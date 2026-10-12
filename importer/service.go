@@ -72,7 +72,7 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
 // batch it refuses outright or when ctx ends; records that fail are in the
 // result.
 func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
-	res := Result{Written: map[string]int{}, Failed: []Failure{}, IDs: map[string]map[string]string{}}
+	res := Result{Written: map[string]int{}, Failed: []RecordFailure{}, IDs: map[string]map[string]string{}}
 	if !sourceRE.MatchString(b.Source) {
 		return res, fmt.Errorf("%w: source %q must match %s", ErrInvalid, b.Source, sourceRE)
 	}
@@ -289,7 +289,7 @@ func (run *batchRun) fail(section string, index int, external string, err error)
 	if code == CodeInternal {
 		run.s.o.Logger.Error("contentkit: import record failed", "section", section, "index", index, "err", err)
 	}
-	run.res.Failed = append(run.res.Failed, Failure{Section: section, Index: index, ExternalID: external, Code: code, Error: msg})
+	run.res.Failed = append(run.res.Failed, RecordFailure{Section: section, Index: index, ExternalID: external, Code: code, Error: msg})
 }
 
 // classify maps a store's error to a failure code and a message without
@@ -493,7 +493,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 	return more.Err()
 }
 
-// resolved is a Target's record.
+// resolved is what a TargetRef names.
 type resolved struct {
 	ref     contentref.ContentRef // kind and id, version for a version target
 	group   string                // a group target's id
@@ -511,7 +511,7 @@ const (
 )
 
 // target resolves t to what it names, within what the section allows.
-func (r *resolver) target(t Target, allow int) (resolved, error) {
+func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 	var out resolved
 	n := 0
 	for _, p := range []*Ref{t.Group, t.Comment} {

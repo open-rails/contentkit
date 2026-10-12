@@ -8159,6 +8159,53 @@
           "request"
         ]
       }
+    },
+    "/v1/import": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Batch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "import",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:import:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:import",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -8245,6 +8292,23 @@
           "content_id"
         ]
       },
+      "AliasRecord": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          }
+        }
+      },
       "Anchor": {
         "type": "object",
         "properties": {
@@ -8304,6 +8368,28 @@
           "label",
           "count"
         ]
+      },
+      "AnswerRecord": {
+        "type": "object",
+        "properties": {
+          "poll": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Attribute": {
         "type": "object",
@@ -8393,6 +8479,89 @@
         "required": [
           "scope"
         ]
+      },
+      "Batch": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "preference_floor": {
+            "type": "integer"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupRecord"
+            }
+          },
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentRecord"
+            }
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipSet"
+            }
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferRecord"
+            }
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AliasRecord"
+            }
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommentRecord"
+            }
+          },
+          "reactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReactionRecord"
+            }
+          },
+          "favorites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteRecord"
+            }
+          },
+          "polls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollRecord"
+            }
+          },
+          "votes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VoteRecord"
+            }
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerRecord"
+            }
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignalRecord"
+            }
+          }
+        }
       },
       "Card": {
         "type": "object",
@@ -8715,6 +8884,47 @@
           },
           "anon_name": {
             "type": "string"
+          }
+        }
+      },
+      "CommentRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "language": {
+            "type": "string"
+          },
+          "reply_to": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -9228,6 +9438,86 @@
           }
         }
       },
+      "ContentRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "publish_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "listing": {
+            "type": "string"
+          },
+          "access": {
+            "$ref": "#/components/schemas/Rule"
+          },
+          "restrictions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "owner_group": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "cover": {
+            "type": "string"
+          },
+          "creators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Creator"
+            }
+          },
+          "text": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogText"
+            }
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionRecord"
+            }
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ContentRef": {
         "type": "object",
         "properties": {
@@ -9430,6 +9720,17 @@
           },
           "to": {
             "type": "string"
+          }
+        }
+      },
+      "EdgeRecord": {
+        "type": "object",
+        "properties": {
+          "relation": {
+            "type": "string"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Ref"
           }
         }
       },
@@ -9677,6 +9978,21 @@
           "content_id",
           "created_at"
         ]
+      },
+      "FavoriteRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "FavoriteState": {
         "type": "object",
@@ -10264,6 +10580,77 @@
           "groups"
         ]
       },
+      "GroupRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "state": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupsText"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover_image": {
+            "type": "string"
+          },
+          "cover_content": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EdgeRecord"
+            }
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "GroupRef": {
         "type": "object",
         "properties": {
@@ -10787,6 +11174,54 @@
           }
         }
       },
+      "MembershipRecord": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "role": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "active_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "active_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "MembershipSet": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipRecord"
+            }
+          }
+        }
+      },
       "MergeInput": {
         "type": "object",
         "properties": {
@@ -10941,6 +11376,17 @@
         "required": [
           "offers"
         ]
+      },
+      "OfferRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms"
+          }
+        }
       },
       "Op": {
         "type": "object",
@@ -11482,6 +11928,72 @@
           }
         }
       },
+      "PollOptionRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          }
+        }
+      },
+      "PollRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "live_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closes_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollOptionRecord"
+            }
+          }
+        }
+      },
       "PollUpdate": {
         "type": "object",
         "properties": {
@@ -11764,6 +12276,31 @@
           "mine"
         ]
       },
+      "ReactionRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "value": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ReadResult": {
         "type": "object",
         "properties": {
@@ -11930,6 +12467,43 @@
           "id"
         ]
       },
+      "RecordFailure": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "section",
+          "index",
+          "code",
+          "error"
+        ]
+      },
+      "Ref": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          }
+        }
+      },
       "RefBody": {
         "type": "object",
         "properties": {
@@ -12081,6 +12655,43 @@
           "restored"
         ]
       },
+      "Result": {
+        "type": "object",
+        "properties": {
+          "written": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "skipped": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecordFailure"
+            }
+          },
+          "ids": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "written",
+          "failed",
+          "ids"
+        ]
+      },
       "ReviewOutcome": {
         "type": "object",
         "properties": {
@@ -12214,6 +12825,42 @@
           }
         }
       },
+      "SignalRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_key": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_s": {
+            "type": "integer"
+          },
+          "progress": {
+            "type": "integer"
+          },
+          "resume": {
+            "type": "string"
+          }
+        }
+      },
       "Signals": {
         "type": "object",
         "properties": {
@@ -12250,6 +12897,23 @@
           "kind",
           "id"
         ]
+      },
+      "TargetRef": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "group": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "comment": {
+            "$ref": "#/components/schemas/Ref"
+          }
+        }
       },
       "Terms": {
         "type": "object",
@@ -12552,6 +13216,77 @@
           }
         }
       },
+      "VersionRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "publish_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "access": {
+            "$ref": "#/components/schemas/Rule"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "ordinal": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/VersionText"
+            }
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "VersionRules": {
         "type": "object",
         "properties": {
@@ -12633,6 +13368,27 @@
           "progress",
           "progress_max"
         ]
+      },
+      "VoteRecord": {
+        "type": "object",
+        "properties": {
+          "poll": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "option": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Written": {
         "type": "object",
@@ -12795,7 +13551,8 @@
     "notifications": "/v1/notifications",
     "versions": "/v1",
     "offers": "/v1",
-    "discovery": "/v1"
+    "discovery": "/v1",
+    "import": "/v1"
   },
   "x-contentkit-error-sets": {
     "module:kinds": [
@@ -12848,6 +13605,10 @@
       "unavailable"
     ],
     "module:discovery": [
+      "internal_error",
+      "unavailable"
+    ],
+    "module:import": [
       "internal_error",
       "unavailable"
     ]

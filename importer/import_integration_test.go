@@ -103,7 +103,7 @@ func catalogBatch() importer.Batch {
 	comment := func(n int) *importer.Ref { return &importer.Ref{ExternalID: "comment:" + string(rune('0'+n))} }
 	return importer.Batch{
 		Source: "test-legacy",
-		Groups: []importer.Group{
+		Groups: []importer.GroupRecord{
 			{ExternalID: "tag:1", ID: id("tag", 1), Kind: "tag", Slug: "big", Code: "TAG000001",
 				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Big"}, {Language: "en", Kind: groups.NameAlias, Name: "Huge"}},
 				Text:  []groups.Text{{Language: "en", Description: "Big things."}}, CreatedAt: &t0},
@@ -115,14 +115,14 @@ func catalogBatch() importer.Batch {
 				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Saga Two"}}},
 			{ExternalID: "char:1", ID: id("character", 1), Kind: "character", Slug: "hero", Scope: &importer.Ref{ExternalID: "series:2"},
 				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Hero"}},
-				Edges: []importer.Edge{{Relation: "member_of", To: importer.Ref{ExternalID: "series:1"}}}},
+				Edges: []importer.EdgeRecord{{Relation: "member_of", To: importer.Ref{ExternalID: "series:1"}}}},
 		},
-		Contents: []importer.Content{
+		Contents: []importer.ContentRecord{
 			{ExternalID: "gallery:1", ID: id("gallery", 1), Kind: "gallery", State: "published", PublishedAt: ptr(t0.Add(24 * time.Hour)), Code: "GAZ000001",
 				Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
 				Creators: []catalog.Creator{{UserID: "u-1"}},
 				Text:     map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
-				Versions: []importer.Version{
+				Versions: []importer.VersionRecord{
 					{ExternalID: "version:1", ID: id("version", 1), Languages: []string{"en"}, Ordinal: ptr(1), PublishedAt: ptr(t0.Add(24 * time.Hour)),
 						Text:     map[string]catalog.VersionText{"en": {Title: "First, in English"}},
 						Segments: []catalog.Segment{{Start: 0, End: 10}, {Start: 10, End: 20, ReleaseAt: &future}}, CreatedAt: &t0},
@@ -130,55 +130,55 @@ func catalogBatch() importer.Batch {
 				}, CreatedAt: &t0, UpdatedAt: ptr(t0.Add(48 * time.Hour))},
 			{ExternalID: "gallery:2", ID: id("gallery", 2), Kind: "gallery", State: "deleted", PublishedAt: &t0, DeletedAt: ptr(t0.Add(72 * time.Hour)),
 				Text:     map[string]catalog.Text{"en": {Title: "Gone"}},
-				Versions: []importer.Version{{ExternalID: "version:3", Languages: []string{"en"}, PublishedAt: &t0, CreatedAt: &t0}}, CreatedAt: &t0},
+				Versions: []importer.VersionRecord{{ExternalID: "version:3", Languages: []string{"en"}, PublishedAt: &t0, CreatedAt: &t0}}, CreatedAt: &t0},
 			{ExternalID: "gallery:3", ID: id("gallery", 3), Kind: "gallery", State: "published", PublishAt: &future, Restrictions: []string{"restricted"},
 				Text:     map[string]catalog.Text{"en": {Title: "Soon"}},
-				Versions: []importer.Version{{ExternalID: "version:4", ID: id("version", 4), Languages: []string{"en"}, CreatedAt: &t0}}, CreatedAt: &t0},
+				Versions: []importer.VersionRecord{{ExternalID: "version:4", ID: id("version", 4), Languages: []string{"en"}, CreatedAt: &t0}}, CreatedAt: &t0},
 			{ExternalID: "post:1", ID: id("post", 1), Kind: "blog", State: "published", PublishedAt: &t0, Text: map[string]catalog.Text{"en": {Title: "News", Body: "<p>Hello</p>"}},
 				CreatedAt: &t0},
 		},
-		Memberships: []importer.Memberships{
-			{Content: gallery1, Kinds: []string{"tag"}, Memberships: []importer.Membership{{Group: tag(1)}, {Group: tag(2)}}},
-			{Content: gallery1, Kinds: []string{"artist"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "artist:1"}},
+		Memberships: []importer.MembershipSet{
+			{Content: gallery1, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Group: tag(1)}, {Group: tag(2)}}},
+			{Content: gallery1, Kinds: []string{"artist"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "artist:1"}},
 				{Group: importer.Ref{ExternalID: "artist:1"}, Role: "publisher"}}},
-			{Content: gallery1, Kinds: []string{"series"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "series:2"}, Position: ptr(3)}}},
-			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "char:1"}}}},
-			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.Membership{{Group: tag(1)}}},
+			{Content: gallery1, Kinds: []string{"series"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "series:2"}, Position: ptr(3)}}},
+			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "char:1"}}}},
+			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Group: tag(1)}}},
 		},
-		Offers:  []importer.Offer{{Target: importer.Target{Content: &gallery1}, Terms: offers.Terms{Amount: 4_990_000}}},
-		Aliases: []importer.Alias{{Kind: "folder", Key: "12345", Target: importer.Target{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.Target{Group: ptr(tag(1))}}},
-		Comments: []importer.Comment{
-			{ExternalID: "comment:1", ID: id("comment", 1), Target: importer.Target{Content: &gallery1}, Language: "en", UserID: "u-1", Body: "Great", CreatedAt: &t0},
-			{ExternalID: "comment:2", ID: id("comment", 2), Target: importer.Target{Content: &gallery1}, Language: "en", AnonName: "guest", Body: "Agreed",
+		Offers:  []importer.OfferRecord{{Target: importer.TargetRef{Content: &gallery1}, Terms: offers.Terms{Amount: 4_990_000}}},
+		Aliases: []importer.AliasRecord{{Kind: "folder", Key: "12345", Target: importer.TargetRef{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.TargetRef{Group: ptr(tag(1))}}},
+		Comments: []importer.CommentRecord{
+			{ExternalID: "comment:1", ID: id("comment", 1), Target: importer.TargetRef{Content: &gallery1}, Language: "en", UserID: "u-1", Body: "Great", CreatedAt: &t0},
+			{ExternalID: "comment:2", ID: id("comment", 2), Target: importer.TargetRef{Content: &gallery1}, Language: "en", AnonName: "guest", Body: "Agreed",
 				ReplyTo: comment(1), CreatedAt: ptr(t0.Add(time.Hour))},
-			{ExternalID: "comment:3", ID: id("comment", 3), Target: importer.Target{Content: &gallery1}, UserID: "u-2", Body: "spam", DeletedAt: ptr(t0.Add(time.Hour)), CreatedAt: &t0},
-			{ExternalID: "comment:4", ID: id("comment", 4), Target: importer.Target{Content: &gallery1}, Language: "ja", UserID: "u-3", Body: "同意",
+			{ExternalID: "comment:3", ID: id("comment", 3), Target: importer.TargetRef{Content: &gallery1}, UserID: "u-2", Body: "spam", DeletedAt: ptr(t0.Add(time.Hour)), CreatedAt: &t0},
+			{ExternalID: "comment:4", ID: id("comment", 4), Target: importer.TargetRef{Content: &gallery1}, Language: "ja", UserID: "u-3", Body: "同意",
 				ReplyTo: comment(2), CreatedAt: ptr(t0.Add(2 * time.Hour))},
 		},
-		Reactions: []importer.Reaction{
-			{Target: importer.Target{Content: &gallery1}, UserID: "u-1", Value: 1, CreatedAt: &t0},
-			{Target: importer.Target{Content: &gallery1}, UserID: "u-2", Value: -1, CreatedAt: &t0},
-			{Target: importer.Target{Content: &gallery1}, IP: "203.0.113.9", Value: 1, CreatedAt: &t0},
-			{Target: importer.Target{Comment: comment(1)}, UserID: "u-1", Value: 1, CreatedAt: &t0},
-			{Target: importer.Target{Group: ptr(tag(1))}, UserID: "u-1", Value: -1, CreatedAt: &t0},
-			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-3", Value: 0, CreatedAt: &t0},
+		Reactions: []importer.ReactionRecord{
+			{Target: importer.TargetRef{Content: &gallery1}, UserID: "u-1", Value: 1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Content: &gallery1}, UserID: "u-2", Value: -1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Content: &gallery1}, IP: "203.0.113.9", Value: 1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Comment: comment(1)}, UserID: "u-1", Value: 1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Group: ptr(tag(1))}, UserID: "u-1", Value: -1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-3", Value: 0, CreatedAt: &t0},
 		},
-		Favorites: []importer.Favorite{{Target: importer.Target{Content: &gallery1}, UserID: "u-1", CreatedAt: &t0},
-			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-2", CreatedAt: &t0}},
-		Polls: []importer.Poll{
+		Favorites: []importer.FavoriteRecord{{Target: importer.TargetRef{Content: &gallery1}, UserID: "u-1", CreatedAt: &t0},
+			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-2", CreatedAt: &t0}},
+		Polls: []importer.PollRecord{
 			{ExternalID: "poll:1", ID: id("poll", 1), Question: "Best?", Language: "en", CreatedAt: &t0,
-				Options: []importer.PollOption{{ExternalID: "answer:1", ID: id("option", 1), Label: "This", Position: 0}, {ExternalID: "answer:2", Label: "That", Position: 1}}},
+				Options: []importer.PollOptionRecord{{ExternalID: "answer:1", ID: id("option", 1), Label: "This", Position: 0}, {ExternalID: "answer:2", Label: "That", Position: 1}}},
 			{ExternalID: "poll:2", Kind: "free_text", Question: "Why?", Language: "en", CreatedAt: &t0},
 		},
-		Votes: []importer.Vote{
+		Votes: []importer.VoteRecord{
 			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:1"}, UserID: "u-1", CreatedAt: &t0},
 			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:2"}, IP: "203.0.113.9", CreatedAt: &t0},
 			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:1"}, UserID: "u-2", CreatedAt: &t0},
 		},
-		Answers: []importer.Answer{{Poll: importer.Ref{ExternalID: "poll:2"}, UserID: "u-1", Text: "Because", CreatedAt: &t0}},
-		Signals: []importer.Signal{
-			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", Type: "view", EventID: "view:1", OccurredAt: t0, Progress: 5},
-			{Target: importer.Target{Content: &gallery1}, AnonKey: "a-1", Type: "view", EventID: "view:2", OccurredAt: t0},
+		Answers: []importer.AnswerRecord{{Poll: importer.Ref{ExternalID: "poll:2"}, UserID: "u-1", Text: "Because", CreatedAt: &t0}},
+		Signals: []importer.SignalRecord{
+			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", Type: "view", EventID: "view:1", OccurredAt: t0, Progress: 5},
+			{Target: importer.TargetRef{Content: &gallery1}, AnonKey: "a-1", Type: "view", EventID: "view:2", OccurredAt: t0},
 		},
 	}
 }
@@ -317,17 +317,17 @@ func mapsEqual(a, b map[string]map[string]string) bool {
 // transaction; sending the batch again once fixed completes it.
 func TestImportPartialFailureResumes(t *testing.T) {
 	f := newEngine(t)
-	gallery := func(n int, state string, owner *importer.Ref) importer.Content {
+	gallery := func(n int, state string, owner *importer.Ref) importer.ContentRecord {
 		ext := "gallery:" + string(rune('0'+n))
-		return importer.Content{ExternalID: ext, ID: id("gallery", int64(n)), Kind: "gallery", State: state, OwnerGroup: owner,
-			Text: map[string]catalog.Text{"en": {Title: ext}}, Versions: []importer.Version{{ExternalID: "version:" + ext, Languages: []string{"en"}}}}
+		return importer.ContentRecord{ExternalID: ext, ID: id("gallery", int64(n)), Kind: "gallery", State: state, OwnerGroup: owner,
+			Text: map[string]catalog.Text{"en": {Title: ext}}, Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, Languages: []string{"en"}}}}
 	}
 	b := importer.Batch{Source: "test-legacy",
-		Contents: []importer.Content{gallery(1, "published", nil), gallery(2, "published", &importer.Ref{ExternalID: "tag:9"}), gallery(3, "live", nil), gallery(4, "draft", nil)},
-		Comments: []importer.Comment{
-			{ExternalID: "c:1", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "hi"},
-			{ExternalID: "c:2", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:3"}}, UserID: "u", Body: "lost"},
-			{ExternalID: "c:3", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "orphan", ReplyTo: &importer.Ref{ID: id("comment", 99)}},
+		Contents: []importer.ContentRecord{gallery(1, "published", nil), gallery(2, "published", &importer.Ref{ExternalID: "tag:9"}), gallery(3, "live", nil), gallery(4, "draft", nil)},
+		Comments: []importer.CommentRecord{
+			{ExternalID: "c:1", Target: importer.TargetRef{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "hi"},
+			{ExternalID: "c:2", Target: importer.TargetRef{Content: &importer.Ref{ExternalID: "gallery:3"}}, UserID: "u", Body: "lost"},
+			{ExternalID: "c:3", Target: importer.TargetRef{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "orphan", ReplyTo: &importer.Ref{ID: id("comment", 99)}},
 		},
 	}
 	res := f.importBatch(t, b)
@@ -343,7 +343,7 @@ func TestImportPartialFailureResumes(t *testing.T) {
 		t.Fatal("the failed records were written")
 	}
 	// Fix the causes and send it all again.
-	b.Groups = []importer.Group{{ExternalID: "tag:9", ID: id("tag", 9), Kind: "tag", Slug: "nine"}}
+	b.Groups = []importer.GroupRecord{{ExternalID: "tag:9", ID: id("tag", 9), Kind: "tag", Slug: "nine"}}
 	b.Contents[2].State = "published"
 	b.Comments[2].ReplyTo = &importer.Ref{ExternalID: "c:1"}
 	res = f.importBatch(t, b)
@@ -380,7 +380,7 @@ func TestImportRoute(t *testing.T) {
 		f.routes.ServeHTTP(rec, req)
 		return rec
 	}
-	b := importer.Batch{Source: "test-legacy", Groups: []importer.Group{{ExternalID: "t", Kind: "tag", Slug: "t"}}}
+	b := importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{{ExternalID: "t", Kind: "tag", Slug: "t"}}}
 	if rec := post("staff", b); rec.Code != http.StatusForbidden {
 		t.Fatalf("staff without the permission: %d %s", rec.Code, rec.Body)
 	}

@@ -32,19 +32,19 @@ type Batch struct {
 	// PreferenceFloor raises the preference revision sequence past a
 	// retained signal plane's newest revision before anything is stamped, as
 	// after a Postgres restore. It only ever advances.
-	PreferenceFloor int64         `json:"preference_floor,omitempty"`
-	Groups          []Group       `json:"groups,omitempty"`
-	Contents        []Content     `json:"contents,omitempty"`
-	Memberships     []Memberships `json:"memberships,omitempty"`
-	Offers          []Offer       `json:"offers,omitempty"`
-	Aliases         []Alias       `json:"aliases,omitempty"`
-	Comments        []Comment     `json:"comments,omitempty"`
-	Reactions       []Reaction    `json:"reactions,omitempty"`
-	Favorites       []Favorite    `json:"favorites,omitempty"`
-	Polls           []Poll        `json:"polls,omitempty"`
-	Votes           []Vote        `json:"votes,omitempty"`
-	Answers         []Answer      `json:"answers,omitempty"`
-	Signals         []Signal      `json:"signals,omitempty"`
+	PreferenceFloor int64            `json:"preference_floor,omitempty"`
+	Groups          []GroupRecord    `json:"groups,omitempty"`
+	Contents        []ContentRecord  `json:"contents,omitempty"`
+	Memberships     []MembershipSet  `json:"memberships,omitempty"`
+	Offers          []OfferRecord    `json:"offers,omitempty"`
+	Aliases         []AliasRecord    `json:"aliases,omitempty"`
+	Comments        []CommentRecord  `json:"comments,omitempty"`
+	Reactions       []ReactionRecord `json:"reactions,omitempty"`
+	Favorites       []FavoriteRecord `json:"favorites,omitempty"`
+	Polls           []PollRecord     `json:"polls,omitempty"`
+	Votes           []VoteRecord     `json:"votes,omitempty"`
+	Answers         []AnswerRecord   `json:"answers,omitempty"`
+	Signals         []SignalRecord   `json:"signals,omitempty"`
 }
 
 // Ref names a record by its ContentKit id or by its external id under the
@@ -54,19 +54,19 @@ type Ref struct {
 	ExternalID string `json:"external_id,omitempty"`
 }
 
-// Target is what an interaction, offer or alias is about: a content item,
+// TargetRef is what an interaction, offer or alias is about: a content item,
 // one version (its content is implied), a group or a comment, as the
 // section allows.
-type Target struct {
+type TargetRef struct {
 	Content *Ref `json:"content,omitempty"`
 	Version *Ref `json:"version,omitempty"`
 	Group   *Ref `json:"group,omitempty"`
 	Comment *Ref `json:"comment,omitempty"`
 }
 
-// Group is a group with its names and text. Nil lists keep what is stored;
-// given ones replace it.
-type Group struct {
+// GroupRecord is a group with its names and text. Nil lists keep what is
+// stored; given ones replace it.
+type GroupRecord struct {
 	ExternalID string `json:"external_id"`
 	// ID is kept when the external id is new (contentref.LegacyID derives a
 	// stable one); generated when empty.
@@ -88,7 +88,7 @@ type Group struct {
 	OwnerUserID  string `json:"owner_user_id,omitempty"`
 	AuthScope    string `json:"auth_scope,omitempty"`
 	// Edges replace the group's edges to other groups.
-	Edges []Edge `json:"edges,omitempty"`
+	Edges []EdgeRecord `json:"edges,omitempty"`
 	// Code keeps a content code the group had (9 characters); one is
 	// generated otherwise. A code never changes once given.
 	Code      string     `json:"code,omitempty"`
@@ -96,16 +96,16 @@ type Group struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// Edge is a relation from the group to another.
-type Edge struct {
+// EdgeRecord is a relation from the group to another.
+type EdgeRecord struct {
 	Relation string `json:"relation"`
 	To       Ref    `json:"to"`
 }
 
-// Content is a content item with its text, creators and versions. Nil text,
-// creators, version text and segments keep what is stored; given ones
+// ContentRecord is a content item with its text, creators and versions. Nil
+// text, creators, version text and segments keep what is stored; given ones
 // replace it. Versions not listed are left as they are.
-type Content struct {
+type ContentRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
 	Kind       string `json:"kind"`
@@ -129,20 +129,20 @@ type Content struct {
 	Creators []catalog.Creator       `json:"creators,omitempty"`
 	Text     map[string]catalog.Text `json:"text,omitempty"`
 	// Versions: a kind with hidden versions takes none or one.
-	Versions  []Version  `json:"versions,omitempty"`
-	Code      string     `json:"code,omitempty"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Versions  []VersionRecord `json:"versions,omitempty"`
+	Code      string          `json:"code,omitempty"`
+	CreatedAt *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt *time.Time      `json:"updated_at,omitempty"`
 }
 
-// Version is one version of a content item, ordered as listed.
-type Version struct {
+// VersionRecord is one version of a content item, ordered as listed.
+type VersionRecord struct {
 	ExternalID string   `json:"external_id"`
 	ID         string   `json:"id,omitempty"`
 	Languages  []string `json:"languages"`
 	Traits     []string `json:"traits,omitempty"`
 	Label      string   `json:"label,omitempty"`
-	// State is published (the default), draft or deleted; times as Content's.
+	// State is published (the default), draft or deleted; times as ContentRecord's.
 	State       string                         `json:"state,omitempty"`
 	PublishAt   *time.Time                     `json:"publish_at,omitempty"`
 	PublishedAt *time.Time                     `json:"published_at,omitempty"`
@@ -156,16 +156,17 @@ type Version struct {
 	UpdatedAt   *time.Time                     `json:"updated_at,omitempty"`
 }
 
-// Memberships replaces a content item's memberships in the listed group
+// MembershipSet replaces a content item's memberships in the listed group
 // kinds; memberships in other kinds stay.
-type Memberships struct {
-	Content     Ref          `json:"content"`
-	Kinds       []string     `json:"kinds"`
-	Memberships []Membership `json:"memberships"`
+type MembershipSet struct {
+	Content     Ref                `json:"content"`
+	Kinds       []string           `json:"kinds"`
+	Memberships []MembershipRecord `json:"memberships"`
 }
 
-// Membership places the content item, or one version of it, in a group.
-type Membership struct {
+// MembershipRecord places the content item, or one version of it, in a
+// group.
+type MembershipRecord struct {
 	Group       Ref        `json:"group"`
 	Version     *Ref       `json:"version,omitempty"`
 	Role        string     `json:"role,omitempty"`
@@ -176,30 +177,30 @@ type Membership struct {
 	State string `json:"state,omitempty"`
 }
 
-// Offer puts a content item, a version or a sellable group on sale; the
+// OfferRecord puts a content item, a version or a sellable group on sale; the
 // offers job syncs it to the billing provider.
-type Offer struct {
-	Target Target       `json:"target"`
+type OfferRecord struct {
+	Target TargetRef    `json:"target"`
 	Terms  offers.Terms `json:"terms"`
 }
 
-// Alias resolves another system's identifier (under the batch's source) to
+// AliasRecord resolves another system's identifier (under the batch's source) to
 // a content item or group: a legacy URL's id, token or name.
-type Alias struct {
+type AliasRecord struct {
 	// Kind is the identifier space ("folder", "tag-name").
 	Kind string `json:"kind"`
 	Key  string `json:"key"`
 	// Locator is a position inside the target, such as a page.
-	Locator string `json:"locator,omitempty"`
-	Target  Target `json:"target"`
+	Locator string    `json:"locator,omitempty"`
+	Target  TargetRef `json:"target"`
 }
 
-// Comment is a comment on a content item (or one version), or a reply to a
-// top-level comment on it; a reply to a reply joins its thread.
-type Comment struct {
-	ExternalID string `json:"external_id"`
-	ID         string `json:"id,omitempty"`
-	Target     Target `json:"target"`
+// CommentRecord is a comment on a content item (or one version), or a reply
+// to a top-level comment on it; a reply to a reply joins its thread.
+type CommentRecord struct {
+	ExternalID string    `json:"external_id"`
+	ID         string    `json:"id,omitempty"`
+	Target     TargetRef `json:"target"`
 	// Language is the language the comment is written in; empty is unknown.
 	Language string `json:"language,omitempty"`
 	ReplyTo  *Ref   `json:"reply_to,omitempty"`
@@ -212,10 +213,10 @@ type Comment struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// Reaction is a person's like (1), dislike (-1) or neutral (0) on a content
-// item, version, comment or group; an anonymous one is keyed by IP.
-type Reaction struct {
-	Target    Target     `json:"target"`
+// ReactionRecord is a person's like (1), dislike (-1) or neutral (0) on a
+// content item, version, comment or group; an anonymous one is keyed by IP.
+type ReactionRecord struct {
+	Target    TargetRef  `json:"target"`
 	UserID    string     `json:"user_id,omitempty"`
 	IP        string     `json:"ip,omitempty"`
 	Value     int16      `json:"value"`
@@ -223,15 +224,15 @@ type Reaction struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// Favorite is a person's bookmark of a content item or version.
-type Favorite struct {
-	Target    Target     `json:"target"`
+// FavoriteRecord is a person's bookmark of a content item or version.
+type FavoriteRecord struct {
+	Target    TargetRef  `json:"target"`
 	UserID    string     `json:"user_id"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
-// Poll is a site poll with its options, which replace the stored ones.
-type Poll struct {
+// PollRecord is a site poll with its options, which replace the stored ones.
+type PollRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
 	// Kind is multiple_choice (the default) or free_text.
@@ -239,25 +240,25 @@ type Poll struct {
 	Question string `json:"question"`
 	Language string `json:"language,omitempty"`
 	// Active defaults to true.
-	Active    *bool        `json:"active,omitempty"`
-	LiveAt    *time.Time   `json:"live_at,omitempty"`
-	ClosesAt  *time.Time   `json:"closes_at,omitempty"`
-	DeletedAt *time.Time   `json:"deleted_at,omitempty"`
-	CreatedAt *time.Time   `json:"created_at,omitempty"`
-	UpdatedAt *time.Time   `json:"updated_at,omitempty"`
-	Options   []PollOption `json:"options,omitempty"`
+	Active    *bool              `json:"active,omitempty"`
+	LiveAt    *time.Time         `json:"live_at,omitempty"`
+	ClosesAt  *time.Time         `json:"closes_at,omitempty"`
+	DeletedAt *time.Time         `json:"deleted_at,omitempty"`
+	CreatedAt *time.Time         `json:"created_at,omitempty"`
+	UpdatedAt *time.Time         `json:"updated_at,omitempty"`
+	Options   []PollOptionRecord `json:"options,omitempty"`
 }
 
-// PollOption is one choice of a multiple-choice poll, ordered by Position.
-type PollOption struct {
+// PollOptionRecord is one choice of a multiple-choice poll, ordered by Position.
+type PollOptionRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
 	Label      string `json:"label"`
 	Position   int    `json:"position"`
 }
 
-// Vote is one person's (or, anonymous, one IP's) choice in a poll.
-type Vote struct {
+// VoteRecord is one person's (or, anonymous, one IP's) choice in a poll.
+type VoteRecord struct {
 	Poll      Ref        `json:"poll"`
 	Option    Ref        `json:"option"`
 	UserID    string     `json:"user_id,omitempty"`
@@ -265,9 +266,9 @@ type Vote struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
-// Answer is one person's free-text answer to a poll; the classifier groups
-// it later.
-type Answer struct {
+// AnswerRecord is one person's free-text answer to a poll; the classifier
+// groups it later.
+type AnswerRecord struct {
 	Poll      Ref        `json:"poll"`
 	UserID    string     `json:"user_id"`
 	Text      string     `json:"text"`
@@ -275,11 +276,11 @@ type Answer struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// Signal is a view or click on a content item or one version, for the
+// SignalRecord is a view or click on a content item or one version, for the
 // signal plane; skipped without one. A view on a version counts for its
 // content too.
-type Signal struct {
-	Target Target `json:"target"`
+type SignalRecord struct {
+	Target TargetRef `json:"target"`
 	// UserID or, signed out, an opaque AnonKey.
 	UserID  string `json:"user_id,omitempty"`
 	AnonKey string `json:"anon_key,omitempty"`
@@ -328,15 +329,15 @@ type Result struct {
 	Written map[string]int `json:"written"`
 	// Skipped counts records an engine without the capability leaves out:
 	// signals without a signal plane, offers without billing.
-	Skipped map[string]int `json:"skipped,omitempty"`
-	Failed  []Failure      `json:"failed"`
+	Skipped map[string]int  `json:"skipped,omitempty"`
+	Failed  []RecordFailure `json:"failed"`
 	// IDs maps each written record's external id to its id, by entity.
 	IDs map[string]map[string]string `json:"ids"`
 }
 
-// Failure is one record not written. Sending it again (or the whole batch)
-// once its cause is fixed resumes the import.
-type Failure struct {
+// RecordFailure is one record not written. Sending it again (or the whole
+// batch) once its cause is fixed resumes the import.
+type RecordFailure struct {
 	Section    string `json:"section"`
 	Index      int    `json:"index"`
 	ExternalID string `json:"external_id,omitempty"`

@@ -23,6 +23,7 @@ var moduleTitles = map[httpapi.Module]string{
 	httpapi.Versions:      "Content versions: reader plan, reader metadata, forks, downloads",
 	httpapi.Offers:        "Offers, free group joins and the library",
 	httpapi.Discovery:     "Discovery: lists, search, similar and recommended contents, release dates, content filters, history and signals",
+	httpapi.Import:        "Bulk import",
 }
 
 func (m *model) bodyDoc(v any) string {
