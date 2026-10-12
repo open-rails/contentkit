@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,82 +20,9 @@ import (
 // was constructed without a ClickHouse connection.
 var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
 
-// ContentCatalog pages live, visible content ids of a kind from the host's
-// tables. The host owns visibility and ordering; a cursor must continue that
-// same stable order without repeating or skipping ids.
-type ContentCatalog interface {
-	Page(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error)
-}
-
-// CatalogQuery requests one bounded page. An empty Cursor starts at the first
-// page; subsequent cursors are opaque to ContentKit and owned by the host.
-type CatalogQuery struct {
-	Limit  int
-	Cursor string
-}
-
-// CatalogPage contains ids in catalog order and the cursor for the next page.
-// An empty NextCursor means the catalog is exhausted.
-type CatalogPage struct {
-	IDs        []string
-	NextCursor string
-}
-
-// ContentCatalogFunc adapts a function to the ContentCatalog interface.
-type ContentCatalogFunc func(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error)
-
-func (f ContentCatalogFunc) Page(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error) {
-	return f(ctx, tenant, contentKind, q)
-}
-
-// Hub is the single surface host apps program against: content-plane queries
-// (search/typeahead), the signal plane (RecordSignals), and the discovery
-// plane (reads over content × signals). All methods return ranked content
-// references (+ per-subject State); the host hydrates them into cards from
-// its own DB. Every method is scoped to the tenant pinned at construction;
-// a reference of another tenant is an error.
-type Hub interface {
-	// Tenant returns the tenant this hub instance is scoped to.
-	Tenant() string
-
-	// Content plane.
-	Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error)
-	Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error)
-	SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error)
-
-	// Signal plane.
-	RecordSignals(ctx context.Context, signals []signal.Signal) error
-	RecordExposures(ctx context.Context, exposures []signal.Exposure) error
-	ForgetExposures(ctx context.Context, subject signal.Subject) error
-	ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error
-	Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error)
-	Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error
-	EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error)
-	EnforceErasures(ctx context.Context) (signal.ErasureReport, error)
-
-	// Discovery plane.
-	History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error)
-	HistoryCount(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) (int64, error)
-	SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error)
-	Unseen(ctx context.Context, subject signal.Subject, opts UnseenOptions) ([]string, error)
-	States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error)
-	Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error)
-	Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error)
-	PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error)
-	Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error)
-
-	// Maintenance.
-	RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error
-	RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error)
-	Inventory(ctx context.Context) ([]signal.InventoryRow, error)
-	PurgeContentKinds(ctx context.Context, contentKinds []string) error
-}
-
-// EmbeddedConfig configures an in-process hub against the shared DB.
-type EmbeddedConfig struct {
-	// Content plane (Postgres). PG + PGSchema are required. PGSchema is the
-	// host-selected schema containing all ContentKit tables; it may also hold
-	// application tables.
+// Config configures one tenant's hub.
+type Config struct {
+	// Content plane (Postgres). PG + PGSchema (ContentKit's schema) are required.
 	PG       *pgxpool.Pool
 	PGSchema string
 
@@ -122,29 +48,24 @@ type EmbeddedConfig struct {
 	// ProgressMax / Completed before recording.
 	Scorers map[string]signal.Scorer
 
-	// Catalogs maps content kind → host ContentCatalog (the Unseen universe).
-	Catalogs map[string]ContentCatalog
-
 	// Candidates sources SimilarTo and Recommend (requires CH). Nil =
 	// discovery.Engagement (co-engagement) over this hub's signal store.
 	Candidates discovery.Candidates
 }
 
-// EmbeddedHub implements Hub in-process. Construct with NewEmbedded.
-type EmbeddedHub struct {
+// Hub is one tenant's search, signal and discovery planes: the engine's
+// internal surface the discovery routes build on.
+type Hub struct {
 	defaultRRFK int
 	client      *Client
 	store       *signal.Store
 	tenant      string
 	scorers     map[string]signal.Scorer
-	catalogs    map[string]ContentCatalog
 	discovery   discovery.Recommender
 }
 
-var _ Hub = (*EmbeddedHub)(nil)
-
-// NewEmbedded builds the embedded hub: in-process, shared DB, one tenant.
-func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
+// New builds the hub of one tenant.
+func New(cfg Config) (*Hub, error) {
 	client, err := NewClient(ClientConfig{
 		Pool:            cfg.PG,
 		Schema:          cfg.PGSchema,
@@ -155,12 +76,11 @@ func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &EmbeddedHub{
+	h := &Hub{
 		client:      client,
 		defaultRRFK: cfg.DefaultRRFK,
 		tenant:      client.Tenant(),
 		scorers:     cfg.Scorers,
-		catalogs:    cfg.Catalogs,
 	}
 	if h.defaultRRFK <= 0 {
 		h.defaultRRFK = 60
@@ -189,17 +109,17 @@ func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
 }
 
 // Client returns the underlying content-plane client (advanced use).
-func (h *EmbeddedHub) Client() *Client { return h.client }
+func (h *Hub) Client() *Client { return h.client }
 
 // Tenant returns the pinned tenant value.
-func (h *EmbeddedHub) Tenant() string { return h.tenant }
+func (h *Hub) Tenant() string { return h.tenant }
 
 // Content returns a reference to a work of this hub's tenant.
-func (h *EmbeddedHub) Content(contentKind, contentID string) ContentRef {
+func (h *Hub) Content(contentKind, contentID string) ContentRef {
 	return contentref.New(h.tenant, contentKind, contentID)
 }
 
-func (h *EmbeddedHub) requireStore() (*signal.Store, error) {
+func (h *Hub) requireStore() (*signal.Store, error) {
 	if h.store == nil {
 		return nil, ErrSignalPlaneDisabled
 	}
@@ -243,7 +163,7 @@ type HubSearchOptions struct {
 	Personalize *Personalization
 }
 
-func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error) {
+func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error) {
 	if opts.Personalize == nil {
 		return h.client.Search(ctx, userText, opts.SearchOptions)
 	}
@@ -391,7 +311,7 @@ func unpersonalized(ctx context.Context, content SearchResult, offset, limit int
 	return out
 }
 
-func (h *EmbeddedHub) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
+func (h *Hub) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
 	return h.client.Typeahead(ctx, userText, opts)
 }
 
@@ -406,7 +326,7 @@ type RecommendOptions = discovery.RecommendOptions
 
 // SimilarTo returns works like the anchor ("more like this") from the
 // configured Candidates source (default: co-engagement).
-func (h *EmbeddedHub) SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error) {
+func (h *Hub) SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error) {
 	if h.store == nil {
 		return nil, ErrSignalPlaneDisabled
 	}
@@ -416,7 +336,7 @@ func (h *EmbeddedHub) SimilarTo(ctx context.Context, ref ContentRef, opts Simila
 // Recommend returns "for you" works for a subject from the configured
 // Candidates source, excluding seen (unless IncludeSeen) and disliked works,
 // with a popularity fill for cold start. The host hydrates the references.
-func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error) {
+func (h *Hub) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error) {
 	if h.store == nil {
 		return nil, ErrSignalPlaneDisabled
 	}
@@ -425,7 +345,7 @@ func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opt
 
 // RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
 // for this tenant (see signal.Store.RefreshCoEngagement). Run periodically.
-func (h *EmbeddedHub) RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error {
+func (h *Hub) RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -436,7 +356,7 @@ func (h *EmbeddedHub) RefreshCoEngagement(ctx context.Context, opts signal.Refre
 // RepairProjections is the bounded, host-scheduled projection repair (see
 // signal.Store.RepairProjections): run it periodically with IngestedSince for
 // crash repair, and with Rebuild over a window after projection changes.
-func (h *EmbeddedHub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
+func (h *Hub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return signal.RepairResult{}, err
@@ -445,7 +365,7 @@ func (h *EmbeddedHub) RepairProjections(ctx context.Context, opts signal.RepairO
 }
 
 // Inventory reports canonical event volume per content kind and signal type.
-func (h *EmbeddedHub) Inventory(ctx context.Context) ([]signal.InventoryRow, error) {
+func (h *Hub) Inventory(ctx context.Context) ([]signal.InventoryRow, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -455,7 +375,7 @@ func (h *EmbeddedHub) Inventory(ctx context.Context) ([]signal.InventoryRow, err
 
 // PurgeContentKinds irreversibly deletes whole content kinds from this tenant's
 // signal plane (see signal.Store.PurgeContentKinds).
-func (h *EmbeddedHub) PurgeContentKinds(ctx context.Context, contentKinds []string) error {
+func (h *Hub) PurgeContentKinds(ctx context.Context, contentKinds []string) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -466,7 +386,7 @@ func (h *EmbeddedHub) PurgeContentKinds(ctx context.Context, contentKinds []stri
 // RecordExposures logs one row per result list and stage (served, rendered,
 // visible) so clicks can be attributed to what was actually exposed. Hosts call
 // it once per list per stage, never per item.
-func (h *EmbeddedHub) RecordExposures(ctx context.Context, exposures []signal.Exposure) error {
+func (h *Hub) RecordExposures(ctx context.Context, exposures []signal.Exposure) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -475,7 +395,7 @@ func (h *EmbeddedHub) RecordExposures(ctx context.Context, exposures []signal.Ex
 }
 
 // ForgetExposures clears a subject's result-list exposures (search history).
-func (h *EmbeddedHub) ForgetExposures(ctx context.Context, subject signal.Subject) error {
+func (h *Hub) ForgetExposures(ctx context.Context, subject signal.Subject) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -484,7 +404,7 @@ func (h *EmbeddedHub) ForgetExposures(ctx context.Context, subject signal.Subjec
 }
 
 // ForgetExposuresBefore clears only exposures from before the host's clear request.
-func (h *EmbeddedHub) ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error {
+func (h *Hub) ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -494,7 +414,7 @@ func (h *EmbeddedHub) ForgetExposuresBefore(ctx context.Context, subject signal.
 
 // Attribution exports renders at one stage with their clicks joined (see
 // signal.Store.Attribution); the evaluation dataset source.
-func (h *EmbeddedHub) Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error) {
+func (h *Hub) Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return signal.AttributionPage{}, err
@@ -506,7 +426,7 @@ func (h *EmbeddedHub) Attribution(ctx context.Context, opts signal.AttributionOp
 
 // RecordSignals applies each content kind's registered Scorer, then records
 // the batch (see signal.Store.RecordSignals). A scorer error records nothing.
-func (h *EmbeddedHub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
+func (h *Hub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -530,7 +450,7 @@ func (h *EmbeddedHub) RecordSignals(ctx context.Context, signals []signal.Signal
 
 // --- Discovery plane ---
 
-func (h *EmbeddedHub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {
+func (h *Hub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -541,7 +461,7 @@ func (h *EmbeddedHub) History(ctx context.Context, subject signal.Subject, opts 
 // Forget erases the subject's signals for one work and its versions
 // (contentID set) or a whole content kind (contentID empty) — host "clear my
 // history" support.
-func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error {
+func (h *Hub) Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
@@ -552,7 +472,7 @@ func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, conten
 // EraseSubjects permanently erases subjects from this tenant's signal plane:
 // see signal.Store.EraseSubjects for the completion contract. Shared accounts
 // exist in several tenants: each host erases its own tenant.
-func (h *EmbeddedHub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
+func (h *Hub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return signal.ErasureReport{}, err
@@ -563,7 +483,7 @@ func (h *EmbeddedHub) EraseSubjects(ctx context.Context, subjects []signal.Subje
 // EnforceErasures physically removes residue of every recorded erasure of
 // this tenant (see signal.Store.EnforceErasures): schedule it and run it after
 // every restore.
-func (h *EmbeddedHub) EnforceErasures(ctx context.Context) (signal.ErasureReport, error) {
+func (h *Hub) EnforceErasures(ctx context.Context) (signal.ErasureReport, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return signal.ErasureReport{}, err
@@ -572,7 +492,7 @@ func (h *EmbeddedHub) EnforceErasures(ctx context.Context) (signal.ErasureReport
 }
 
 // HistoryCount returns the total row count History would paginate over.
-func (h *EmbeddedHub) HistoryCount(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) (int64, error) {
+func (h *Hub) HistoryCount(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) (int64, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return 0, err
@@ -581,10 +501,8 @@ func (h *EmbeddedHub) HistoryCount(ctx context.Context, subject signal.Subject, 
 }
 
 // SeenIDs returns the subject's seen-set for one content kind (the
-// signal-plane half of the unseen anti-join). Use when the host wants to run
-// its own diff against a custom-filtered universe instead of Unseen's
-// registered catalog.
-func (h *EmbeddedHub) SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error) {
+// signal-plane half of an unseen anti-join).
+func (h *Hub) SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -592,81 +510,7 @@ func (h *EmbeddedHub) SeenIDs(ctx context.Context, subject signal.Subject, conte
 	return store.SeenIDs(ctx, h.tenant, subject, contentKind)
 }
 
-// UnseenOptions controls Unseen reads.
-type UnseenOptions struct {
-	// ContentKind selects the catalog to read. Required.
-	ContentKind string
-	// Limit caps the returned ids (default 50). Order follows the host catalog.
-	Limit int
-	// CatalogLimit is the per-page candidate count (default and max 1,000).
-	CatalogLimit int
-}
-
-// Unseen returns catalog ids the subject has not seen (max_progress > 0
-// defines "seen"). The host catalog applies its own visibility decisions;
-// ContentKit checks the subject's state only for each bounded candidate page.
-func (h *EmbeddedHub) Unseen(ctx context.Context, subject signal.Subject, opts UnseenOptions) ([]string, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	contentKind := strings.TrimSpace(opts.ContentKind)
-	if contentKind == "" {
-		return nil, fmt.Errorf("contentkit: UnseenOptions.ContentKind is required")
-	}
-	catalog, ok := h.catalogs[contentKind]
-	if !ok || catalog == nil {
-		return nil, fmt.Errorf("contentkit: no ContentCatalog registered for content kind %q", contentKind)
-	}
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	pageSize := opts.CatalogLimit
-	if pageSize <= 0 || pageSize > 1000 {
-		pageSize = 1000
-	}
-	out := make([]string, 0, min(limit, pageSize))
-	cursor := ""
-	for {
-		page, err := catalog.Page(ctx, h.tenant, contentKind, CatalogQuery{Limit: pageSize, Cursor: cursor})
-		if err != nil {
-			return nil, fmt.Errorf("contentkit: catalog page for %q: %w", contentKind, err)
-		}
-		if len(page.IDs) > pageSize || (len(page.IDs) == 0 && page.NextCursor != "") {
-			return nil, fmt.Errorf("contentkit: invalid catalog page for %q", contentKind)
-		}
-		refs := make([]ContentRef, len(page.IDs))
-		for i, id := range page.IDs {
-			refs[i] = h.Content(contentKind, id)
-		}
-		states, err := store.States(ctx, h.tenant, subject, refs)
-		if err != nil {
-			return nil, err
-		}
-		for i, ref := range refs {
-			if states[ref.Key()].Seen {
-				continue
-			}
-			out = append(out, page.IDs[i])
-			if len(out) >= limit {
-				return out, nil
-			}
-		}
-		if page.NextCursor == "" {
-			return out, nil
-		}
-		if page.NextCursor == cursor {
-			return nil, fmt.Errorf("contentkit: catalog cursor did not advance for %q", contentKind)
-		}
-		cursor = page.NextCursor
-	}
-}
-
-func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error) {
+func (h *Hub) States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -674,7 +518,7 @@ func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs [
 	return store.States(ctx, h.tenant, subject, refs)
 }
 
-func (h *EmbeddedHub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
+func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -684,7 +528,7 @@ func (h *EmbeddedHub) Popular(ctx context.Context, contentKind string, opts sign
 
 // Metrics returns named window metrics (viewers, views, completions,
 // feedback, ...) for the references (works or versions).
-func (h *EmbeddedHub) Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error) {
+func (h *Hub) Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -695,7 +539,7 @@ func (h *EmbeddedHub) Metrics(ctx context.Context, refs []ContentRef, window sig
 // PopularityFor scores a fixed candidate set (work ids of one kind) by the
 // popularity ranking, returning content_id -> score. Use to rank a host-
 // filtered universe (e.g. "galleries of artist X by popularity").
-func (h *EmbeddedHub) PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error) {
+func (h *Hub) PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err

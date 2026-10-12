@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import "strings"
 

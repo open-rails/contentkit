@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 const (
 	// evalBaselinePath is the committed golden report the regression gate
 	// compares against. Regenerate with CONTENTKIT_EVAL_UPDATE=1.
-	evalBaselinePath = "eval/testdata/golden_gallery_baseline.json"
+	evalBaselinePath = "../../eval/testdata/golden_gallery_baseline.json"
 	evalUpdateEnv    = "CONTENTKIT_EVAL_UPDATE"
 )
 
@@ -40,7 +40,7 @@ func newEvalTestClient(t *testing.T) (context.Context, *Client) {
 
 func loadGoldenSuite(t *testing.T) eval.Suite {
 	t.Helper()
-	f, err := os.Open("eval/testdata/golden_gallery.json")
+	f, err := os.Open("../../eval/testdata/golden_gallery.json")
 	if err != nil {
 		t.Fatalf("open golden suite: %v", err)
 	}

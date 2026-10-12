@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ func TestPersonalizedSearchPagesCompleteCandidateWindows(t *testing.T) {
 	database := "ck_search_window_" + strings.ReplaceAll(contentref.NewID(), "-", "")
 	conn := env.Fresh(t, database)
 	t.Cleanup(func() { env.Drop(t, conn, database) })
-	hub, err := NewEmbedded(EmbeddedConfig{PG: pool, PGSchema: schema, CH: conn, CHDatabase: database, Tenant: testTenant})
+	hub, err := New(Config{PG: pool, PGSchema: schema, CH: conn, CHDatabase: database, Tenant: testTenant})
 	if err != nil {
 		t.Fatal(err)
 	}

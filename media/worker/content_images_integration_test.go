@@ -20,7 +20,6 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
@@ -124,18 +123,18 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-		EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
-		Auth:           testauth.Auth{Authz: ckStaff{}},
-		Content: content.Options{Resolver: noItems{}, ContentKinds: []string{"gallery"},
-			PostBodyProcessor: keepHTML{}, Limits: content.Limits{Disabled: true},
-			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
-		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-	})
+	auth := testauth.Auth{Authz: ckStaff{}}
+	rt, err := content.New(ctx, content.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth,
+		Resolver: noItems{}, ContentKinds: []string{"gallery"}, PostBodyProcessor: keepHTML{}, Limits: content.Limits{Disabled: true},
+		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs, Reader: reader}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hooks.rt = rt.Content
+	hooks.rt = rt
+	mux := http.NewServeMux()
+	mux.Handle("/", rt.Handler())
+	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Auth: auth})))
+	mux.Handle("/media/", http.StripPrefix("/media", reader.Handler(media.HandlerOptions{Auth: auth, Limit: media.RateLimit{Disabled: true}})))
 	w, err := worker.New(ctx, worker.Config{Pool: pool, Schema: workers, ContentSchema: schema, Store: env.Store, Kinds: reg,
 		HostSchema: hostRiver, TempDir: t.TempDir(), Threads: 2})
 	if err != nil {
@@ -151,7 +150,7 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		}
 	})
 
-	h := rt.Handler()
+	h := mux
 	staff, reader1, anon := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "reader", Kind: "user"}, access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	call := func(actor access.Actor, method, target string, body, out any) int {
 		t.Helper()

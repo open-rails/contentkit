@@ -23,7 +23,7 @@ import (
 // application holding access.TaxonomyWrite in a's root scope: a says who each
 // request is (authkit/auth; AuthKit's ak.Authenticator()) and its Verified's
 // Can decides. Every route is scoped to the store's tenant and content ids
-// stay opaque. contentkit.Runtime.Handler serves it at /taxonomy. Errors are JSON {"error", "code"} with 400 for ErrInvalid, 404 for
+// stay opaque. The engine serves it as the taxonomy route group. Errors are JSON {"error", "code"} with 400 for ErrInvalid, 404 for
 // ErrNotFound, 409 for ErrConflict and a sanitized 500 for everything else;
 // the cause always reaches Options.Logger.
 func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {

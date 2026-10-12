@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -36,9 +36,6 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 	if _, err := h.Popular(ctx, "gallery", signal.PopularOptions{}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Popular: %v", err)
 	}
-	if _, err := h.Unseen(ctx, sub, UnseenOptions{ContentKind: "gallery"}); !errors.Is(err, ErrSignalPlaneDisabled) {
-		t.Fatalf("Unseen: %v", err)
-	}
 	if _, err := h.Recommend(ctx, sub, RecommendOptions{ContentKinds: []string{"gallery"}}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Recommend: %v", err)
 	}
@@ -55,9 +52,9 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 }
 
 func TestHubRequiresTenant(t *testing.T) {
-	_, err := NewEmbedded(EmbeddedConfig{PG: lazyPool(t), PGSchema: "hub"})
+	_, err := New(Config{PG: lazyPool(t), PGSchema: "hub"})
 	if err == nil || !strings.Contains(err.Error(), "Tenant") {
-		t.Fatalf("NewEmbedded without a tenant: %v", err)
+		t.Fatalf("New without a tenant: %v", err)
 	}
 	h := newTestHub(t, nil, "", nil)
 	if h.Tenant() != testTenant || h.Content("gallery", cid(1)).TenantID != testTenant {

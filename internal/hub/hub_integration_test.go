@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { chEnv.Drop(t, chEnv.Open(t, ""), hubTestCHDB) })
 
-	hub, err := NewEmbedded(EmbeddedConfig{
+	hub, err := New(Config{
 		PG:         pool,
 		PGSchema:   schema,
 		CH:         ch,
@@ -51,17 +51,10 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 				}, nil
 			}),
 		},
-		Catalogs: map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(context.Context, string, string, CatalogQuery) (CatalogPage, error) {
-				return CatalogPage{IDs: []string{cid(3), cid(2), cid(1)}}, nil // newest first
-			}),
-		},
 	})
 	if err != nil {
-		t.Fatalf("NewEmbedded: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	var _ Hub = hub
-
 	user := signal.Subject{UserID: "u1"}
 	g1, g2 := hub.Content("gallery", cid(1)), hub.Content("gallery", cid(2))
 	day := func(d, h int) time.Time { return time.Date(2026, 6, d, h, 0, 0, 0, time.UTC) }
@@ -95,15 +88,6 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	}
 	if len(hist) != 1 || !hist[0].Equal(g1) {
 		t.Fatalf("history: %+v", hist)
-	}
-
-	// Unseen: u1 saw g1 -> g3, g2 remain (catalog order).
-	unseen, err := hub.Unseen(ctx, user, UnseenOptions{ContentKind: "gallery"})
-	if err != nil {
-		t.Fatalf("Unseen: %v", err)
-	}
-	if len(unseen) != 2 || unseen[0] != cid(3) || unseen[1] != cid(2) {
-		t.Fatalf("unseen: %v", unseen)
 	}
 
 	// Named metrics on g2.

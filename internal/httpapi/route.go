@@ -17,53 +17,57 @@ const (
 	GET, POST, PUT, PATCH, DELETE = http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete
 )
 
-// Module is one mountable handler. contentkit.Runtime.Handler serves every
-// configured module under one prefix, each at its fixed sub-path (Prefix).
+// Version is the API version every route is served under.
+const Version = "/v1"
+
+// Module is one route group: the engine serves each configured module under
+// the host's prefix, at its fixed sub-path (Prefix).
 type Module string
 
 const (
 	// Content is posts, comments, reactions, favorites, polls, comment bans
-	// and moderation (content.Runtime.Handler).
+	// and moderation.
 	Content Module = "content"
-	// Upload is the media upload API (media.UploadHandler).
+	// Upload is the media upload API.
 	Upload Module = "upload"
-	// Media is the media read API and playlists (media.Reader.Handler).
+	// Media is the media read API and playlists.
 	Media Module = "media"
-	// Codes resolves content codes (contenturl.Router.Handler).
+	// Codes resolves content codes.
 	Codes Module = "codes"
-	// Taxonomy is the taxonomy admin API (taxonomy.Handler).
+	// Taxonomy is the taxonomy admin API.
 	Taxonomy Module = "taxonomy"
-	// PublicCatalog is the public catalog API (taxonomy.Store.CatalogHandler).
+	// PublicCatalog is the public catalog API.
 	PublicCatalog Module = "catalog"
-	// Notifications is the authenticated user inbox.
+	// Notifications is the user inbox and the service's publish route.
 	Notifications Module = "notifications"
 )
 
 // Modules lists every module in catalog order.
 var Modules = []Module{Content, Upload, Media, Codes, Taxonomy, PublicCatalog, Notifications}
 
-// Prefix is the module's sub-path under the one mount: content at its root,
-// the others beneath their own first segment, which no content kind may take.
+// Prefix is the module's sub-path under the host's prefix: Version, then
+// content at its root and the others beneath their own first segment, which
+// no content kind may take.
 func (m Module) Prefix() string {
 	switch m {
 	case Upload:
-		return "/media/upload"
+		return Version + "/media/upload"
 	case Media:
-		return "/media"
+		return Version + "/media"
 	case Codes:
-		return "/codes"
+		return Version + "/codes"
 	case Taxonomy:
-		return "/taxonomy"
+		return Version + "/taxonomy"
 	case PublicCatalog:
-		return "/catalog"
+		return Version + "/catalog"
 	case Notifications:
-		return "/notifications"
+		return Version + "/notifications"
 	}
-	return ""
+	return Version
 }
 
 // Reserved is the first path segments the non-content modules take: a content
-// kind with one of these names would be unreachable under the one mount.
+// kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string { return []string{"media", "codes", "taxonomy", "catalog", "notifications"} }
 
 // Tier is what a route requires of its caller before its handler acts. The
@@ -151,7 +155,7 @@ type Spec struct {
 // Key is the route's identity within its module: "GET /posts/{id}".
 func (s Spec) Key() string { return s.Method + " " + s.Path }
 
-// FullPath is the route's path under the one mount.
+// FullPath is the route's path under the host's prefix.
 func (s Spec) FullPath() string { return s.Module.Prefix() + s.Path }
 
 // Route is a Spec with the handler that serves it, built from the state S
@@ -242,8 +246,8 @@ func Catalog() []Spec {
 	return out
 }
 
-// Match finds the catalog route serving a method and a path under the one
-// mount, preferring literal segments as ServeMux does.
+// Match finds the catalog route serving a method and a path under the host's
+// prefix, preferring literal segments as ServeMux does.
 func Match(method, path string) (Spec, bool) {
 	segs := strings.Split(strings.Trim(path, "/"), "/")
 	var best Spec

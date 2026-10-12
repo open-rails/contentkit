@@ -27,8 +27,8 @@ type TotalsClient struct {
 	totals *cache.Cache[string, Total]
 }
 
-// NewTotalsClient reads the deployment whose ContentKit is mounted at baseURL,
-// e.g. "https://hentai0.com/api/v1/contentkit". A nil hc is a client with a
+// NewTotalsClient reads the deployment whose ContentKit routes are under baseURL
+// (its Routes.Prefix), e.g. "https://hentai0.com/api/contentkit". A nil hc is a client with a
 // ten-second timeout.
 func NewTotalsClient(baseURL string, hc *http.Client) (*TotalsClient, error) {
 	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))

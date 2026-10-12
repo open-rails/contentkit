@@ -1,8 +1,8 @@
-// Package contentkit is the deterministic content library: tenant-scoped
-// keyword search over host content, the ClickHouse signal plane, and the
-// discovery reads over both. The DocumentSink port publishes
-// document changes to optional external consumers.
-package contentkit
+// Package hub is the engine's search, signal and discovery planes for one
+// tenant: keyword search and typeahead, the ClickHouse signal plane and the
+// discovery reads over both. The engine's jobs and routes use it; hosts reach
+// it only through ContentKit's API.
+package hub
 
 import (
 	"github.com/open-rails/contentkit/contentref"

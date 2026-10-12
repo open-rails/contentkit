@@ -1,9 +1,8 @@
-package contentkit
+package hub
 
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,13 +17,13 @@ const hubSignalTestCHDB = "contentkit_hub_signal_test"
 
 // signalHub is an embedded hub over a real ClickHouse with the migrated signal
 // schema and no content model.
-func signalHub(t *testing.T, mutate func(*EmbeddedConfig)) *EmbeddedHub {
+func signalHub(t *testing.T, mutate func(*Config)) *Hub {
 	t.Helper()
 	hub, _ := signalHubConn(t, mutate)
 	return hub
 }
 
-func signalHubConn(t *testing.T, mutate func(*EmbeddedConfig)) (*EmbeddedHub, signal.Conn) {
+func signalHubConn(t *testing.T, mutate func(*Config)) (*Hub, signal.Conn) {
 	t.Helper()
 	env := signaltest.FromEnv(t)
 	conn := env.Fresh(t, hubSignalTestCHDB)
@@ -44,7 +43,7 @@ func hubView(tenant, id, subject string, day int, score int16) signal.Signal {
 
 func TestHubRecordSignalsAppliesScorersAtomically(t *testing.T) {
 	calls := 0
-	h := signalHub(t, func(c *EmbeddedConfig) {
+	h := signalHub(t, func(c *Config) {
 		c.Scorers = map[string]signal.Scorer{
 			"blog_post": signal.ScorerFunc(func(_ context.Context, s signal.Signal) (signal.Scored, error) {
 				calls++
@@ -93,97 +92,6 @@ func TestHubRecordSignalsAppliesScorersAtomically(t *testing.T) {
 	}
 	if _, err := h.Metrics(ctx, []ContentRef{foreign.ContentRef}, signal.AllTime()); err == nil {
 		t.Fatal("foreign tenant reference accepted by Metrics")
-	}
-}
-
-func TestHubUnseenFiltersSeenCatalogIDs(t *testing.T) {
-	pageCalls := 0
-	h := signalHub(t, func(c *EmbeddedConfig) {
-		c.Catalogs = map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, contentKind string, q CatalogQuery) (CatalogPage, error) {
-				pageCalls++
-				if tenant != testTenant || contentKind != "gallery" {
-					return CatalogPage{}, fmt.Errorf("unexpected catalog call %s/%s", tenant, contentKind)
-				}
-				return CatalogPage{IDs: []string{cid(1), cid(2), cid(3), cid(4), cid(5)}}, nil
-			}),
-		}
-	})
-	ctx := context.Background()
-	zero := hubView(testTenant, cid(3), "u1", 1, 0)
-	zero.Progress = 0
-	if err := h.RecordSignals(ctx, []signal.Signal{hubView(testTenant, cid(2), "u1", 1, 10), hubView(testTenant, cid(4), "u1", 1, 10), zero}); err != nil {
-		t.Fatal(err)
-	}
-	user := signal.Subject{UserID: "u1"}
-	got, err := h.Unseen(ctx, user, UnseenOptions{ContentKind: "gallery"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{cid(1), cid(3), cid(5)}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unseen: got %v want %v (zero progress is not seen)", got, want)
-	}
-	got, err = h.Unseen(ctx, user, UnseenOptions{ContentKind: "gallery", Limit: 2})
-	if err != nil || !reflect.DeepEqual(got, []string{cid(1), cid(3)}) {
-		t.Fatalf("unseen limited: %v %v", got, err)
-	}
-	if pageCalls != 2 {
-		t.Fatalf("catalog pages: %d", pageCalls)
-	}
-	if _, err := h.Unseen(ctx, user, UnseenOptions{ContentKind: "video"}); err == nil {
-		t.Fatal("missing catalog must error")
-	}
-}
-
-func TestHubUnseenPagesPastSeenCatalogWindow(t *testing.T) {
-	const window = 1000
-	ids := make([]string, window+2)
-	for i := range ids {
-		ids[i] = cid(i + 1)
-	}
-	calls := 0
-	h := signalHub(t, func(c *EmbeddedConfig) {
-		c.Catalogs = map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, kind string, q CatalogQuery) (CatalogPage, error) {
-				if tenant != testTenant || kind != "gallery" || q.Limit != window {
-					return CatalogPage{}, fmt.Errorf("unexpected catalog query: %s/%s %+v", tenant, kind, q)
-				}
-				calls++
-				switch calls {
-				case 1:
-					if q.Cursor != "" {
-						return CatalogPage{}, fmt.Errorf("unexpected first cursor %q", q.Cursor)
-					}
-					return CatalogPage{IDs: ids[:window], NextCursor: "older"}, nil
-				case 2:
-					if q.Cursor != "older" {
-						return CatalogPage{}, fmt.Errorf("unexpected second cursor %q", q.Cursor)
-					}
-					return CatalogPage{IDs: ids[window:]}, nil
-				default:
-					return CatalogPage{}, fmt.Errorf("unexpected third catalog page")
-				}
-			}),
-		}
-	})
-	ctx := context.Background()
-	user := signal.Subject{UserID: "u1"}
-	views := make([]signal.Signal, window)
-	for i, id := range ids[:window] {
-		views[i] = hubView(testTenant, id, user.UserID, 1, 10)
-	}
-	for start := 0; start < len(views); start += signal.MaxSignalsPerBatch {
-		end := min(start+signal.MaxSignalsPerBatch, len(views))
-		if err := h.RecordSignals(ctx, views[start:end]); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := h.Unseen(ctx, user, UnseenOptions{ContentKind: "gallery", Limit: 2, CatalogLimit: window})
-	if err != nil || !slices.Equal(got, ids[window:]) {
-		t.Fatalf("unseen past the first catalog page: %v, %v", got, err)
-	}
-	if calls != 2 {
-		t.Fatalf("catalog pages: %d, want 2", calls)
 	}
 }
 
@@ -269,8 +177,8 @@ func TestHubRecommendFromCanonicalSignals(t *testing.T) {
 func TestHubEraseSubjectsIsTenantScoped(t *testing.T) {
 	h, conn := signalHubConn(t, nil)
 	ctx := context.Background()
-	other := newTestHub(t, conn, hubSignalTestCHDB, func(c *EmbeddedConfig) { c.Tenant = "hentai0" })
-	for _, hub := range []*EmbeddedHub{h, other} {
+	other := newTestHub(t, conn, hubSignalTestCHDB, func(c *Config) { c.Tenant = "hentai0" })
+	for _, hub := range []*Hub{h, other} {
 		if err := hub.RecordSignals(ctx, []signal.Signal{hubView(hub.Tenant(), cid(1), "gone", 1, 50), hubView(hub.Tenant(), cid(1), "kept", 1, 50)}); err != nil {
 			t.Fatal(err)
 		}
@@ -280,7 +188,7 @@ func TestHubEraseSubjectsIsTenantScoped(t *testing.T) {
 		t.Fatalf("erase: %+v %v", report, err)
 	}
 	for _, tc := range []struct {
-		hub  *EmbeddedHub
+		hub  *Hub
 		want int
 	}{{h, 0}, {other, 1}} {
 		hist, err := tc.hub.History(ctx, signal.Subject{UserID: "gone"}, signal.HistoryOptions{})

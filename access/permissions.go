@@ -23,11 +23,13 @@ const (
 	ModerationReview Permission = "root:moderation:review"
 	// TaxonomyWrite: the taxonomy admin API, its reads included.
 	TaxonomyWrite Permission = "root:taxonomy:write"
+	// NotificationsPublish: publish notices to users' inboxes (a host service).
+	NotificationsPublish Permission = "root:notifications:publish"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, TaxonomyWrite}
+	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, TaxonomyWrite, NotificationsPublish}
 }
 
 func (p Permission) String() string { return string(p) }

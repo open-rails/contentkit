@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/contentkit/worker"
+	"github.com/open-rails/contentkit/internal/worker"
 )
 
 const isolationCHDB = "contentkit_tenant_isolation_test"
@@ -26,9 +26,9 @@ func TestTenantIsolationIntegration(t *testing.T) {
 	t.Cleanup(func() { chEnv.Drop(t, chEnv.Open(t, ""), isolationCHDB) })
 
 	const a, b = "doujins", "hentai0"
-	hubs := map[string]*EmbeddedHub{}
+	hubs := map[string]*Hub{}
 	for _, tenant := range []string{a, b} {
-		h, err := NewEmbedded(EmbeddedConfig{PG: pool, PGSchema: schema, CH: ch, CHDatabase: isolationCHDB, Tenant: tenant})
+		h, err := New(Config{PG: pool, PGSchema: schema, CH: ch, CHDatabase: isolationCHDB, Tenant: tenant})
 		if err != nil {
 			t.Fatal(err)
 		}

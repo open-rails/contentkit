@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -66,9 +66,9 @@ func lazyPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func newTestHub(t *testing.T, ch signal.Conn, database string, mutate func(*EmbeddedConfig)) *EmbeddedHub {
+func newTestHub(t *testing.T, ch signal.Conn, database string, mutate func(*Config)) *Hub {
 	t.Helper()
-	cfg := EmbeddedConfig{
+	cfg := Config{
 		PG:       lazyPool(t),
 		PGSchema: "hub",
 		Tenant:   testTenant,
@@ -80,7 +80,7 @@ func newTestHub(t *testing.T, ch signal.Conn, database string, mutate func(*Embe
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	h, err := NewEmbedded(cfg)
+	h, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

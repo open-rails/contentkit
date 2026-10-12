@@ -3,10 +3,10 @@
   "info": {
     "title": "ContentKit",
     "version": "v0",
-    "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
+    "description": "ContentKit's HTTP API, under the prefix the host mounts contentkit.Engine.Routes at (contentkit.Routes.Prefix). Each module sits at its own sub-path (x-contentkit-modules) and is one route group. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
   },
   "paths": {
-    "/config": {
+    "/v1/config": {
       "get": {
         "tags": [
           "config"
@@ -38,7 +38,7 @@
         ]
       }
     },
-    "/posts": {
+    "/v1/posts": {
       "get": {
         "tags": [
           "posts"
@@ -171,7 +171,7 @@
         ]
       }
     },
-    "/posts/admin": {
+    "/v1/posts/admin": {
       "get": {
         "tags": [
           "posts"
@@ -261,7 +261,7 @@
         ]
       }
     },
-    "/posts/{id}": {
+    "/v1/posts/{id}": {
       "get": {
         "tags": [
           "posts"
@@ -420,7 +420,7 @@
         ]
       }
     },
-    "/posts/{id}/restore": {
+    "/v1/posts/{id}/restore": {
       "post": {
         "tags": [
           "posts"
@@ -470,7 +470,7 @@
         ]
       }
     },
-    "/posts/{id}/cover": {
+    "/v1/posts/{id}/cover": {
       "put": {
         "tags": [
           "posts"
@@ -530,7 +530,7 @@
         ]
       }
     },
-    "/posts/{id}/images": {
+    "/v1/posts/{id}/images": {
       "post": {
         "tags": [
           "posts"
@@ -590,7 +590,7 @@
         ]
       }
     },
-    "/{kind}/{id}/comments": {
+    "/v1/{kind}/{id}/comments": {
       "get": {
         "tags": [
           "comments"
@@ -755,7 +755,7 @@
         ]
       }
     },
-    "/comments/latest": {
+    "/v1/comments/latest": {
       "get": {
         "tags": [
           "comments"
@@ -813,7 +813,7 @@
         ]
       }
     },
-    "/comments/admin": {
+    "/v1/comments/admin": {
       "get": {
         "tags": [
           "comments"
@@ -887,7 +887,7 @@
         ]
       }
     },
-    "/comments/{cid}/restore": {
+    "/v1/comments/{cid}/restore": {
       "post": {
         "tags": [
           "comments"
@@ -936,7 +936,7 @@
         ]
       }
     },
-    "/comments/{cid}/replies": {
+    "/v1/comments/{cid}/replies": {
       "get": {
         "tags": [
           "comments"
@@ -1004,7 +1004,7 @@
         ]
       }
     },
-    "/comments/{cid}": {
+    "/v1/comments/{cid}": {
       "patch": {
         "tags": [
           "comments"
@@ -1119,7 +1119,7 @@
         ]
       }
     },
-    "/comments/{cid}/like": {
+    "/v1/comments/{cid}/like": {
       "post": {
         "tags": [
           "comments"
@@ -1172,7 +1172,7 @@
         ]
       }
     },
-    "/comments/{cid}/dislike": {
+    "/v1/comments/{cid}/dislike": {
       "post": {
         "tags": [
           "comments"
@@ -1225,7 +1225,7 @@
         ]
       }
     },
-    "/comments/{cid}/reaction": {
+    "/v1/comments/{cid}/reaction": {
       "delete": {
         "tags": [
           "comments"
@@ -1278,7 +1278,7 @@
         ]
       }
     },
-    "/{kind}/{id}/like": {
+    "/v1/{kind}/{id}/like": {
       "post": {
         "tags": [
           "reactions"
@@ -1339,7 +1339,7 @@
         ]
       }
     },
-    "/{kind}/{id}/dislike": {
+    "/v1/{kind}/{id}/dislike": {
       "post": {
         "tags": [
           "reactions"
@@ -1400,7 +1400,7 @@
         ]
       }
     },
-    "/{kind}/{id}/reaction": {
+    "/v1/{kind}/{id}/reaction": {
       "delete": {
         "tags": [
           "reactions"
@@ -1516,7 +1516,7 @@
         ]
       }
     },
-    "/favorites": {
+    "/v1/favorites": {
       "get": {
         "tags": [
           "favorites"
@@ -1573,7 +1573,7 @@
         ]
       }
     },
-    "/{kind}/{id}/favorite": {
+    "/v1/{kind}/{id}/favorite": {
       "post": {
         "tags": [
           "favorites"
@@ -1743,7 +1743,7 @@
         ]
       }
     },
-    "/polls": {
+    "/v1/polls": {
       "get": {
         "tags": [
           "polls"
@@ -1872,7 +1872,7 @@
         ]
       }
     },
-    "/polls/admin": {
+    "/v1/polls/admin": {
       "get": {
         "tags": [
           "polls"
@@ -1970,7 +1970,7 @@
         ]
       }
     },
-    "/polls/{id}": {
+    "/v1/polls/{id}": {
       "get": {
         "tags": [
           "polls"
@@ -2116,7 +2116,7 @@
         ]
       }
     },
-    "/polls/{id}/vote": {
+    "/v1/polls/{id}/vote": {
       "post": {
         "tags": [
           "polls"
@@ -2178,7 +2178,7 @@
         ]
       }
     },
-    "/polls/{id}/answer": {
+    "/v1/polls/{id}/answer": {
       "post": {
         "tags": [
           "polls"
@@ -2238,7 +2238,7 @@
         ]
       }
     },
-    "/polls/{id}/image": {
+    "/v1/polls/{id}/image": {
       "put": {
         "tags": [
           "polls"
@@ -2298,7 +2298,7 @@
         ]
       }
     },
-    "/polls/{id}/options": {
+    "/v1/polls/{id}/options": {
       "post": {
         "tags": [
           "polls"
@@ -2357,7 +2357,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}": {
+    "/v1/polls/{id}/options/{oid}": {
       "patch": {
         "tags": [
           "polls"
@@ -2474,7 +2474,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}/image": {
+    "/v1/polls/{id}/options/{oid}/image": {
       "put": {
         "tags": [
           "polls"
@@ -2542,7 +2542,7 @@
         ]
       }
     },
-    "/comment-bans": {
+    "/v1/comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2599,7 +2599,7 @@
         ]
       }
     },
-    "/comment-bans/{user}": {
+    "/v1/comment-bans/{user}": {
       "put": {
         "tags": [
           "bans"
@@ -2692,7 +2692,7 @@
         ]
       }
     },
-    "/global-comment-bans": {
+    "/v1/global-comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2752,7 +2752,7 @@
         ]
       }
     },
-    "/global-comment-bans/{user}": {
+    "/v1/global-comment-bans/{user}": {
       "get": {
         "tags": [
           "bans"
@@ -2899,7 +2899,7 @@
         ]
       }
     },
-    "/{kind}/{id}/can-comment": {
+    "/v1/{kind}/{id}/can-comment": {
       "get": {
         "tags": [
           "bans"
@@ -2956,7 +2956,7 @@
         ]
       }
     },
-    "/moderation/held": {
+    "/v1/moderation/held": {
       "get": {
         "tags": [
           "moderation"
@@ -3019,7 +3019,7 @@
         ]
       }
     },
-    "/moderation/{kind}/{id}/resolve": {
+    "/v1/moderation/{kind}/{id}/resolve": {
       "post": {
         "tags": [
           "moderation"
@@ -3087,7 +3087,7 @@
         ]
       }
     },
-    "/media/upload/presign": {
+    "/v1/media/upload/presign": {
       "post": {
         "tags": [
           "uploads"
@@ -3142,7 +3142,7 @@
         ]
       }
     },
-    "/media/upload/parts": {
+    "/v1/media/upload/parts": {
       "post": {
         "tags": [
           "uploads"
@@ -3191,7 +3191,7 @@
         ]
       }
     },
-    "/media/upload/parts/list": {
+    "/v1/media/upload/parts/list": {
       "post": {
         "tags": [
           "uploads"
@@ -3240,7 +3240,7 @@
         ]
       }
     },
-    "/media/upload/complete": {
+    "/v1/media/upload/complete": {
       "post": {
         "tags": [
           "uploads"
@@ -3291,7 +3291,7 @@
         ]
       }
     },
-    "/media/upload/abort": {
+    "/v1/media/upload/abort": {
       "post": {
         "tags": [
           "uploads"
@@ -3333,7 +3333,7 @@
         ]
       }
     },
-    "/media/upload/commit": {
+    "/v1/media/upload/commit": {
       "post": {
         "tags": [
           "uploads"
@@ -3390,7 +3390,7 @@
         ]
       }
     },
-    "/media/upload/frame": {
+    "/v1/media/upload/frame": {
       "get": {
         "tags": [
           "uploads"
@@ -3471,7 +3471,7 @@
         ]
       }
     },
-    "/media/presets": {
+    "/v1/media/presets": {
       "get": {
         "tags": [
           "media"
@@ -3506,7 +3506,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}": {
+    "/v1/media/{kind}/{id}": {
       "get": {
         "tags": [
           "media"
@@ -3603,7 +3603,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}/hls/{path}": {
+    "/v1/media/{kind}/{id}/hls/{path}": {
       "get": {
         "tags": [
           "media"
@@ -3699,7 +3699,7 @@
         ]
       }
     },
-    "/codes/{code}": {
+    "/v1/codes/{code}": {
       "get": {
         "tags": [
           "codes"
@@ -3753,7 +3753,7 @@
         ]
       }
     },
-    "/taxonomy/nodes": {
+    "/v1/taxonomy/nodes": {
       "get": {
         "tags": [
           "taxonomy"
@@ -3967,7 +3967,7 @@
         ]
       }
     },
-    "/taxonomy/nodes/{id}": {
+    "/v1/taxonomy/nodes/{id}": {
       "get": {
         "tags": [
           "taxonomy"
@@ -4121,7 +4121,7 @@
         ]
       }
     },
-    "/taxonomy/nodes/{id}/names": {
+    "/v1/taxonomy/nodes/{id}/names": {
       "put": {
         "tags": [
           "taxonomy"
@@ -4305,7 +4305,7 @@
         ]
       }
     },
-    "/taxonomy/nodes/{id}/assignments": {
+    "/v1/taxonomy/nodes/{id}/assignments": {
       "get": {
         "tags": [
           "taxonomy"
@@ -4386,7 +4386,7 @@
         ]
       }
     },
-    "/taxonomy/nodes/{id}/merge": {
+    "/v1/taxonomy/nodes/{id}/merge": {
       "post": {
         "tags": [
           "taxonomy"
@@ -4446,7 +4446,7 @@
         ]
       }
     },
-    "/taxonomy/edges": {
+    "/v1/taxonomy/edges": {
       "post": {
         "tags": [
           "taxonomy"
@@ -4547,7 +4547,7 @@
         ]
       }
     },
-    "/taxonomy/assignments": {
+    "/v1/taxonomy/assignments": {
       "post": {
         "tags": [
           "taxonomy"
@@ -4668,7 +4668,7 @@
         ]
       }
     },
-    "/taxonomy/effective": {
+    "/v1/taxonomy/effective": {
       "post": {
         "tags": [
           "taxonomy"
@@ -4721,7 +4721,7 @@
         ]
       }
     },
-    "/taxonomy/counts": {
+    "/v1/taxonomy/counts": {
       "get": {
         "tags": [
           "taxonomy"
@@ -4779,7 +4779,7 @@
         ]
       }
     },
-    "/taxonomy/counts/rebuild": {
+    "/v1/taxonomy/counts/rebuild": {
       "post": {
         "tags": [
           "taxonomy"
@@ -4815,7 +4815,7 @@
         ]
       }
     },
-    "/catalog/totals": {
+    "/v1/catalog/totals": {
       "get": {
         "tags": [
           "catalog"
@@ -4878,7 +4878,7 @@
         ]
       }
     },
-    "/notifications/inbox": {
+    "/v1/notifications/inbox": {
       "get": {
         "tags": [
           "notifications"
@@ -4948,7 +4948,7 @@
         ]
       }
     },
-    "/notifications/{id}/read": {
+    "/v1/notifications/{id}/read": {
       "put": {
         "tags": [
           "notifications"
@@ -5042,7 +5042,7 @@
         ]
       }
     },
-    "/notifications/{id}/dismiss": {
+    "/v1/notifications/{id}/dismiss": {
       "put": {
         "tags": [
           "notifications"
@@ -5129,6 +5129,53 @@
         "x-contentkit-errors": [
           "not_found"
         ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/notifications/publish": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Publication"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Published"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:notifications:publish",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:notifications",
           "auth",
@@ -6265,6 +6312,34 @@
           "ref",
           "url"
         ]
+      },
+      "Input": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "$ref": "#/components/schemas/Recipient"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "data": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "action_requested": {
+            "type": "boolean"
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
       },
       "Item": {
         "type": "object",
@@ -7462,6 +7537,31 @@
           "username"
         ]
       },
+      "Publication": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Input"
+            }
+          }
+        }
+      },
+      "Published": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "ReactionCounts": {
         "type": "object",
         "properties": {
@@ -7915,13 +8015,13 @@
     }
   },
   "x-contentkit-modules": {
-    "content": "",
-    "upload": "/media/upload",
-    "media": "/media",
-    "codes": "/codes",
-    "taxonomy": "/taxonomy",
-    "catalog": "/catalog",
-    "notifications": "/notifications"
+    "content": "/v1",
+    "upload": "/v1/media/upload",
+    "media": "/v1/media",
+    "codes": "/v1/codes",
+    "taxonomy": "/v1/taxonomy",
+    "catalog": "/v1/catalog",
+    "notifications": "/v1/notifications"
   },
   "x-contentkit-error-sets": {
     "module:content": [

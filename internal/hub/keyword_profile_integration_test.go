@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/worker"
+	"github.com/open-rails/contentkit/internal/worker"
 )
 
 // The complete baseline supports the keyword worker and preserves its ledger.

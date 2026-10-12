@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -62,7 +62,7 @@ func TestHubCustomCandidatesGetSharedPolicy(t *testing.T) {
 		gallery(cid(6)), gallery(cid(6)), gallery(cid(7)),
 	)
 	custom.similar, custom.forSubject = list, list[1:]
-	h := signalHub(t, func(cfg *EmbeddedConfig) { cfg.Candidates = custom })
+	h := signalHub(t, func(cfg *Config) { cfg.Candidates = custom })
 
 	u1 := signal.Subject{UserID: "u1"}
 	batch := []signal.Signal{
@@ -122,7 +122,7 @@ func TestHubFallbackCandidatesOverEngagement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := newTestHub(t, conn, hubSignalTestCHDB, func(cfg *EmbeddedConfig) {
+	h := newTestHub(t, conn, hubSignalTestCHDB, func(cfg *Config) {
 		cfg.Candidates = discovery.Fallback{
 			Primary:   primary,
 			Secondary: engagement,
@@ -182,7 +182,7 @@ func TestHubFallbackFillsAfterPolicyFiltering(t *testing.T) {
 		forSubject: cands(gallery(cid(3)), gallery(cid(5)), gallery(cid(4))),
 		queries:    &secondaryQueries,
 	}
-	h := signalHub(t, func(cfg *EmbeddedConfig) {
+	h := signalHub(t, func(cfg *Config) {
 		cfg.Candidates = &discovery.Fallback{
 			Primary: primary, Secondary: secondary,
 			OnError: func(err error) { reported = append(reported, err) },

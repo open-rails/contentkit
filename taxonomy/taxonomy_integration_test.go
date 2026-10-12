@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/worker"
+	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/worker"
 )
 
 func TestNodesNamesEdgesAndMergeIntegration(t *testing.T) {
@@ -279,7 +279,7 @@ func TestEffectiveTagsAndVersionEligibilityIntegration(t *testing.T) {
 
 	// The same filter inside keyword search: the requested trait and the
 	// requested language hold on one document.
-	client, err := contentkit.NewClient(contentkit.ClientConfig{Pool: pool, Schema: schema, Tenant: tenant})
+	client, err := hub.NewClient(hub.ClientConfig{Pool: pool, Schema: schema, Tenant: tenant})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,9 +288,9 @@ func TestEffectiveTagsAndVersionEligibilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for lang, want := range map[string]string{"es": "g2@v4", "en": "g1@v2"} {
-		res, err := client.Search(ctx, "océano", contentkit.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
+		res, err := client.Search(ctx, "océano", hub.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
 		if lang == "en" {
-			res, err = client.Search(ctx, "blue ocean", contentkit.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
+			res, err = client.Search(ctx, "blue ocean", hub.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
 		}
 		if err != nil || len(res.Hits) != 1 || label(res.Hits[0].ContentID)+"@"+res.Hits[0].Version() != want {
 			t.Fatalf("search %s: %+v %v", lang, res.Hits, err)
@@ -417,13 +417,13 @@ func TestTypeaheadDocumentsIntegration(t *testing.T) {
 		}
 	}
 	sync()
-	client, err := contentkit.NewClient(contentkit.ClientConfig{Pool: pool, Schema: schema, Tenant: tenant})
+	client, err := hub.NewClient(hub.ClientConfig{Pool: pool, Schema: schema, Tenant: tenant})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ahead := func(lang, q string, kinds ...string) string {
 		t.Helper()
-		hits, err := client.Typeahead(ctx, q, contentkit.TypeaheadOptions{Language: lang, ContentKinds: kinds})
+		hits, err := client.Typeahead(ctx, q, hub.TypeaheadOptions{Language: lang, ContentKinds: kinds})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -570,8 +570,8 @@ func TestMarketplaceListingFixtureIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Published listings are public; an unpublished one is visible to entitled subjects.
-	entitled := func(subject string) *contentkit.Eligibility {
-		return &contentkit.Eligibility{SQL: fmt.Sprintf(`SELECT (NOT hv.is_default)::int AS priority FROM %s.hv hv
+	entitled := func(subject string) *hub.Eligibility {
+		return &hub.Eligibility{SQL: fmt.Sprintf(`SELECT (NOT hv.is_default)::int AS priority FROM %s.hv hv
  WHERE hv.tenant_id=sd.tenant_id AND hv.content_kind=sd.content_kind AND hv.content_id=sd.content_id AND hv.version_id=sd.content_version_id AND hv.language=sd.language
    AND (hv.live OR EXISTS (SELECT 1 FROM %s.entitlements e WHERE e.subject=@subject AND e.content_id=sd.content_id))`, schema, schema), Args: map[string]any{"subject": subject}}
 	}

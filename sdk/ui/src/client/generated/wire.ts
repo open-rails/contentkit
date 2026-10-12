@@ -356,6 +356,17 @@ export interface InlineImage {
   url: string | null;
 }
 
+export interface Input {
+  recipient: Recipient;
+  origin: Origin;
+  kind: string;
+  data: unknown;
+  created_at: string;
+  status?: string;
+  action_requested?: boolean;
+  severity?: string;
+}
+
 export interface Item {
   id: string;
   recipient: Recipient;
@@ -677,6 +688,14 @@ export interface PublicUser {
   username: string;
   avatar?: string;
   avatar_srcset?: string;
+}
+
+export interface Publication {
+  notifications: Input[];
+}
+
+export interface Published {
+  items: Item[];
 }
 
 export interface ReactionCounts {

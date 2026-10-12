@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// Source reads one tenant's canonical window projections; contentkit.Hub
+// Source reads one tenant's canonical window projections; the engine's hub
 // satisfies it. Every reference the Ranker builds carries Source.Tenant().
 type Source interface {
 	Tenant() string

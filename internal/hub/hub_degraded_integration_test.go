@@ -1,4 +1,4 @@
-package contentkit
+package hub
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func TestPersonalizedSearchSurvivesSignalReadFailure(t *testing.T) {
 	const db = "contentkit_hub_degraded_test"
 	ch := chEnv.Fresh(t, db)
 	t.Cleanup(func() { chEnv.Drop(t, chEnv.Open(t, ""), db) })
-	hub, err := NewEmbedded(EmbeddedConfig{PG: pool, PGSchema: schema, CH: ch, CHDatabase: db, Tenant: testTenant})
+	hub, err := New(Config{PG: pool, PGSchema: schema, CH: ch, CHDatabase: db, Tenant: testTenant})
 	if err != nil {
 		t.Fatal(err)
 	}

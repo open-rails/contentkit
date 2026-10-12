@@ -171,7 +171,7 @@ type Options struct {
 	Logger *slog.Logger
 }
 
-// Store is one tenant's catalog over the host schema.
+// Store is one tenant's catalog in ContentKit's schema.
 type Store struct {
 	pool      *pgxpool.Pool
 	tx        querier

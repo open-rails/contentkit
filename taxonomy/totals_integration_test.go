@@ -303,11 +303,11 @@ func TestCatalogHandlerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.StripPrefix("/api/v1/contentkit/catalog", h))
+	srv := httptest.NewServer(http.StripPrefix("/api/contentkit/v1/catalog", h))
 	t.Cleanup(srv.Close)
 	get := func(host, query string) (int, string, string) {
 		t.Helper()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/contentkit/catalog/totals"+query, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/contentkit/v1/catalog/totals"+query, nil)
 		req.Host = host
 		resp, err := srv.Client().Do(req)
 		if err != nil {
@@ -337,7 +337,7 @@ func TestCatalogHandlerIntegration(t *testing.T) {
 		}
 	}
 
-	client, err := NewTotalsClient(srv.URL+"/api/v1/contentkit/", nil)
+	client, err := NewTotalsClient(srv.URL+"/api/contentkit/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +485,7 @@ func TestCatalogTotalsCacheIntegration(t *testing.T) {
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		http.StripPrefix("/ck/catalog", h).ServeHTTP(w, r)
+		http.StripPrefix("/ck/v1/catalog", h).ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	client, err := NewTotalsClient(srv.URL+"/ck", nil)

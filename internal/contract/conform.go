@@ -37,8 +37,7 @@ func NewChecker(fsys fs.FS) (*Checker, error) {
 }
 
 // Wrap serves h and reports each response that breaks its route's contract.
-// path is the request path under the one mount; strip removes the host's
-// mount prefix from it.
+// strip removes the host's prefix from the request path.
 func (c *Checker) Wrap(strip string, h http.Handler, report func(error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &recorder{header: http.Header{}, status: http.StatusOK}

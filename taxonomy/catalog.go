@@ -20,7 +20,7 @@ type CatalogOptions struct {
 
 // CatalogHandler is the public catalog API (catalogRoutes), open to anyone:
 // GET /totals sizes the listing by kind (Totals) and may be cached by any
-// cache for ten minutes. contentkit.Runtime.Handler serves it at /catalog. It
+// cache for ten minutes. The engine serves it as the catalog route group. It
 // needs Options.Listing.
 func (s *Store) CatalogHandler(opts CatalogOptions) (http.Handler, error) {
 	if s.listing == nil {

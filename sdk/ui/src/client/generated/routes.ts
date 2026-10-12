@@ -2,21 +2,21 @@
 
 export type ContentKitModule = "content" | "upload" | "media" | "codes" | "taxonomy" | "catalog" | "notifications";
 
-// Each module's sub-path under the one mount (contentkit.Runtime.Handler).
+// Each module's sub-path under the host's prefix (contentkit.Routes.Prefix), the API version first.
 export const CONTENTKIT_MODULES: Readonly<Record<ContentKitModule, string>> = {
-  content: "",
-  upload: "/media/upload",
-  media: "/media",
-  codes: "/codes",
-  taxonomy: "/taxonomy",
-  catalog: "/catalog",
-  notifications: "/notifications",
+  content: "/v1",
+  upload: "/v1/media/upload",
+  media: "/v1/media",
+  codes: "/v1/codes",
+  taxonomy: "/v1/taxonomy",
+  catalog: "/v1/catalog",
+  notifications: "/v1/notifications",
 };
 
 export type ContentKitRoute = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   module: ContentKitModule;
-  // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the one mount.
+  // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the host's prefix.
   path: string;
   // open: never authenticates; public: the actor is optional; user: a signed-in person;
   // staff: a person or an application holding the host permission.
@@ -119,6 +119,7 @@ export const CONTENTKIT_ROUTES = [
   { method: "DELETE", module: "notifications", path: "/{id}/read", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
   { method: "PUT", module: "notifications", path: "/{id}/dismiss", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
   { method: "DELETE", module: "notifications", path: "/{id}/dismiss", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "POST", module: "notifications", path: "/publish", auth: "staff", permission: "root:notifications:publish", query: [], request: "Publication", responses: { 200: "Published" }, errors: [], errorSets: ["module:notifications", "auth", "request"] },
 ] as const satisfies readonly ContentKitRoute[];
 
 // The codes every route of a kind answers, by set name.
