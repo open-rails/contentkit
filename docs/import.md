@@ -1,0 +1,84 @@
+# Bulk import
+
+Legacy importers write through `POST /v1/import` (route group `import`, staff
+permission `root:import:write`; Go: `Client.PostImport`), never into
+ContentKit's tables. The body is an `importer.Batch`; its wire types are in
+[`api/openapi.json`](../api/openapi.json).
+
+## Identity and convergence
+
+- Every record with an identity carries `external_id`, scoped by the batch's
+  `source` and its entity (`content`, `version`, `group`, `comment`, `poll`,
+  `poll_option`) in `content_external_ids`. Re-sending a record updates what
+  changed and writes nothing when nothing did; it is never duplicated.
+- `id` (a UUIDv7) is kept when the external id is new; derive it with
+  `contentref.LegacyID` so media folders survive a re-import into a fresh
+  store. An external id already imported under another id is a `conflict`.
+- References name a record by `id` or `external_id`
+  (`{"external_id": "folder:123"}`); `target` names a `content`, `version`,
+  `group` or `comment`, as the section allows.
+- Collections given replace what is stored (text, creators, version text,
+  segments, names, group text, edges, poll options); omitted ones stay.
+  Versions not listed stay. `memberships` replace a content item's
+  memberships in the group `kinds` they name.
+- Content `code` and group `code` keep an existing content code.
+- Imported content is trusted: not screened, approved. Reactions and
+  favorites take fresh preference revisions; `preference_floor` first raises
+  the sequence past a retained signal plane (also the restore step).
+- A group of an `auth_scope` kind names its `auth_scope`, or the batch sets
+  `provision_scopes` and ContentKit's scope job creates it.
+- Records of erased subjects fail (`erased`).
+
+## Order and failures
+
+Sections are written in order: groups, contents, memberships, offers,
+aliases, comments, reactions, favorites, polls, votes, answers, signals; a
+record may name what an earlier section or call wrote. Each section runs in
+transactions of up to 1000 records: all at once, else each in its own
+savepoint, so the result lists only the records that failed
+(`section`, `index`, `external_id`, `code`, `error`) and the rest commit.
+Fix the cause and send them, or the whole batch, again. A batch holds at
+most 20,000 records.
+
+Offers are skipped without billing (synced by the offers job otherwise),
+signals without a signal plane; `skipped` counts them.
+
+## After an import
+
+The import queues the engine's jobs: search documents, group counts and
+covers, listing counts and, after signals, popularity. Interaction counts
+are recounted exactly in the writing transaction.
+
+## Media
+
+Media is not part of the batch. Fill each imported version's folder through
+the upload routes, as the host (`Engine.Client()`) or an application holding
+`root:content:write`:
+
+```go
+out, err := client.IngestMedia(ctx, nil, media.RefBody{Kind: "gallery", ID: contentID, Version: versionID},
+	operationID, []contentkit.MediaFile{{Path: "originals/0001.png", Type: "image/png", Body: f}})
+```
+
+`IngestMedia` presigns each file, uploads it (one PUT or multipart parts) and
+commits the folder in one operation; a retry with the same `operationID`
+commits once. Publication, renditions and version facts (pages, duration)
+follow from the media jobs.
+
+## Record shapes
+
+| Section | Record | Keys |
+|---|---|---|
+| `groups` | `GroupRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `access`, `restrictions`, `attributes`, `owner_group`, `cover`, `creators`, `text`, `versions`, `code`, times |
+| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `text`, `segments` |
+| `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
+| `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
+| `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
+| `comments` | `CommentRecord` | `external_id`, `target` (content, version), `language`, `reply_to`, `user_id` / `anon_name`, `body`, `deleted_at`, times |
+| `reactions` | `ReactionRecord` | `target` (content, version, comment, group), `user_id` / `ip`, `value` |
+| `favorites` | `FavoriteRecord` | `target` (content, version), `user_id` |
+| `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
+| `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
+| `answers` | `AnswerRecord` | `poll`, `user_id`, `text` |
+| `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (view, click), `event_id`, `occurred_at`, `progress`, `duration_s` |

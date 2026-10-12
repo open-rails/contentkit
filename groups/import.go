@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/internal/codes"
 )
 
@@ -23,10 +25,12 @@ type ImportGroup struct {
 	State       State
 	Attributes  map[string]any
 	Cover       *Cover
+	Avatar      *Avatar
 	OwnerUserID string
-	AuthScope   string
-	Names       []Name
-	Text        []Text
+	// AuthScope names the group's AuthKit scope; empty keeps the stored one.
+	AuthScope string
+	Names     []Name
+	Text      []Text
 	// Edges are the group's edges to others (From is the group).
 	Edges     []Edge
 	Code      string
@@ -41,18 +45,20 @@ type importRow struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// bound is the store running in q, the import's transaction.
-func (s *Store) bound(q Querier) *Store {
+// bound is the store running in tx, the import's.
+func (s *Store) bound(tx pgx.Tx) *Store {
 	c := *s
-	c.tx = q
+	c.tx = tx
 	return &c
 }
 
 // ImportGroups writes groups in q: new ones are inserted, stored ones updated
 // where the import changes them. Codes, search documents and the facets of
 // the content a moved or deleted group reaches follow. A merged group is
-// ErrConflict; a taken slug too.
-func (s *Store) ImportGroups(ctx context.Context, q Querier, in []ImportGroup) error {
+// ErrConflict; a taken slug too. An active group of an auth_scope kind keeps
+// the AuthKit scope it names or has; one with neither is provisioned, by the
+// scope sync job, only with provision (else ErrInvalid).
+func (s *Store) ImportGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, provision bool) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -108,11 +114,11 @@ func (s *Store) ImportGroups(ctx context.Context, q Querier, in []ImportGroup) e
 			rows[i].UpdatedAt = *g.CreatedAt
 		}
 	}
-	return mapPGError(s.importGroups(ctx, q, in, ids, rows, names, texts, edges, keep))
+	return mapPGError(s.importGroups(ctx, q, in, ids, rows, names, texts, edges, keep, provision))
 }
 
-func (s *Store) importGroups(ctx context.Context, q Querier, in []ImportGroup, ids []string, rows []importRow, names map[string][]nameRow,
-	texts map[string][]textRow, edges map[string][]edgeRow, keep map[codes.Key]string) error {
+func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, ids []string, rows []importRow, names map[string][]nameRow,
+	texts map[string][]textRow, edges map[string][]edgeRow, keep map[codes.Key]string, provision bool) error {
 	stored := map[string]Group{}
 	res, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR UPDATE`,
 		groupColumns, s.table("content_groups")), s.tenant, ids)
@@ -130,6 +136,9 @@ func (s *Store) importGroups(ctx context.Context, q Querier, in []ImportGroup, i
 	for i := range rows {
 		r := &rows[i]
 		g, ok := stored[r.ID]
+		if !provision && r.State == string(StateActive) && r.AuthScope == nil && s.cfg.GroupKinds[r.Kind].AuthScope && (!ok || g.AuthScope == "") {
+			return fmt.Errorf("%w: group %s needs its auth_scope, or the import provisions scopes", ErrInvalid, r.ID)
+		}
 		if !ok {
 			continue
 		}
@@ -151,19 +160,20 @@ func (s *Store) importGroups(ctx context.Context, q Querier, in []ImportGroup, i
 		return err
 	}
 	// An automatic cover stays while the import selects none.
-	got, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s AS g (tenant_id, id, kind, slug, scope_id, parent_id, state, attributes, cover, owner_user_id,
- auth_scope, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.owner_user_id, r.auth_scope, r.created_at, r.updated_at
+	got, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s AS g (tenant_id, id, kind, slug, scope_id, parent_id, state, attributes, cover, avatar,
+ owner_user_id, auth_scope, created_at, updated_at)
+ SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope,
+  r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb,
-  owner_user_id text, auth_scope text, created_at timestamptz, updated_at timestamptz)
+  avatar text, owner_user_id text, auth_scope text, created_at timestamptz, updated_at timestamptz)
  ORDER BY r.ordinal
  ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
   attributes = EXCLUDED.attributes, cover = CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END,
-  owner_user_id = EXCLUDED.owner_user_id, auth_scope = EXCLUDED.auth_scope, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
-  revision = g.revision + 1
- WHERE (g.slug, g.scope_id, g.parent_id, g.state, g.attributes, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
-  IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.owner_user_id,
-  EXCLUDED.auth_scope, EXCLUDED.created_at, CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END)
+  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = coalesce(EXCLUDED.auth_scope, g.auth_scope),
+  created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, revision = g.revision + 1
+ WHERE (g.slug, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
+  IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
+  coalesce(EXCLUDED.auth_scope, g.auth_scope), EXCLUDED.created_at, CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END)
  RETURNING g.id`, s.table("content_groups")), s.tenant, string(data))
 	if err != nil {
 		return err
@@ -217,7 +227,17 @@ func (s *Store) importGroups(ctx context.Context, q Querier, in []ImportGroup, i
 	for _, g := range written {
 		marks = append(marks, g)
 	}
-	return s.markDirty(ctx, q, marks)
+	if err := s.markDirty(ctx, q, marks); err != nil {
+		return err
+	}
+	// A deleted group's scope is retired, an unscoped one provisioned, by the job.
+	var sync []string
+	for _, g := range marks {
+		if g.State != StateActive && g.AuthScope != "" || provision && slices.Contains(s.unscoped([]Group{g}), string(g.ID)) {
+			sync = append(sync, string(g.ID))
+		}
+	}
+	return s.queueSync(ctx, q, sync)
 }
 
 // checkImport validates one group's own fields against its kind.
@@ -260,6 +280,9 @@ func (s *Store) checkImport(g *ImportGroup) (importRow, error) {
 		row.ParentID = &p
 	}
 	if row.Cover, err = validateCover(g.Cover); err != nil {
+		return row, err
+	}
+	if row.Avatar, err = validateAvatar(g.Avatar); err != nil {
 		return row, err
 	}
 	if err := s.fields(gk, kind, &row.groupRow); err != nil {
@@ -367,7 +390,7 @@ func (s *Store) replaceText(ctx context.Context, q Querier, given map[string][]t
 }
 
 // replaceEdges sets each group's edges to others to the given ones.
-func (s *Store) replaceEdges(ctx context.Context, q Querier, given map[string][]edgeRow) error {
+func (s *Store) replaceEdges(ctx context.Context, q pgx.Tx, given map[string][]edgeRow) error {
 	if len(given) == 0 {
 		return nil
 	}
@@ -399,7 +422,7 @@ func (s *Store) replaceEdges(ctx context.Context, q Querier, given map[string][]
 // ImportMemberships replaces, in q, each content's memberships in the group
 // kinds its set names (SetContentGroups); a set equal to what is stored
 // writes nothing.
-func (s *Store) ImportMemberships(ctx context.Context, q Querier, sets []ContentGroups) error {
+func (s *Store) ImportMemberships(ctx context.Context, q pgx.Tx, sets []ContentGroups) error {
 	var contentIDs []string
 	for _, set := range sets {
 		if len(set.Kinds) == 0 {

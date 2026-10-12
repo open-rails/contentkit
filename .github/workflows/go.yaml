@@ -162,6 +162,43 @@ jobs:
         go mod tidy -diff
         go vet ./...
         go test ./... -count=1 -race
+  authkit-adapter:
+    # adapters/authkit is its own module: group scopes over a real AuthKit.
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.8-debian-18
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: adapters/authkit
+    env:
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      CONTENTKIT_TEST_REQUIRE_DB: '1'
+      AUTHKIT_TEST_DATABASE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      AUTHKIT_TEST_REQUIRE_DB: '1'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: adapters/authkit/go.mod
+        cache-dependency-path: adapters/authkit/go.sum
+    - name: gofmt, tidy, vet, test
+      run: |
+        test -z "$(gofmt -l .)"
+        go mod tidy -diff
+        go vet ./...
+        go test ./... -count=1 -race
   openrails-adapter:
     # adapters/openrails is its own module: access.Billing and offers over a real embedded OpenRails.
     if: '!github.event.pull_request.draft'

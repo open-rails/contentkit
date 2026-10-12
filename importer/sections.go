@@ -32,7 +32,7 @@ func (run *batchRun) sections() []section {
 	out := []section{
 		{name: SectionGroups, n: len(b.Groups), prepare: run.group,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ImportGroup) error {
-				return s.o.Groups.ImportGroups(ctx, tx, in)
+				return s.o.Groups.ImportGroups(ctx, tx, in, b.ProvisionScopes)
 			})},
 		{name: SectionContents, n: len(b.Contents), prepare: run.content, write: typed(s.o.Catalog.Import)},
 		{name: SectionMemberships, n: len(b.Memberships), prepare: run.memberships,
@@ -74,6 +74,9 @@ func (run *batchRun) group(r *resolver, i int) (any, string, error) {
 	}
 	in := groups.ImportGroup{ID: groups.GroupID(id), Kind: g.Kind, Slug: g.Slug, State: groups.State(g.State), Attributes: g.Attributes,
 		OwnerUserID: g.OwnerUserID, AuthScope: g.AuthScope, Names: g.Names, Text: g.Text, Code: g.Code, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
+	if g.Avatar != "" {
+		in.Avatar = &groups.Avatar{Image: g.Avatar}
+	}
 	for _, link := range []struct {
 		ref  *Ref
 		into *groups.GroupID

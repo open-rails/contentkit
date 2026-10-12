@@ -3,7 +3,11 @@ package importer_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	pngenc "image/png"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -24,6 +28,8 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -52,7 +58,10 @@ type fixture struct {
 	routes http.Handler
 }
 
-func newEngine(t *testing.T) fixture {
+func newEngine(t *testing.T) fixture { return newEngineWith(t, nil) }
+
+// newEngineWith builds the engine, edited by mutate (media and its store).
+func newEngineWith(t *testing.T, mutate func(*contentkit.Config, *contentkit.Deps)) fixture {
 	t.Helper()
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
@@ -61,7 +70,7 @@ func newEngine(t *testing.T) fixture {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		for _, name := range []string{schema, schema + "_river"} {
+		for _, name := range []string{schema, schema + "_river", schema + "_media_worker"} {
 			_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{name}.Sanitize()+" CASCADE")
 		}
 		_, _ = pool.Exec(ctx, "DELETE FROM public.migrations WHERE schema = $1", schema)
@@ -78,9 +87,14 @@ func newEngine(t *testing.T) fixture {
 				"artist":    {Route: "artists", Roles: []string{"publisher"}},
 				"series":    {Route: "series", Ordered: true, Parent: "series"},
 				"character": {Route: "characters", ScopedBy: "series"},
+				"channel":   {Route: "channels", Owner: "user", AuthScope: true},
 			}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}}}
-	e, err := contentkit.New(ctx, cfg, contentkit.Deps{Postgres: pool, Auth: testauth.Auth{Authz: authz{}}})
+	deps := contentkit.Deps{Postgres: pool, Auth: testauth.Auth{Authz: authz{}}}
+	if mutate != nil {
+		mutate(&cfg, &deps)
+	}
+	e, err := contentkit.New(ctx, cfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,4 +441,83 @@ func TestImportRebuildsProjections(t *testing.T) {
 	if !slices.Contains([]string{"0", "1", "2"}, f.scalar(t, `SELECT count(*)::text FROM $s.content_search_dirty WHERE content_id = $1`, g1)) {
 		t.Error("search marks pile up")
 	}
+}
+
+// A group of an auth_scope kind keeps the AuthKit scope it names; one naming
+// none is provisioned only when the batch asks. Avatars and owners import.
+func TestImportGroupScopes(t *testing.T) {
+	f := newEngine(t)
+	avatar := "i-" + uuid.NewString()
+	channel := func(n int, scope string) importer.GroupRecord {
+		return importer.GroupRecord{ExternalID: "channel:" + string(rune('0'+n)), ID: id("channel", int64(n)), Kind: "channel", Slug: "c" + string(rune('0'+n)),
+			OwnerUserID: "u-1", Avatar: avatar, AuthScope: scope}
+	}
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{channel(1, "scope-1"), channel(2, "")}})
+	if res.Written["groups"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
+		t.Fatalf("result %+v", res)
+	}
+	if got := f.scalar(t, `SELECT owner_user_id || ' ' || avatar || ' ' || auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "u-1 "+avatar+" scope-1" {
+		t.Fatalf("channel 1: %q", got)
+	}
+	// Re-imported without its scope, a group keeps it.
+	again := channel(1, "")
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{again}}); len(res.Failed) > 0 {
+		t.Fatalf("re-import %+v", res.Failed)
+	}
+	if got := f.scalar(t, `SELECT auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "scope-1" {
+		t.Fatalf("scope after re-import: %q", got)
+	}
+	res = f.importBatch(t, importer.Batch{Source: "test-legacy", ProvisionScopes: true, Groups: []importer.GroupRecord{channel(2, "")}})
+	if len(res.Failed) > 0 || res.Written["groups"] != 1 {
+		t.Fatalf("provisioned import %+v", res)
+	}
+}
+
+// Media is not imported: an importer fills an imported version's folder
+// through the upload routes, here as the host's in-process client.
+func TestImportThenIngestMedia(t *testing.T) {
+	env := mediatest.Open(t)
+	f := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
+		cfg.Tenant = env.Tenant
+		pngs := []string{"image/png"}
+		cfg.Media = &contentkit.MediaConfig{
+			Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
+				Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20}}}}},
+			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
+			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
+		deps.Store = env.Store
+	})
+	b := catalogBatch()
+	res := f.importBatch(t, importer.Batch{Source: b.Source, Groups: b.Groups, Contents: b.Contents[:1]})
+	if len(res.Failed) > 0 {
+		t.Fatalf("import %+v", res.Failed)
+	}
+	pages := []contentkit.MediaFile{{Path: "originals/0001.png", Type: "image/png", Body: bytes.NewReader(png(t, 8))},
+		{Path: "originals/0002.png", Type: "image/png", Body: bytes.NewReader(png(t, 9))}}
+	ref := media.RefBody{Kind: "gallery", ID: id("gallery", 1), Version: id("version", 1)}
+	op := uuid.NewString()
+	out, err := f.e.Client().IngestMedia(t.Context(), nil, ref, op, pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Files) != 2 || out.Files[0].Path != "originals/0001.png" {
+		t.Fatalf("committed %+v", out.Files)
+	}
+	// A retry of the same operation commits nothing twice.
+	for _, p := range pages {
+		_, _ = p.Body.Seek(0, 0)
+	}
+	if again, err := f.e.Client().IngestMedia(t.Context(), nil, ref, op, pages); err != nil || len(again.Files) != 2 {
+		t.Fatalf("retry %+v %v", again.Files, err)
+	}
+}
+
+func png(t *testing.T, w int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, w))
+	img.Set(0, 0, color.RGBA{R: 200, A: 255})
+	var b bytes.Buffer
+	if err := pngenc.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }

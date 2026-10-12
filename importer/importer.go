@@ -32,7 +32,11 @@ type Batch struct {
 	// PreferenceFloor raises the preference revision sequence past a
 	// retained signal plane's newest revision before anything is stamped, as
 	// after a Postgres restore. It only ever advances.
-	PreferenceFloor int64            `json:"preference_floor,omitempty"`
+	PreferenceFloor int64 `json:"preference_floor,omitempty"`
+	// ProvisionScopes lets ContentKit create the AuthKit scope of an
+	// imported group of an auth_scope kind that names none; without it such
+	// a group fails.
+	ProvisionScopes bool             `json:"provision_scopes,omitempty"`
 	Groups          []GroupRecord    `json:"groups,omitempty"`
 	Contents        []ContentRecord  `json:"contents,omitempty"`
 	Memberships     []MembershipSet  `json:"memberships,omitempty"`
@@ -85,8 +89,13 @@ type GroupRecord struct {
 	// CoverContent a member whose cover it shows, imported before.
 	CoverImage   string `json:"cover_image,omitempty"`
 	CoverContent *Ref   `json:"cover_content,omitempty"`
-	OwnerUserID  string `json:"owner_user_id,omitempty"`
-	AuthScope    string `json:"auth_scope,omitempty"`
+	// Avatar is a user-owned group's avatar: an image of its media folder.
+	Avatar string `json:"avatar,omitempty"`
+	// OwnerUserID owns a user-owned kind's group.
+	OwnerUserID string `json:"owner_user_id,omitempty"`
+	// AuthScope is the group's AuthKit scope (an auth_scope kind's); empty
+	// keeps the stored one.
+	AuthScope string `json:"auth_scope,omitempty"`
 	// Edges replace the group's edges to other groups.
 	Edges []EdgeRecord `json:"edges,omitempty"`
 	// Code keeps a content code the group had (9 characters); one is

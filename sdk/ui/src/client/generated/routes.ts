@@ -24,9 +24,10 @@ export type ContentKitRoute = {
   // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the host's prefix.
   path: string;
   // open: never authenticates; public: the actor is optional; user: a signed-in person;
-  // staff: a person or an application holding the host permission.
-  auth: "open" | "public" | "user" | "staff";
-  // A staff route's permission: root:<resource>:<action>.
+  // staff: a person or an application holding the host permission; editor: staff holding the
+  // permission, or the target's own editors (its creators, a user-owned group's owner and scope holders).
+  auth: "open" | "public" | "user" | "staff" | "editor";
+  // A staff or editor route's staff permission: root:<resource>:<action>.
   permission: string | null;
   query: readonly string[];
   // wire.ts type names (or a content type): the JSON body, and each success by status.
@@ -114,11 +115,12 @@ export const CONTENTKIT_ROUTES = [
   { method: "GET", module: "media", path: "/{kind}/{id}/versions/{version}", auth: "public", permission: null, query: ["prefix", "offset", "limit", "download", "editor"], request: null, responses: { 200: "ReadResult" }, errors: [], errorSets: ["module:media", "auth", "request"] },
   { method: "GET", module: "media", path: "/{kind}/{id}/versions/{version}/hls/{path...}", auth: "public", permission: null, query: ["audio", "subs"], request: null, responses: { 200: "application/vnd.apple.mpegurl" }, errors: [], errorSets: ["module:media", "auth", "request"] },
   { method: "GET", module: "codes", path: "/{code}", auth: "open", permission: null, query: ["lang"], request: null, responses: { 200: "Resolved" }, errors: ["gone", "not_found"], errorSets: ["module:codes", "request"] },
-  { method: "GET", module: "groups", path: "/groups", auth: "open", permission: null, query: ["kind", "parent", "scope", "slug", "letter", "language", "content_kind", "sort", "cursor", "limit"], request: null, responses: { 200: "GroupPage" }, errors: [], errorSets: ["module:groups", "request"] },
-  { method: "GET", module: "groups", path: "/groups/{id}", auth: "open", permission: null, query: ["language"], request: null, responses: { 200: "GroupDetail" }, errors: ["not_found"], errorSets: ["module:groups", "request"] },
-  { method: "POST", module: "groups", path: "/groups", auth: "staff", permission: "root:groups:write", query: [], request: "GroupInput[]", responses: { 201: "Group[]" }, errors: ["conflict", "not_found"], errorSets: ["module:groups", "auth", "request"] },
-  { method: "PATCH", module: "groups", path: "/groups/{id}", auth: "staff", permission: "root:groups:write", query: [], request: "GroupUpdate", responses: { 200: "Group" }, errors: ["conflict", "not_found"], errorSets: ["module:groups", "auth", "request"] },
-  { method: "DELETE", module: "groups", path: "/groups/{id}", auth: "staff", permission: "root:groups:write", query: [], request: null, responses: { 200: "Group" }, errors: ["not_found"], errorSets: ["module:groups", "auth", "request"] },
+  { method: "GET", module: "groups", path: "/groups", auth: "public", permission: null, query: ["kind", "parent", "scope", "slug", "letter", "language", "content_kind", "sort", "cursor", "limit"], request: null, responses: { 200: "GroupPage" }, errors: [], errorSets: ["module:groups", "auth", "request"] },
+  { method: "GET", module: "groups", path: "/groups/{id}", auth: "public", permission: null, query: ["language"], request: null, responses: { 200: "GroupDetail" }, errors: ["not_found"], errorSets: ["module:groups", "auth", "request"] },
+  { method: "GET", module: "groups", path: "/me/groups", auth: "user", permission: null, query: ["kind", "language", "sort", "cursor", "limit"], request: null, responses: { 200: "MyGroupPage" }, errors: [], errorSets: ["module:groups", "auth", "request"] },
+  { method: "POST", module: "groups", path: "/groups", auth: "editor", permission: "root:groups:write", query: [], request: "GroupInput[]", responses: { 201: "Group[]" }, errors: ["conflict", "not_found", "limit_reached"], errorSets: ["module:groups", "auth", "request"] },
+  { method: "PATCH", module: "groups", path: "/groups/{id}", auth: "editor", permission: "root:groups:write", query: [], request: "GroupUpdate", responses: { 200: "Group" }, errors: ["conflict", "not_found", "limit_reached"], errorSets: ["module:groups", "auth", "request"] },
+  { method: "DELETE", module: "groups", path: "/groups/{id}", auth: "editor", permission: "root:groups:write", query: [], request: null, responses: { 200: "Group" }, errors: ["not_found"], errorSets: ["module:groups", "auth", "request"] },
   { method: "PUT", module: "groups", path: "/groups/{id}/names", auth: "staff", permission: "root:groups:write", query: [], request: "Name[]", responses: { 200: "Name[]" }, errors: ["conflict", "not_found"], errorSets: ["module:groups", "auth", "request"] },
   { method: "POST", module: "groups", path: "/groups/{id}/names", auth: "staff", permission: "root:groups:write", query: [], request: "Name[]", responses: { 200: "Name[]" }, errors: ["conflict", "not_found"], errorSets: ["module:groups", "auth", "request"] },
   { method: "DELETE", module: "groups", path: "/groups/{id}/names", auth: "staff", permission: "root:groups:write", query: [], request: "Name[]", responses: { 200: "Name[]" }, errors: ["conflict", "not_found"], errorSets: ["module:groups", "auth", "request"] },
@@ -141,12 +143,12 @@ export const CONTENTKIT_ROUTES = [
   { method: "PUT", module: "versions", path: "/contents/{id}/versions/{version}/reader", auth: "user", permission: null, query: [], request: "ReaderMeta", responses: { 204: null }, errors: [], errorSets: ["module:versions", "auth", "request"] },
   { method: "POST", module: "versions", path: "/contents/{id}/versions/{version}/fork", auth: "user", permission: null, query: [], request: "ForkBody", responses: { 202: "Pending" }, errors: [], errorSets: ["module:versions", "auth", "request"] },
   { method: "GET", module: "versions", path: "/contents/{id}/versions/{version}/download", auth: "public", permission: null, query: [], request: null, responses: { 200: "application/zip", 202: "Pending" }, errors: ["forbidden", "rate_limited"], errorSets: ["module:versions", "auth", "request"] },
-  { method: "PUT", module: "offers", path: "/contents/{id}/offer", auth: "user", permission: null, query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
-  { method: "DELETE", module: "offers", path: "/contents/{id}/offer", auth: "user", permission: null, query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
-  { method: "PUT", module: "offers", path: "/contents/{id}/versions/{vid}/offer", auth: "user", permission: null, query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
-  { method: "DELETE", module: "offers", path: "/contents/{id}/versions/{vid}/offer", auth: "user", permission: null, query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
-  { method: "PUT", module: "offers", path: "/groups/{id}/offer", auth: "user", permission: null, query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
-  { method: "DELETE", module: "offers", path: "/groups/{id}/offer", auth: "user", permission: null, query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "PUT", module: "offers", path: "/contents/{id}/offer", auth: "editor", permission: "root:offers:write", query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "DELETE", module: "offers", path: "/contents/{id}/offer", auth: "editor", permission: "root:offers:write", query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "PUT", module: "offers", path: "/contents/{id}/versions/{vid}/offer", auth: "editor", permission: "root:offers:write", query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "DELETE", module: "offers", path: "/contents/{id}/versions/{vid}/offer", auth: "editor", permission: "root:offers:write", query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "PUT", module: "offers", path: "/groups/{id}/offer", auth: "editor", permission: "root:offers:write", query: [], request: "Terms", responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
+  { method: "DELETE", module: "offers", path: "/groups/{id}/offer", auth: "editor", permission: "root:offers:write", query: [], request: null, responses: { 200: "Offer" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
   { method: "POST", module: "offers", path: "/groups/{id}/join", auth: "user", permission: null, query: [], request: null, responses: { 200: "GroupJoin" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
   { method: "DELETE", module: "offers", path: "/groups/{id}/join", auth: "user", permission: null, query: [], request: null, responses: { 200: "GroupJoin" }, errors: ["not_found", "conflict"], errorSets: ["module:offers", "auth", "request"] },
   { method: "GET", module: "offers", path: "/me/library", auth: "user", permission: null, query: ["language", "cursor", "limit"], request: null, responses: { 200: "LibraryPage" }, errors: [], errorSets: ["module:offers", "auth", "request"] },

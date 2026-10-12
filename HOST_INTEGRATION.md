@@ -172,16 +172,11 @@ code, resolution and canonicalization.
   canonical one.
 - **Registration.** Groups and content items register themselves (group
   slugs come from canonical names, one per language; content slugs from each
-  language's slug or title). Other references call `Put` in the transaction
-  that creates them, and again when a title changes. `Put` is idempotent, so the host backfills existing rows
-  by calling it over them.
+  language's slug or title). The bulk import keeps a record's code (`code`).
 
 ```go
 urls, _ := contenturl.New(contenturl.Options{Pool: pool, Schema: "hentai0", Tenant: "hentai0"})
-links, _ := urls.WithSQLTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref, Title: video.Title,
-	Titles: map[string]string{"es": video.TitleES}}) // links[0].Code, .Slug, .Slugs
-byRef, _ := urls.Links(ctx, refs)                    // list pages: code and slugs for each ref
-_ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redirects to the survivor
+byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
 ```
 
 - **Canonical redirects.** The router maps kinds to routes. Mount its middleware
@@ -207,11 +202,12 @@ mux.Handle("/", router.Middleware(spa))
 // the engine's codes route group serves GET /v1/codes/{code}[?lang=], routed by Config.Content's kinds
 ```
 
-- **Legacy aliases.** An import records the identifiers of the old site in the
-  same transaction as the content. Each alias is `(source, legacy_kind, key)`,
-  for example `("hentai0-legacy", "video", "346791971")` or
+- **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
+  [docs/import.md](docs/import.md)) records the old site's identifiers. Each
+  alias is `(source, legacy_kind, key)`, for example
+  `("hentai0-legacy", "video", "346791971")` or
   `("doujins-legacy", "tag-name", "netorare")`. An alias is written once:
-  repeating it is a no-op and re-pointing it is `ErrConflict`. The host keeps
+  repeating it is a no-op and re-pointing it is a conflict. The host keeps
   its legacy URL-shape rules. It calls `DecideAlias` and answers a 301 to
   `Path` (Matched), a 410 (Gone) or a 404 (neither), in one hop and before
   language negotiation.
@@ -1145,9 +1141,9 @@ reactions and comment threads never do.
 - **Erasure**: `ck.EraseSubjects` deletes the subject's rows behind the source
   fence and fences the signal plane, which drops any late send.
 - **Restore**: after restoring PostgreSQL against a retained signal plane, the
-  preference revision floor must be seeded to the sink's newest revision
-  before writers resume (`content.Runtime.SeedPreferenceRevisionFloor`, only
-  ever advancing; an operator step until the import API exposes it).
+  preference revision floor must be raised to the sink's newest revision
+  before writers resume: `POST /v1/import` with `preference_floor` (only ever
+  advancing).
 
 ## Attribution export (paged evaluation data)
 
@@ -1212,6 +1208,7 @@ dwell a page), seconds (player kinds) or scroll percent (post kinds). See
 
 ## Migration checklist
 
+- Import legacy data through `POST /v1/import` ([docs/import.md](docs/import.md)), never into ContentKit's tables.
 - Create and reuse one `contentkit.Engine` per tenant.
 - Read lists, search and recommendations through the discovery routes; send views as `POST /signals`.
 - `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.

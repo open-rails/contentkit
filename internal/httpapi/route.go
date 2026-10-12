@@ -103,6 +103,11 @@ const (
 	// the host's auth; 401 unauthorized without a credential, 403 forbidden
 	// without the permission.
 	Staff Tier = "staff"
+	// Editor: a signed-in person or application; 401 unauthorized without a
+	// credential. The handler admits staff holding Perm and the target's own
+	// editors (its creators, a user-owned group's owner and scope holders),
+	// and answers anyone else 403 forbidden.
+	Editor Tier = "editor"
 )
 
 // Reply is one success outcome: its status and a zero value of its body's
@@ -152,8 +157,8 @@ type Spec struct {
 	// Doc says what the route does, in one line.
 	Doc  string
 	Auth Tier
-	// Perm is the permission a Staff route checks, an access.Permission's
-	// full name: root:<resource>:<action>.
+	// Perm is the permission a Staff route checks, or an Editor route admits
+	// staff by: an access.Permission's full name, root:<resource>:<action>.
 	Perm string
 	// Query lists the query parameters; Request is a zero value of the JSON
 	// body's type (nil for none); Responses is every success outcome.
@@ -235,11 +240,11 @@ func (s Spec) check() error {
 		return fmt.Errorf("needs a Resource and a Doc")
 	case len(s.Responses) == 0:
 		return fmt.Errorf("needs a response")
-	case (s.Auth == Staff) != (s.Perm != ""):
-		return fmt.Errorf("a Staff route, and only one, names a Perm")
+	case (s.Auth == Staff || s.Auth == Editor) != (s.Perm != ""):
+		return fmt.Errorf("a Staff or Editor route, and only one, names a Perm")
 	case s.Perm != "" && (!strings.HasPrefix(s.Perm, "root:") || strings.Count(s.Perm, ":") != 2):
 		return fmt.Errorf("Perm %q is not root:<resource>:<action>", s.Perm)
-	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Staff:
+	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Staff && s.Auth != Editor:
 		return fmt.Errorf("unknown tier %q", s.Auth)
 	}
 	for _, code := range s.Errors {
