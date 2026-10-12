@@ -47,10 +47,11 @@ type Querier interface {
 }
 
 // Groups answers each version's effective group ids (its content's
-// memberships, its own and what they imply), read in q's transaction:
-// *groups.Store.
+// memberships, its own and what they imply), read in q's transaction, and
+// owner groups' cards: *groups.Store.
 type Groups interface {
 	EffectiveGroups(ctx context.Context, q groups.Querier, versionIDs []string) (map[string][]string, error)
+	Cards(ctx context.Context, ids []groups.GroupID, o groups.CardOptions) ([]groups.GroupCard, error)
 }
 
 // Moderation screens text before it publishes: content.Runtime.

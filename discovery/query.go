@@ -56,6 +56,9 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
+	// OwnerGroups keeps content one of these groups owns (a channel's feed);
+	// owning is not membership and opens nothing.
+	OwnerGroups []string
 }
 
 // View statuses.
@@ -149,6 +152,11 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		return nil, err
 	} else if len(gs) > 0 {
 		q.and("NOT (f.group_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": gs})
+	}
+	if gs, err := ids("owner_group", f.OwnerGroups); err != nil {
+		return nil, err
+	} else if len(gs) > 0 {
+		q.and("f.owner_group_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": gs})
 	}
 	if ts, err := ids("traits", f.Traits); err != nil {
 		return nil, err

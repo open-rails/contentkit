@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -163,9 +164,12 @@ type Content struct {
 	Restrictions []string          `json:"restrictions"`
 	Attributes   map[string]any    `json:"attributes"`
 	OwnerGroupID string            `json:"owner_group_id,omitempty"`
-	Creators     []Creator         `json:"creators"`
-	Groups       []GroupSummary    `json:"groups"`
-	Versions     []Version         `json:"versions"`
+	// Owner is the owner group's card (a channel's name, path, avatar and
+	// cover) while it is active.
+	Owner    *groups.GroupCard `json:"owner,omitempty"`
+	Creators []Creator         `json:"creators"`
+	Groups   []GroupSummary    `json:"groups"`
+	Versions []Version         `json:"versions"`
 	// Editor: the viewer may edit it; the fields below are theirs.
 	Editor           bool            `json:"editor"`
 	Text             map[string]Text `json:"text,omitempty"`

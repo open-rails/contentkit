@@ -35,7 +35,10 @@ type Card struct {
 	Cover    []media.PublicRendition `json:"cover"`
 	Version  CardVersion             `json:"version"`
 	// Groups are the version's effective groups with a page, by group kind.
-	Groups      map[string][]Chip `json:"groups"`
+	Groups map[string][]Chip `json:"groups"`
+	// Owner is the owner group's card (a channel's name, path, avatar and
+	// cover).
+	Owner       *groups.GroupCard `json:"owner,omitempty"`
 	Counts      Counts            `json:"counts"`
 	Access      CardAccess        `json:"access"`
 	Viewer      *ViewerState      `json:"viewer,omitempty"`
@@ -125,6 +128,7 @@ type cardRow struct {
 	contentRule access.Rule
 	override    *access.Rule
 	groupIDs    []string
+	owner       string
 	slug        string
 }
 
@@ -141,7 +145,8 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.favorites,
  f.popularity, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
- coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, '')
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
+ coalesce(f.owner_group_id, '')
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
 JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.vid
 JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
@@ -161,7 +166,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var code string
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
 			&c.Counts.Favorites, &pop, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&code, &c.slug, &c.Title, &c.Language)
+			&code, &c.slug, &c.Title, &c.Language, &c.owner)
 		if err != nil {
 			return c, err
 		}
@@ -196,6 +201,9 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	}
 	if !o.lean {
 		if err := s.chips(ctx, q, got, o.chips); err != nil {
+			return nil, err
+		}
+		if err := s.owners(ctx, q, got); err != nil {
 			return nil, err
 		}
 		if err := s.viewerState(ctx, q.reader.Actor, got); err != nil {
@@ -306,6 +314,32 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 		}
 		for _, cs := range rows[i].Groups {
 			slices.SortFunc(cs, func(a, b Chip) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+		}
+	}
+	return nil
+}
+
+// owners fills the cards' owner groups, avatars and covers resolved, in one
+// call.
+func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
+	var ids []groups.GroupID
+	for _, c := range rows {
+		if c.owner != "" && !slices.Contains(ids, groups.GroupID(c.owner)) {
+			ids = append(ids, groups.GroupID(c.owner))
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.path, Covers: true})
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		for j := range cards {
+			if string(cards[j].ID) == rows[i].owner {
+				rows[i].Owner = &cards[j]
+			}
 		}
 	}
 	return nil

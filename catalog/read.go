@@ -8,6 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -166,10 +167,42 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	if err := s.fillOffers(ctx, v, built); err != nil {
 		return nil, err
 	}
+	if err := s.fillOwners(ctx, v.language, built); err != nil {
+		return nil, err
+	}
 	for i, id := range ids {
 		out[i] = built[id]
 	}
 	return out, nil
+}
+
+// fillOwners attaches the items' owner groups' cards, avatars and covers
+// resolved, in one call.
+func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content) error {
+	if s.groups == nil {
+		return nil
+	}
+	var ids []groups.GroupID
+	for _, c := range built {
+		if c.OwnerGroupID != "" && !slices.Contains(ids, groups.GroupID(c.OwnerGroupID)) {
+			ids = append(ids, groups.GroupID(c.OwnerGroupID))
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	cards, err := s.groups.Cards(ctx, ids, groups.CardOptions{Language: language, Covers: true})
+	if err != nil {
+		return err
+	}
+	for _, c := range built {
+		for i := range cards {
+			if string(cards[i].ID) == c.OwnerGroupID {
+				c.Owner = &cards[i]
+			}
+		}
+	}
+	return nil
 }
 
 // fillOffers attaches every paywall's purchasable offers in one read and, on

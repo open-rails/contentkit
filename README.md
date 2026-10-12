@@ -205,6 +205,16 @@ version's override (`content_versions.access`) and on sellable groups:
 key, the key of a group holding it, a tier its rule names, its rule's group
 (`group`), or a free rule (`public`, past `free_after`).
 
+A content item's `body` is part of what it sells: reads return it only to its
+editors and to viewers who open a version; others get `description` and the
+paywall `decision`. Content, version and card decisions list `offers`, each
+sold key's synced offer (`key`, `target`, `terms`, `price_id`); tier keys are
+the host's to label. A `group_ppv` item's product requires the group key
+(OpenRails `required_entitlements`), so OpenRails refuses a non-member's order
+(`entitlement_required`) for the key the decision `requires`. Content a group
+owns (`owner_group_id`, a channel) lists under `owner_group=` and carries the
+group's card as `owner`; owning is not membership and opens nothing.
+
 ```go
 gate, _ := access.NewGate(access.GateConfig{Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client)})
 f, _ := gate.Filter(ctx, actor)                  // one billing read: tiers, content and group keyspaces
