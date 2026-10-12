@@ -2690,7 +2690,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2750,7 +2750,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2856,7 +2856,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2922,7 +2922,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a version; a content item keeps at least one. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3072,7 +3072,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Creates a content item as a draft. root:content:write holders, or an owner group's editors in it.",
+        "summary": "Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3305,7 +3305,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3355,7 +3355,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3427,7 +3427,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3478,7 +3478,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3556,7 +3556,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3615,7 +3615,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3675,7 +3675,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3736,7 +3736,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Adds a version after the others. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3796,7 +3796,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3856,7 +3856,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -6524,7 +6524,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
+        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6582,7 +6582,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
+        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6632,7 +6632,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
+        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6698,7 +6698,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
+        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6756,7 +6756,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6814,7 +6814,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
+        "summary": "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",

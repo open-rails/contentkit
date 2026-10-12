@@ -689,101 +689,101 @@ func (c *Client) GetManageContents(ctx context.Context, q GetManageContentsQuery
 	return out, err
 }
 
-// PostContents is POST /v1/contents (public). Creates a content item as a draft. root:content:write holders, or an owner group's editors in it.
+// PostContents is POST /v1/contents (public). Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.
 func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, "/v1/contents", nil, body, &out)
 	return out, err
 }
 
-// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors and root:content:write holders only.
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContent is DELETE /v1/contents/{id} (public). Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors and root:content:write holders only.
+// DeleteContent is DELETE /v1/contents/{id} (public). Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContent(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
-// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only.
+// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/restore", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only.
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentUnpublish is POST /v1/contents/{id}/unpublish (public). Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only.
+// PostContentUnpublish is POST /v1/contents/{id}/unpublish (public). Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentUnpublish(ctx context.Context, id string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/unpublish", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only.
+// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentText(ctx context.Context, id string, language string, body catalog.Text) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only.
+// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContentText(ctx context.Context, id string, language string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, nil, &out)
 	return out, err
 }
 
-// PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only.
+// PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog.CreatorsInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/creators", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentImages is POST /v1/contents/{id}/images (public). The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only.
+// PostContentImages is POST /v1/contents/{id}/images (public). The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentImages(ctx context.Context, id string, body content.ImageInput) (catalog.InlineImage, error) {
 	var out catalog.InlineImage
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others. Creators, the owner group's editors and root:content:write holders only.
+// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentVersions(ctx context.Context, id string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PutContentVersionsOrder is PUT /v1/contents/{id}/versions/order (public). Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors and root:content:write holders only.
+// PutContentVersionsOrder is PUT /v1/contents/{id}/versions/order (public). Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body catalog.OrderInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/order", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Deletes a version; a content item keeps at least one. Creators, the owner group's editors and root:content:write holders only.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
 
-// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors and root:content:write holders only.
+// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid string, body catalog.SegmentsInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/segments", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
@@ -1405,42 +1405,42 @@ func (c *Client) GetContentVersionDownload(ctx context.Context, id string, versi
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
 
-// PutContentOffer is PUT /v1/contents/{id}/offer (editor). Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
+// PutContentOffer is PUT /v1/contents/{id}/offer (editor). Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
 func (c *Client) PutContentOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentOffer is DELETE /v1/contents/{id}/offer (editor). Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
+// DeleteContentOffer is DELETE /v1/contents/{id}/offer (editor). Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
 func (c *Client) DeleteContentOffer(ctx context.Context, id string) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PutContentVersionOffer is PUT /v1/contents/{id}/versions/{vid}/offer (editor). Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
+// PutContentVersionOffer is PUT /v1/contents/{id}/versions/{vid}/offer (editor). Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
 func (c *Client) PutContentVersionOffer(ctx context.Context, id string, vid string, body offers.Terms) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/offer", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentVersionOffer is DELETE /v1/contents/{id}/versions/{vid}/offer (editor). Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
+// DeleteContentVersionOffer is DELETE /v1/contents/{id}/versions/{vid}/offer (editor). Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
 func (c *Client) DeleteContentVersionOffer(ctx context.Context, id string, vid string) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}/offer", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, &out)
 	return out, err
 }
 
-// PutGroupOffer is PUT /v1/groups/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+// PutGroupOffer is PUT /v1/groups/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
 func (c *Client) PutGroupOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupOffer is DELETE /v1/groups/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+// DeleteGroupOffer is DELETE /v1/groups/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
 func (c *Client) DeleteGroupOffer(ctx context.Context, id string) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)

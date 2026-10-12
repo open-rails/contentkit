@@ -18,6 +18,7 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
@@ -61,7 +62,8 @@ func channelBilling(w *world) *openrails.Client {
 // neither; cards carry the avatar, the offer and the viewer's membership;
 // the viewer joins it free and finds it among their groups; uploads are rate
 // limited and capped per channel; the host's Go client reads and writes it;
-// deleting it retires its scope and its media.
+// a holder of channel:content:write writes its posts; deleting it retires
+// its scope, its posts and its media.
 func TestChannels(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -175,7 +177,21 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("a missing group: %v", err)
 	}
 
-	// Deleting retires the scope and queues the media folder's deletion.
+	// A holder of channel:content:write writes the channel's posts; nobody
+	// else does.
+	writer, writerToken := w.person(iam.Role{})
+	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
+	post := catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID), Text: map[string]catalog.Text{"en": {Title: "Hello"}}}
+	f.want(http.StatusForbidden, strangerToken, "POST", "/contents", post, nil)
+	var made2 catalog.Content
+	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &made2)
+	listing := "unlisted"
+	f.want(http.StatusOK, writerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
+	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
+	f.want(http.StatusForbidden, writerToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Mine"}}}, nil)
+
+	// Deleting retires the scope, deletes the channel's posts and queues its
+	// media folder's deletion.
 	var deleted groups.Group
 	f.want(http.StatusOK, creatorToken, "DELETE", path, nil, &deleted)
 	if deleted.State != groups.StateDeleted || deleted.AuthScope != "" {
@@ -183,6 +199,10 @@ func TestChannels(t *testing.T) {
 	}
 	if g, err := w.ak.Group(ctx, iam.GroupByID(string(ch.ID))); err != nil || g.DeletedAt == nil {
 		t.Fatalf("the scope after delete %+v %v", g, err)
+	}
+	var state string
+	if err := w.pool.QueryRow(ctx, `SELECT state FROM `+pgx.Identifier{w.schema, "content_items"}.Sanitize()+` WHERE id = $1`, made2.ID).Scan(&state); err != nil || state != "deleted" {
+		t.Fatalf("the channel's post after delete: %q %v", state, err)
 	}
 	var queued int
 	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+

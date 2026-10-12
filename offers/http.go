@@ -40,8 +40,8 @@ type handler struct {
 }
 
 const (
-	contentEditors = " For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write."
-	groupEditors   = " For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
+	contentEditors = " For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write."
+	groupEditors   = " For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
 )
 
 var routes = []httpapi.Route[handler]{

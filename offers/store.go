@@ -297,7 +297,8 @@ func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error
 // Authorize admits actor to change targets' offers: staff holding
 // access.OffersWrite in a's root scope, else a creator of the content, or an
 // editor of the user-owned group sold or owning the content: its owner, or a
-// holder of access.GroupSettingsManage in its AuthKit scope.
+// holder of access.GroupOffersWrite or access.GroupSettingsManage in its
+// AuthKit scope.
 func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []Target) error {
 	if actor.Anonymous {
 		return ErrForbidden
@@ -330,7 +331,7 @@ func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor acc
 		}
 		ok := creator && actor.Person()
 		if !ok && s.kinds.GroupKinds[kind].Owner == "user" {
-			if ok, err = gate.GroupEditor(ctx, a, actor, owner, scope, access.GroupSettingsManage(kind)); err != nil {
+			if ok, err = gate.GroupEditor(ctx, a, actor, owner, scope, access.GroupOffersWrite(kind), access.GroupSettingsManage(kind)); err != nil {
 				return err
 			}
 		}
