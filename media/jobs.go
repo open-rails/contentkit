@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -326,14 +327,36 @@ func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
 	return m.uploadBytes(), nil
 }
 
-// parseFolder guards every job's prefix: exactly "{ns}/{kind}/{id}/".
-func parseFolder(prefix string) (ns, kind, id string, err error) {
-	parts := strings.Split(prefix, "/")
-	if len(parts) != 4 || parts[3] != "" || !layout.ValidSegment(parts[0]) || !layout.ValidSegment(parts[1]) ||
-		contentref.ValidateID(parts[2]) != nil {
-		return "", "", "", fmt.Errorf("media: invalid folder prefix %q", prefix)
+// parseFolder guards every job's prefix: exactly an item folder,
+// "{ns}/{kind}/{id}/" or a version's "{ns}/{kind}/{id}/{version}/".
+func parseFolder(prefix string) (contentref.ContentRef, error) {
+	k, ok := layout.ParseFolder(prefix)
+	if !ok || contentref.ValidateID(k.ID) != nil || k.Version != "" && contentref.ValidateID(k.Version) != nil {
+		return contentref.ContentRef{}, fmt.Errorf("media: invalid folder prefix %q", prefix)
 	}
-	return parts[0], parts[1], parts[2], nil
+	return contentref.New(k.Namespace, k.Kind, k.ID).WithVersion(k.Version), nil
+}
+
+// itemFolders lists the item folders of kind k in key order: each item's,
+// and each content's versions' before its own.
+func (j *Jobs) itemFolders(ctx context.Context, k *Kind) iter.Seq2[contentref.ContentRef, error] {
+	return func(yield func(contentref.ContentRef, error) bool) {
+		last := ""
+		for o, err := range j.cfg.Store.List(ctx, k.ns+"/"+k.Name+"/") {
+			if err != nil {
+				yield(contentref.ContentRef{}, err)
+				return
+			}
+			key, ok := layout.Parse(o.Key)
+			if !ok || key.Folder() == last {
+				continue
+			}
+			last = key.Folder()
+			if ref, err := parseFolder(last); err == nil && !yield(ref, nil) {
+				return
+			}
+		}
+	}
 }
 
 // Regenerate visits every item of kind (in its namespace) and asks the
@@ -352,18 +375,14 @@ func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error)
 		return 0, fmt.Errorf("media: kind %q lives in namespace %q, which its owner regenerates", k.Name, k.ns)
 	}
 	n := 0
-	root := k.ns + "/" + k.Name + "/"
-	last := ""
-	for o, err := range j.cfg.Store.List(ctx, root) {
+	for ref, err := range j.itemFolders(ctx, k) {
 		if err != nil {
 			return n, err
 		}
-		id, rest, _ := strings.Cut(strings.TrimPrefix(o.Key, root), "/")
-		if id == last || rest != layout.ManifestName || contentref.ValidateID(id) != nil {
+		if _, err := j.cfg.Registry.Item(ref); err != nil {
 			continue
 		}
-		last = id
-		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: contentref.New(k.ns, k.Name, id), Preset: preset, Class: VideoBackfill}); err != nil {
+		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: ref, Preset: preset, Class: VideoBackfill}); err != nil {
 			return n, err
 		}
 		n++
@@ -388,7 +407,7 @@ func (w *sweepWorker) Timeout(*river.Job[sweepArgs]) time.Duration { return 15 *
 
 func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	if _, _, _, err := parseFolder(job.Args.Prefix); err != nil {
+	if _, err := parseFolder(job.Args.Prefix); err != nil {
 		return river.JobCancel(err)
 	}
 	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
@@ -459,11 +478,11 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	a := job.Args
-	if _, _, _, err := parseFolder(a.Prefix); err != nil {
+	ref, err := parseFolder(a.Prefix)
+	if err != nil {
 		return river.JobCancel(err)
 	}
-	ns, kind, id, _ := parseFolder(a.Prefix)
-	item, err := w.j.cfg.Registry.Item(contentref.New(ns, kind, id))
+	item, err := w.j.cfg.Registry.Item(ref)
 	if err != nil {
 		return river.JobCancel(err)
 	}

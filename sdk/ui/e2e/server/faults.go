@@ -211,7 +211,7 @@ func (f *faults) expire(r *http.Request) *http.Request {
 		return r
 	}
 	q := r.URL.Query()
-	q.Set("t", f.h.ring.Sign(token.ItemScope(p[1], p[2], p[3]), time.Now().Add(-time.Hour)))
+	q.Set("t", f.h.ring.Sign(token.ItemScope(p[1], p[2], p[3], ""), time.Now().Add(-time.Hour)))
 	r.URL.RawQuery = q.Encode()
 	return r
 }

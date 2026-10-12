@@ -54,10 +54,12 @@ type Op struct {
 	Takedown bool `json:"takedown,omitempty"`
 }
 
-// CopyFrom names an upload of an item of the same kind, including this item.
+// CopyFrom names an upload of an item of the same kind, including this item:
+// of a Versions kind, one version's, or ("") its content-level item's.
 type CopyFrom struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path"`
 }
 
 // NamedPrefix starts the names the server gives Named uploads.

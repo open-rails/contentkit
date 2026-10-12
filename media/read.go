@@ -168,7 +168,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if !res.Visible {
 		return nil, ErrNotVisible
 	}
-	scope := token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID)
+	scope := token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID, ref.Version())
 	if res.Full() || res.Editor {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
 			return nil, err
