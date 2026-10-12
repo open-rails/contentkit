@@ -62,7 +62,9 @@ func siteConfig() kinds.Config {
 // writer in the seeds.
 type staffOnly struct{}
 
-func (staffOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) { return a.ID == "staff", nil }
+func (staffOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
+	return a.ID == "staff", nil
+}
 
 type fixture struct {
 	t      *testing.T
@@ -93,7 +95,9 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	cfg := siteConfig()
 	var err error
 	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error { return f.cat.ContentChanged(ctx, q, ids) }}); err != nil {
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return f.cat.ContentChanged(ctx, q, ids)
+		}}); err != nil {
 		t.Fatal(err)
 	}
 	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg})

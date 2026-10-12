@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/internal/worker"
+	"github.com/open-rails/contentkit/search"
 )
 
 // Content items are their own search documents: the worker builds one per
