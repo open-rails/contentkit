@@ -19,6 +19,8 @@ export interface Item {
   owner?: string;
   access: "full" | "none";
   hidden?: boolean;
+  /** Its one version: the item its version-level media live on. */
+  version?: string;
   /** Its content code and canonical path, when created with a title. */
   code?: string;
   path?: string;
@@ -64,6 +66,20 @@ export interface Config {
   auth_api: string;
   on_upload_api: string;
   members_api: string;
+}
+
+// Kinds whose uploads and private outputs live on version items (kinds.json).
+export const VERSIONED: ReadonlySet<string> = new Set(["gallery", "video", "album", "abr", "watch", "comic"]);
+
+/** The item an item's uploads go to: its version for a kind whose media are versions'. */
+export function mediaRef(it: { kind: string; id: string; version?: string }): { kind: string; id: string; version?: string } {
+  return VERSIONED.has(it.kind) && it.version ? { kind: it.kind, id: it.id, version: it.version } : { kind: it.kind, id: it.id };
+}
+
+/** An item as a demo page's query parameter: "{id}" or, for a version's media, "{id}~{version}". */
+export function itemParam(it: { kind: string; id: string; version?: string }): string {
+  const ref = mediaRef(it);
+  return ref.version ? `${ref.id}~${ref.version}` : ref.id;
 }
 
 export class Harness {
@@ -112,8 +128,10 @@ export class Harness {
   }
 
   /** The stored bytes of an item's file (by path or upload stem) or public name; null when absent. */
-  async object(ref: { kind: string; id: string }, name: string, at: "path" | "public" = "path"): Promise<{ size: number; sha256: string } | null> {
-    const res = await fetch(`${this.origin}/__test/object?${new URLSearchParams({ ...ref, [at]: name })}`);
+  async object(ref: { kind: string; id: string; version?: string }, name: string, at: "path" | "public" = "path"): Promise<{ size: number; sha256: string } | null> {
+    const q = new URLSearchParams({ kind: ref.kind, id: ref.id, [at]: name });
+    if (ref.version) q.set("version", ref.version);
+    const res = await fetch(`${this.origin}/__test/object?${q}`);
     return res.ok ? res.json() : null;
   }
 

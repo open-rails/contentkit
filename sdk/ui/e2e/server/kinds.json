@@ -15,8 +15,7 @@
             "image/png",
             "image/jpeg"
           ],
-          "max_bytes": 10485760,
-          "content": true
+          "max_bytes": 10485760
         },
         {
           "path": "cover",
@@ -26,14 +25,6 @@
           ],
           "max_bytes": 10485760,
           "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -117,8 +108,7 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824,
-          "content": true
+          "max_bytes": 1073741824
         },
         {
           "path": "poster",
@@ -127,8 +117,7 @@
             "image/jpeg"
           ],
           "max_bytes": 10485760,
-          "frames": "source",
-          "content": true
+          "frames": "source"
         },
         {
           "path": "subs/{name}",
@@ -136,16 +125,7 @@
             "text/vtt",
             "application/x-subrip"
           ],
-          "max_bytes": 1048576,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max_bytes": 1048576
         }
       ],
       "private": [
@@ -189,8 +169,7 @@
             "image/webp"
           ],
           "max_bytes": 26214400,
-          "max": 6,
-          "content": true
+          "max": 6
         },
         {
           "path": "videos/{name}",
@@ -198,16 +177,7 @@
             "video/mp4"
           ],
           "max_bytes": 1073741824,
-          "max": 2,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max": 2
         }
       ],
       "private": [
@@ -257,16 +227,7 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max_bytes": 1073741824
         }
       ],
       "private": [
@@ -478,8 +439,7 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824,
-          "content": true
+          "max_bytes": 1073741824
         },
         {
           "path": "subs/{name}",
@@ -487,16 +447,7 @@
             "text/vtt",
             "application/x-subrip"
           ],
-          "max_bytes": 1048576,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max_bytes": 1048576
         }
       ],
       "private": [
@@ -527,6 +478,92 @@
         }
       ],
       "versions": true
+    },
+    {
+      "name": "comic",
+      "versions": true,
+      "keep_originals": true,
+      "publish": {
+        "pages": "originals/{name}",
+        "renditions": [
+          "low",
+          "thumb"
+        ],
+        "previews": "preview",
+        "download": "zip"
+      },
+      "uploads": [
+        {
+          "path": "cover",
+          "content": true,
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
+        },
+        {
+          "path": "originals/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
+        },
+        {
+          "path": "previews/{name}",
+          "types": [
+            "image/webp"
+          ],
+          "max_bytes": 10485760,
+          "max": 3
+        }
+      ],
+      "private": [
+        {
+          "name": "low",
+          "from": "originals/{name}",
+          "to": "low-res/{name}.webp",
+          "image": {
+            "width": 1200,
+            "height": 1200
+          }
+        },
+        {
+          "name": "thumb",
+          "from": "originals/{name}",
+          "to": "thumb/{name}.webp",
+          "image": {
+            "width": 200,
+            "height": 300,
+            "fit": "cover"
+          }
+        },
+        {
+          "name": "zip",
+          "to": "download/pages.zip",
+          "download": "{title}.zip",
+          "zip": "low-res/",
+          "host_only": true
+        }
+      ],
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover",
+          "to": "cover-{w}.webp",
+          "widths": [
+            230,
+            460
+          ]
+        },
+        {
+          "name": "preview",
+          "from": "previews/{name}",
+          "to": "preview-{n}.webp",
+          "first": 3
+        }
+      ]
     },
     {
       "name": "artist",

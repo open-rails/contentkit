@@ -2,7 +2,7 @@
 // or stdin closes. Run `pnpm build` first.
 import { buildDemo } from "./demo.ts";
 import { seedShared } from "./fixtures.ts";
-import { Harness } from "./harness.ts";
+import { Harness, itemParam } from "./harness.ts";
 import { seedChannel, seedSocial, seedVideo } from "./seed.ts";
 import { startStack } from "./stack.ts";
 
@@ -32,12 +32,12 @@ try {
   const p = f.player;
   process.stdout.write(
     [
-      `profile  ${stack.origin}/?${as(f.owner)}&channel=${channel.id}&empty=${empty.id}&video=${video.id}`,
-      `gallery  ${stack.origin}/gallery.html?${as(f.viewer)}&post=${f.post.id}&locked=${f.locked.id}&single=${f.single.id}`,
-      `player   ${stack.origin}/gallery.html?page=player&${as(f.viewer)}&no-cors=${p["no-cors"].id}&refresh=${p.refresh.id}&denied=${p.denied.id}&busy=${p.busy.id}&missing=${p.missing.id}`,
-      `abr      ${stack.origin}/gallery.html?page=abr&${as(f.viewer)}&abr=${f.abr.id}`,
-      `watch    ${stack.origin}/gallery.html?page=watch&${as(f.viewer)}&watch=${f.watch.id}`,
-      `folder   ${stack.origin}/folder.html?${as(f.owner)}&post=${f.post.id}&draft=${draft.id}`,
+      `profile  ${stack.origin}/?${as(f.owner)}&channel=${channel.id}&empty=${empty.id}&video=${itemParam(video)}`,
+      `gallery  ${stack.origin}/gallery.html?${as(f.viewer)}&post=${itemParam(f.post)}&locked=${itemParam(f.locked)}&single=${itemParam(f.single)}`,
+      `player   ${stack.origin}/gallery.html?page=player&${as(f.viewer)}&no-cors=${itemParam(p["no-cors"])}&refresh=${itemParam(p.refresh)}&denied=${itemParam(p.denied)}&busy=${itemParam(p.busy)}&missing=${itemParam(p.missing)}`,
+      `abr      ${stack.origin}/gallery.html?page=abr&${as(f.viewer)}&abr=${itemParam(f.abr)}`,
+      `watch    ${stack.origin}/gallery.html?page=watch&${as(f.viewer)}&watch=${itemParam(f.watch)}`,
+      `folder   ${stack.origin}/folder.html?${as(f.owner)}&post=${itemParam(f.post)}&draft=${itemParam(draft)}`,
       `social   ${stack.origin}/social.html?${as(f.viewer)}&item=${social.item.id}&poll=${social.poll.id}`,
       "Ctrl-C stops the stack.",
       "",

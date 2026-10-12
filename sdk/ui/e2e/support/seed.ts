@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createContentKitClient, type FileInfo, type RefBody } from "@openrails/contentkit-ui/client";
-import type { Harness, Item, TestUser } from "./harness.ts";
+import { mediaRef, type Harness, type Item, type TestUser } from "./harness.ts";
 
 const fixtures = path.resolve(import.meta.dirname, "..", "fixtures");
 const TYPES: Record<string, string> = { ".jpg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4", ".vtt": "text/vtt" };
@@ -22,7 +22,7 @@ export function mediaClient(h: Harness, user: TestUser) {
 }
 
 const wait = { interval: 250, timeout: 180_000 };
-const refOf = (it: Item): RefBody => ({ kind: it.kind, id: it.id });
+const refOf = (it: Item): RefBody => mediaRef(it);
 
 /** Waits until every upload of the item is processed and its public files are published. */
 export async function processed(h: Harness, user: TestUser, ref: RefBody): Promise<FileInfo[]> {

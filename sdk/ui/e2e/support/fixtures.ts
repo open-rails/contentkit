@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
-import { Harness, type Item, type TestUser } from "./harness.ts";
+import { Harness, mediaRef, type Item, type TestUser } from "./harness.ts";
 import { mediaClient, processed, seedAlbum, seedWatch } from "./seed.ts";
 
 export interface SharedFixtures {
@@ -41,7 +41,7 @@ export async function seedShared(h: Harness): Promise<SharedFixtures> {
   const clip = ["landscape.mp4"];
   const abr = (async () => {
     const it = await h.item({ kind: "abr", owner: owner.id });
-    const ref = { kind: it.kind, id: it.id };
+    const ref = mediaRef(it);
     await mediaClient(h, owner).put(new File([readFileSync(abrSource())], "abr.mp4", { type: "video/mp4" }), { ref, path: "source" });
     await processed(h, owner, ref);
     return it;

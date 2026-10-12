@@ -8,7 +8,7 @@ import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* ContentManager of blog posts
-// (with the package's rich-text editor), /admin/groups/* GroupManager, /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// (with the package's rich-text editor), /admin/groups/* GroupManager, /admin/media/{kind}/{id}[/{version}] MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -72,7 +72,7 @@ function Alone() {
       ) : at.startsWith("/admin/polls") ? (
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
       ) : at.startsWith("/admin/media/") ? (
-        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]! }} languages={subtitleLanguages} />
+        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]!, version: at.split("/")[5] || undefined }} languages={subtitleLanguages} />
       ) : at.startsWith("/admin/uploads") ? (
         <>
           <Created />
@@ -111,7 +111,7 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
-        <Route path="/admin/media/:kind/:id" element={<MediaPage />} />
+        <Route path="/admin/media/:kind/:id/:version?" element={<MediaPage />} />
         <Route
           path="/admin/uploads"
           element={
@@ -136,8 +136,8 @@ function Hosted() {
 }
 
 function MediaPage() {
-  const { kind, id } = useParams();
-  return <MediaItemPanel client={client} item={{ kind: kind!, id: id! }} languages={subtitleLanguages} language={lang} />;
+  const { kind, id, version } = useParams();
+  return <MediaItemPanel client={client} item={{ kind: kind!, id: id!, version }} languages={subtitleLanguages} language={lang} />;
 }
 
 function UserPage() {

@@ -176,6 +176,9 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it.ID = c.ID
+	if len(c.Versions) > 0 {
+		it.Version = c.Versions[0].ID
+	}
 	if in.Title != "" {
 		it.Code, it.Path = c.Code, c.Path
 	}
@@ -259,7 +262,7 @@ func (h *harness) addFaults(w http.ResponseWriter, r *http.Request) {
 // of the stored bytes; 404 when absent.
 func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ref, err := h.ref(q.Get("kind"), q.Get("id"))
+	ref, err := h.reg.VersionRef(q.Get("kind"), q.Get("id"), q.Get("version"))
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return

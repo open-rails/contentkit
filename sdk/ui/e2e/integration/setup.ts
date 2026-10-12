@@ -16,7 +16,7 @@ import {
   type VersionInput,
 } from "../../src/client/index.js";
 import { png as pngBytes } from "../support/bytes.js";
-import { Harness, type Config, type Role, type TestUser } from "../support/harness.js";
+import { Harness, mediaRef, type Config, type Role, type TestUser } from "../support/harness.js";
 
 // Node's modules at run time, not imported: vite externalizes Node built-ins
 // a jsdom file imports, for browser compatibility.
@@ -138,11 +138,20 @@ export function client(h: Harness, cfg: Config, user: TestUser | null, o: Client
   });
 }
 
-/** An item the host knows, owned by owner. */
+/**
+ * A content item the host made through the catalog, owned by owner: the
+ * item its uploads go to, its version for a kind whose media are versions'.
+ * content(ref) is its content-level item (a gallery's cover).
+ */
 export async function item(h: Harness, kind: string, owner: TestUser | null, o: { access?: "full" | "none"; hidden?: boolean; title?: string } = {}): Promise<RefBody> {
-  const it = await h.item({ kind, owner: owner?.id, ...o });
-  return { kind: it.kind, id: it.id };
+  return mediaRef(await h.item({ kind, owner: owner?.id, ...o }));
 }
+
+/** The content-level item of a ref: where a content's cover lives. */
+export const content = ({ kind, id }: RefBody): RefBody => ({ kind, id });
+
+/** An item's storage folder as media URLs name it: "{kind}/{id}", a version's "{kind}/{id}/{version}". */
+export const itemFolder = (ref: RefBody) => (ref.version ? `${ref.kind}/${ref.id}/${ref.version}` : `${ref.kind}/${ref.id}`);
 
 /** A real PNG, each seed distinct, as Node's File (jsdom's Blob is no body Node's fetch can send). */
 export function png(name: string, seed = 1, w = 48, h = 32): File {
