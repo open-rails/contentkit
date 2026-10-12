@@ -16,10 +16,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/helpers/notify"
 
+	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/media"
 )
+
+// mount serves an engine's route groups under prefix.
+func mount(e *contentkit.Engine, prefix string, groups contentkit.RouteGroups) http.Handler {
+	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: groups})
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	for _, r := range routes {
+		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
+	}
+	return mux
+}
 
 // routes is the app origin: AuthKit, ContentKit at apiPrefix, the bucket's
 // presigned uploads, the test-control surface and the built demo apps.
@@ -28,10 +42,10 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(apiPrefix, h.rt.Handler()))))
-	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(membersPrefix, h.members.Handler()))))
-	upload := media.UploadHandler(h.onUpload, media.UploadHandlerOptions{Auth: h.auth.Authenticator()})
-	mux.Handle(onUploadPrefix+"/media/upload/", h.faults.api(behindProxy(http.StripPrefix(onUploadPrefix+"/media/upload", upload))))
+	every := contentkit.AllRoutes &^ contentkit.CatalogRoutes
+	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(mount(h.ck, apiPrefix, every))))
+	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(mount(h.members, membersPrefix, every))))
+	mux.Handle(onUploadPrefix+"/", h.faults.api(behindProxy(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)
 	mux.Handle("/"+h.bucket, bucket)
@@ -276,10 +290,13 @@ func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 	if in.Origin.System == "" {
 		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
 	}
-	item, err := h.rt.Notifications.Publish(r.Context(), in)
+	items, err := h.ck.Client().PublishNotifications(r.Context(), []notify.Input{in})
+	if err == nil && len(items) == 0 {
+		err = errors.New("the recipient was erased")
+	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	reply(w, http.StatusCreated, item)
+	reply(w, http.StatusCreated, items[0])
 }

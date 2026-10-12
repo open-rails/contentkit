@@ -1,6 +1,6 @@
 // Command server runs a real ContentKit for @openrails/contentkit-ui's
 // integration and browser tests: AuthKit passed straight in as its auth and
-// directory (as hosts wire it), the ContentKit Runtime (content, taxonomy,
+// directory (as hosts wire it), ContentKit's engines (content, taxonomy,
 // codes, media upload and read) over PostgreSQL and MinIO, its River jobs, the built demo
 // apps and the bucket on one origin, a fault proxy in front of media-gateway
 // on another, and a test-control surface at /__test. Test-only.

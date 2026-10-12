@@ -117,7 +117,7 @@ export interface ClientOptions {
 export function client(h: Harness, cfg: Config, user: TestUser | null, o: ClientOptions = {}): ContentKitClient {
   return createContentKitClient({
     baseUrl: `${h.origin}${cfg.api}`,
-    mounts: o.onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/media/upload` } : undefined,
+    mounts: o.onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/v1/media/upload` } : undefined,
     token: () => user?.access_token,
     headers: (): Record<string, string> => (o.ip ? { "X-Forwarded-For": o.ip } : {}),
     fetch: o.record?.fetch,

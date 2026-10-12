@@ -1,4 +1,5 @@
 import { ContentKitError, aborted, readContentKitError } from "./errors.js";
+import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { ContentChange } from "./content/types.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
 
@@ -7,22 +8,23 @@ export type Mount = string | ((ref: RefBody) => string);
 
 /**
  * Where each module lives when the host does not serve them all under
- * baseUrl's fixed sub-paths.
+ * baseUrl's fixed sub-paths (CONTENTKIT_MODULES: the API version, then the
+ * module's path). A mount is the module's full base URL.
  */
 export interface ContentKitMounts {
-  /** Posts, comments, reactions, favorites, polls, bans, moderation. Default baseUrl. */
+  /** Posts, comments, reactions, favorites, polls, bans, moderation. Default `{baseUrl}/v1`. */
   content?: string;
-  /** Media reads and HLS playlists. Default `{baseUrl}/media`. */
+  /** Media reads and HLS playlists. Default `{baseUrl}/v1/media`. */
   media?: Mount;
-  /** Uploads and commits. Default `{baseUrl}/media/upload`. */
+  /** Uploads and commits. Default `{baseUrl}/v1/media/upload`. */
   upload?: Mount;
-  /** Content-code lookup. Default `{baseUrl}/codes`. */
+  /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
-  /** Taxonomy. Default `{baseUrl}/taxonomy`. */
+  /** Taxonomy. Default `{baseUrl}/v1/taxonomy`. */
   taxonomy?: string;
-  /** The public catalog. Default `{baseUrl}/catalog`. */
+  /** The public catalog. Default `{baseUrl}/v1/catalog`. */
   catalog?: string;
-  /** User inbox. Default `{baseUrl}/notifications`. */
+  /** User inbox. Default `{baseUrl}/v1/notifications`. */
   notifications?: string;
 }
 
@@ -41,7 +43,7 @@ export type ContentKitChange =
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;
 
 export interface HttpOptions {
-  /** Where the host mounts ContentKit, e.g. "/api/v1/contentkit". */
+  /** Where the host mounts ContentKit's routes (contentkit.Routes.Prefix), e.g. "/api/contentkit". */
   baseUrl: string;
   mounts?: ContentKitMounts;
   /** Transport for API calls; pass an authenticating fetch (auth-ui's authFetch). */
@@ -88,16 +90,7 @@ export class Http {
       return trim(m(ref));
     }
     if (m !== undefined) return trim(m);
-    switch (module) {
-      case "content":
-        return this.base;
-      case "media":
-        return `${this.base}/media`;
-      case "upload":
-        return `${this.base}/media/upload`;
-      default:
-        return `${this.base}/${module}`;
-    }
+    return this.base + CONTENTKIT_MODULES[module];
   }
 
   async request<T>(url: string, { method, body, signal, blob }: RequestOptions = {}): Promise<T> {

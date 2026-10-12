@@ -59,7 +59,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     await client(h, cfg, bob).media.put(png("avatar.png", 42, 300, 300), { ref, path: "avatar" });
     await client(h, cfg, bob).media.waitFor(ref, "avatar", wait);
     // A fresh client fetches the presets once: that request is refused.
-    await h.faults([{ fault: "api", path: "/api/contentkit/media/presets", method: "GET", status: 404, code: "not_found", times: 1 }]);
+    await h.faults([{ fault: "api", path: "/api/contentkit/v1/media/presets", method: "GET", status: 404, code: "not_found", times: 1 }]);
     const { result } = renderHook(() => usePublicImage("user", bob.id, "avatar"), { wrapper: wrap(client(h, cfg, bob)) });
     await waitFor(() => expect(result.current.image?.renditions.length).toBeGreaterThan(0), wait);
     expect(result.current.rule).toBeUndefined();
