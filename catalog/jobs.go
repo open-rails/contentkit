@@ -130,15 +130,7 @@ func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	if s.media != nil {
-		refs, err := s.folders(ctx, tx, ids)
-		if err != nil {
-			return 0, err
-		}
-		deletions := make([]media.Deletion, len(refs))
-		for i, r := range refs {
-			deletions[i] = media.Deletion{Ref: r}
-		}
-		if err := s.media.Expose.DeleteItemsTx(ctx, tx, deletions...); err != nil {
+		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
 			return 0, err
 		}
 	}

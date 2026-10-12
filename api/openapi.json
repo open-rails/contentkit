@@ -4030,6 +4030,14 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "a Versions kind's version id; absent for its content-level item",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "path",
             "in": "query",
             "description": "the video upload's path",
@@ -4236,6 +4244,215 @@
           },
           {
             "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "the rest of the path; may contain /",
+            "allowReserved": true
+          },
+          {
+            "name": "audio",
+            "in": "query",
+            "description": "audio languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "subs",
+            "in": "query",
+            "description": "subtitle languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/vtt; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/media/{kind}/{id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "only files under this path prefix, e.g. low-res/",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "files to skip before the URLs start",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "files that get URLs",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "description": "URLs carry their download names",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "editor",
+            "in": "query",
+            "description": "editors: uploads with edits, failures, progress and editor views",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/media/{kind}/{id}/versions/{version}/hls/{path}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
             "in": "path",
             "required": true,
             "schema": {
@@ -5699,6 +5916,258 @@
         ]
       }
     },
+    "/v1/contents/{id}/versions/{version}/reader": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderPlan"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      },
+      "put": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderMeta"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/fork": {
+      "post": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/download": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/contents/{id}/offer": {
       "put": {
         "tags": [
@@ -6347,6 +6816,28 @@
           "content_id"
         ]
       },
+      "Anchor": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "offset_percent": {
+            "type": "number"
+          },
+          "duration_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "page",
+          "offset_percent"
+        ]
+      },
       "Anonymous": {
         "type": "object",
         "properties": {
@@ -6383,6 +6874,35 @@
           "id",
           "label",
           "count"
+        ]
+      },
+      "BackgroundCue": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "from_page": {
+            "type": "string"
+          },
+          "to_page": {
+            "type": "string"
+          },
+          "from_anchor": {
+            "type": "string"
+          },
+          "to_anchor": {
+            "type": "string"
+          },
+          "loop": {
+            "type": "boolean"
+          },
+          "layer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
         ]
       },
       "BanInput": {
@@ -6987,6 +7507,9 @@
           "id": {
             "type": "string"
           },
+          "version": {
+            "type": "string"
+          },
           "path": {
             "type": "string"
           }
@@ -7484,6 +8007,37 @@
           "type"
         ]
       },
+      "ForegroundCue": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "anchor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ]
+      },
+      "ForkBody": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "playback": {
+            "type": "boolean"
+          },
+          "segments": {
+            "type": "boolean"
+          }
+        }
+      },
       "Frame": {
         "type": "object",
         "properties": {
@@ -7893,6 +8447,12 @@
           },
           "auto": {
             "type": "boolean"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
           }
         }
       },
@@ -8584,6 +9144,148 @@
           "parts"
         ]
       },
+      "Pending": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "PlanPage": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "w",
+          "h",
+          "files"
+        ]
+      },
+      "PlanPlayback": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTrack"
+            }
+          }
+        },
+        "required": [
+          "item",
+          "tracks"
+        ]
+      },
+      "PlanPreview": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "url",
+          "w",
+          "h"
+        ]
+      },
+      "PlanSegment": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "released": {
+            "type": "boolean"
+          },
+          "release_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPage"
+            }
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "released",
+          "locked"
+        ]
+      },
+      "PlanTrack": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ]
+      },
       "Poll": {
         "type": "object",
         "properties": {
@@ -9122,6 +9824,89 @@
           "files"
         ]
       },
+      "ReaderDefaults": {
+        "type": "object",
+        "properties": {
+          "auto_advance_seconds": {
+            "type": "number"
+          }
+        }
+      },
+      "ReaderMeta": {
+        "type": "object",
+        "properties": {
+          "schema_version": {
+            "type": "integer"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ReaderDefaults"
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Anchor"
+            }
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackgroundCue"
+            }
+          },
+          "foreground": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ForegroundCue"
+            }
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "ReaderPlan": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "publication_id": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanSegment"
+            }
+          },
+          "previews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPreview"
+            }
+          },
+          "playback": {
+            "$ref": "#/components/schemas/PlanPlayback"
+          },
+          "reader": {
+            "$ref": "#/components/schemas/ReaderMeta"
+          }
+        },
+        "required": [
+          "content_id",
+          "version_id",
+          "publication_id",
+          "pages",
+          "segments",
+          "previews"
+        ]
+      },
       "Recipient": {
         "type": "object",
         "properties": {
@@ -9145,8 +9930,34 @@
           },
           "id": {
             "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
-        }
+        },
+        "required": [
+          "kind",
+          "id"
+        ]
+      },
+      "Rendition": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "w",
+          "h"
+        ]
       },
       "RequestReply": {
         "type": "object",
@@ -9570,6 +10381,20 @@
           "decision"
         ]
       },
+      "VersionFork": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "playback": {
+            "type": "boolean"
+          },
+          "segments": {
+            "type": "boolean"
+          }
+        }
+      },
       "VersionInput": {
         "type": "object",
         "properties": {
@@ -9619,6 +10444,9 @@
           },
           "ordinal": {
             "type": "integer"
+          },
+          "fork": {
+            "$ref": "#/components/schemas/VersionFork"
           }
         }
       },
@@ -9808,6 +10636,7 @@
     "codes": "/codes",
     "groups": "/v1",
     "notifications": "/notifications",
+    "versions": "/v1",
     "offers": "/v1"
   },
   "x-contentkit-error-sets": {
@@ -9847,6 +10676,11 @@
     ],
     "module:notifications": [
       "internal_error"
+    ],
+    "module:versions": [
+      "internal_error",
+      "not_found",
+      "unavailable"
     ],
     "module:offers": [
       "internal_error",

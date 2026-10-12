@@ -19,6 +19,7 @@ var moduleTitles = map[httpapi.Module]string{
 	httpapi.Codes:         "Content codes",
 	httpapi.Groups:        "Groups: listings, pages, writes and memberships",
 	httpapi.Notifications: "Notifications",
+	httpapi.Versions:      "Content versions: reader plan, reader metadata, forks, downloads",
 	httpapi.Offers:        "Offers, free group joins and the library",
 }
 

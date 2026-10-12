@@ -33,6 +33,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -62,6 +63,7 @@ type harness struct {
 	ring       token.Ring
 	urls       *contenturl.Store
 	cat        *catalog.Store
+	versions   *versions.Service
 	rt         *contentkit.Runtime
 	members    *contentkit.Runtime // takes nothing anonymous
 	onUpload   *media.Uploads
@@ -120,7 +122,33 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	mc.BaseURL, mc.Hooks = mediaOrigin, media.Hooks{Resolver: h, CanUpload: h}
+	// Galleries and albums are the host's items here, though groups hold
+	// them; blog items are the catalog's, their media the versions module's
+	// (kinds.json marks blog "versions"), which hands other kinds to h.
+	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
+	gallery, album := grouped, grouped
+	gallery.Route, album.Route = "g", "album"
+	model := kindcfg.Config{Languages: []string{"en", "ja"},
+		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album,
+			blogKind: {Route: "blog", Presentation: "post", Versions: kindcfg.VersionRules{Languages: "one", Hidden: true}}},
+		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
+			"character": {Route: "characters", ScopedBy: "series"}}}
+	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model,
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return h.cat.ContentChanged(ctx, q, ids)
+		}})
+	if err != nil {
+		return nil, err
+	}
+	if h.cat, err = catalog.New(ctx, catalog.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model, Auth: h.auth.Authenticator(),
+		Groups: grp, Body: newPostHTML()}); err != nil {
+		return nil, err
+	}
+	if h.versions, err = versions.New(versions.Options{Tenant: tenant, Schema: schema, Pool: h.pool, Kinds: model, Auth: h.auth.Authenticator(),
+		Resolver: h.cat.Resolver(), Facets: h.cat, Others: h}); err != nil {
+		return nil, err
+	}
+	mc.BaseURL, mc.Hooks = mediaOrigin, h.versions.Hooks()
 	if h.reg, err = media.NewRegistry(mc); err != nil {
 		return nil, err
 	}
@@ -170,26 +198,14 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
+	if err := h.versions.Bind(versions.Media{Manifests: h.manifests, Uploads: uploads, Jobs: jobs}); err != nil {
+		return nil, err
+	}
+	if err := h.cat.BindMedia(catalog.Media{Images: h.manifests, Reader: reader, Versions: h.versions}); err != nil {
+		return nil, err
+	}
 
 	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
-		return nil, err
-	}
-	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
-	gallery, album := grouped, grouped
-	gallery.Route, album.Route = "g", "album"
-	model := kindcfg.Config{Languages: []string{"en", "ja"},
-		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album,
-			blogKind: {Route: "blog", Presentation: "post", Versions: kindcfg.VersionRules{Languages: "one", Hidden: true}}},
-		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
-			"character": {Route: "characters", ScopedBy: "series"}}}
-	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error { return h.cat.ContentChanged(ctx, q, ids) }})
-	if err != nil {
-		return nil, err
-	}
-	if h.cat, err = catalog.New(ctx, catalog.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model, Auth: h.auth.Authenticator(),
-		Groups: grp, Body: newPostHTML(),
-		Media: &catalog.Media{Images: h.manifests, Expose: jobs, Reader: reader}}); err != nil {
 		return nil, err
 	}
 	// Host items (video, note, ...) keep their own pages; blog pages show while live.
@@ -237,7 +253,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 
 	if h.river, err = riverkit.New(ctx, h.pool, &river.Config{Schema: riverSchema, Queues: map[string]river.QueueConfig{},
 		FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond},
-		h.auth.RiverJobs(), jobs.RiverJobs(), h.cat.RiverJobs()); err != nil {
+		h.auth.RiverJobs(), jobs.RiverJobs(), h.cat.RiverJobs(), h.versions.RiverJobs()); err != nil {
 		return nil, err
 	}
 	if err := h.river.Start(ctx); err != nil {

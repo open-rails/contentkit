@@ -102,6 +102,11 @@ func newWorld(t *testing.T) *world {
 				Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10}, {Path: "cover", Types: images, MaxBytes: 1 << 20},
 					{Path: "extras/{name}", Types: images, MaxBytes: 1 << 20, Max: 1}},
 				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}},
+			{Name: "book", Versions: true, KeepOriginals: true,
+				Publish: &media.Publish{Pages: "pages/{name}", Renditions: []string{"read"}, Download: "zip"},
+				Uploads: []media.Upload{{Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
+				Private: []media.Private{{Name: "read", From: "pages/{name}", To: "read/{name}.webp", Image: &media.Image{Width: 64}},
+					{Name: "zip", To: "download/pages.zip", Zip: "read/", HostOnly: true}}},
 			{Name: "user", Namespace: "accounts", KeepOriginals: true,
 				Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
@@ -248,6 +253,7 @@ func (w *world) ownOrStaff(ctx context.Context, a access.Actor, id string) (bool
 type server struct {
 	t       *testing.T
 	h       http.Handler
+	mux     *http.ServeMux
 	checker *contract.Checker
 	mu      sync.Mutex
 	broken  []string
@@ -259,8 +265,8 @@ func serve(t *testing.T, rt *contentkit.Runtime) *server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{t: t, checker: checker}
 	mux := http.NewServeMux()
+	s := &server{t: t, checker: checker, mux: mux}
 	mux.Handle(prefix+"/", http.StripPrefix(prefix, rt.Handler()))
 	s.h = checker.Wrap(prefix, mux, func(err error) {
 		s.mu.Lock()
@@ -323,4 +329,10 @@ func pngBytes(t *testing.T, w int) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
+}
+
+// mount serves h at pattern under the one mount, beside the runtime, with
+// its module's prefix stripped.
+func (s *server) mount(pattern, module string, h http.Handler) {
+	s.mux.Handle(prefix+pattern, http.StripPrefix(prefix+module, h))
 }

@@ -415,102 +415,9 @@ func decision(d access.Decision) Decision {
 	return out
 }
 
-// Target names a content item (Version "") or one of its versions.
-type Target struct {
-	Content string `json:"content"`
-	Version string `json:"version,omitempty"`
-}
-
-// Sight is what a viewer sees of a content item or a version.
-type Sight struct {
-	Visible bool // live, deleted and held, or the viewer edits it
-	Live    bool // live for everyone: published, due and not deleted
-	Editor  bool // staff, a creator or an owner-group editor
-}
-
-// Opening is what a viewer opens of a version.
-type Opening struct {
-	Opens bool // every released segment
-	Free  int  // leading segments open without Opens: the rule's preview
-}
-
-// See is the visibility rule for direct reads without a site (media and
-// interactions): per target, one it omits is unseen.
-func (s *Store) See(ctx context.Context, actor access.Actor, targets []Target) (map[Target]Sight, error) {
-	views, err := s.directViews(ctx, actor, targets)
-	if err != nil {
-		return nil, err
-	}
-	out := map[Target]Sight{}
-	for _, t := range targets {
-		iv := views[t.Content]
-		if iv == nil || !iv.visible {
-			continue
-		}
-		var sight Sight
-		for _, r := range iv.versions {
-			if t.Version == "" || r.versionID == t.Version {
-				sight.Visible = true
-				sight.Live = sight.Live || (r.liveFrom != nil && !r.liveFrom.After(s.now()) && !r.deleted && !r.contentDeleted)
-			}
-		}
-		if sight.Visible {
-			sight.Editor = iv.editor
-			out[t] = sight
-		}
-	}
-	return out, nil
-}
-
-// Open is the gate's verdict on versions the viewer sees: per version, one
-// it omits is closed.
-func (s *Store) Open(ctx context.Context, actor access.Actor, versions []Target) (map[Target]Opening, error) {
-	views, err := s.directViews(ctx, actor, versions)
-	if err != nil {
-		return nil, err
-	}
-	out := map[Target]Opening{}
-	for _, t := range versions {
-		iv := views[t.Content]
-		if iv == nil || t.Version == "" {
-			continue
-		}
-		d, ok := iv.decisions[t.Version]
-		if !ok {
-			continue
-		}
-		o := Opening{Opens: d.Allowed}
-		if !d.Allowed && d.Preview != nil {
-			o.Free = d.Preview.Segments
-		}
-		out[t] = o
-	}
-	return out, nil
-}
-
-// Tiers are the configured tiers actor holds.
-func (s *Store) Tiers(ctx context.Context, actor access.Actor) ([]string, error) {
-	f, err := s.accessG.Filter(ctx, actor)
-	if err != nil && !errors.Is(err, access.ErrUnavailable) {
-		return nil, err
-	}
-	out := []string{}
-	for _, t := range s.accessG.Tiers() {
-		if f.Tier(t) {
-			out = append(out, t)
-		}
-	}
-	return out, nil
-}
-
-// directViews decides the targets' content items for actor without a site.
-func (s *Store) directViews(ctx context.Context, actor access.Actor, targets []Target) (map[string]*itemView, error) {
-	var ids []string
-	for _, t := range targets {
-		if !slices.Contains(ids, t.Content) {
-			ids = append(ids, t.Content)
-		}
-	}
+// directViews decides content items for actor without a site (media and
+// interactions know none).
+func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []string) (map[string]*itemView, error) {
 	if len(ids) == 0 {
 		return map[string]*itemView{}, nil
 	}
@@ -522,11 +429,13 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, targets []T
 	return v.decide(ctx, ids)
 }
 
-// Resolver is the access.ContentResolver of content items for interactions
-// and media: a content reference (kind, content) or one of its versions is
-// visible as See says, accessible when the viewer opens it (a content
-// reference: any of its visible versions), with editors as Editor and the
-// first creator as Owner.
+// Resolver is the access.ContentResolver of content items for media
+// (media/versions) and interactions: a content reference (kind, content) or
+// one of its versions is visible by the rule for direct reads (live, deleted
+// and held by its own keys, or edited by the viewer), accessible when the
+// viewer opens it (a content reference: any of its visible versions), with
+// staff, creators and owner-group editors as Editor and the first creator as
+// Owner. A reference it omits is unseen.
 func (s *Store) Resolver() access.ContentResolver { return resolver{s} }
 
 type resolver struct{ s *Store }
@@ -534,23 +443,15 @@ type resolver struct{ s *Store }
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	s := r.s
 	out := map[contentref.ContentKey]access.Resolution{}
-	var targets []Target
 	var ids []string
 	for _, ref := range refs {
-		if ref.TenantID != s.tenant || s.cfg.Kinds[ref.ContentKind].Route == "" {
-			continue
-		}
-		targets = append(targets, Target{Content: ref.ContentID, Version: ref.Version()})
-		if !slices.Contains(ids, ref.ContentID) {
+		if _, ok := s.cfg.Kinds[ref.ContentKind]; ok && ref.TenantID == s.tenant && !slices.Contains(ids, ref.ContentID) {
 			ids = append(ids, ref.ContentID)
 		}
 	}
-	if len(ids) == 0 {
-		return out, nil
-	}
-	views, err := s.directViews(ctx, actor, targets)
-	if err != nil {
-		return nil, err
+	views, err := s.directViews(ctx, actor, ids)
+	if err != nil || len(views) == 0 {
+		return out, err
 	}
 	owners, err := s.firstCreators(ctx, ids)
 	if err != nil {

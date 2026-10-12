@@ -6,9 +6,12 @@
 //	                       /private/sha256-{hex}  a pre-v0.68 item's blob, kept by the upgrade
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
+//	{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
 //
-// The URL of an object is its key under /v1/ on the site's media host.
+// A content kind's {id} folder is its content-level item; each of its
+// versions is a folder within it. The URL of an object is its key under /v1/
+// on the site's media host.
 package layout
 
 import (
@@ -40,18 +43,25 @@ const (
 // Key is a parsed object key.
 type Key struct {
 	Namespace, Kind, ID string
+	Version             string // "" outside a version's folder
 	Area                string
 	Name                string // the name within the area; "" for the manifest
 }
 
+// Folder is the key's item folder.
+func (k Key) Folder() string { return Prefix(k.Namespace, k.Kind, k.ID, k.Version) }
+
 // Parse classifies an object key; ok is false for anything outside the layout.
 func Parse(key string) (Key, bool) {
 	parts := strings.Split(key, "/")
-	if len(parts) < 4 || len(parts) > 5 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
+	if len(parts) < 4 || len(parts) > 6 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
 		return Key{}, false
 	}
 	k := Key{Namespace: parts[0], Kind: parts[1], ID: parts[2]}
 	rest := parts[3:]
+	if len(rest) > 1 && ValidVersion(rest[0]) {
+		k.Version, rest = rest[0], rest[1:]
+	}
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
@@ -65,8 +75,31 @@ func Parse(key string) (Key, bool) {
 	return k, true
 }
 
-// Prefix is an item's folder: "{namespace}/{kind}/{id}/".
-func Prefix(namespace, kind, id string) string { return namespace + "/" + kind + "/" + id + "/" }
+// Prefix is an item's folder: "{namespace}/{kind}/{id}/", and a version's
+// "{namespace}/{kind}/{id}/{version}/".
+func Prefix(namespace, kind, id, version string) string {
+	if version != "" {
+		return namespace + "/" + kind + "/" + id + "/" + version + "/"
+	}
+	return namespace + "/" + kind + "/" + id + "/"
+}
+
+// ParseFolder parses an item folder, "{namespace}/{kind}/{id}/" or a
+// version's "{namespace}/{kind}/{id}/{version}/".
+func ParseFolder(prefix string) (Key, bool) {
+	k, ok := Parse(prefix + ManifestName)
+	return k, ok && k.Folder() == prefix
+}
+
+// ValidVersion accepts a version folder's segment: a valid segment that is
+// no area, manifest or reserved "_" name.
+func ValidVersion(s string) bool {
+	switch s {
+	case ManifestName, AreaPrivate, AreaPublic, AreaTemp:
+		return false
+	}
+	return ValidSegment(s) && s[0] != '_'
+}
 
 // ValidSegment keeps keys stable ASCII: [A-Za-z0-9._-]{1,128}, no leading dot.
 func ValidSegment(s string) bool {

@@ -47,27 +47,19 @@ func (s *items) reset() {
 	clear(s.m)
 }
 
-// Resolve is the host's access.ContentResolver: a known item is visible to
-// everyone unless hidden, open unless locked, and edited by its owner and
-// staff. An account's item (kind user) is its user's; blog items resolve
-// through the catalog, poll images through the content module.
+// Resolve is versions.Others' resolver for the host's items: a known item is
+// visible to everyone unless hidden, open unless locked, and edited by its
+// owner and staff; poll images resolve through the content module.
 func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := make(map[contentref.ContentKey]access.Resolution, len(refs))
 	var staff *bool
-	var blogs, polls []contentref.ContentRef
+	var polls []contentref.ContentRef
 	for _, ref := range refs {
-		switch ref.ContentKind {
-		case blogKind:
-			blogs = append(blogs, ref)
-			continue
-		case pollFolder:
+		if ref.ContentKind == pollFolder {
 			polls = append(polls, ref)
 			continue
 		}
 		it, ok := h.items.get(ref.Key())
-		if !ok && ref.ContentKind == ckUserKind {
-			it, ok = item{Owner: ref.ContentID, Access: "full"}, true
-		}
 		if !ok {
 			continue
 		}
@@ -84,14 +76,8 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 		}
 		out[ref.Key()] = access.Resolution{Visible: !it.Hidden || editor, Accessible: it.Access != "none" || editor, Owner: it.Owner, Editor: editor}
 	}
-	for _, part := range []struct {
-		r    access.ContentResolver
-		refs []contentref.ContentRef
-	}{{h.cat.Resolver(), blogs}, {h.rt.Content.MediaResolver(), polls}} {
-		if len(part.refs) == 0 {
-			continue
-		}
-		res, err := part.r.Resolve(ctx, part.refs, a)
+	if len(polls) > 0 {
+		res, err := h.rt.Content.MediaResolver().Resolve(ctx, polls, a)
 		if err != nil {
 			return nil, err
 		}
@@ -102,23 +88,10 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 	return out, nil
 }
 
-const ckUserKind = "user"
-
-// CanUpload is media's upload authorizer: an account's media by its person
-// (their quota) or staff (exempt), blog images through the catalog and poll
-// images through the content module (as hosts wire them), every other
-// item's by its editors.
+// CanUpload is versions.Others' upload authorizer: poll images through the
+// content module (as hosts wire them), every other item's by its editors.
 func (h *harness) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	switch {
-	case t.Ref.ContentKind == ckUserKind:
-		if a.Person() && a.ID == t.Ref.ContentID {
-			return media.UploadGrant{Allowed: true, Owner: a.ID}, nil
-		}
-		staff, err := h.editsAllMedia(ctx, a)
-		return media.UploadGrant{Allowed: staff, Exempt: staff}, err
-	case t.Ref.ContentKind == blogKind:
-		return h.cat.CanUpload(ctx, a, t)
-	case t.Ref.ContentKind == pollFolder:
+	if t.Ref.ContentKind == pollFolder {
 		return h.rt.Content.CanUpload(ctx, a, t)
 	}
 	res, err := h.Resolve(ctx, []contentref.ContentRef{t.Ref}, a)

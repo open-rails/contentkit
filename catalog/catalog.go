@@ -94,8 +94,6 @@ type Options struct {
 	Moderation Moderation
 	// Body sanitizes text bodies; nil strips tags.
 	Body Sanitizer
-	// Media connects covers, inline images and visibility to media.
-	Media *Media
 	// DeletedRetention: see DefaultDeletedRetention.
 	DeletedRetention time.Duration
 	Now              func() time.Time
@@ -175,13 +173,6 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	}
 	if s.log == nil {
 		s.log = slog.Default()
-	}
-	if opts.Media != nil {
-		m, err := newMedia(opts.Media)
-		if err != nil {
-			return nil, err
-		}
-		s.media = m
 	}
 	var err error
 	if s.totals, err = cache.New(totalsPolicy, s.loadTotals); err != nil {

@@ -1,0 +1,239 @@
+package versions
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/open-rails/authkit/auth"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/media"
+)
+
+// A group kind's items, {kind, group}, hold the group's named covers (and a
+// user-owned group's avatars): staff holding root:groups:write edit them,
+// and its owner, and for a user-owned group its AuthKit scope's holders of
+// {kind}:media:write.
+
+// groupRight is what one actor may do with one group's item.
+type groupRight struct {
+	active, editor, staff bool
+	owner                 string
+}
+
+// groupRights loads, per group id of kind, the group's state and actor's
+// right to edit its media.
+func (s *Service) groupRights(ctx context.Context, actor access.Actor, kind string, ids []string) (map[string]groupRight, error) {
+	out := map[string]groupRight{}
+	rows, err := s.o.Pool.Query(ctx, `SELECT id, state = 'active', coalesce(owner_user_id, ''), coalesce(auth_scope, '')
+FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Tenant, kind, ids)
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		id, owner, scope string
+		active           bool
+	}
+	var found []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.active, &r.owner, &r.scope); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found = append(found, r)
+	}
+	if err := rows.Err(); err != nil || len(found) == 0 {
+		return out, err
+	}
+	staff := false
+	if actor.Person() || actor.Kind == auth.SubjectApplication {
+		if staff, err = gate.Can(ctx, s.o.Auth, actor, string(access.GroupsWrite)); err != nil {
+			return nil, err
+		}
+	}
+	userOwned := s.o.Kinds.GroupKinds[kind].Owner == "user"
+	for _, r := range found {
+		right := groupRight{active: r.active, staff: staff, owner: r.owner}
+		switch {
+		case staff:
+			right.editor = true
+		case !actor.Person():
+		case r.owner == actor.ID:
+			right.editor = true
+		case userOwned && r.scope != "":
+			root, err := gate.RootScope(ctx, s.o.Auth)
+			if err != nil {
+				return nil, err
+			}
+			if right.editor, err = actor.Can(ctx, auth.Scope{Authority: root.Authority, ID: r.scope}, kind+":media:write"); err != nil {
+				return nil, err
+			}
+		}
+		out[r.id] = right
+	}
+	return out, nil
+}
+
+func (s *Service) isGroupKind(kind string) bool {
+	_, ok := s.o.Kinds.GroupKinds[kind]
+	return ok
+}
+
+// resolveGroups shows an active group's item to everyone, its public files
+// only, and its private files to its editors.
+func (s *Service) resolveGroups(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]access.Resolution) error {
+	byKind := map[string][]string{}
+	for _, ref := range refs {
+		byKind[ref.ContentKind] = append(byKind[ref.ContentKind], ref.ContentID)
+	}
+	rights := map[string]map[string]groupRight{}
+	for kind, ids := range byKind {
+		var err error
+		if rights[kind], err = s.groupRights(ctx, actor, kind, ids); err != nil {
+			return err
+		}
+	}
+	for _, ref := range refs {
+		if r, ok := rights[ref.ContentKind][ref.ContentID]; ok && r.active {
+			out[ref.Key()] = access.Resolution{Visible: true, Editor: r.editor}
+		}
+	}
+	return nil
+}
+
+func (s *Service) canEditGroup(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	rights, err := s.groupRights(ctx, actor, t.Ref.ContentKind, []string{t.Ref.ContentID})
+	if err != nil {
+		return media.UploadGrant{}, err
+	}
+	r, ok := rights[t.Ref.ContentID]
+	if !ok || !r.active || !r.editor {
+		return media.UploadGrant{}, nil
+	}
+	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: cmpOr(r.owner, actor.ID)}, nil
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// CoverOf names a content's or a group's cover: Kind and ID are its owner;
+// Image an image uploaded to the owner's item ("i-{uuid}"), else ContentID a
+// content whose cover it shows; with neither, a content owner's own.
+type CoverOf struct {
+	Kind      string
+	ID        string
+	Image     string
+	ContentID string
+}
+
+// Covers resolves covers to their public renditions, per cover in order,
+// in two queries for the page. A content's cover is the image its cover
+// selects, else its item's first cover image, else its kind's default.
+func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.PublicRendition, error) {
+	out := make([][]media.PublicRendition, len(covers))
+	targets := make([]string, len(covers))
+	var contents []string
+	for i, c := range covers {
+		if c.Image != "" {
+			continue
+		}
+		targets[i] = c.ContentID
+		if _, isContent := s.o.Kinds.Kinds[c.Kind]; targets[i] == "" && isContent {
+			targets[i] = c.ID
+		}
+		if targets[i] != "" {
+			contents = append(contents, targets[i])
+		}
+	}
+	type content struct{ kind, image string }
+	found := map[string]content{}
+	if len(contents) > 0 {
+		rows, err := s.o.Pool.Query(ctx, `SELECT id, kind, coalesce(cover, '{}'::jsonb) FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`,
+			s.o.Tenant, contents)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, kind string
+			var raw []byte
+			if err := rows.Scan(&id, &kind, &raw); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			var cover struct {
+				Image string `json:"image"`
+			}
+			_ = json.Unmarshal(raw, &cover)
+			found[id] = content{kind, cover.Image}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	var qs []media.ImageQuery
+	var at []int
+	for i, c := range covers {
+		q := media.ImageQuery{Preset: media.CoverPreset, Name: c.Image}
+		var err error
+		if c.Image != "" {
+			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
+		} else if f, ok := found[targets[i]]; ok {
+			q.Ref, err = s.reg.Ref(f.kind, targets[i])
+			q.Name = f.image
+		} else {
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		qs, at = append(qs, q), append(at, i)
+	}
+	images, err := s.m.Manifests.Images(ctx, qs...)
+	if err != nil {
+		return nil, err
+	}
+	for j, i := range at {
+		image, ok := media.PublicImage{}, len(images[j]) > 0
+		if ok {
+			image = images[j][0]
+		} else {
+			image, ok = s.reg.DefaultImage(qs[j].Ref, media.CoverPreset)
+		}
+		if ok {
+			out[i] = image.Renditions
+		}
+	}
+	return out, nil
+}
+
+// GroupCovers is Covers for the groups API's cards and pages
+// (groups.Options.Covers).
+func (s *Service) GroupCovers() groups.CoverResolver { return groupCovers{s} }
+
+type groupCovers struct{ s *Service }
+
+func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]groups.Rendition, error) {
+	asked := make([]CoverOf, len(cs))
+	for i, c := range cs {
+		asked[i] = CoverOf{Kind: c.Kind, ID: string(c.ID), Image: c.Cover.Image, ContentID: c.Cover.ContentID}
+	}
+	got, err := g.s.Covers(ctx, asked)
+	if err != nil {
+		return nil, err
+	}
+	out := make([][]groups.Rendition, len(cs))
+	for i, rs := range got {
+		for _, r := range rs {
+			out[i] = append(out[i], groups.Rendition{URL: r.URL, W: r.W, H: r.H})
+		}
+	}
+	return out, nil
+}

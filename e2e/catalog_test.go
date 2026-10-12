@@ -251,6 +251,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/v1/groups/"+saga, nil, nil)
 
 	mediaScenario(t, f, user, anon)
+	versionsScenario(t, w, f, owner, user, anon)
 
 	served := f.checker.Served()
 	var missing []string

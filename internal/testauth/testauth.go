@@ -26,6 +26,12 @@ type Authorizer interface {
 	Can(ctx context.Context, a access.Actor, perm string) (bool, error)
 }
 
+// ScopedAuthorizer, when an Authorizer is one, decides in every scope, not
+// only Scope: AuthKit group scopes.
+type ScopedAuthorizer interface {
+	CanIn(ctx context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error)
+}
+
 // All holds every permission.
 type All struct{}
 
@@ -37,8 +43,12 @@ type None struct{}
 func (None) Can(context.Context, access.Actor, string) (bool, error) { return false, nil }
 
 // Auth authenticates "Bearer user:{id}" and "Bearer app:{id}"; any other
-// bearer is refused. Authz answers Can in Scope; nil holds nothing.
-type Auth struct{ Authz Authorizer }
+// bearer is refused. Authz answers Can in Scope; nil holds nothing. Claims
+// are a subject's token entitlement claims (access.Entitled).
+type Auth struct {
+	Authz  Authorizer
+	Claims map[string][]string
+}
 
 // RootScope is Scope (authkit/auth Root).
 func (Auth) RootScope(context.Context) (auth.Scope, error) { return Scope, nil }
@@ -54,47 +64,29 @@ func (a Auth) Authenticate(r *http.Request) (auth.Verified, error) {
 		return nil, auth.ErrUnauthenticated
 	}
 	return verified{id: auth.Identity{Issuer: Issuer, Subject: id, SubjectKind: sk,
-		Invoker: auth.Invoker{Issuer: Issuer, ID: id}, Credential: auth.Credential{Kind: auth.CredentialSession}}, authz: a.Authz}, nil
+		Invoker: auth.Invoker{Issuer: Issuer, ID: id}, Credential: auth.Credential{Kind: auth.CredentialSession}}, authz: a.Authz,
+		claims: a.Claims[id]}, nil
 }
 
 type verified struct {
-	id    auth.Identity
-	authz Authorizer
+	id     auth.Identity
+	authz  Authorizer
+	claims []string
 }
 
 func (v verified) Identity() auth.Identity { return v.id }
 
-// Claimer also names the entitlement claims a test actor's token carries
-// (access.Entitled).
-type Claimer interface {
-	Claims(subject string) []string
-}
-
-func (v verified) Entitlements() []string {
-	if c, ok := v.authz.(Claimer); ok {
-		return c.Claims(v.id.Subject)
-	}
-	return nil
-}
-
-// GroupAuthorizer also decides permissions in the scopes of groups (an
-// owner group's AuthKit scope), named by their scope id under Issuer.
-type GroupAuthorizer interface {
-	Authorizer
-	CanIn(ctx context.Context, a access.Actor, scopeID, perm string) (bool, error)
-}
+// Entitlements are the subject's token entitlement claims.
+func (v verified) Entitlements() []string { return v.claims }
 
 func (v verified) Can(ctx context.Context, scope auth.Scope, perm string) (bool, error) {
-	actor := access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}
-	switch g, ok := v.authz.(GroupAuthorizer); {
-	case v.authz == nil || scope.Authority != Issuer:
-		return false, nil
-	case scope == Scope:
-		return v.authz.Can(ctx, actor, perm)
-	case ok:
-		return g.CanIn(ctx, actor, scope.ID, perm)
+	if sa, ok := v.authz.(ScopedAuthorizer); ok {
+		return sa.CanIn(ctx, access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}, scope, perm)
 	}
-	return false, nil
+	if scope != Scope || v.authz == nil {
+		return false, nil
+	}
+	return v.authz.Can(ctx, access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}, perm)
 }
 
 // Token is the bearer As sends for a signed-in actor.

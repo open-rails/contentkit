@@ -35,7 +35,8 @@ func (classifier) Classify(_ context.Context, a content.Answer) (content.GroupAs
 
 func (classifier) StatelessPolicy() {}
 
-// Blog items are catalog content; poll images live in content's poll folder.
+// Blog items are catalog content (their media the versions module's); poll
+// images live in content's poll folder.
 const (
 	blogKind   = "blog"
 	pollFolder = "poll"

@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
@@ -55,19 +56,12 @@ func config() kinds.Config {
 	}
 }
 
-// roles is the test auth: root permissions per actor ("*" holds all), the
-// editors of each group scope, and the tier claims of each actor's token.
+// roles is the test auth: root permissions per actor ("*" holds all) and
+// the editors of each group scope.
 type roles struct {
 	mu     sync.Mutex
 	root   map[string][]string
 	groups map[string]map[string]bool
-	claims map[string][]string
-}
-
-func (r *roles) Claims(subject string) []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.claims[subject]
 }
 
 func (r *roles) Can(_ context.Context, a access.Actor, perm string) (bool, error) {
@@ -76,10 +70,13 @@ func (r *roles) Can(_ context.Context, a access.Actor, perm string) (bool, error
 	return slices.Contains(r.root[a.ID], "*") || slices.Contains(r.root[a.ID], perm), nil
 }
 
-func (r *roles) CanIn(_ context.Context, a access.Actor, scope, perm string) (bool, error) {
+func (r *roles) CanIn(ctx context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error) {
+	if scope == testauth.Scope {
+		return r.Can(ctx, a, perm)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return perm == EditorPermission && r.groups[scope][a.ID], nil
+	return scope.Authority == testauth.Issuer && perm == EditorPermission && r.groups[scope.ID][a.ID], nil
 }
 
 type fixture struct {
@@ -90,6 +87,7 @@ type fixture struct {
 	s      *Store
 	groups *groups.Store
 	roles  *roles
+	auth   testauth.Auth // its Claims are each actor's token tier claims
 	mu     sync.Mutex
 	clock  time.Time
 }
@@ -103,9 +101,9 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
 	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool),
-		roles: &roles{root: map[string][]string{"staff": {"*"}, "viewer": {string(access.ContentViewRestricted)}}, groups: map[string]map[string]bool{},
-			claims: map[string][]string{}},
+		roles: &roles{root: map[string][]string{"staff": {"*"}, "viewer": {string(access.ContentViewRestricted)}}, groups: map[string]map[string]bool{}},
 		clock: time.Now().UTC().Truncate(time.Second)}
+	f.auth = testauth.Auth{Authz: f.roles, Claims: map[string][]string{}}
 	var err error
 	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(),
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
@@ -113,7 +111,7 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: f.roles},
+	opts := Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: f.auth,
 		Groups: f.groups, Now: f.now}
 	if mutate != nil {
 		mutate(&opts)
@@ -165,11 +163,7 @@ func (f *fixture) join(groupID, contentID, versionID string) {
 }
 
 // claim gives actorID's token the tier claims.
-func (f *fixture) claim(actorID string, tiers ...string) {
-	f.roles.mu.Lock()
-	defer f.roles.mu.Unlock()
-	f.roles.claims[actorID] = tiers
-}
+func (f *fixture) claim(actorID string, tiers ...string) { f.auth.Claims[actorID] = tiers }
 
 // editor makes actorID an editor of the channel's scope.
 func (f *fixture) editor(slug, actorID string) {
@@ -187,7 +181,13 @@ func (f *fixture) as(id string) access.Actor {
 	if id == "" {
 		return access.Actor{Anonymous: true, IP: "10.0.0.1"}
 	}
-	return testauth.Actor(access.Actor{ID: id, Kind: "user"}, f.roles)
+	a := access.Actor{ID: id, Kind: auth.SubjectUser}
+	v, err := f.auth.Authenticate(testauth.As(httptest.NewRequest(http.MethodGet, "/", nil), a))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	a.Verified = v
+	return a
 }
 
 var anon = ""

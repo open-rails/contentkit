@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -69,6 +70,17 @@ type VersionInput struct {
 	Text        map[string]VersionText `json:"text,omitempty"`       // replaces all
 	Segments    *[]Segment             `json:"segments,omitempty"`   // replaces all
 	Ordinal     *int                   `json:"ordinal,omitempty"`
+	// Fork fills a new version's media from a sibling (creation only).
+	Fork *VersionFork `json:"fork,omitempty"`
+}
+
+// VersionFork copies a sibling version's media into a new version: its
+// uploads and reader metadata, with Playback its audio, with Segments its
+// segments.
+type VersionFork struct {
+	From     string `json:"from"`
+	Playback bool   `json:"playback,omitempty"`
+	Segments bool   `json:"segments,omitempty"`
 }
 
 // Update is one ContentPatch.
@@ -108,6 +120,9 @@ type effects struct {
 	expose bool // anonymous visibility may have changed
 	// retitled are offer targets whose product name may have changed.
 	retitled []offers.Target
+	// republish are versions whose effective rule or segments changed.
+	republish []versions.Target
+	forks     []versions.Fork
 }
 
 // mutate runs fn over the authorized, locked items in one transaction, then
@@ -147,6 +162,19 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 	}
 	if err := s.emit(ctx, tx, fx.events...); err != nil {
 		return err
+	}
+	if s.media != nil && len(fx.republish) > 0 {
+		if err := s.media.Versions.RepublishTx(ctx, tx, fx.republish); err != nil {
+			return err
+		}
+	}
+	if len(fx.forks) > 0 {
+		if s.media == nil {
+			return errMediaNotConfigured
+		}
+		if err := s.media.Versions.ForkTx(ctx, tx, fx.forks); err != nil {
+			return err
+		}
 	}
 	if len(fx.retitled) > 0 && s.offers != nil {
 		if err := s.offers.Resync(ctx, tx, fx.retitled); err != nil {
@@ -220,6 +248,9 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 			p.versions = []VersionInput{{Languages: s.hiddenLanguages(p.kind, texts)}}
 		} else if p.versions = c.Versions; len(p.versions) == 0 {
 			return nil, invalid("a content item needs at least one version")
+		}
+		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
+			return nil, invalid("a new item's versions have no sibling to fork")
 		}
 		owners = append(owners, c.OwnerGroupID)
 		preps[i] = p
@@ -381,10 +412,34 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 					return fx, err
 				}
 			}
+			if u.Access != nil {
+				inheriting, err := s.inheritingVersions(ctx, tx, u.ID)
+				if err != nil {
+					return fx, err
+				}
+				fx.republish = append(fx.republish, inheriting...)
+			}
 			fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: o.kind, ContentID: u.ID})
 		}
 		return fx, nil
 	})
+}
+
+// inheritingVersions are the versions of content id that follow its rule.
+func (s *Store) inheritingVersions(ctx context.Context, tx pgx.Tx, id string) ([]versions.Target, error) {
+	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND access IS NULL AND state <> 'deleted' ORDER BY id`, s.tenant, id)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]versions.Target, len(ids))
+	for i, v := range ids {
+		out[i] = versions.Target{Content: id, Version: v}
+	}
+	return out, nil
 }
 
 var errStale = errors.Join(ErrConflict, errors.New("the content changed since it was read"))
@@ -750,12 +805,21 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			if k.Versions.Hidden {
 				return fx, invalid("kind %s has one hidden version", o.kind)
 			}
+			if p.Fork != nil {
+				if err := s.checkFork(ctx, tx, p); err != nil {
+					return fx, err
+				}
+			}
 			if p.VersionID == "" {
 				vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionInput)
 				if err != nil {
 					return fx, err
 				}
 				out[i] = vid
+				if f := p.Fork; f != nil {
+					fx.forks = append(fx.forks, versions.Fork{Version: versions.Target{Content: p.ContentID, Version: vid}, From: f.From,
+						Playback: f.Playback, Segments: f.Segments})
+				}
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 				continue
 			}
@@ -764,6 +828,9 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			}
 			if p.Label != nil {
 				fx.retitled = append(fx.retitled, offers.Target{Kind: offers.VersionTarget, ID: p.VersionID, Content: p.ContentID})
+			}
+			if p.Access != nil || p.ClearAccess || p.Segments != nil {
+				fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})
 			}
 			out[i] = p.VersionID
 			fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
@@ -863,6 +930,22 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 		return "", err
 	}
 	return id, nil
+}
+
+// checkFork accepts a fork into a new version from a live sibling.
+func (s *Store) checkFork(ctx context.Context, tx pgx.Tx, p VersionPut) error {
+	if p.VersionID != "" {
+		return invalid("a fork fills a new version")
+	}
+	var ok bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3 AND state <> 'deleted')`,
+		s.tenant, p.ContentID, p.Fork.From).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return invalid("fork source %s is not a version of %s", p.Fork.From, p.ContentID)
+	}
+	return nil
 }
 
 func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) error {

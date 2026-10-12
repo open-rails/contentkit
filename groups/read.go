@@ -268,7 +268,43 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 		page, err = s.cards(ctx, q, c)
 		return err
 	})
-	return page, err
+	if err != nil {
+		return page, err
+	}
+	slots := make([]coverSlot, len(page.Groups))
+	for i := range page.Groups {
+		slots[i] = coverSlot{page.Groups[i].Kind, page.Groups[i].ID, page.Groups[i].Cover}
+	}
+	return page, s.fillCovers(ctx, slots)
+}
+
+// coverSlot is a cover to fill in place.
+type coverSlot struct {
+	kind  string
+	id    GroupID
+	cover *Cover
+}
+
+// fillCovers resolves every slot's renditions in one call.
+func (s *Store) fillCovers(ctx context.Context, slots []coverSlot) error {
+	var asked []CoverOf
+	var at []*Cover
+	for _, sl := range slots {
+		if s.covers != nil && sl.cover != nil {
+			asked, at = append(asked, CoverOf{Kind: sl.kind, ID: sl.id, Cover: *sl.cover}), append(at, sl.cover)
+		}
+	}
+	if len(asked) == 0 {
+		return nil
+	}
+	got, err := s.covers.Covers(ctx, asked)
+	if err != nil {
+		return err
+	}
+	for i, c := range at {
+		c.Renditions = got[i]
+	}
+	return nil
 }
 
 const maxMergeHops = 8
@@ -358,7 +394,24 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 		}
 		return err
 	})
-	return d, err
+	if err != nil {
+		return d, err
+	}
+	slots := []coverSlot{{d.Kind, d.ID, d.Cover}}
+	for _, g := range append([]*GroupCard{d.Parent, d.Scope}, pointers(d.Children)...) {
+		if g != nil {
+			slots = append(slots, coverSlot{g.Kind, g.ID, g.Cover})
+		}
+	}
+	return d, s.fillCovers(ctx, slots)
+}
+
+func pointers(cards []GroupCard) []*GroupCard {
+	out := make([]*GroupCard, len(cards))
+	for i := range cards {
+		out[i] = &cards[i]
+	}
+	return out
 }
 
 func (s *Store) text(ctx context.Context, q Querier, id string) ([]Text, error) {

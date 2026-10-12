@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/offers"
@@ -30,7 +31,9 @@ func TestCatalogOverOpenRails(t *testing.T) {
 	ctx := t.Context()
 	var cat *catalog.Store
 	grp, err := groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error { return cat.ContentChanged(ctx, q, ids) }})
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return cat.ContentChanged(ctx, q, ids)
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,14 +145,11 @@ func TestCatalogOverOpenRails(t *testing.T) {
 	if got := read(max, ppv)[0]; got == nil || len(got.Versions) != 1 || got.Versions[0].ID != ja || !got.Versions[0].Decision.Allowed {
 		t.Fatalf("the version buyer's deleted item %+v", got)
 	}
-	targets := []catalog.Target{{Content: ppv}, {Content: ppv, Version: en}, {Content: ppv, Version: ja}}
-	sights, err := cat.See(access.WithMemo(ctx), max, targets)
-	if err != nil || len(sights) != 2 || sights[targets[0]] != (catalog.Sight{Visible: true}) || sights[targets[2]] != (catalog.Sight{Visible: true}) {
-		t.Fatalf("the version buyer sees %+v %v", sights, err)
-	}
-	opens, err := cat.Open(access.WithMemo(ctx), max, targets[1:])
-	if err != nil || len(opens) != 1 || !opens[targets[2]].Opens {
-		t.Fatalf("the version buyer opens %+v %v", opens, err)
+	// Media and interactions see the same through the resolver.
+	item := contentref.New(tenant, "post", ppv)
+	res, err := cat.Resolver().Resolve(access.WithMemo(ctx), []contentref.ContentRef{item, item.WithVersion(en), item.WithVersion(ja)}, max)
+	if err != nil || len(res) != 2 || !res[item.Key()].Visible || !res[item.WithVersion(ja).Key()].Accessible {
+		t.Fatalf("the version buyer resolves %+v %v", res, err)
 	}
 	if err := cat.Restore(ctx, staff, []string{ppv}); err != nil {
 		t.Fatal(err)

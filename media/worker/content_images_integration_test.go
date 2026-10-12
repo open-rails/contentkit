@@ -31,6 +31,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -42,30 +43,16 @@ func (ckStaff) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 	return a.ID == "staff" && !a.Anonymous, nil
 }
 
-// folders routes the blog kind to the catalog and the poll kind to the
-// content module, as a host's registry hooks do.
-type folders struct {
-	catalog *catalog.Store
-	content *content.Runtime
+// others is versions.Others: the poll kind's folders, through the content
+// module, as a host wires them.
+type others struct{ content *content.Runtime }
+
+func (o *others) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	return o.content.MediaResolver().Resolve(ctx, refs, a)
 }
 
-func (f *folders) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out, err := f.catalog.Resolver().Resolve(ctx, refs, a)
-	if err != nil {
-		return nil, err
-	}
-	polls, err := f.content.MediaResolver().Resolve(ctx, refs, a)
-	for k, v := range polls {
-		out[k] = v
-	}
-	return out, err
-}
-
-func (f *folders) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	if t.Ref.ContentKind == "poll" {
-		return f.content.CanUpload(ctx, a, t)
-	}
-	return f.catalog.CanUpload(ctx, a, t)
+func (o *others) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	return o.content.CanUpload(ctx, a, t)
 }
 
 type keepHTML struct{}
@@ -87,9 +74,34 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 320}}}}
 	}
-	hooks := &folders{}
-	reg, err := media.NewRegistry(media.Config{Namespace: env.Tenant, BaseURL: "https://media.example",
-		Kinds: []media.Kind{folder("blog"), folder("poll")}, Hooks: media.Hooks{Resolver: hooks, CanUpload: hooks}})
+	// The blog's images are its content-level item's; its hidden version
+	// takes attachments.
+	blog := folder("blog")
+	blog.Uploads[0].Content = true
+	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: pngs, MaxBytes: 10 << 20})
+	site := kinds.Config{Languages: []string{"en", "ja"}, Kinds: map[string]kinds.Kind{
+		"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+		"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}}}}
+	gallery := media.Kind{Name: "gallery", KeepOriginals: true, Uploads: []media.Upload{{Path: "pages/{name}", Types: pngs, MaxBytes: 10 << 20}}}
+	auth := testauth.Auth{Authz: ckStaff{}}
+	cat, err := catalog.New(ctx, catalog.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth, Kinds: site, Body: keepHTML{},
+		DeletedRetention: time.Nanosecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cat.Close)
+	polls := &others{}
+	svc, err := versions.New(versions.Options{Tenant: env.Tenant, Schema: schema, Pool: pool, Kinds: site, Auth: auth,
+		Resolver: cat.Resolver(), Facets: cat, Others: polls})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := media.ForContent(media.Config{Namespace: env.Tenant, BaseURL: "https://media.example",
+		Kinds: []media.Kind{blog, gallery, folder("poll")}, Hooks: svc.Hooks()}, site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := media.NewRegistry(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +125,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostRiver, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
+	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostRiver, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs(), svc.RiverJobs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,25 +146,24 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.Bind(versions.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.BindMedia(catalog.Media{Images: jobs.Manifests(), Reader: reader, Versions: svc}); err != nil {
+		t.Fatal(err)
+	}
 	rt, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 		EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
-		Auth:           testauth.Auth{Authz: ckStaff{}},
-		Content: content.Options{Resolver: hooks, ContentKinds: []string{"blog"}, Limits: content.Limits{Disabled: true},
+		Auth:           auth,
+		Content: content.Options{Resolver: cat.Resolver(), ContentKinds: []string{"blog"}, Limits: content.Limits{Disabled: true},
 			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
 		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := catalog.New(ctx, catalog.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: testauth.Auth{Authz: ckStaff{}},
-		Kinds: kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"blog": {Route: "blog", Presentation: "post",
-			Versions: kinds.VersionRules{Languages: "one", Hidden: true}}}},
-		Moderation: rt.Content, Body: keepHTML{}, Media: &catalog.Media{Images: jobs.Manifests(), Expose: jobs, Reader: reader}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cat.Close)
-	hooks.catalog, hooks.content = cat, rt.Content
+	cat.BindModeration(rt.Content)
+	polls.content = rt.Content
 	w, err := worker.New(ctx, worker.Config{Pool: pool, Schema: workers, ContentSchema: schema, Store: env.Store, Kinds: reg,
 		HostSchema: hostRiver, TempDir: t.TempDir(), Threads: 2})
 	if err != nil {
@@ -195,13 +206,12 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			t.Fatalf("%s %s as %q: %d, want %d", method, target, actor.ID, code, status)
 		}
 	}
-	upload := func(kind, id string, seed uint8) string {
+	put := func(ref media.RefBody, path string, seed uint8) string {
 		t.Helper()
 		body := pngImage(t, 640, 400, seed)
 		sum := sha256.Sum256(body)
-		ref := media.RefBody{Kind: kind, ID: id}
 		var plan media.PresignReply
-		must(http.StatusOK, staff, "POST", "/media/upload/presign", media.PresignBody{Ref: ref, Path: "photo.png", Type: "image/png",
+		must(http.StatusOK, staff, "POST", "/media/upload/presign", media.PresignBody{Ref: ref, Path: path, Type: "image/png",
 			Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}, &plan)
 		req, _ := http.NewRequest(plan.Put.Method, plan.Put.URL, bytes.NewReader(body))
 		for k, v := range plan.Put.Headers {
@@ -217,6 +227,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
 		return strings.TrimSuffix(plan.Path, ".png")
 	}
+	upload := func(kind, id string, seed uint8) string { return put(media.RefBody{Kind: kind, ID: id}, "photo.png", seed) }
 	// exists reports a file a URL names in the bucket.
 	exists := func(u string) bool {
 		t.Helper()
@@ -331,4 +342,35 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		must(http.StatusOK, anon, "GET", "/polls/"+poll.ID, nil, &p)
 		return p.ImageURL != "" && p.ImageURL != first.ImageURL && exists(p.ImageURL)
 	})
+
+	// Version media follows catalog writes: a new version forks a sibling's
+	// pages, and purging a deleted item deletes its media.
+	var g catalog.Content
+	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Pages"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &g)
+	from := g.Versions[0].ID
+	put(media.RefBody{Kind: "gallery", ID: g.ID, Version: from}, "pages/001.png", 11)
+	var forked catalog.Version
+	must(http.StatusCreated, staff, "POST", "/v1/contents/"+g.ID+"/versions", catalog.VersionInput{Languages: []string{"ja"},
+		Fork: &catalog.VersionFork{From: from}}, &forked)
+	forkRef, err := reg.VersionRef("gallery", g.ID, forked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := func() bool {
+		m, _, err := jobs.Manifests().Get(ctx, forkRef)
+		if err != nil || m == nil {
+			return false
+		}
+		_, ok := m.Get("pages/001.png")
+		return ok
+	}
+	eventually(t, "the forked pages", time.Minute, pages)
+	// A rule change republishes the versions that inherit it.
+	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+g.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.PPV}}, nil)
+	must(http.StatusNoContent, staff, "DELETE", "/v1/contents/"+g.ID, nil, nil)
+	if n, err := cat.PurgeDeleted(ctx); err != nil || n != 1 {
+		t.Fatalf("PurgeDeleted %d %v", n, err)
+	}
+	eventually(t, "the purged media", time.Minute, func() bool { return !pages() })
 }

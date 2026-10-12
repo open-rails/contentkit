@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -181,36 +180,14 @@ func TestResolverIntegration(t *testing.T) {
 		}
 	}
 
-	// See and Open answer media for content and versions: a locked
-	// version's preview segments are free.
-	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}}
+	// A locked version's decision carries the rule's preview and free_after.
+	free := f.now().Add(time.Hour)
+	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}, FreeAfter: &free}
 	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: preview}}}); err != nil {
 		t.Fatal(err)
 	}
-	version := Target{Content: id, Version: vs[0].ID}
-	targets := []Target{{Content: id}, version, {Content: draft}}
-	for _, c := range []struct {
-		actor  string
-		sights map[Target]Sight
-		open   Opening
-	}{
-		{anon, map[Target]Sight{{Content: id}: {Visible: true, Live: true}, version: {Visible: true, Live: true}}, Opening{Free: 1}},
-		{"pam", map[Target]Sight{{Content: id}: {Visible: true, Live: true}, version: {Visible: true, Live: true}}, Opening{Opens: true}},
-		{"staff", map[Target]Sight{{Content: id}: {Visible: true, Live: true, Editor: true}, version: {Visible: true, Live: true, Editor: true},
-			{Content: draft}: {Visible: true, Editor: true}}, Opening{Opens: true}},
-	} {
-		ctx := access.WithMemo(f.ctx)
-		sights, err := f.s.See(ctx, f.as(c.actor), targets)
-		if err != nil || !maps.Equal(sights, c.sights) {
-			t.Errorf("%q sees %+v %v", c.actor, sights, err)
-		}
-		opens, err := f.s.Open(ctx, f.as(c.actor), []Target{version})
-		if err != nil || len(opens) != 1 || opens[version] != c.open {
-			t.Errorf("%q opens %+v %v", c.actor, opens, err)
-		}
-	}
-	if tiers, err := f.s.Tiers(f.ctx, f.as("pam")); err != nil || !slices.Equal(tiers, []string{"premium"}) {
-		t.Fatalf("pam's tiers %v %v", tiers, err)
+	if d := f.read(anon, "main.test", id)[0].Versions[0].Decision; d.Allowed || d.Preview == nil || d.Preview.Segments != 1 || d.FreeAfter == nil || !d.FreeAfter.Equal(free) {
+		t.Fatalf("the locked decision %+v", d)
 	}
 }
 

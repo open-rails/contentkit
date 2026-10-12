@@ -12,18 +12,18 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
-// Media connects content items to ContentKit media. A content item's folder
-// is addressed by its reference (kind, content); each version's by
-// (kind, content, version). Covers and body images are inline images of the
-// content's folder: the browser uploads one to a named upload path and hands
-// its name ("i-{uuid}") to the catalog.
+// Media connects content items to ContentKit media, built over the
+// catalog's Resolver and RefreshTx (media/versions): bind it with BindMedia
+// before serving. A content item's media item is (kind, content), holding its
+// cover and body images; each version's is (kind, content, version).
 type Media struct {
-	Images Images  // *media.Manifests
-	Expose Exposer // *media.Jobs
+	Images Images // *media.Manifests
 	// Reader gives editors an unpublished item's image previews.
-	Reader Reader
+	Reader   Reader
+	Versions VersionMedia // *versions.Service
 }
 
 // Images answers image queries from current publications in one read.
@@ -31,66 +31,63 @@ type Images interface {
 	Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error)
 }
 
-// Exposer queues visibility changes and folder deletions in the writing
-// transaction.
-type Exposer interface {
-	ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error
-	DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
-}
-
 // Reader reads an item as the media read API does.
 type Reader interface {
 	Read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o media.ReadOptions) (*media.ReadResult, error)
 }
 
-var errMediaNotConfigured = errors.New("catalog: Options.Media is not configured")
-
-func newMedia(m *Media) (*Media, error) {
-	if m.Images == nil || m.Expose == nil {
-		return nil, errors.New("catalog: Media needs Images and Expose")
-	}
-	out := *m
-	return &out, nil
+// VersionMedia is the media calls catalog writes make in their transaction:
+// a target is a content item (its item and every version's) or one version.
+type VersionMedia interface {
+	// ExposeTx follows a visibility change.
+	ExposeTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
+	// RepublishTx follows a change of a version's effective rule or segments.
+	RepublishTx(ctx context.Context, tx pgx.Tx, versions []versions.Target) error
+	// DeleteTx deletes media before the rows go.
+	DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
+	// ForkTx fills new versions' media from siblings.
+	ForkTx(ctx context.Context, tx pgx.Tx, forks []versions.Fork) error
 }
 
-// folders are the media folders of content items: each content's and each of
-// its versions'.
-func (s *Store) folders(ctx context.Context, q Querier, ids []string) ([]contentref.ContentRef, error) {
-	rows, err := q.Query(ctx, `SELECT c.kind, c.id, coalesce(v.id, '') FROM `+s.t.items+` c
- LEFT JOIN `+s.t.versions+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id
- WHERE c.tenant_id = $1 AND c.id = ANY($2) ORDER BY c.id, v.id`, s.tenant, ids)
+var errMediaNotConfigured = errors.New("catalog: media is not bound")
+
+// BindMedia attaches media; call it once, before serving.
+func (s *Store) BindMedia(m Media) error {
+	if m.Images == nil || m.Versions == nil {
+		return errors.New("catalog: Media needs Images and Versions")
+	}
+	s.media = &m
+	return nil
+}
+
+// RefreshTx is versions.Facets: it refreshes the facets of the versions'
+// content items after their media facts changed.
+func (s *Store) RefreshTx(ctx context.Context, tx pgx.Tx, versionIDs []string) error {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT content_id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, versionIDs)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
-	var out []contentref.ContentRef
-	seen := map[string]bool{}
-	for rows.Next() {
-		var kind, id, version string
-		if err := rows.Scan(&kind, &id, &version); err != nil {
-			return nil, err
-		}
-		if !seen[id] {
-			seen[id] = true
-			out = append(out, s.Ref(kind, id))
-		}
-		if version != "" {
-			out = append(out, contentref.NewVersion(s.tenant, kind, id, version))
-		}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
 	}
-	return out, rows.Err()
+	return s.RefreshFacets(ctx, tx, ids)
 }
 
-// exposeTx asks media to bring the items' public files to their visibility.
+func contentTargets(ids []string) []versions.Target {
+	out := make([]versions.Target, len(ids))
+	for i, id := range ids {
+		out[i] = versions.Target{Content: id}
+	}
+	return out
+}
+
+// exposeTx asks media to bring the items' media to their visibility.
 func (s *Store) exposeTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	if s.media == nil || len(ids) == 0 {
 		return nil
 	}
-	refs, err := s.folders(ctx, tx, ids)
-	if err != nil || len(refs) == 0 {
-		return err
-	}
-	return s.media.Expose.ExposeTx(ctx, tx, refs...)
+	return s.media.Versions.ExposeTx(ctx, tx, contentTargets(ids))
 }
 
 // imageSet resolves the images one response shows with one lookup.
@@ -161,42 +158,3 @@ func (s *Store) previewURL(ctx context.Context, editor access.Actor, kind, id, n
 	}
 	return "", nil
 }
-
-// CanUpload is media's UploadAuthorizer for content folders: the actor edits
-// the content item (or, for a version folder, its content), which exists.
-// Other targets are refused.
-func (s *Store) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	ref := t.Ref
-	if ref.TenantID != s.tenant {
-		return media.UploadGrant{}, nil
-	}
-	if _, ok := s.cfg.Kinds[ref.ContentKind]; !ok {
-		return media.UploadGrant{}, nil
-	}
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return media.UploadGrant{}, err
-	}
-	defer tx.Rollback(ctx)
-	got, err := s.authorize(ctx, tx, actor, []string{ref.ContentID})
-	switch {
-	case errors.Is(err, ErrNotFound), errors.Is(err, ErrForbidden):
-		return media.UploadGrant{}, nil
-	case err != nil:
-		return media.UploadGrant{}, err
-	}
-	o := got[ref.ContentID]
-	if o.kind != ref.ContentKind || o.state == StateDeleted {
-		return media.UploadGrant{}, nil
-	}
-	if v := ref.Version(); v != "" {
-		var ok bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3 AND state <> 'deleted')`,
-			s.tenant, ref.ContentID, v).Scan(&ok); err != nil || !ok {
-			return media.UploadGrant{}, err
-		}
-	}
-	return media.UploadGrant{Allowed: true}, nil
-}
-
-var _ media.UploadAuthorizer = (*Store)(nil)
