@@ -37,7 +37,9 @@ const (
 	ContentRoutes RouteGroups = 1 << iota
 	// UploadRoutes: media uploads and commits (/v1/media/upload).
 	UploadRoutes
-	// MediaRoutes: media reads and HLS playlists (/v1/media).
+	// MediaRoutes: media reads and HLS playlists (/v1/media), and versions'
+	// reader plans, reader metadata, forks and downloads
+	// (/v1/contents/{id}/versions/{vid}/...).
 	MediaRoutes
 	// CodeRoutes: content-code lookup (/v1/codes).
 	CodeRoutes
@@ -63,7 +65,7 @@ var groupModules = []struct {
 }{
 	{ContentRoutes, []httpapi.Module{httpapi.Kinds, httpapi.Content}, "content"},
 	{UploadRoutes, []httpapi.Module{httpapi.Upload}, "upload"},
-	{MediaRoutes, []httpapi.Module{httpapi.Media}, "media"},
+	{MediaRoutes, []httpapi.Module{httpapi.Media, httpapi.Versions}, "media"},
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
 	{GroupRoutes, []httpapi.Module{httpapi.Groups}, "groups"},
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},

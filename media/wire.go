@@ -9,10 +9,12 @@ import (
 // (Reader.Handler). The browser SDK's types are generated from them
 // (internal/contract). SHA-256 values are lowercase hex.
 
-// RefBody names an item of the handler's registry.
+// RefBody names an item of the handler's registry: of a Versions kind, one
+// version's, or ("") its content-level item.
 type RefBody struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
 }
 
 // PresignBody declares one upload: its path, type, size and whole-file

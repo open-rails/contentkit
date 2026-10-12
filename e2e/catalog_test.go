@@ -253,6 +253,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
 	mediaScenario(t, f, user, anon)
+	versionsScenario(t, w, f, owner, user, anon)
 
 	served := f.checker.Served()
 	var missing []string
@@ -268,7 +269,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 }
 
 func mediaScenario(t *testing.T, f *server, user, anon string) {
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	ref := media.RefBody{Kind: "album", ID: cid(1)}
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
 	presign := func(path string) media.PresignBody { return presignPNG(ref, path, body) }
@@ -296,11 +297,11 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 		f.want(http.StatusBadRequest, user, "POST", p, media.TicketBody{Ticket: "forged"}, nil)
 	}
 	f.want(http.StatusBadRequest, user, "POST", "/media/upload/parts", media.PartsBody{Ticket: "forged", Parts: []media.PartBody{{Number: 1, Size: 1, SHA256: hex.EncodeToString(sum[:])}}}, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=gallery&id="+cid(1)+"&path=originals/001&t=1", nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=album&id="+cid(1)+"&path=originals/001&t=1", nil, nil)
 
 	// An editor read carries the kind's upload rules; a viewer's does not.
 	var read media.ReadResult
-	f.want(http.StatusOK, user, "GET", "/media/gallery/"+cid(1)+"?editor", nil, &read)
+	f.want(http.StatusOK, user, "GET", "/media/album/"+cid(1)+"?editor", nil, &read)
 	if len(read.Files) != 2 || !read.Files[0].Upload || len(read.Uploads) != 3 {
 		t.Fatalf("editor read %+v", read)
 	}
@@ -311,17 +312,17 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 		t.Fatalf("cover rule %+v", r)
 	}
 	var viewer media.ReadResult
-	f.want(http.StatusOK, anon, "GET", "/media/gallery/"+cid(1)+"?limit=10&editor", nil, &viewer)
+	f.want(http.StatusOK, anon, "GET", "/media/album/"+cid(1)+"?limit=10&editor", nil, &viewer)
 	if viewer.Uploads != nil {
 		t.Fatalf("a viewer read the upload rules: %+v", viewer.Uploads)
 	}
-	f.want(http.StatusNotFound, anon, "GET", "/media/gallery/"+cid(2), nil, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/gallery/"+cid(1)+"/hls/master.m3u8?audio=ja", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/media/album/"+cid(2), nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/album/"+cid(1)+"/hls/master.m3u8?audio=ja", nil, nil)
 
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 4 || presets[0].Kind != "gallery" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+	if len(presets) != 6 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
 		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" {
 		t.Fatalf("presets %+v", presets)
 	}

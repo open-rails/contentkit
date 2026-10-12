@@ -44,6 +44,7 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
@@ -76,8 +77,8 @@ type Engine struct {
 	groups   *groups.Store
 	offers   *offers.Service
 	media    *engineMedia
-	resolver access.ContentResolver
-	uploader media.UploadAuthorizer
+	resolver engineResolver
+	uploader engineUploader
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
 	probes   []Probe
@@ -93,6 +94,7 @@ type Engine struct {
 
 type engineMedia struct {
 	folders  bool // the registry declares the post and poll kinds
+	versions *versions.Service
 	reg      *media.Registry
 	store    media.Store
 	jobs     *media.Jobs
@@ -181,9 +183,14 @@ func (e *Engine) validate(deps Deps) error {
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
 	}
-	for kind := range cfg.Content.Kinds {
+	for _, kind := range append(slices.Collect(maps.Keys(cfg.Content.Kinds)), cfg.Interactions.HostKinds...) {
 		if slices.Contains(httpapi.Reserved(), kind) {
 			return fmt.Errorf("contentkit: content kind %q is a route group's path", kind)
+		}
+	}
+	for _, kind := range cfg.Interactions.HostKinds {
+		if _, ok := cfg.Content.Kinds[kind]; ok {
+			return fmt.Errorf("contentkit: %q is a content kind and a host kind", kind)
 		}
 	}
 	if deps.Postgres == nil {
@@ -273,15 +280,28 @@ func (e *Engine) openSignalPlane(ctx context.Context, deps Deps) error {
 
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
 	mc := e.cfg.Media
-	reg := mc.Config
-	reg.Hooks = media.Hooks{Resolver: e.resolver, CanUpload: e.uploader, PurgePublic: deps.PurgePublic}
+	// Posts and polls keep their folders until posts become a kind (#120).
+	site := e.cfg.Content
+	site.Kinds = maps.Clone(site.Kinds)
+	delete(site.Kinds, content.KindPost)
+	reg, err := media.ForContent(mc.Config, site)
+	if err != nil {
+		return nil, err
+	}
 	m := &engineMedia{store: deps.Store}
 	declared := map[string]bool{}
-	for _, k := range mc.Kinds {
+	for _, k := range reg.Kinds {
 		declared[k.Name] = true
 	}
 	m.folders = declared[postFolder] && declared[pollFolder]
-	var err error
+	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
+		Resolver: e.resolver, Gate: e.gate, Facets: noFacets{}, Others: others{engineResolver: e.resolver, engineUploader: e.uploader},
+		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, Redis: deps.Redis},
+		Logger:    e.log, Now: now}); err != nil {
+		return nil, err
+	}
+	reg.Hooks = m.versions.Hooks()
+	reg.Hooks.PurgePublic = deps.PurgePublic
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
 	}
@@ -340,6 +360,9 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	m.limit = rate(mc.ReadLimit)
+	if err := m.versions.Bind(versions.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs}); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -361,14 +384,14 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			PostReaction: rates(l.PostReaction), Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
-		ContentKinds: slices.Sorted(maps.Keys(e.cfg.Content.Kinds)),
+		ContentKinds: append(slices.Sorted(maps.Keys(e.cfg.Content.Kinds)), in.HostKinds...),
 		Logger:       e.log,
 	}
 	if e.hub.SignalPlane() {
 		// Preferences are exported under the reference they were made on: content ids are ContentKit's own.
 		o.Canonicalizer = content.ContentCanonicalizerFunc(func(ref contentref.ContentRef) (contentref.ContentRef, bool) {
 			_, ok := e.cfg.Content.Kinds[ref.ContentKind]
-			return ref, ok || ref.ContentKind == content.KindPost
+			return ref, ok || ref.ContentKind == content.KindPost || slices.Contains(e.cfg.Interactions.HostKinds, ref.ContentKind)
 		})
 	}
 	if e.media != nil {
@@ -388,9 +411,16 @@ func (e *Engine) mount(deps Deps) error {
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit})
+		if e.modules[httpapi.Versions], err = m.versions.Handler(e.auth, e.log); err != nil {
+			return err
+		}
 	}
 	c := e.cfg.Content
-	if e.groups, err = groups.New(groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Logger: e.log}); err != nil {
+	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Logger: e.log}
+	if e.media != nil {
+		opts.Covers = e.media.versions.GroupCovers()
+	}
+	if e.groups, err = groups.New(opts); err != nil {
 		return err
 	}
 	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {

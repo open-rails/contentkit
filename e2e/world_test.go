@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -50,7 +51,6 @@ type world struct {
 	t      *testing.T
 	ak     *authkit.Client
 	scope  auth.Scope // the root group: AuthKit's root scope, where staff hold their permissions
-	media  iam.Perm   // edit any item's media
 	staff  iam.Role
 	pool   *pgxpool.Pool
 	schema string
@@ -69,8 +69,7 @@ func newWorld(t *testing.T) *world {
 	rbac := authkit.NewRoles(authkit.APIKeys)
 	// ContentKit names its staff permissions; the host declares them and
 	// builds its roles from them, beside its own.
-	w.media = rbac.Root.Permission("media", "edit")
-	grants := []iam.Grant{w.media}
+	var grants []iam.Grant
 	for _, p := range rbac.Root.Declare(access.Names(access.Permissions()...)...) {
 		grants = append(grants, p)
 	}
@@ -97,8 +96,8 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
-// mediaConfig is the site's media registry: galleries, accounts' avatars and
-// ContentKit's own post and poll images.
+// mediaConfig is the site's media registry: the host's albums, books'
+// versions, accounts' avatars and ContentKit's own post and poll images.
 func (w *world) mediaConfig() media.Config {
 	images := []string{"image/png"}
 	folder := func(name string) media.Kind {
@@ -107,10 +106,15 @@ func (w *world) mediaConfig() media.Config {
 	}
 	return media.Config{BaseURL: "https://media.test",
 		Kinds: []media.Kind{
-			{Name: "gallery", KeepOriginals: true,
+			{Name: "album", KeepOriginals: true,
 				Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10}, {Path: "cover", Types: images, MaxBytes: 1 << 20},
 					{Path: "extras/{name}", Types: images, MaxBytes: 1 << 20, Max: 1}},
 				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}},
+			{Name: "book", Versions: true, KeepOriginals: true,
+				Publish: &media.Publish{Pages: "pages/{name}", Renditions: []string{"read"}, Download: "zip"},
+				Uploads: []media.Upload{{Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
+				Private: []media.Private{{Name: "read", From: "pages/{name}", To: "read/{name}.webp", Image: &media.Image{Width: 64}},
+					{Name: "zip", To: "download/pages.zip", Zip: "read/", HostOnly: true}}},
 			{Name: "user", Namespace: "accounts", KeepOriginals: true,
 				Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
@@ -127,10 +131,11 @@ func (w *world) config() contentkit.Config {
 		Content: kinds.Config{Languages: []string{"en"},
 			Kinds: map[string]kinds.Kind{
 				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag", "series"}},
+				"book":    {Route: "b", Presentation: "reader", Versions: one},
 				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
 			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
-		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
+		Interactions: contentkit.InteractionsConfig{HostKinds: []string{"album"}, Limits: contentkit.LimitsConfig{Disabled: true}},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}},
@@ -231,44 +236,40 @@ func (w *world) person(role iam.Role) (authtest.User, string) {
 	return u, authtest.SignIn(w.t, w.ak, u).AccessToken
 }
 
-// Resolve is the host's resolver: the gallery cid(1), owned by w.owner, is
-// visible to everyone and edited by any signed-in person; an account's item
-// is its person's and staff's to edit.
+// Resolve is the host's resolver: the gallery and the album cid(1), owned
+// by w.owner, are visible to everyone and edited by any signed-in person.
+// Books stand in for the catalog's resolver over the contract tables: a
+// version is live when it and its content are published, its content's
+// creators edit it, and only a public rule opens it.
 func (w *world) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, r := range refs {
 		switch {
-		case r.ContentKind == "gallery" && r.ContentID == cid(1):
+		case (r.ContentKind == "gallery" || r.ContentKind == "album") && r.ContentID == cid(1):
 			out[r.Key()] = access.Resolution{Visible: true, Accessible: true, Owner: w.owner, Editor: a.Person()}
-		case r.ContentKind == "user":
-			editor, err := w.ownOrStaff(ctx, a, r.ContentID)
-			if err != nil {
+		case r.ContentKind == "book":
+			t := func(name string) string { return pgx.Identifier{w.schema, name}.Sanitize() }
+			var live, creator, public bool
+			err := w.pool.QueryRow(ctx, `SELECT c.state = 'published' AND v.state = 'published',
+	EXISTS (SELECT 1 FROM `+t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4),
+	c.access->>'level' = 'public'
+FROM `+t("content_items")+` c JOIN `+t("content_versions")+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id
+WHERE c.tenant_id = $1 AND c.id = $2 AND ($3 = '' OR v.id = $3) LIMIT 1`, w.tenant, r.ContentID, r.Version(), a.ID).Scan(&live, &creator, &public)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			} else if err != nil {
 				return nil, err
 			}
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true, Owner: r.ContentID, Editor: editor}
+			out[r.Key()] = access.Resolution{Visible: live || creator && a.Person(), Accessible: public, Editor: creator && a.Person()}
 		}
 	}
 	return out, nil
 }
 
-// CanUpload is the host's upload authorizer: a person's own avatar (their
-// quota), staff anyone's (exempt), and the gallery for any signed-in person.
-func (w *world) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	if t.Ref.ContentKind != "user" {
-		return media.UploadGrant{Allowed: a.Person()}, nil
-	}
-	if a.Person() && a.ID == t.Ref.ContentID {
-		return media.UploadGrant{Allowed: true, Owner: a.ID}, nil
-	}
-	ok, err := a.Can(ctx, w.scope, w.media.String())
-	return media.UploadGrant{Allowed: ok, Exempt: ok}, err
-}
-
-func (w *world) ownOrStaff(ctx context.Context, a access.Actor, id string) (bool, error) {
-	if a.Person() && a.ID == id {
-		return true, nil
-	}
-	return a.Can(ctx, w.scope, w.media.String())
+// CanUpload is the host's upload authorizer: the album for any signed-in
+// person. ContentKit decides avatars, versions and groups itself.
+func (w *world) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
+	return media.UploadGrant{Allowed: a.Person()}, nil
 }
 
 // server serves the engine's routes under prefix, every response held to

@@ -49,22 +49,19 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 // backstop for missed schedules and abandoned uploads.
 func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
-	for _, k := range j.cfg.Registry.cfg.Kinds {
+	for _, k := range j.cfg.Registry.all {
 		if j.cfg.Journal.Bound(k.ns) {
 			continue // its owner sweeps it
 		}
-		root := k.ns + "/" + k.Name + "/"
-		last := ""
-		for o, err := range j.cfg.Store.List(ctx, root) {
+		for ref, err := range j.itemFolders(ctx, k) {
 			if err != nil {
 				return errors.Join(append(errs, err)...)
 			}
-			id, _, _ := strings.Cut(strings.TrimPrefix(o.Key, root), "/")
-			if id == last || contentref.ValidateID(id) != nil {
-				continue
+			item, err := j.cfg.Registry.Item(ref)
+			if err == nil {
+				_, err = j.sweep(ctx, item.Prefix())
 			}
-			last = id
-			if _, err := j.sweep(ctx, root+id+"/"); err != nil {
+			if err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -76,11 +73,11 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 }
 
 func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
-	ns, kind, id, err := parseFolder(prefix)
+	ref, err := parseFolder(prefix)
 	if err != nil {
 		return SweepResult{}, err
 	}
-	item, err := j.cfg.Registry.Item(contentref.New(ns, kind, id))
+	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
 		return SweepResult{}, err
 	}
@@ -98,7 +95,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 				return journalEffects{}, err
 			}
 			k, ok := layout.Parse(o.Key)
-			if !ok || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
+			if !ok || k.Folder() != prefix || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
 				continue
 			}
 			switch k.Area {
@@ -179,9 +176,10 @@ func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
 	return objs, nil
 }
 
-// deleteFolder removes every object under prefix: the manifest and public/
-// first, so readers stop resolving the item and public URLs stop answering,
-// before its blobs go. Removed public keys are purged.
+// deleteFolder removes every object under prefix but other items' folders
+// within it: the manifest and public/ first, so readers stop resolving the
+// item and public URLs stop answering, before its blobs go. Removed public
+// keys are purged.
 func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	objs, err := j.list(ctx, prefix)
 	if err != nil {
@@ -189,7 +187,11 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	}
 	var first, public, rest []string
 	for _, o := range objs {
-		switch k, _ := layout.Parse(o.Key); k.Area {
+		k, ok := layout.Parse(o.Key)
+		if ok && k.Folder() != prefix {
+			continue
+		}
+		switch k.Area {
 		case layout.AreaManifest:
 			first = append(first, o.Key)
 		case layout.AreaPublic:
@@ -224,7 +226,8 @@ func (j *Jobs) deleteKeys(ctx context.Context, keys []string) error {
 type OrphanSweep struct {
 	Kind string
 	// Exists reports which of ids the host still has (a batch of at most
-	// 500). An id it omits is an orphan.
+	// 500): item ids, and of a Versions kind its version ids too. An id it
+	// omits is an orphan.
 	Exists func(ctx context.Context, ids []string) (map[string]bool, error)
 	// Grace skips folders with an object newer than this (default the Jobs
 	// grace), so an item created meanwhile is never taken for an orphan.
@@ -233,11 +236,13 @@ type OrphanSweep struct {
 	Delete bool
 }
 
-// OrphanFolder is a folder no host item owns. ValidID false: its id is not
-// an item id, so no item can ever address it.
+// OrphanFolder is a folder no host item owns: ID is its item's id, or its
+// version's. ValidID false: its id is not an item id, so no item can ever
+// address it.
 type OrphanFolder struct {
 	Prefix  string
 	ID      string
+	ref     contentref.ContentRef
 	ValidID bool
 	Objects int
 	Newest  time.Time
@@ -272,14 +277,21 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 		if err != nil {
 			return rep, err
 		}
-		id, _, ok := strings.Cut(strings.TrimPrefix(o.Key, root), "/")
-		if !ok || id == "" || id == layout.DefaultID {
+		prefix, id := "", ""
+		ref := contentref.ContentRef{}
+		if key, ok := layout.Parse(o.Key); ok && key.Kind == k.Name && key.ID != layout.DefaultID {
+			prefix, id = key.Folder(), cmpOr(key.Version, key.ID)
+			ref, _ = parseFolder(prefix)
+		} else if first, _, ok := strings.Cut(strings.TrimPrefix(o.Key, root), "/"); ok && first != "" && first != layout.DefaultID {
+			prefix, id = root+first+"/", first
+		} else {
 			continue
 		}
-		f := folders[id]
+		f := folders[prefix]
 		if f == nil {
-			f = &OrphanFolder{Prefix: root + id + "/", ID: id, ValidID: contentref.ValidateID(id) == nil}
-			folders[id] = f
+			_, err := j.cfg.Registry.Item(ref)
+			f = &OrphanFolder{Prefix: prefix, ID: id, ref: ref, ValidID: err == nil}
+			folders[prefix] = f
 		}
 		f.Objects++
 		if o.LastModified.After(f.Newest) {
@@ -287,13 +299,13 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 		}
 	}
 	rep.Folders = len(folders)
-	ids := slices.Sorted(maps.Keys(folders))
-	for start := 0; start < len(ids); start += 500 {
-		batch := ids[start:min(start+500, len(ids))]
+	prefixes := slices.Sorted(maps.Keys(folders))
+	for start := 0; start < len(prefixes); start += 500 {
+		batch := prefixes[start:min(start+500, len(prefixes))]
 		var valid []string
-		for _, id := range batch {
-			if folders[id].ValidID {
-				valid = append(valid, id)
+		for _, p := range batch {
+			if folders[p].ValidID {
+				valid = append(valid, folders[p].ID)
 			}
 		}
 		exists := map[string]bool{}
@@ -302,15 +314,14 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 				return rep, err
 			}
 		}
-		for _, id := range batch {
-			f := folders[id]
-			if exists[id] || f.Newest.After(cutoff) {
+		for _, p := range batch {
+			f := folders[p]
+			if f.ValidID && exists[f.ID] || f.Newest.After(cutoff) {
 				continue
 			}
 			if s.Delete {
 				if f.ValidID {
-					ref := contentref.New(k.ns, k.Name, id)
-					item, _ := j.cfg.Registry.Item(ref)
+					item, _ := j.cfg.Registry.Item(f.ref)
 					m, _, err := j.manifests.get(ctx, item.ManifestKey())
 					if errors.Is(err, ErrUpgradeRequired) {
 						continue // never deleted before the upgrade reads it

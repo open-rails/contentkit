@@ -42,16 +42,19 @@ const (
 	Notifications Module = "notifications"
 	// Kinds is the site's public content model.
 	Kinds Module = "kinds"
+	// Versions is content versions' reader plan, reader metadata, forks and
+	// downloads.
+	Versions Module = "versions"
 	// Offers is offers on content, versions and groups, free group joins and
 	// the viewer's library.
 	Offers Module = "offers"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Offers}
+var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Versions, Offers}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
-// content, groups, offers and kinds at its root and the others beneath their own
+// content, groups, versions, offers and kinds at its root and the others beneath their own
 // first segment. Modules sharing a prefix share one router.
 func (m Module) Prefix() string {
 	switch m {
@@ -332,6 +335,8 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
 	case "module:codes", "module:groups", "module:catalog", "module:notifications", "module:kinds":
 		return []string{CodeInternal}
+	case "module:versions":
+		return []string{CodeInternal, CodeNotFound, CodeUnavailable}
 	case "module:offers":
 		return []string{CodeInternal, CodeUnavailable}
 	}

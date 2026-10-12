@@ -17,6 +17,136 @@ import (
 type kindState struct {
 	ns       string
 	patterns []pattern // parallel to Uploads
+	content  *Kind     // a Versions kind's content-level item, nil without Content uploads
+	version  *Kind     // a Versions kind's versions
+	of       *Kind     // a published kind's Publish kind
+}
+
+// Of is a published kind's Publish kind, nil for any other.
+func (k *Kind) Of() *Kind { return k.of }
+
+// VersionKind is a Versions kind as its versions see it: without the
+// content-level uploads.
+func (k *Kind) VersionKind() *Kind { return k.version }
+
+// levels splits a Versions kind into its content-level and version views
+// and derives its published kind (nil without Publish).
+func (k *Kind) levels() (*Kind, error) {
+	if !k.Versions {
+		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Content }) || k.Publish != nil {
+			return nil, errors.New("Content uploads and Publish need Versions")
+		}
+		return nil, nil
+	}
+	content := map[string]bool{}
+	for _, u := range k.Uploads {
+		content[u.Path] = u.Content
+	}
+	views := [2]Kind{}
+	for i := range views {
+		views[i] = Kind{Name: k.Name, Namespace: k.Namespace, KeepOriginals: k.KeepOriginals, ServeOriginals: k.ServeOriginals,
+			Defaults: k.Defaults}
+		views[i].ns = k.ns
+	}
+	views[1].Versions, views[1].Publish = true, k.Publish
+	at := func(content bool) *Kind {
+		if content {
+			return &views[0]
+		}
+		return &views[1]
+	}
+	for _, u := range k.Uploads {
+		v := at(u.Content)
+		v.Uploads = append(v.Uploads, u)
+	}
+	for _, p := range k.Private {
+		v := at(content[p.From])
+		v.Private = append(v.Private, p)
+	}
+	for _, p := range k.Public {
+		v := at(content[p.From])
+		v.Public = append(v.Public, p)
+	}
+	for i, level := range []string{"content", "version"} {
+		if len(views[i].Uploads) == 0 {
+			continue
+		}
+		if err := views[i].validate(); err != nil {
+			return nil, fmt.Errorf("%s level: %w", level, err)
+		}
+	}
+	if len(views[0].Uploads) > 0 {
+		k.content = &views[0]
+	}
+	if len(views[1].Uploads) == 0 {
+		return nil, errors.New("a Versions kind needs uploads of its versions")
+	}
+	k.version = &views[1]
+	if k.Publish == nil {
+		return nil, nil
+	}
+	pub, err := k.version.published()
+	if err != nil {
+		return nil, fmt.Errorf("Publish: %w", err)
+	}
+	pub.of = k
+	return pub, nil
+}
+
+// published validates Publish on a version view and derives its kind.
+func (k *Kind) published() (*Kind, error) {
+	p := k.Publish
+	pages := k.uploadIndex(p.Pages)
+	if pages < 0 || k.patterns[pages].literal != "" || k.Uploads[pages].Named || !k.feedsImages(p.Pages) {
+		return nil, fmt.Errorf("Pages %q is no {name} image upload of versions", p.Pages)
+	}
+	maxBytes := max(k.Uploads[pages].MaxBytes, 64<<20)
+	out := &Kind{Name: k.Name + PublishedSuffix, Namespace: k.Namespace, KeepOriginals: true, ServeOriginals: true}
+	out.ns = k.ns
+	if len(p.Renditions) == 0 {
+		return nil, errors.New("needs Renditions")
+	}
+	for _, name := range p.Renditions {
+		r := k.private(name)
+		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") {
+			return nil, fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp", name)
+		}
+		dir := strings.TrimSuffix(r.To, nameVar+".webp")
+		out.Uploads = append(out.Uploads, Upload{Path: dir + nameVar, Types: []string{"image/webp"}, MaxBytes: maxBytes})
+	}
+	if p.Previews != "" {
+		pv := k.public(p.Previews)
+		if pv == nil || pv.First == 0 || !slices.Contains(k.Uploads[k.uploadIndex(pv.From)].Types, "image/webp") {
+			return nil, fmt.Errorf("Previews %q is no preview preset (First) of a WebP upload", p.Previews)
+		}
+	}
+	if p.Playback != "" {
+		a := k.private(p.Playback)
+		dir, ok := "", false
+		if a != nil {
+			dir, ok = strings.CutSuffix(a.To, nameVar+"/")
+		}
+		if a == nil || a.Audio == nil || !ok {
+			return nil, fmt.Errorf("Playback %q is no Audio preset to {dir}{name}/", p.Playback)
+		}
+		src := k.Uploads[k.uploadIndex(a.From)]
+		out.Uploads = append(out.Uploads, Upload{Path: dir + nameVar, Types: []string{"audio/mp4"}, MaxBytes: max(src.MaxBytes, 64<<20)})
+	}
+	if p.Import != "" {
+		i := k.uploadIndex(p.Import)
+		if i < 0 || k.patterns[i].literal != "" || !slices.Equal(k.Uploads[i].Types, []string{"application/zip"}) {
+			return nil, fmt.Errorf("Import %q is no {name} upload of application/zip", p.Import)
+		}
+	}
+	if p.Download != "" {
+		if z := k.private(p.Download); z == nil || z.Zip == "" || !z.HostOnly {
+			return nil, fmt.Errorf("Download %q is no HostOnly Zip preset", p.Download)
+		}
+	}
+	if err := out.validate(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // upload finds the Upload a path (stem plus optional extension) belongs to:

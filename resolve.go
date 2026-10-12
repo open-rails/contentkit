@@ -3,6 +3,8 @@ package contentkit
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -59,6 +61,19 @@ func (r engineResolver) Resolve(ctx context.Context, refs []contentref.ContentRe
 	}
 	return out, nil
 }
+
+// others are the media kinds versions leaves to the engine: post and poll
+// images, and the host's own kinds.
+type others struct {
+	engineResolver
+	engineUploader
+}
+
+// noFacets leaves content_facets to the catalog's writes until it refreshes
+// them on media facts (#120).
+type noFacets struct{}
+
+func (noFacets) RefreshTx(context.Context, pgx.Tx, []string) error { return nil }
 
 // engineUploader authorizes uploads to ContentKit's own items itself and
 // asks the host (Deps.CanUpload) for the rest.

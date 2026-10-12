@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (97). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, offers `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (103). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -81,7 +81,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/v1/media/upload/complete` | user | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
 | POST | `/v1/media/upload/abort` | user | `TicketBody` | 204 — | Abandons a multipart upload. |
 | POST | `/v1/media/upload/commit` | user | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
-| GET | `/v1/media/upload/frame` | user | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `path`, `t`, `w`. |
+| GET | `/v1/media/upload/frame` | user | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
 
 ## Media reads and playback (`/v1/media`)
 
@@ -90,6 +90,8 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
 | GET | `/v1/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
 | GET | `/v1/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
+| GET | `/v1/media/{kind}/{id}/versions/{version}` | public | — | 200 `ReadResult` | A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
+| GET | `/v1/media/{kind}/{id}/versions/{version}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's. Query: `audio`, `subs`. |
 
 ## Content codes (`/v1/codes`)
 
@@ -129,6 +131,15 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PUT | `/v1/notifications/{id}/dismiss` | user | — | 200 `Item` | Archives this receipt without changing its read or workflow state. |
 | DELETE | `/v1/notifications/{id}/dismiss` | user | — | 200 `Item` | Restores an archived receipt to this user's inbox. |
 | POST | `/v1/notifications/publish` | staff `root:notifications:publish` | `Publication` | 200 `Published` | Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped. |
+
+## Content versions: reader plan, reader metadata, forks, downloads (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/contents/{id}/versions/{version}/reader` | public | — | 200 `ReaderPlan`<br>202 `Pending` | A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication. |
+| PUT | `/v1/contents/{id}/versions/{version}/reader` | user | `ReaderMeta` | 204 — | Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads. |
+| POST | `/v1/contents/{id}/versions/{version}/fork` | user | `ForkBody` | 202 `Pending` | Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job. |
+| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `application/zip`<br>202 `Pending` | A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared. |
 
 ## Offers, free group joins and the library (`/v1`)
 

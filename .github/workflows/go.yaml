@@ -1,5 +1,5 @@
 name: go
-# Core Go packages. media/image, media/video, media/worker and cmd/media-worker run in their own workflows.
+# Core Go packages. media/image, media/video, media/worker, media/versions (its tests run the worker) and cmd/media-worker run in their own workflows.
 'on':
   pull_request:
     branches: [master, 'next/**']
@@ -88,7 +88,7 @@ jobs:
         exit 1
     - name: vet, test
       run: |
-        pkgs=$(go list ./... | grep -vE '/media/(image|video|worker)$|/cmd/media-worker$')
+        pkgs=$(go list ./... | grep -vE '/media/(image|video|worker|versions)$|/cmd/media-worker$')
         go vet $pkgs
         go test $pkgs -count=1 -race -p 2
     - name: e2e with a real AuthKit (its own module), vet, test

@@ -148,7 +148,7 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *G
 
 func (r *Reader) requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor, error) {
 	actor := gate.Actor(req.Context())
-	ref, err := r.reg.Ref(req.PathValue("kind"), req.PathValue("id"))
+	ref, err := r.reg.VersionRef(req.PathValue("kind"), req.PathValue("id"), req.PathValue("version"))
 	if err != nil {
 		return ref, actor, ErrNotVisible
 	}

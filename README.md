@@ -99,7 +99,10 @@ for _, r := range routes {
   lock. It may share the host's database, never its schema. PGroonga and
   pg_trgm live in `public`.
 - `Config` is plain data (YAML/JSON); `Deps` holds connections and
-  providers. Media's namespace is the tenant.
+  providers. Media's namespace is the tenant; content kinds' media are their
+  versions' (`media.ForContent`, the `media/versions` service), and
+  `Interactions.HostKinds` are the host's own commentable kinds with plain
+  media until #120.
 - `Start` runs every background job: search indexing, preference sync,
   co-engagement, projection repair, erasure, groups' counts and windows,
   offer sync and the media jobs. Hosts schedule nothing. Start before
@@ -125,7 +128,7 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 |---|---|---|
 | `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), posts, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
-| `MediaRoutes` | `/v1/media`: reads and HLS playlists | `Config.Media` |
+| `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `GroupRoutes` | `/v1/groups`, `/v1/contents/{id}/groups`: listings and pages, writes for `root:groups:write` | always |
 | `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
@@ -244,13 +247,16 @@ commit ops, reads and exposure.
                        /private/sha256-{hex}  every blob: uploads, derived files, editor views (token)
                        /public/{name}         app-declared names, e.g. cover-460.webp (anyone)
                        /temp/{name}           staged uploads (u-{uuid}) and in-flight writes; never served
+{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
 {namespace}/{kind}/_default/public/{name}     a public preset's default image
 ```
 
-An item is the host's version (`gallery/456` English, `gallery/789` Korean).
-Private blobs are content-addressed and immutable; public names are fixed and
-overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
-`https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
+A content kind's items are its versions, `{kind, content, version}`, each in
+its content's folder beside the content-level item (its cover); other kinds'
+items have no versions. Private blobs are content-addressed and immutable;
+public names carry a generation. Every URL is
+`https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
+`media/versions` publishes versions to viewers (see HOST_INTEGRATION "Media").
 
 `Config.Media` is the registry (`media.Config`, without hooks) and how it is
 served; the engine builds the uploads, reads, journal, worker queue and jobs

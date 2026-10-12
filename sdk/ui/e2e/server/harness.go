@@ -73,21 +73,17 @@ type harness struct {
 	media      string
 }
 
-// site is the content model: commentable kinds with their URL routes, and
-// the group kinds galleries and albums join.
+// site is the content model: ContentKit's posts, and the group kinds.
 var site = func() kinds.Config {
-	one := kinds.VersionRules{Languages: "one"}
-	grouped := []string{"tag", "series", "character"}
 	return kinds.Config{Languages: []string{"en", "de", "ja"},
-		Kinds: map[string]kinds.Kind{
-			"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: grouped},
-			"album":   {Route: "post", Presentation: "post", Versions: one, Groups: grouped},
-			"video":   {Route: "watch", Presentation: "player", Versions: one},
-			"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
-		},
+		Kinds: map[string]kinds.Kind{"post": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}},
 		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
 			"character": {Route: "characters", ScopedBy: "series"}}}
 }
+
+// hostKinds are the items the host owns (/__test/items): commentable, with
+// plain media.
+var hostKinds = []string{"gallery", "album", "video"}
 
 func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, err error) {
 	h := &harness{items: newItems(), bucket: c.bucket, origin: c.origin, media: mediaOrigin}
@@ -127,7 +123,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	// One ContentKit per mount, over one schema: AuthKit and the host's
 	// hooks for the items it still owns passed straight in.
 	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
-		Interactions: contentkit.InteractionsConfig{
+		Interactions: contentkit.InteractionsConfig{HostKinds: hostKinds,
 			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
 			// The suites test the bound; the default may change.
 			CommentMaxLength: 400,
@@ -181,7 +177,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
 		return nil, err
 	}
-	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: site().Routes(), Languages: site().Languages}); err != nil {
+	routes := site().Routes()
+	routes["gallery"], routes["album"], routes["video"] = "g", "post", "watch"
+	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: routes, Languages: site().Languages}); err != nil {
 		return nil, err
 	}
 

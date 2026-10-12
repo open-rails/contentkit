@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // ErrFolderNotEmpty: a new item's folder already holds objects. Item ids are
@@ -34,7 +35,7 @@ func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Man
 	if err != nil {
 		return nil, err
 	}
-	if keys, err := m.keys(ctx, item.Prefix(), 3); err != nil {
+	if keys, err := m.keys(ctx, item, item.Prefix(), 3); err != nil {
 		return nil, err
 	} else if len(keys) > 0 {
 		return nil, &FolderNotEmptyError{Prefix: item.Prefix(), Keys: keys}
@@ -46,7 +47,7 @@ func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Man
 // manifest are a previous item's leftovers (uploads may precede a first
 // commit; public files never do).
 func (m *Manifests) requireFresh(ctx context.Context, item Item) error {
-	keys, err := m.keys(ctx, item.PublicPrefix(), 3)
+	keys, err := m.keys(ctx, item, item.PublicPrefix(), 3)
 	if err != nil {
 		return err
 	}
@@ -56,11 +57,15 @@ func (m *Manifests) requireFresh(ctx context.Context, item Item) error {
 	return nil
 }
 
-func (m *Manifests) keys(ctx context.Context, prefix string, n int) ([]string, error) {
+// keys lists up to n of item's own keys under prefix.
+func (m *Manifests) keys(ctx context.Context, item Item, prefix string, n int) ([]string, error) {
 	var keys []string
 	for o, err := range m.store.List(ctx, prefix) {
 		if err != nil {
 			return nil, err
+		}
+		if k, ok := layout.Parse(o.Key); ok && k.Folder() != item.Prefix() {
+			continue // a version's folder within a content's
 		}
 		if keys = append(keys, o.Key); len(keys) == n {
 			break

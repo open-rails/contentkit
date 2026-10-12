@@ -737,7 +737,7 @@ func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
 			continue // its owner recovers it
 		}
 		var kinds []string
-		for _, kind := range m.reg.cfg.Kinds {
+		for _, kind := range m.reg.all {
 			if kind.ns == tenant {
 				kinds = append(kinds, kind.Name)
 			}

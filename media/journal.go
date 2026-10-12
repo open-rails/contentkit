@@ -173,9 +173,9 @@ func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit
 	}
 	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
-(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id, effects)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operation_id) DO NOTHING`,
-			c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Folder, c.Actor, c.Fingerprint[:], lease, effects)
+(tenant_id, operation_id, content_kind, content_id, content_version_id, folder_prefix, actor_id, fingerprint, lease_id, effects)
+VALUES ($1, $2, $3, $4, $10, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operation_id) DO NOTHING`,
+			c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Folder, c.Actor, c.Fingerprint[:], lease, effects, c.Ref.Version())
 		if err != nil {
 			var pe *pgconn.PgError
 			if errors.As(err, &pe) && pe.Code == "23505" && pe.ConstraintName == "content_media_commits_pending_folder" {
@@ -187,7 +187,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operation_id
 		if err != nil {
 			return err
 		}
-		if found.Ref != c.Ref || found.Folder != c.Folder || found.Actor != c.Actor || found.Fingerprint != c.Fingerprint {
+		if !found.Ref.Equal(c.Ref) || found.Folder != c.Folder || found.Actor != c.Actor || found.Fingerprint != c.Fingerprint {
 			return ErrCommitIdentity
 		}
 		if !found.terminal() && found.Lease != lease {
@@ -225,7 +225,7 @@ func (j *PGJournal) existing(ctx context.Context, c manifestCommit) (*manifestCo
 		if err != nil {
 			return err
 		}
-		if found.Ref != c.Ref || found.Folder != c.Folder || found.Actor != c.Actor || found.Fingerprint != c.Fingerprint {
+		if !found.Ref.Equal(c.Ref) || found.Folder != c.Folder || found.Actor != c.Actor || found.Fingerprint != c.Fingerprint {
 			return ErrCommitIdentity
 		}
 		out = &found
@@ -238,14 +238,16 @@ func (j *PGJournal) load(ctx context.Context, tx pgx.Tx, tenant string, id uuid.
 	c := manifestCommit{ID: id, Ref: contentref.ContentRef{TenantID: tenant}}
 	var fingerprint, effects []byte
 	var attempt *uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT content_kind, content_id, folder_prefix, actor_id, fingerprint,
+	var version string
+	err := tx.QueryRow(ctx, `SELECT content_kind, content_id, content_version_id, folder_prefix, actor_id, fingerprint,
 lease_id, attempt_id, expected_etag, state, effects, charged_bytes FROM `+j.table+`
 WHERE tenant_id = $1 AND operation_id = $2 FOR UPDATE`, tenant, id).Scan(
-		&c.Ref.ContentKind, &c.Ref.ContentID, &c.Folder, &c.Actor, &fingerprint, &c.Lease,
+		&c.Ref.ContentKind, &c.Ref.ContentID, &version, &c.Folder, &c.Actor, &fingerprint, &c.Lease,
 		&attempt, &c.ETag, &c.State, &effects, &c.Charged)
 	if err != nil {
 		return c, err
 	}
+	c.Ref = c.Ref.WithVersion(version)
 	copy(c.Fingerprint[:], fingerprint)
 	if attempt != nil {
 		c.Attempt = *attempt
@@ -263,7 +265,7 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 		return o.prepare(ctx, c, effects, quota)
 	}
 	if effects.Settlement.Tenant != "" && effects.Settlement.Tenant != c.Ref.TenantID ||
-		effects.Process != nil && effects.Process.Ref != c.Ref {
+		effects.Process != nil && !effects.Process.Ref.Equal(c.Ref) {
 		return ErrCommitIdentity
 	}
 	if (effects.Cancel || effects.Process != nil) && j.queue == nil {
@@ -369,8 +371,8 @@ func (j *PGJournal) checkReceipt(ctx context.Context, item Item, r *CommitReceip
 	var known bool
 	err = j.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+j.table+`
 WHERE tenant_id = $1 AND operation_id = $2 AND attempt_id = $3
-AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'applied')`,
-		item.Ref().TenantID, operation, attempt, item.Ref().ContentKind, item.Ref().ContentID, item.Prefix()).Scan(&known)
+AND content_kind = $4 AND content_id = $5 AND content_version_id = $7 AND folder_prefix = $6 AND state = 'applied')`,
+		item.Ref().TenantID, operation, attempt, item.Ref().ContentKind, item.Ref().ContentID, item.Prefix(), item.Ref().Version()).Scan(&known)
 	if err != nil {
 		return err
 	}
@@ -464,7 +466,7 @@ func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, 
 	if o := j.at(tenant); o != j {
 		return o.pending(ctx, tenant, kinds, limit, notifications)
 	}
-	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, folder_prefix FROM `+j.table+`
+	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, content_version_id, folder_prefix FROM `+j.table+`
 WHERE tenant_id = $1 AND content_kind = ANY($2)
 AND (state IN ('open', 'prepared', 'frozen') OR ($4 AND state = 'applied' AND effects->>'notify' = 'true'))
 ORDER BY CASE WHEN state = 'applied' THEN 1 ELSE 0 END, updated_at, operation_id LIMIT $3`, tenant, kinds, limit, notifications)
@@ -475,9 +477,11 @@ ORDER BY CASE WHEN state = 'applied' THEN 1 ELSE 0 END, updated_at, operation_id
 	var out []manifestCommit
 	for rows.Next() {
 		c := manifestCommit{Ref: contentref.ContentRef{TenantID: tenant}}
-		if err := rows.Scan(&c.ID, &c.Ref.ContentKind, &c.Ref.ContentID, &c.Folder); err != nil {
+		var version string
+		if err := rows.Scan(&c.ID, &c.Ref.ContentKind, &c.Ref.ContentID, &version, &c.Folder); err != nil {
 			return nil, err
 		}
+		c.Ref = c.Ref.WithVersion(version)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -491,9 +495,9 @@ func (j *PGJournal) notification(ctx context.Context, c manifestCommit) (bool, e
 	// Rotate a failed delivery behind other due notifications. Notification
 	// outages must not starve either newer callbacks or unfinished S3 attempts.
 	err := j.pool.QueryRow(ctx, `UPDATE `+j.table+` SET updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4
+WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND content_version_id = $5
 AND state = 'applied' AND effects->>'notify' = 'true' RETURNING true`,
-		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID).Scan(&pending)
+		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Ref.Version()).Scan(&pending)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -505,8 +509,8 @@ func (j *PGJournal) acknowledgeNotification(ctx context.Context, c manifestCommi
 		return o.acknowledgeNotification(ctx, c)
 	}
 	_, err := j.pool.Exec(ctx, `UPDATE `+j.table+` SET effects = jsonb_set(effects, '{notify}', 'false'), updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND state = 'applied'`,
-		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID)
+WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND content_version_id = $5 AND state = 'applied'`,
+		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Ref.Version())
 	return err
 }
 

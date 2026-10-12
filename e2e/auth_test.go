@@ -81,8 +81,8 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"groups, without the permission", user, "POST", "/groups", []any{}, 403, ""},
 		{"groups, an application holding it", app, "POST", "/groups", []any{}, 201, ""},
 		{"upload, an application", app, "POST", "/media/upload/abort", map[string]string{"ticket": "x"}, 403, ""},
-		{"media read, a forged credential", owner + "x", "GET", "/media/gallery/" + cid(1), nil, 401, `Bearer error="invalid_token"`},
-		{"media read, anonymous", "", "GET", "/media/gallery/" + cid(1), nil, 200, ""},
+		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + cid(1), nil, 401, `Bearer error="invalid_token"`},
+		{"media read, anonymous", "", "GET", "/media/album/" + cid(1), nil, 200, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := f.call(tc.bearer, tc.method, tc.target, tc.body)

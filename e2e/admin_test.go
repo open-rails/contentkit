@@ -199,7 +199,7 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 	ctx := t.Context()
 	_, editor := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	ref := media.RefBody{Kind: "album", ID: cid(1)}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
 		t.Fatal(err)

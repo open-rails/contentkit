@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -55,6 +56,9 @@ type DatabaseConfig struct {
 
 // InteractionsConfig configures the content module.
 type InteractionsConfig struct {
+	// HostKinds are kinds the host still owns, answered by Deps.Resolver:
+	// commentable, with plain media rather than versions. #120 removes them.
+	HostKinds []string `yaml:"host_kinds" json:"host_kinds"`
 	// Anonymous is what signed-out visitors may do; zero lets them only read.
 	Anonymous content.Anonymous `yaml:"anonymous" json:"anonymous"`
 	// CommentMaxLength is the longest comment in characters; 0 is the default.
@@ -86,7 +90,8 @@ type Rate struct {
 }
 
 // MediaConfig is the media registry (media.Config: its Namespace is the
-// tenant, its hooks come from Deps) and how ContentKit serves it.
+// tenant; content kinds' media are their versions', and each group kind
+// gains cover media, media.ForContent) and how ContentKit serves it.
 type MediaConfig struct {
 	media.Config `yaml:",inline"`
 	// WorkerSchema holds the media worker's queue (cmd/media-worker's
@@ -101,6 +106,9 @@ type MediaConfig struct {
 	ReadLimit   RateLimitConfig `yaml:"read_limit" json:"read_limit"`
 	// Issuance limits the items each viewer opens per hour.
 	Issuance IssuanceConfig `yaml:"issuance" json:"issuance"`
+	// Downloads are the version download quotas (anonymous, user, tiers);
+	// Deps.Redis shares them.
+	Downloads versions.Downloads `yaml:"downloads" json:"downloads"`
 }
 
 // DeliveryConfig is how viewers with access present their item token to the
