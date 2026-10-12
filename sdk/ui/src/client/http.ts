@@ -32,6 +32,8 @@ export interface ContentKitMounts {
   versions?: string;
   /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
   offers?: string;
+  /** Lists, search, typeahead, rails, filters, history, signals. Default `{baseUrl}/v1`. */
+  discovery?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
@@ -73,6 +75,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Read the body as a Blob instead of JSON. */
   blob?: boolean;
+  keepalive?: boolean;
 }
 
 const trim = (u: string) => u.replace(/\/+$/, "");
@@ -99,7 +102,7 @@ export class Http {
     return this.base + CONTENTKIT_MODULES[module];
   }
 
-  async request<T>(url: string, { method, body, signal, blob }: RequestOptions = {}): Promise<T> {
+  async request<T>(url: string, { method, body, signal, blob, keepalive }: RequestOptions = {}): Promise<T> {
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
     if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -115,6 +118,7 @@ export class Http {
         body: body === undefined ? null : JSON.stringify(body),
         credentials: this.o.credentials ?? "same-origin",
         signal: signal ?? null,
+        ...(keepalive ? { keepalive } : {}),
       });
     } catch (err) {
       if (signal?.aborted) throw aborted(signal);

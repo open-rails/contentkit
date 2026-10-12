@@ -34,8 +34,6 @@ export interface GroupDirectoryProps {
   layout?: "list" | "grid";
   /** A group's link; default its canonical path. */
   href?: (group: GroupLike) => string | undefined;
-  /** Temporary: the host's cover until group cards carry renditions. */
-  renderCover?: (group: GroupLike) => ReactNode;
   /** A group's entry instead of the default one. */
   renderGroup?: (group: GroupCard) => ReactNode;
   pageSize?: number;
@@ -101,7 +99,7 @@ export function GroupDirectory(p: GroupDirectoryProps) {
                 p.renderGroup(g)
               ) : grid ? (
                 <GroupLink group={g} href={p.href} className="group grid gap-1.5">
-                  <GroupCover group={g} renderCover={p.renderCover} className="aspect-[3/4] w-full" />
+                  <GroupCover group={g} className="aspect-[3/4] w-full" />
                   <span className="font-medium break-words group-hover:underline">{g.name || g.slug}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">{m.plural("groups.items", g.count)}</span>
                 </GroupLink>

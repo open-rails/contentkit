@@ -4,8 +4,7 @@ import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { attributeInput, parseAttributes, slugify } from "../../client/group-fields.js";
-import type { Group, GroupCard, GroupDetail, MergeReport, Name, Text } from "../../client/generated/wire.js";
-import type { AttributeSpec, GroupKindSpec, Kinds } from "../../client/kinds.js";
+import type { Attribute, ContentModel, Group, GroupCard, GroupDetail, GroupKind, MergeReport, Name, Text } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup, useKinds, type UseGroup } from "../../react/groups.js";
@@ -29,15 +28,11 @@ export interface GroupEditorProps {
   kind: string;
   /** Languages names and text are written in; default the content model's. */
   languages?: readonly string[];
-  /** Temporary: the content model until GET /v1/kinds serves it. */
-  kinds?: Kinds;
   labels?: Labels;
   onCreated?: (group: Group) => void;
   /** After a merge: the survivor's id is report.into. */
   onMerged?: (report: MergeReport) => void;
   onDeleted?: (group: Group) => void;
-  /** Temporary: the host's cover until group cards carry renditions. */
-  renderCover?: (group: GroupLike) => ReactNode;
   /** Below the editor's sections, with the loaded group: the members, host fields. */
   children?: (group: GroupDetail) => ReactNode;
   client?: ContentKitClient;
@@ -56,11 +51,11 @@ const NONE = "__none__";
  */
 export function GroupEditor(p: GroupEditorProps) {
   const { t } = useMessages();
-  const { kinds, loading: kindsLoading } = useKinds({ initial: p.kinds, client: p.client });
+  const { kinds, loading: kindsLoading } = useKinds({ client: p.client });
   const g = useGroup(p.id, { client: p.client });
   const languages = p.languages ?? kinds?.languages ?? ["en"];
   const kind = g.group?.kind ?? p.kind;
-  const spec: GroupKindSpec = kinds?.group_kinds?.[kind] ?? {};
+  const spec: GroupKind = kinds?.group_kinds?.[kind] ?? {};
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-6 text-sm", p.className)} data-ckui="group-editor" data-kind={kind}>
       {children}
@@ -97,7 +92,7 @@ export function GroupEditor(p: GroupEditorProps) {
       <Details key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
       <Names group={group} g={g} languages={languages} onError={p.onError} />
       <Texts key={group.id} group={group} g={g} languages={languages} onError={p.onError} />
-      <CoverSection group={group} g={g} renderCover={p.renderCover} onError={p.onError} />
+      <CoverSection group={group} g={g} onError={p.onError} />
       <Edges group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(group)}
     </>,
@@ -302,7 +297,7 @@ export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language,
 }
 
 /** The kind's declared attributes as form fields. */
-function AttributeFields({ declared, form, onChange, labels }: { declared: Readonly<Record<string, AttributeSpec>>; form: Record<string, string | boolean>; onChange: (name: string, v: string | boolean) => void; labels?: Labels }) {
+function AttributeFields({ declared, form, onChange, labels }: { declared: Readonly<Record<string, Attribute>>; form: Record<string, string | boolean>; onChange: (name: string, v: string | boolean) => void; labels?: Labels }) {
   const { t } = useMessages();
   const id = useId();
   const names = Object.keys(declared).sort();
@@ -357,7 +352,7 @@ function AttributeFields({ declared, form, onChange, labels }: { declared: Reado
   );
 }
 
-const formOf = (declared: Readonly<Record<string, AttributeSpec>>, values: Record<string, unknown>) =>
+const formOf = (declared: Readonly<Record<string, Attribute>>, values: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(declared).map(([n, s]) => [n, attributeInput(s, values[n])]));
 
 /** A parent or scope: the chosen group with a change and a clear, or a picker. */
@@ -385,7 +380,7 @@ function GroupField({ label, kind, value, onChange, exclude, required, client }:
   );
 }
 
-function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, client }: GroupEditorProps & { spec: GroupKindSpec; languages: readonly string[]; g: UseGroup }) {
+function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, client }: GroupEditorProps & { spec: GroupKind; languages: readonly string[]; g: UseGroup }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
@@ -459,7 +454,7 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   );
 }
 
-function Details({ group, spec, g, labels, onError, client }: { group: GroupDetail; spec: GroupKindSpec; g: UseGroup; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+function Details({ group, spec, g, labels, onError, client }: { group: GroupDetail; spec: GroupKind; g: UseGroup; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
@@ -689,7 +684,7 @@ function Texts({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
   );
 }
 
-function CoverSection({ group, g, renderCover, onError }: { group: GroupDetail; g: UseGroup; renderCover?: GroupEditorProps["renderCover"]; onError?: ContentKitErrorHandler }) {
+function CoverSection({ group, g, onError }: { group: GroupDetail; g: UseGroup; onError?: ContentKitErrorHandler }) {
   const { t } = useMessages();
   const input = useRef<HTMLInputElement>(null);
   const save = useAction("group.save", onError);
@@ -698,7 +693,7 @@ function CoverSection({ group, g, renderCover, onError }: { group: GroupDetail; 
   return (
     <Section title={t("groupEditor.cover")} ckui="group-cover-editor">
       <div className="flex flex-wrap items-start gap-4" data-mode={mode}>
-        <GroupCover group={group} src={g.coverPreview} renderCover={renderCover} className="aspect-[3/4] w-28" />
+        <GroupCover group={group} src={g.coverPreview} className="aspect-[3/4] w-28" />
         <div className="grid gap-2">
           <p className="text-muted-foreground" data-ckui="cover-mode">
             {t(mode === "image" ? "groupEditor.coverImage" : mode === "content" ? "groupEditor.coverContent" : "groupEditor.coverAuto")}
@@ -735,7 +730,7 @@ function CoverSection({ group, g, renderCover, onError }: { group: GroupDetail; 
 
 const RELATION = /^[a-z][a-z0-9_]*$/;
 
-function Edges({ group, g, kinds, labels, onError, client }: { group: GroupDetail; g: UseGroup; kinds: Kinds | null; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+function Edges({ group, g, kinds, labels, onError, client }: { group: GroupDetail; g: UseGroup; kinds: ContentModel | null; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
   const save = useAction("group.save", onError);

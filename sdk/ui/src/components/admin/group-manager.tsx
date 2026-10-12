@@ -1,8 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/group-fields.js";
-import type { Membership } from "../../client/generated/wire.js";
-import type { Kinds } from "../../client/kinds.js";
+import type { ContentModel, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useGroups, useKinds, type GroupSort } from "../../react/groups.js";
@@ -11,22 +10,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
 import { GroupMembers } from "../groups/memberships.js";
-import { labelOf, useLanguageName, type GroupLike, type Labels } from "../groups/parts.js";
+import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {
   /** The group kinds managed, in tab order; default the content model's site-owned kinds. */
   groupKinds?: readonly string[];
-  /** Temporary: the content model until GET /v1/kinds serves it. */
-  kinds?: Kinds;
   /** Display names of kinds, attributes, roles and values by identifier. */
   labels?: Labels;
   /** Counts of this content kind; default every kind. */
   contentKind?: string;
   /** One member, e.g. a link with its title; default its content id. */
   renderContent?: (member: Membership) => ReactNode;
-  /** Temporary: the host's cover until group cards carry renditions. */
-  renderCover?: (group: GroupLike) => ReactNode;
   pageSize?: number;
 }
 
@@ -52,13 +47,13 @@ export function GroupManager({ client: own, baseUrl, auth, guard, appearance, cl
 }
 
 type Inner = Omit<GroupManagerProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
-type Ctx = Inner & { loc: AdminLocation; kind: string; kinds: Kinds };
+type Ctx = Inner & { loc: AdminLocation; kind: string; kinds: ContentModel };
 
 function Manager({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
   const access = useGroupManagerAccess({ client: p.client });
-  const model = useKinds({ initial: p.kinds, client: p.client });
+  const model = useKinds({ client: p.client });
   const kinds = model.kinds;
   const list = useMemo(
     () =>
@@ -201,43 +196,38 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
   );
 }
 
-function Create({ loc, kind, kinds, client, labels, onError, renderCover }: Ctx) {
+function Create({ loc, kind, client, labels, onError }: Ctx) {
   return (
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
       <GroupEditor
         id={null}
         kind={kind}
-        kinds={kinds}
         labels={labels}
         client={client}
         onError={onError}
-        renderCover={renderCover}
         onCreated={(g) => loc.go(`${kind}/${g.id}`, undefined, { replace: true })}
       />
     </div>
   );
 }
 
-function Edit({ loc, kind, kinds, client, labels, onError, renderCover, renderContent, id }: Ctx & { id: string }) {
+function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & { id: string }) {
   return (
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
       <GroupEditor
         id={id}
         kind={kind}
-        kinds={kinds}
         labels={labels}
         client={client}
         onError={onError}
-        renderCover={renderCover}
         onMerged={(r) => loc.go(`${kind}/${r.into}`, undefined, { replace: true })}
       >
         {(group) => (
           <GroupMembers
             group={group}
-            kinds={kinds}
-            labels={labels}
+                labels={labels}
             client={client}
             onError={onError}
             renderContent={renderContent}

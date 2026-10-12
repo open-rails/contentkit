@@ -22,7 +22,23 @@ export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
 export { GroupsClient, type GroupQuery, type MemberQuery } from "./groups.js";
-export type { AttributeSpec, ContentFilterSpec, GroupKindSpec, KindSpec, Kinds } from "./kinds.js";
+export {
+  DiscoveryClient,
+  type AccessMode,
+  type CardQuery,
+  type ContentFilterQuery,
+  type ContentQuery,
+  type HistoryQuery,
+  type ListSort,
+  type Period,
+  type RailQuery,
+  type ReaderQuery,
+  type ReleaseDatesQuery,
+  type SearchQuery,
+  type TypeaheadQuery,
+} from "./discovery.js";
+export { VersionsClient, isPending } from "./versions.js";
+export { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
@@ -64,7 +80,7 @@ export {
 } from "./media/rules.js";
 export { READ_CHUNK, chunkOffsets, isProcessing, mergeReads, processing } from "./media/windows.js";
 export { defaultTransport, fetchTransport, xhrTransport, type Transport } from "./media/transport.js";
-export { checkRef, isContentId } from "./media/ref.js";
+export { checkRef, isContentId, itemKey, sameItem } from "./media/ref.js";
 export { encodeRemaining } from "./media/encode.js";
 export { sha256Hex } from "./media/hash.js";
 export { Pacer, type PacerOptions } from "./media/pacer.js";

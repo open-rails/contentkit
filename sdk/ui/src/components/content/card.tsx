@@ -1,0 +1,158 @@
+import { FavouriteIcon, LockIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { cn } from "cn";
+import { useCallback, useContext, type MouseEvent, type ReactNode } from "react";
+import type { Card, CardAccess } from "../../client/generated/wire.js";
+import { useMessages } from "../../i18n/context.js";
+import type { Translator } from "../../i18n/messages.js";
+import { ContentKitContext } from "../../react/context.js";
+import { Badge } from "#ckui/ui/badge";
+import { RenditionImg } from "../rendition-img.js";
+import { formatDate } from "../social/parts.js";
+import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+
+export interface ContentCardProps {
+  card: Card;
+  /** The card's link; default its canonical path. */
+  href?: (card: Card) => string | undefined;
+  /** Before the card's link is followed: a click signal. */
+  onOpen?: (card: Card) => void;
+  /** Cover shape: "portrait" (3:4, readers) or "landscape" (16:9, players). Default portrait. */
+  shape?: "portrait" | "landscape";
+  /** The group kinds whose chips show, in order; default every kind the card names. */
+  groupKinds?: readonly string[];
+  /** Chips per group kind. Default 3. */
+  chips?: number;
+  /** Tiers the site sells, so a lock names them; others show as "for sale". */
+  tiers?: readonly string[];
+  /** Display names of kinds, traits and tiers by identifier. */
+  labels?: Labels;
+  /** Below the meta line: the host's own. */
+  children?: ReactNode;
+  className?: string;
+}
+
+const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+
+/** Why a card is locked, in words; null when it opens. */
+export function lockLabel(m: Translator, a: CardAccess, tiers: readonly string[] = [], labels?: Labels): string | null {
+  if (a.allowed) return null;
+  if (a.unknown) return m.t("contents.unknownAccess");
+  const tier = a.sell?.find((k) => tiers.includes(k));
+  if (tier) return labelOf(labels, tier);
+  if (a.sell?.some((k) => k.includes(":group:"))) return m.t("contents.members");
+  if (a.sell?.length) return m.t("contents.forSale");
+  return m.t("contents.locked");
+}
+
+/** A link followed in-app through the provider's navigate. */
+function useLink(url: string | undefined, before?: () => void) {
+  const navigate = useContext(ContentKitContext)?.navigate;
+  return useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      before?.();
+      if (!navigate || !url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      navigate(url);
+    },
+    [navigate, url, before],
+  );
+}
+
+/** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked. */
+export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, children, className }: ContentCardProps) {
+  const m = useMessages();
+  const { t } = m;
+  const languageName = useLanguageName();
+  const url = href ? href(card) : card.path;
+  const open = useCallback(() => onOpen?.(card), [onOpen, card]);
+  const onClick = useLink(url, open);
+  const lock = lockLabel(m, card.access, tiers, labels);
+  const v = card.version;
+  const progress = card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
+  const kinds = groupKinds ?? Object.keys(card.groups);
+  const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
+  const meta = [
+    ...v.languages.map(languageName),
+    ...v.traits.map((x) => labelOf(labels, x)),
+    v.pages ? m.plural("contents.pages", v.pages) : null,
+    minutes ? m.plural("contents.minutes", minutes) : null,
+  ].filter(Boolean);
+  const title = card.title || card.code;
+  return (
+    <article className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+      <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
+        <div className={shape === "landscape" ? "aspect-video" : "aspect-[3/4]"}>
+          <RenditionImg
+            outputs={card.cover}
+            alt=""
+            fit="cover"
+            skeleton
+            className="size-full transition-transform group-hover/card:scale-[1.02]"
+            fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
+          />
+        </div>
+        {lock && (
+          <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
+            <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
+            {lock}
+          </span>
+        )}
+        {progress > 0 && (
+          <span className="absolute inset-x-0 bottom-0 h-1 bg-background/60" data-ckui="card-progress">
+            <span className="block h-full bg-primary" style={{ width: `${Math.round(progress * 100)}%` }} />
+          </span>
+        )}
+      </a>
+      <div className="grid gap-1">
+        <a href={url} onClick={onClick} className="line-clamp-2 font-medium break-words hover:underline" data-ckui="card-title">
+          {title}
+          {lock && <span className="sr-only"> ({lock})</span>}
+        </a>
+        {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
+        {card.viewer?.completed && (
+          <Badge variant="secondary" className="justify-self-start">
+            {t("contents.completed")}
+          </Badge>
+        )}
+        {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
+        {kinds.some((k) => card.groups[k]?.length) && (
+          <ul className="flex flex-wrap gap-1" data-ckui="card-groups">
+            {kinds.flatMap((k) =>
+              (card.groups[k] ?? []).slice(0, chips).map((g) => (
+                <li key={`${k}:${g.id}`} data-kind={k}>
+                  <Chip url={g.path} name={g.name || g.slug} />
+                </li>
+              )),
+            )}
+          </ul>
+        )}
+        <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
+          <span className="inline-flex items-center gap-1" title={t("contents.favorites")}>
+            <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
+            <span className="sr-only">{t("contents.favorites")}</span>
+            {compact(card.counts.favorites, m.language)}
+          </span>
+          <span className="inline-flex items-center gap-1" title={t("contents.likes")}>
+            <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} className="size-3.5" aria-hidden />
+            <span className="sr-only">{t("contents.likes")}</span>
+            {compact(card.counts.likes, m.language)}
+          </span>
+        </p>
+        {children}
+      </div>
+    </article>
+  );
+}
+
+function Chip({ url, name }: { url?: string; name: string }) {
+  const onClick = useLink(url);
+  const cls = "inline-block rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground";
+  return url ? (
+    <a href={url} onClick={onClick} className={cn(cls, "hover:bg-muted hover:text-foreground")}>
+      {name}
+    </a>
+  ) : (
+    <span className={cls}>{name}</span>
+  );
+}

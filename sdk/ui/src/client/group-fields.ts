@@ -1,4 +1,4 @@
-import type { AttributeSpec } from "./kinds.js";
+import type { Attribute } from "./generated/wire.js";
 
 /** How ContentKit compares names (contentkit_keyword_normalize): accents dropped, lowercase, single spaces. */
 export function fold(s: string): string {
@@ -41,7 +41,7 @@ export function fromLocalInput(value: string): string | undefined {
 }
 
 /** A form field's value for an attribute: text for the inputs, a boolean for a switch. */
-export function attributeInput(spec: AttributeSpec, value: unknown): string | boolean {
+export function attributeInput(spec: Attribute, value: unknown): string | boolean {
   if (spec.type === "bool") return value === true;
   if (value === undefined || value === null) return "";
   return spec.type === "time" ? toLocalInput(String(value)) : String(value);
@@ -52,7 +52,7 @@ export function attributeInput(spec: AttributeSpec, value: unknown): string | bo
  * field, an unchecked switch: absent reads as false). A value that is not of
  * the attribute's type throws a RangeError.
  */
-export function parseAttribute(spec: AttributeSpec, input: string | boolean): unknown {
+export function parseAttribute(spec: Attribute, input: string | boolean): unknown {
   if (spec.type === "bool") return input === true || undefined;
   const s = String(input).trim();
   if (!s) return undefined;
@@ -76,7 +76,7 @@ export function parseAttribute(spec: AttributeSpec, input: string | boolean): un
 }
 
 /** Every declared attribute's value from the form, undeclared ones dropped. */
-export function parseAttributes(declared: Readonly<Record<string, AttributeSpec>>, form: Readonly<Record<string, string | boolean>>): Record<string, unknown> {
+export function parseAttributes(declared: Readonly<Record<string, Attribute>>, form: Readonly<Record<string, string | boolean>>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(declared)) {
     const v = name in form ? parseAttribute(spec, form[name]!) : undefined;

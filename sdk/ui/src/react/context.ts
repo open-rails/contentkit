@@ -48,7 +48,9 @@ export type SocialOperation =
   | "notifications.dismiss"
   | "group.load"
   | "group.save"
-  | "membership.save";
+  | "membership.save"
+  | "history.forget"
+  | "filters.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { itemKey } from "../client/media/ref.js";
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, RefBody } from "../client/generated/wire.js";
@@ -40,7 +41,7 @@ export type UseEditorCrop = EditorCropState & {
 export function useEditorCrop(ref: RefBody, path: string | null | undefined, o: EditorCropOptions = {}): UseEditorCrop {
   const { media } = useContentKitClient(o.client);
   const report = useErrorReporter(o.onError);
-  const key = path ? `${ref.kind}/${ref.id}/${path}` : "";
+  const key = path ? `${itemKey(ref)}:${path}` : "";
   const [attempt, setAttempt] = useState(0);
   const [s, setS] = useState<{ key: string; state: EditorCropState }>({ key: "", state: { status: "idle" } });
   const opts = useRef({ o, ref, path });

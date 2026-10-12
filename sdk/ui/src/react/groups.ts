@@ -3,6 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type {
   ContentMemberships,
+  ContentModel,
   Edge,
   EdgeInput,
   Group,
@@ -15,22 +16,21 @@ import type {
   MergeReport,
   Name,
 } from "../client/generated/wire.js";
-import type { Kinds } from "../client/kinds.js";
 import { useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
 export interface UseKinds {
   /** null until it loads (or when it fails). */
-  kinds: Kinds | null;
+  kinds: ContentModel | null;
   loading: boolean;
   error?: ContentKitError;
   reload: () => void;
 }
 
-/** The site's content model (client.kinds()), one read per client; `initial` stands in for the read. */
-export function useKinds(o: { initial?: Kinds; client?: ContentKitClient } = {}): UseKinds {
+/** The site's content model (GET /v1/kinds): languages, tiers, kinds, group kinds and content filters; one read per client. */
+export function useKinds(o: { client?: ContentKitClient } = {}): UseKinds {
   const { client, store } = useContentScope(o.client);
-  const r = useResource<Kinds>(store, keyOf("kinds"), { type: "kinds" }, (s) => client.kinds(s), { initial: o.initial });
+  const r = useResource<ContentModel>(store, keyOf("kinds"), { type: "kinds" }, (s) => client.kinds(s));
   return { kinds: r.data ?? null, loading: !r.data && (r.loading || !r.loaded), error: r.error, reload: r.reload };
 }
 

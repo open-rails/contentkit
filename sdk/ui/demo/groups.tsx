@@ -1,15 +1,12 @@
 import { ContentKitProvider } from "@openrails/contentkit-ui/react";
 import { ContentKitUiProvider, GroupDirectory, GroupHeader, MembershipEditor } from "@openrails/contentkit-ui";
-import type { Kinds } from "@openrails/contentkit-ui/client";
 import { StrictMode, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { client, dark, q, theme, viewer } from "./session";
 
 // Group pages: ?kind=&parent= a directory (its letter in the URL, ?layout=grid),
 // ?group= a group's header, ?content=&content_kind= a content's groups (staff)
-// with ?versions=id:label,…; ?lang= the UI. The content model comes from
-// /__test/kinds until GET /v1/kinds serves it.
-const kinds = (await (await fetch("/__test/kinds")).json()) as Kinds;
+// with ?versions=id:label,…; ?lang= the UI.
 const lang = q.get("lang") ?? "en";
 const versions = (q.get("versions") ?? "").split(",").filter(Boolean).map((v) => ({ id: v.split(":")[0]!, label: v.split(":")[1] ?? v }));
 const panel: React.CSSProperties = { display: "grid", gap: 12, padding: 16, borderRadius: 14, background: dark ? "#18181b" : "#fff", border: `1px solid ${dark ? "#27272a" : "#e4e4e7"}` };
@@ -53,12 +50,12 @@ function Page() {
       )}
       {group && (
         <section data-demo="header" style={panel}>
-          <GroupHeader id={group} language={lang} kinds={kinds} />
+          <GroupHeader id={group} language={lang} />
         </section>
       )}
       {content && (
         <section data-demo="memberships" style={panel}>
-          <MembershipEditor content={content} contentKind={q.get("content_kind") ?? "gallery"} versions={versions} kinds={kinds} language={lang} />
+          <MembershipEditor content={content} contentKind={q.get("content_kind") ?? "comic"} versions={versions} language={lang} />
         </section>
       )}
     </main>

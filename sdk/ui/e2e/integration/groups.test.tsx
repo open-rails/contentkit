@@ -3,7 +3,7 @@ import "../../src/test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { ContentKitClient, Group, Kinds } from "../../src/client/index.js";
+import type { ContentKitClient, Group } from "../../src/client/index.js";
 import { ContentKitProvider, type GroupFilter, useContentGroups, useGroup, useGroupMembers, useGroups, useKinds, useStaffAccess } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
 import { Accounts, client, fixture, harness } from "./setup.js";
@@ -16,12 +16,10 @@ describe("groups against the real ContentKit", () => {
   const h = harness();
   const acc = new Accounts(h);
   let cfg: Config;
-  let kinds: Kinds;
   let staff: ContentKitClient;
 
   beforeAll(async () => {
     cfg = await h.config();
-    kinds = await h.kinds();
     await acc.load("staff", "alice");
     staff = client(h, cfg, acc.get("staff"));
   });
@@ -48,7 +46,7 @@ describe("groups against the real ContentKit", () => {
     // Beta has two live contents, Alpha one: count order after the job runs.
     for (const [g, n] of [[beta, 2], [alpha, 1]] as const) {
       for (let i = 0; i < n; i++) {
-        const c = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }] });
+        const c = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
         await staff.groups.addMembers(g.id, [{ content_id: c.id }]);
       }
     }
@@ -108,14 +106,13 @@ describe("groups against the real ContentKit", () => {
     await waitFor(() => expect(result.current.group?.edges).toEqual([{ from: artist.id, relation: "member_of", to: circle.id }]), wait);
 
     // The cover: an upload to the group's folder, a member's cover, then automatic.
-    await h.item({ kind: "artist", id: artist.id, owner: acc.id("staff") });
     await act(async () => {
       await result.current.uploadCover(fixture("small.png", "image/png", "face.png"), { wait: false });
     });
     await waitFor(() => expect(result.current.group?.cover?.image).toMatch(/^i-[0-9a-f-]{36}$/), wait);
     const image = result.current.group!.cover!.image!;
     expect(await h.object({ kind: "artist", id: artist.id }, `cover/${image}`)).not.toBeNull();
-    const member = await h.content({ kind: "gallery", versions: [{ languages: ["en"], favorites: 5 }] });
+    const member = await h.content({ kind: "comic", favorites: 5, versions: [{ languages: ["en"] }] });
     await staff.groups.addMembers(artist.id, [{ content_id: member.id }]);
     await act(() => result.current.update({ cover: { content_id: member.id } }));
     await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member.id }), wait);
@@ -143,7 +140,7 @@ describe("groups against the real ContentKit", () => {
 
   it("useContentGroups and useGroupMembers: roles, positions, windows and version-level memberships", async () => {
     const r = run();
-    const content = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
+    const content = await h.content({ kind: "comic", versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
     const [, ja] = content.versions;
     const artist = await create("artist", `pub-${r}`, [name("en", `Publisher ${r}`)]);
     const series = await create("series", `ser-${r}`, [name("en", `Series ${r}`)]);
@@ -179,7 +176,7 @@ describe("groups against the real ContentKit", () => {
     await expect(result.current.set([{ group_id: series.id, version_id: ja }], ["series"])).rejects.toMatchObject({ code: "invalid_request" });
 
     // The rail's members, from its side: another content, an order, a new window, a removal.
-    const second = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }] });
+    const second = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
     const { result: members } = renderHook(() => useGroupMembers(rail.id), { wrapper: wrap(staff, "en") });
     await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content.id]), wait);
     await act(async () => {
@@ -202,9 +199,11 @@ describe("groups against the real ContentKit", () => {
     await waitFor(() => expect(by(rail.id)?.position).toBe(2), wait);
   });
 
-  it("useKinds takes the host's model until GET /v1/kinds serves it; staff access to groups", async () => {
-    const { result } = renderHook(() => ({ kinds: useKinds({ initial: kinds }), staff: useStaffAccess(["groups"] as const) }), { wrapper: wrap(staff) });
-    expect(result.current.kinds.kinds?.group_kinds?.artist?.roles).toEqual(["publisher"]);
+  it("useKinds reads the content model; staff access to groups", async () => {
+    const { result } = renderHook(() => ({ kinds: useKinds(), staff: useStaffAccess(["groups"] as const) }), { wrapper: wrap(staff) });
+    await waitFor(() => expect(result.current.kinds.kinds?.group_kinds?.artist?.roles).toEqual(["publisher"]), wait);
+    expect(result.current.kinds.kinds?.kinds.comic).toMatchObject({ route: "comics", presentation: "reader" });
+    expect(result.current.kinds.kinds?.content_filters).toEqual([{ group: { kind: "tag", slug: "gore" }, default_visible: false, labels: { en: "Gore", ja: "ゴア" } }]);
     await waitFor(() => expect(result.current.staff.loading).toBe(false), wait);
     expect(result.current.staff.allowed.groups).toBe(true);
     const { result: alice } = renderHook(() => useStaffAccess(["groups"] as const), { wrapper: wrap(client(h, cfg, acc.get("alice"))) });

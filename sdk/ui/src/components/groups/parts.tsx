@@ -1,11 +1,11 @@
 import { cn } from "cn";
-import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import { fold, humanize, letterOf } from "../../client/group-fields.js";
-import type { Cover, GroupCard, GroupDetail, PublicRendition } from "../../client/generated/wire.js";
+import { humanize } from "../../client/group-fields.js";
+import type { Cover, GroupCard, GroupDetail } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient } from "../../react/context.js";
+import { useTypeahead } from "../../react/discovery.js";
 import { Input } from "#ckui/ui/input";
 import { RenditionImg } from "../rendition-img.js";
 import { ErrorLine } from "../social/parts.js";
@@ -38,27 +38,20 @@ export function useLanguageName(): (code: string) => string {
   }, [language]);
 }
 
-// Until cards carry cover renditions (ContentKit #120 media lane).
-type WithRenditions = Cover & { renditions?: PublicRendition[] };
-
 export interface GroupCoverProps {
   group: GroupLike;
   /** Shown instead, e.g. a cover just uploaded. */
   src?: string;
-  /** Temporary: the host's cover until group cards carry renditions. */
-  renderCover?: (group: GroupLike) => ReactNode;
   className?: string;
 }
 
-/** A group's cover: its renditions, else the host's, else its initial on a muted tile. */
-export function GroupCover({ group, src, renderCover, className }: GroupCoverProps) {
+/** A group's cover: its renditions, else its initial on a muted tile. */
+export function GroupCover({ group, src, className }: GroupCoverProps) {
   const box = cn("overflow-hidden rounded-md bg-muted", className);
   const initial = <span className={cn(box, "grid place-items-center text-lg font-semibold text-muted-foreground")}>{(group.name || group.slug).trim().charAt(0).toUpperCase() || "?"}</span>;
   if (src) return <img src={src} alt="" className={cn(box, "object-cover")} data-ckui="group-cover" />;
-  const renditions = (group.cover as WithRenditions | undefined)?.renditions;
+  const renditions = group.cover?.renditions;
   if (renditions?.length) return <RenditionImg outputs={renditions} fit="cover" skeleton className={box} fallback={initial} data-ckui="group-cover" />;
-  const own = renderCover?.(group);
-  if (own) return <>{own}</>;
   return initial;
 }
 
@@ -95,51 +88,15 @@ export interface GroupPickerProps {
   className?: string;
 }
 
-/** Text matches a group when its name or slug starts a word with it. */
-const matches = (g: GroupCard, q: string) => [fold(g.name), g.slug.toLowerCase()].some((s) => s.startsWith(q) || s.includes(` ${q}`) || s.includes(`-${q}`));
-
-/**
- * A typeahead over one kind's groups. It reads the letter bucket of what is
- * typed and matches names and slugs in it, until discovery's typeahead serves groups.
- */
-export function GroupPicker({ kind, language, exclude, label, onPick, client: own, autoFocus, className }: GroupPickerProps) {
+/** A typeahead over one kind's groups (GET /v1/typeahead). */
+export function GroupPicker({ kind, language, exclude, label, onPick, client, autoFocus, className }: GroupPickerProps) {
   const { t } = useMessages();
-  const client = useContentKitClient(own);
   const id = useId();
   const [text, setText] = useState("");
-  const [bucket, setBucket] = useState<GroupCard[]>([]);
   const [active, setActive] = useState(0);
-  const [error, setError] = useState<ContentKitError | null>(null);
-  const cache = useRef(new Map<string, GroupCard[]>());
-  const q = fold(text);
-  const letter = q ? letterOf(q) : "";
-  useEffect(() => {
-    cache.current.clear();
-  }, [kind, language, client]);
-  useEffect(() => {
-    if (!letter) return;
-    const hit = cache.current.get(letter);
-    if (hit) return setBucket(hit);
-    const ctl = new AbortController();
-    const timer = setTimeout(() => {
-      client.groups.list({ kind, letter, language, sort: "name", limit: 200 }, ctl.signal).then(
-        (page) => {
-          cache.current.set(letter, page.groups);
-          setError(null);
-          setBucket(page.groups);
-        },
-        (e) => {
-          const err = toContentKitError(e);
-          if (err.code !== "aborted") setError(err);
-        },
-      );
-    }, 150);
-    return () => {
-      clearTimeout(timer);
-      ctl.abort();
-    };
-  }, [letter, kind, language, client]);
-  const results = useMemo(() => (q ? bucket.filter((g) => !exclude?.includes(g.id) && matches(g, q)).slice(0, 8) : []), [bucket, q, exclude]);
+  const found = useTypeahead(text, { group_kinds: [kind], display_language: language, limit: 10, client });
+  const results = useMemo(() => found.groups.filter((g) => g.kind === kind && !exclude?.includes(g.id)).slice(0, 8), [found.groups, kind, exclude]);
+  const q = text.trim();
   useEffect(() => setActive(0), [q]);
   const pick = (g: GroupCard) => {
     setText("");
@@ -196,12 +153,12 @@ export function GroupPicker({ kind, language, exclude, label, onPick, client: ow
           ))}
         </ul>
       )}
-      {q && !open && bucket.length > 0 && !error && (
+      {q && !open && found.query === q && !found.loading && !found.error && (
         <p className="text-xs text-muted-foreground" role="status">
           {t("groups.noMatch")}
         </p>
       )}
-      <ErrorLine error={error} />
+      <ErrorLine error={found.error} />
     </div>
   );
 }

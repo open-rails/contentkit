@@ -2,8 +2,7 @@ import { cn } from "cn";
 import type { ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { GroupDetail } from "../../client/generated/wire.js";
-import type { AttributeSpec, Kinds } from "../../client/kinds.js";
+import type { Attribute, GroupDetail } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useGroup, useKinds } from "../../react/groups.js";
@@ -19,13 +18,9 @@ export interface GroupHeaderProps {
   id?: string;
   /** Text, names and counts in this language; default the provider's. */
   language?: string;
-  /** Temporary: the content model until GET /v1/kinds serves it. */
-  kinds?: Kinds;
   labels?: Labels;
   /** A group's link (parent, scope, children); default its canonical path. */
   href?: (group: GroupLike) => string | undefined;
-  /** Temporary: the host's cover until group cards carry renditions. */
-  renderCover?: (group: GroupLike) => ReactNode;
   /** Below the description: the host's actions. */
   children?: ReactNode;
   client?: ContentKitClient;
@@ -34,7 +29,7 @@ export interface GroupHeaderProps {
 }
 
 /** A value as its attribute's type shows it. */
-export function formatAttribute(m: Translator, spec: AttributeSpec | undefined, value: unknown, labels?: Labels): string {
+export function formatAttribute(m: Translator, spec: Attribute | undefined, value: unknown, labels?: Labels): string {
   if (typeof value === "boolean") return m.t(value ? "groups.yes" : "groups.no");
   if (spec?.type === "time" && typeof value === "string") return formatDate(m, value);
   if (spec?.type === "int" && typeof value === "number") return new Intl.NumberFormat(m.language).format(value);
@@ -48,7 +43,7 @@ export function GroupHeader(p: GroupHeaderProps) {
   const { t } = m;
   const languageName = useLanguageName();
   const read = useGroup(p.group ? null : p.id, { language: p.language, client: p.client });
-  const { kinds } = useKinds({ initial: p.kinds, client: p.client });
+  const { kinds } = useKinds({ client: p.client });
   const g = p.group ?? read.group;
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="group-header">
@@ -75,7 +70,7 @@ export function GroupHeader(p: GroupHeaderProps) {
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
   return root(
     <div className="grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]" data-kind={g.kind}>
-      <GroupCover group={g} renderCover={p.renderCover} className="aspect-[3/4] w-32 sm:w-40" />
+      <GroupCover group={g} className="aspect-[3/4] w-32 sm:w-40" />
       <div className="grid content-start gap-3">
         <div className="grid gap-1">
           {(g.parent || g.scope) && (

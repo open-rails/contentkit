@@ -71,6 +71,37 @@ export {
   type UseGroupMembers,
   type UseKinds,
 } from "./groups.js";
+export {
+  beaconsFor,
+  useBeacons,
+  useContentFilters,
+  useContents,
+  useExposure,
+  useHistory,
+  useRecommendations,
+  useReleaseDates,
+  useSearch,
+  useSimilar,
+  useTypeahead,
+  useViewSignal,
+  type ExposureOptions,
+  type ReleaseDate,
+  type UseContentFilters,
+  type UseExposure,
+  type UseHistory,
+  type UseRail,
+  type UseTypeahead,
+} from "./discovery.js";
+export {
+  nextRelease,
+  useReaderPlan,
+  useSegmentPages,
+  useVersionDownload,
+  type ReaderPage,
+  type UseReaderPlan,
+  type UseSegmentPages,
+  type UseVersionDownload,
+} from "./versions.js";
 export { useContentScope, usePaged, type UseList, type UsePaged } from "./use-resource.js";
 export { ResourceStore, resourcesFor, type Page, type Resource } from "./resources.js";
 export {

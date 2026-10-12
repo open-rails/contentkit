@@ -1,11 +1,13 @@
 import { admin } from "./admin/en.js";
 import { social } from "./social/en.js";
 import { groups } from "./groups/en.js";
+import { discovery } from "./discovery/en.js";
 
 export const en = {
   ...social,
   ...admin,
   ...groups,
+  ...discovery,
   common: {
     cancel: "Cancel",
     close: "Close",

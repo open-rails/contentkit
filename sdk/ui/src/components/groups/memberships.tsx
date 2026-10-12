@@ -3,8 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, toLocalInput } from "../../client/group-fields.js";
-import type { ContentMemberships, GroupCard, GroupDetail, Membership } from "../../client/generated/wire.js";
-import type { GroupKindSpec, Kinds } from "../../client/kinds.js";
+import type { ContentMemberships, GroupCard, GroupDetail, GroupKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useContentGroups, useGroupMembers, useKinds, type Member } from "../../react/groups.js";
@@ -36,8 +35,6 @@ export interface MembershipEditorProps {
   versions?: readonly VersionChoice[];
   /** Only these group kinds; default every kind its kind joins. */
   groupKinds?: readonly string[];
-  /** Temporary: the content model until GET /v1/kinds serves it. */
-  kinds?: Kinds;
   labels?: Labels;
   /** Group names in this language; default the provider's. */
   language?: string;
@@ -62,7 +59,7 @@ const same = (a: Membership[], b: Membership[]) => JSON.stringify(a) === JSON.st
 export function MembershipEditor(p: MembershipEditorProps) {
   const m = useMessages();
   const { t } = m;
-  const { kinds, loading: kindsLoading } = useKinds({ initial: p.kinds, client: p.client });
+  const { kinds, loading: kindsLoading } = useKinds({ client: p.client });
   const cg = useContentGroups(p.content, { language: p.language, client: p.client });
   const groupKinds = useMemo(() => p.groupKinds ?? kinds?.kinds[p.contentKind]?.groups ?? [], [p.groupKinds, kinds, p.contentKind]);
   const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
@@ -118,7 +115,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
       }}
     >
       {groupKinds.map((kind) => {
-        const spec: GroupKindSpec = kinds?.group_kinds?.[kind] ?? {};
+        const spec: GroupKind = kinds?.group_kinds?.[kind] ?? {};
         const rows = draft.filter((x) => cards.get(x.group_id ?? "")?.kind === kind);
         const label = labelOf(p.labels, kind);
         return (
@@ -192,7 +189,7 @@ function MembershipRow({
 }: {
   m: Membership;
   card?: GroupCard;
-  spec: GroupKindSpec;
+  spec: GroupKind;
   labels?: Labels;
   versions?: readonly VersionChoice[];
   versionLabel: (id: string) => string;
@@ -302,8 +299,6 @@ function WindowFields({ from, until, name, onChange }: { from?: string; until?: 
 
 export interface GroupMembersProps {
   group: Pick<GroupDetail, "id" | "kind" | "name" | "slug" | "cover">;
-  /** Temporary: the content model until GET /v1/kinds serves it. */
-  kinds?: Kinds;
   labels?: Labels;
   /** One member, e.g. a link with its title; default its content id. */
   renderContent?: (member: Membership) => ReactNode;
@@ -326,8 +321,8 @@ const refKey = (x: Membership) => `${x.content_id}|${x.version_id ?? ""}`;
 export function GroupMembers(p: GroupMembersProps) {
   const m = useMessages();
   const { t } = m;
-  const { kinds } = useKinds({ initial: p.kinds, client: p.client });
-  const spec: GroupKindSpec = kinds?.group_kinds?.[p.group.kind] ?? {};
+  const { kinds } = useKinds({ client: p.client });
+  const spec: GroupKind = kinds?.group_kinds?.[p.group.kind] ?? {};
   const members = useGroupMembers(p.group.id, { pageSize: p.pageSize, client: p.client });
   const save = useAction("membership.save", p.onError);
   const [editing, setEditing] = useState<string | null>(null);
@@ -450,7 +445,7 @@ export function GroupMembers(p: GroupMembersProps) {
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function AddMember({ spec, labels, onAdd }: { spec: GroupKindSpec; labels?: Labels; onAdd: (m: Membership) => Promise<unknown> }) {
+function AddMember({ spec, labels, onAdd }: { spec: GroupKind; labels?: Labels; onAdd: (m: Membership) => Promise<unknown> }) {
   const { t } = useMessages();
   const id = useId();
   const [content, setContent] = useState("");

@@ -26,7 +26,7 @@ for (const theme of ["light", "dark"] as const) {
     );
     const beta = children[1]!;
     for (let i = 0; i < 2; i++) {
-      const c = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }] });
+      const c = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
       await ck.groups.addMembers(beta.id, [{ content_id: c.id }]);
     }
     await ck.groups.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
@@ -84,14 +84,14 @@ test("group header: names in other languages, aliases and typed attributes", asy
 test("membership editor: a content's groups with roles, positions and versions", async ({ page }) => {
   const { staff, ck } = await staffClient();
   const r = run();
-  const content = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
+  const content = await h.content({ kind: "comic", versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
   const [, ja] = content.versions;
   const [artist, series, voice] = (await ck.groups.create([
     { kind: "artist", slug: `pub-${r}`, names: [name("en", `Publisher ${r}`)] },
     { kind: "series", slug: `saga-${r}`, names: [name("en", `Saga ${r}`)] },
     { kind: "voice_actor", slug: `voice-${r}`, names: [name("en", `Voice ${r}`)] },
   ])) as [Group, Group, Group];
-  await page.goto(demo("groups.html", staff, { content: content.id, content_kind: "gallery", versions: `${content.versions[0]}:English,${ja}:Japanese` }));
+  await page.goto(demo("groups.html", staff, { content: content.id, content_kind: "comic", versions: `${content.versions[0]}:English,${ja}:Japanese` }));
   const editor = page.locator("[data-ckui=membership-editor]");
   const kind = (k: string) => editor.locator(`[data-ckui=membership-kind][data-group-kind=${k}]`);
   await expect(kind("artist")).toBeVisible({ timeout: 30_000 });
@@ -169,7 +169,7 @@ for (const [mode, theme] of [
     await expect(texts.getByText("Saved.")).toBeVisible();
 
     // A member, then its cover as the group's.
-    const content = await h.content({ kind: "gallery", versions: [{ languages: ["en"] }] });
+    const content = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
     const members = flow.locator("[data-ckui=group-members]");
     await members.getByLabel("Content id").fill(content.id);
     await members.getByRole("button", { name: "Add member" }).click();

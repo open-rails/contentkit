@@ -42,6 +42,7 @@ export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
 export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
 export * from "./components/groups/index.js";
+export * from "./components/content/index.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
 export { PostManager, postStatus, usePostManagerAccess, type PostEditorProps, type PostManagerProps, type PostStatus } from "./components/admin/post-manager.js";

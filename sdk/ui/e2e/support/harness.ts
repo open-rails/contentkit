@@ -1,5 +1,4 @@
 import type { Item as NotificationItem } from "../../src/client/generated/wire.js";
-import type { Kinds } from "../../src/client/kinds.js";
 // The harness's test-control surface (/__test, e2e/server/control.go).
 
 export interface TestUser {
@@ -23,6 +22,29 @@ export interface Item {
   /** Its content code and canonical path, when created with a title. */
   code?: string;
   path?: string;
+}
+
+/** A content as the e2e host seeds it (e2e/server/seed.go). */
+export interface SeedContent {
+  kind: string;
+  titles?: Record<string, string>;
+  /** An access.Rule; public by default. */
+  access?: Record<string, unknown>;
+  listing?: "listed" | "members" | "unlisted";
+  restrictions?: string[];
+  attributes?: Record<string, unknown>;
+  /** Published this long ago; default 1. */
+  age_hours?: number;
+  favorites?: number;
+  versions: { languages: string[]; traits?: string[]; access?: Record<string, unknown>; pages?: number; future?: boolean }[];
+  /** Group ids, content-level memberships. */
+  groups?: string[];
+}
+
+export interface SeededContent {
+  id: string;
+  code: string;
+  versions: string[];
 }
 
 export interface Fault {
@@ -103,19 +125,19 @@ export class Harness {
     return this.call("POST", "/items", o);
   }
 
-  /** Published content with live, listed versions and their facets, as the catalog's routes will write it. */
-  content(o: { kind: string; versions: { languages: string[]; favorites?: number }[] }): Promise<{ id: string; versions: string[] }> {
-    return this.call("POST", "/contents", o);
+  /** Contents with their text, code, versions, facets, memberships and keyword documents, as the catalog's routes will write them. */
+  contents(items: SeedContent[]): Promise<SeededContent[]> {
+    return this.call("POST", "/contents", items);
+  }
+
+  /** One content: contents([c])[0]. */
+  async content(c: SeedContent): Promise<SeededContent> {
+    return (await this.contents([c]))[0]!;
   }
 
   /** Runs the groups' count and automatic cover job now. */
   recount(): Promise<void> {
     return this.call("POST", "/recount");
-  }
-
-  /** The site's content model, as GET /v1/kinds will serve it. */
-  kinds(): Promise<Kinds> {
-    return this.call("GET", "/kinds");
   }
 
   updateItem(ref: { kind: string; id: string }, o: { access?: "full" | "none"; hidden?: boolean }): Promise<Item> {

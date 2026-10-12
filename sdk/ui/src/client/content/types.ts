@@ -45,4 +45,7 @@ export type ContentChange =
   | { type: "ban.saved"; scope: BanScope; ban: CommentBan }
   | { type: "ban.lifted"; scope: BanScope; user: string }
   | { type: "moderation.resolved"; kind: HeldKind; id: string; decision: Decision }
-  | { type: "groups.changed" };
+  | { type: "groups.changed" }
+  /** The reader's content filters changed: every list reads again. */
+  | { type: "contentFilters.changed" }
+  | { type: "history.changed" };
