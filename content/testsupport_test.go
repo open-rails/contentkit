@@ -125,6 +125,8 @@ func (f *fakeResolver) setCanonical(kind, id, canonical string) {
 		f.entries = map[string]access.Resolution{}
 	}
 	f.entries[kind+":"+id] = access.Resolution{Visible: true, Accessible: true, Ref: contentref.New(testTenant, kind, canonical)}
+	// The canonical reference resolves too, as a real resolver's does.
+	f.entries[kind+":"+canonical] = access.Resolution{Visible: true, Accessible: true}
 }
 
 // setOwned is set for a visible, accessible target owned by owner.
@@ -144,8 +146,8 @@ func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, 
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, r := range refs {
 		if res, ok := f.entries[r.ContentKind+":"+r.ContentID]; ok {
-			if res.Ref.ContentID != "" && r.Version() != "" {
-				res.Ref = res.Ref.WithVersion(r.Version())
+			if res.Ref.ContentID != "" {
+				res.Ref = contentref.New(r.TenantID, res.Ref.ContentKind, res.Ref.ContentID).WithVersion(r.Version())
 			}
 			out[r.Key()] = res
 		}
