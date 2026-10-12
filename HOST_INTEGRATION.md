@@ -8,7 +8,7 @@ another tenant are rejected.
 
 One migrate call, one constructor, one HTTP mount per tenant. The mount
 serves every configured module at its sub-path: content at the root,
-`/media/upload/…`, `/media/…`, `/codes/{code}` and `/taxonomy/…`
+`/media/upload/…`, `/media/…`, `/codes/{code}` and `/v1/…` (groups)
 ([docs/api/routes.md](docs/api/routes.md)):
 
 ```go
@@ -22,7 +22,7 @@ rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 		Limits: content.Limits{Redis: rdb}},
 	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
 	Codes:    router, // /codes/{code}
-	Taxonomy: store,  // /taxonomy, for root:taxonomy:write
+	Groups:   groupStore, // /v1/groups…, writes for root:groups:write
 })
 mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 ```
@@ -54,7 +54,7 @@ ContentKit names its staff permissions, always the full
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and posts |
-| `access.TaxonomyWrite` | `root:taxonomy:write` | use the taxonomy admin API |
+| `access.GroupsWrite` | `root:groups:write` | create, edit, merge and delete groups, and set memberships |
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
@@ -101,7 +101,7 @@ trusted-proxy step before the mount, or every anonymous visitor is the proxy.
 
 A host mounting a module alone passes the same Auth: `content.Options.Auth`
 (and `UserInfo`), `media.HandlerOptions.Auth`,
-`media.UploadHandlerOptions.Auth`, `taxonomy.Store.Handler(auth)`;
+`media.UploadHandlerOptions.Auth`, `groups.Store.Handler(auth)`;
 `contenturl.Router.Handler` needs none.
 
 Hosts use:
@@ -130,8 +130,8 @@ Mint ids with Postgres 18 `uuidv7()` or `contentref.NewID()`;
 `contentref.Parse` validates untrusted input. A content id names the media
 folder `{tenant}/{kind}/{id}/`, so a reused id (an integer sequence restarted
 after a reset) would hand a new item another's files.
-Taxonomy ids follow the same rule: a node is a search document keyed by its
-`taxonomy_id` (`CreateNodes` mints one when omitted).
+Group ids follow the same rule: a group is a search document keyed by its
+id (`CreateGroups` mints one when omitted).
 
 Media never adopts leftovers:
 
@@ -180,7 +180,7 @@ code, resolution and canonicalization.
   never changed or reused. `ParseCode` accepts any case, `O`→`0`, `I`/`L`→`1`
   and hyphens. A request with another spelling of the code is redirected to the
   canonical one.
-- **Registration.** Taxonomy nodes and posts register themselves (node slugs
+- **Registration.** Groups and posts register themselves (group slugs
   come from canonical names, one per language; post slugs from the post slug or
   title). Host content calls `Put` in the transaction that creates it, and again
   when a title changes. `Put` is idempotent, so the host backfills existing rows
@@ -201,8 +201,9 @@ _ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redi
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
   leaking the slug. `Gone` answers 410. For posts, use
-  `rt.Content.PostVisibility`. For taxonomy nodes, map the node state: a
-  deleted node is `Gone`, and merged nodes already resolve to their survivor.
+  `rt.Content.PostVisibility`. For groups, map the group state: a deleted
+  group is `Gone`, and merged groups already resolve to their survivor.
+  `kinds.Config.Routes()` maps every content and group kind to its route.
   A canonical request reaches the page
   with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
   `BaseURL` is set.
@@ -573,7 +574,7 @@ language, each carrying `Title`/`Aliases` of that version and `Keywords` =
 work tags ∪ that version's tags (never a sibling's). Mark every version's
 `DocumentKey` dirty when the version, its work, or any contributing tag or
 alias changes. Ungrouped records (tags, artists, series) are one document per
-language referenced by their taxonomy id as `ContentRef{tag, <taxonomy id>}`.
+language referenced by their group id as `ContentRef{tag, <group id>}`.
 
 ## Eligibility join (host-owned, trusted)
 
@@ -1111,8 +1112,6 @@ gates (Auth). No compatibility: the old ports are gone.
 - `media.HandlerOptions.Identity` and `UploadHandlerOptions.Actor` are `Auth`;
   `media.Identity`, `content.Identity`, `content.Authorizer`,
   `content.UserEnricher` and `content.Runtime.Guard` are gone.
-- `RuntimeConfig.Taxonomy` is the `*taxonomy.Store`; `taxonomy.Handler(store)`
-  is `store.Handler(auth)`.
 - `access.Actor.Kind` is an `auth.SubjectKind`; it gains `Invoker`,
   `Verified`, `Can` and `Person`. Hooks check staff with
   `actor.Can(ctx, scope, perm)`.
@@ -1272,78 +1271,19 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
       = cardinality(@only_slugs::text[])`
 ```
 
-## Taxonomy (nodes, assignments, effective tags, counts)
+## Groups
 
-`taxonomy.Store` owns the generic catalog of one tenant. The PostgreSQL
-baseline installs its tables in the host-selected schema. Construct the
-optional store with that schema and the
-host's kinds, languages and count-eligibility rule. Assign work-level
-tags with a work reference and version traits with a version reference; read
-`EffectiveTags` (work ∪ version) when hydrating. For "every requested tag on
-one version" use `taxonomy.RequireAll(schema, ids)` as `FilterSQL`/`FilterArgs`
-next to your `Eligibility`: both hold on the same `sd` row, so a Spanish
-request for `colored` is never satisfied by an English colored edition plus a
-Spanish original. `Store.Browse` runs that join without a query text.
-
-Counts derive from your documents and `Options.CountEligibility` (your public
-visibility join); call `RecountContent` when a work's versions or visibility
-change, `RebuildCounts` after bulk loads written with
-`AssignOptions{SuppressCounts: true}`. Mark your content documents dirty in
-the transaction that calls `Assign`/`Unassign` (`store.WithTx(tx)`).
-Typeahead documents of nodes are built by the store: register its kinds with
-the worker through `store.Lister`/`store.Builder`. `RuntimeConfig.Taxonomy:
-store` serves the admin routes at `/taxonomy` to staff holding
-`root:taxonomy:write`; mounted alone it is `store.Handler(auth)`. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
-
-### Catalog totals
-
-`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Languages, Scope})` sizes the catalog
-per kind: `public` is the works the anonymous listing shows and anyone opens;
-each tier is every work its holders see and open, public ones and ones the
-anonymous listing hides included. Totals are per kind, language and
-audience: a work counts once in each language any of its eligible documents is
-in, and once in the kind's total, never once per version. Configure `Options.Listing`: the kinds, a listing eligibility (not
-`CountEligibility`: it admits only live, undeleted versions the members'
-listing shows on this deployment) whose row carries the access columns,
-`access.Columns` mapping them, and `PublicListed`, a boolean over that row
-(alias `h`) for the works the anonymous listing also shows:
-
-```go
-Listing: &taxonomy.Listing{Kinds: []string{"gallery"},
-	Eligibility: search.Eligibility{SQL: `SELECT CASE WHEN g.is_premium THEN 'premium' ELSE 'free' END AS access, g.is_unlisted
-	  FROM doujins.gallery_versions gv JOIN doujins.galleries g ON g.id = gv.gallery_id AND g.deleted_at IS NULL
-	  WHERE sd.content_kind = 'gallery' AND g.id::text = sd.content_id AND gv.id::text = sd.content_version_id
-	    AND gv.deleted_at IS NULL AND gv.live_at <= now()`},
-	Access: access.Columns{Level: "h.access", TierName: "premium",
-		Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}},
-	PublicListed: "NOT h.is_unlisted"},
-```
-
-A site's slice is a `taxonomy.CatalogScope`: `AnyOf`/`NoneOf` node keys
-(kind and slug) effective on the counted version. `RuntimeConfig.Catalog:
-store.CatalogHandler(taxonomy.CatalogOptions{Scope: fromHost})` serves the
-open `GET /catalog/totals?kinds=gallery&languages=en,es` with
-`Cache-Control: public, max-age=600`. `languages` limits the breakdown, never
-the kind totals; without it every language with a counted work is listed:
-
-```json
-{"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400},
-  "languages": {"en": {"public": 1100, "tiers": {"premium": 5000}},
-                "es": {"public": 60, "tiers": {"premium": 210}}}}}}
-```
-
-Languages come from the search documents, so the listing eligibility must admit
-a document only in a language its version actually serves. A host that writes a
-document in every language for every version (Hentai0) must check the version's
-languages in that SQL, or the work counts in languages it lacks.
-
-Totals are cached per kind and scope (helpers `cache`): reloaded in the
-background after ten minutes, the last good count served while reloads fail,
-for up to a day. A sibling deployment's totals, cached the same way:
-`taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, taxonomy.TotalsQuery{Kinds: kinds})`
-(`Kinds` required, `Scope` empty). `Close` either
-when discarding it. Counts read your search documents, so a listed work
-without one is not counted.
+`groups.Store` owns one tenant's groups in ContentKit's schema; their kinds
+come from `kinds.Config.GroupKinds`. Content joins a group at content level or,
+for a `version_level` kind, one version; `SetContentGroups` replaces a
+content's memberships in the kinds it names. Membership writes, group
+deletes, parent moves and merges keep `content_facets.group_ids` current (a
+version's effective groups, ancestors included: `EffectiveGroups`).
+`Options.ContentChanged` runs in the same transaction for whatever else
+derives from them. Engine jobs: `Recount` (counts per group, content kind and
+language from the facets, and automatic covers) and `RefreshWindows`
+(featured-rail windows). Group documents are built by the store
+(`BuildKeywordDocuments`, `ListContent`, `IsKind`).
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1448,16 +1388,16 @@ ranker, err := popularity.New(popularity.Config{Source: hub, Policy: policy, Cac
 window, err := popularity.WindowForPeriod(period, time.Now()) // 7d|30d|90d|365d|all, else error
 top, err := ranker.Popular(ctx, "gallery", window, offset+limit)     // ClickHouse RankExpr, global; slice for the page
 scores, err := ranker.Scores(ctx, "gallery", artistGalleryIDs, window) // Go over Metrics: host-selected candidates
-artists, err := ranker.Taxonomy(ctx, "gallery", "artist", window)     // member sums through the Catalog port
+artists, err := ranker.Groups(ctx, "gallery", "artist", window)       // member sums through the Catalog port
 ```
 
 - `Hit` carries the score next to the raw metrics: show `Viewers` and
   `MeanEngagement()` as public counts, never anything derived from the score.
 - Register `popularity.SessionScorer` (or your own `signal.Scorer`) per content
   kind so session scores are coverage of the selected version × dwell.
-- `Catalog.Assignments(tenant, contentKind, taxonomyKind, ids)` maps ranked
-  works to their taxonomy ids from the host's tables; ContentKit never records
-  a signal against a taxonomy id.
+- `Catalog.Memberships(tenant, contentKind, groupKind, ids)` maps ranked
+  works to their group ids; `*groups.Store` implements it. ContentKit never
+  records a signal against a group.
 - Cache keys carry tenant, policy name, kind, window and bounds; two policies
   sharing one cache never read each other's entries.
 - `Popular` serves at most `Config.MaxDepth` works (default 2000) and reads
