@@ -4,94 +4,108 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/kinds"
 )
 
-// Columns.Audiences names, per row, exactly the audiences that open it
-// without buying it: an anonymous visitor (Anyone) for a public row, and a
-// holder of the row's tier for a tier row.
-func TestAudiencesMatchTruth(t *testing.T) {
+// AudiencesSQL names, per content_facets row, exactly the audiences that open
+// it without buying: what Decide answers for an anonymous viewer and for a
+// viewer whose token claims one tier.
+func TestAudiencesMatchDecide(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
-	table := pgx.Identifier{pgtest.EmptySchema(t, ctx, pool), "posts"}.Sanitize()
-	if _, err := pool.Exec(ctx, `CREATE TABLE `+table+` (id int PRIMARY KEY, access_policy text NOT NULL, tier text)`); err != nil {
+	schema := pgtest.Schema(t, ctx, pool)
+	table := func(n string) string { return pgx.Identifier{schema, n}.Sanitize() }
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	rules := []access.Rule{
+		{Level: access.Public},
+		{Level: access.TierLevel, Tiers: []string{"premium"}},
+		{Level: access.TierLevel, Tiers: []string{"gold", "premium"}},
+		{Level: access.GroupLevel, Group: uid(900)},
+		{Level: access.PPV},
+		{Level: access.GroupPPV, Group: uid(900)},
+		{Level: access.PPV, FreeAfter: &past},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, FreeAfter: &future},
+	}
+	var items []access.Item
+	for i, r := range rules {
+		c, v := uid(i+1), uid(100+i)
+		f := r.Facet()
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO ` + table("content_items") + ` (tenant_id, id, kind) VALUES ($1, $2, 'post')`, []any{tenant, c}},
+			{`INSERT INTO ` + table("content_versions") + ` (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, []any{tenant, v, c}},
+			{`INSERT INTO ` + table("content_facets") + ` (tenant_id, content_id, version_id, kind, listing, languages, access_level, access_tiers, access_group_id, access_free_after)
+				VALUES ($1, $2, $3, 'post', 'listed', '{en}', $4, $5, $6, $7)`, []any{tenant, c, v, f.Level, f.Tiers, f.GroupID, f.FreeAfter}},
+		} {
+			if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		items = append(items, access.Item{Content: c, Version: v, Rule: r})
+	}
+	tiers := []string{"gold", "premium"}
+	expr, args, err := access.AudiencesSQL("f", tiers)
+	if err != nil {
 		t.Fatal(err)
 	}
-	type row struct{ value, tier string }
-	var rows []row
-	for _, value := range []string{"public", "premium", "tier", "ppv", "bogus"} {
-		for _, tier := range []string{"premium", "gold", "undeclared"} {
-			rows = append(rows, row{value, tier})
-			if _, err := pool.Exec(ctx, `INSERT INTO `+table+` VALUES ($1, $2, $3)`, len(rows), value, tier); err != nil {
-				t.Fatal(err)
-			}
-		}
+	rows, err := pool.Query(ctx, `SELECT f.version_id, `+expr+` FROM `+table("content_facets")+` f`, pgx.NamedArgs(args))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, expr)
 	}
-	levels := map[string]access.Level{"public": access.Public, "premium": access.TierLevel, "tier": access.TierLevel, "ppv": access.PPV}
-	fixed := access.Columns{Level: "p.access_policy", TierName: "premium", Levels: levels}
-	perRow := access.Columns{Level: "lower(p.access_policy)", Tier: "p.tier", Levels: levels, ArgPrefix: "acc_"}
-	tiers := []string{"premium", "gold"}
-	for _, cols := range []access.Columns{fixed, perRow} {
-		audiences, args, err := cols.Audiences(tiers)
+	got := map[string][]string{}
+	for rows.Next() {
+		var v string
+		var aud []string
+		if err := rows.Scan(&v, &aud); err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(aud)
+		got[v] = aud
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	g, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: kinds.Config{Tiers: tiers, TokenClaims: tiers}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{}
+	for _, audience := range append([]string{access.Anyone}, tiers...) {
+		viewer := access.Actor{Anonymous: true}
+		if audience != access.Anyone {
+			viewer = access.Actor{ID: "u", Kind: "user", Verified: claims{audience}}
+		}
+		ds, err := g.Decide(ctx, viewer, items)
 		if err != nil {
 			t.Fatal(err)
 		}
-		q, err := pool.Query(ctx, "SELECT p.id, "+audiences+" FROM "+table+" p ORDER BY p.id", pgx.NamedArgs(args))
-		if err != nil {
-			t.Fatalf("%v\n%s", err, audiences)
-		}
-		got := map[int][]string{}
-		for q.Next() {
-			var id int
-			var aud []string
-			if err := q.Scan(&id, &aud); err != nil {
-				t.Fatal(err)
-			}
-			slices.Sort(aud)
-			got[id] = aud
-		}
-		if err := q.Err(); err != nil {
-			t.Fatal(err)
-		}
-		for i, r := range rows {
-			var want []string
-			switch levels[r.value] {
-			case access.Public:
-				want = append([]string{access.Anyone}, tiers...)
-			case access.TierLevel:
-				tier := r.tier
-				if cols.TierName != "" {
-					tier = cols.TierName
-				}
-				if slices.Contains(tiers, tier) {
-					want = []string{tier}
-				}
-			}
-			slices.Sort(want)
-			if strings.Join(got[i+1], ",") != strings.Join(want, ",") {
-				t.Errorf("%s: row %d %+v: audiences %q want %q", cols.Level, i+1, r, got[i+1], want)
+		for i, d := range ds {
+			if d.Allowed {
+				want[items[i].Version] = append(want[items[i].Version], audience)
 			}
 		}
 	}
-	for name, c := range map[string]struct {
-		cols  access.Columns
-		tiers []string
-	}{
-		"no levels":         {access.Columns{Level: "p.access_policy"}, tiers},
-		"both tier sources": {access.Columns{Level: "l", Levels: levels, Tier: "t", TierName: "premium"}, tiers},
-		"tier unset":        {access.Columns{Level: "l", Levels: levels}, tiers},
-		"tier name absent":  {fixed, []string{"gold"}},
-		"bad tier":          {perRow, []string{"Gold"}},
-		"repeated tier":     {perRow, []string{"gold", "gold"}},
-		"bad level":         {access.Columns{Level: "l", Levels: map[string]access.Level{"x": "bogus"}}, tiers},
-		"bad prefix":        {access.Columns{Level: "l", Levels: levels, TierName: "premium", ArgPrefix: "X"}, tiers},
-	} {
-		if _, _, err := c.cols.Audiences(c.tiers); err == nil {
-			t.Errorf("%s: no error", name)
+	for i, it := range items {
+		w := want[it.Version]
+		slices.Sort(w)
+		if strings.Join(got[it.Version], ",") != strings.Join(w, ",") {
+			t.Errorf("rule %d %+v: audiences %q, want %q", i, it.Rule, got[it.Version], w)
 		}
+	}
+	for _, bad := range [][]string{{"Gold"}, {"gold", "gold"}} {
+		if _, _, err := access.AudiencesSQL("f", bad); err == nil {
+			t.Errorf("tiers %v accepted", bad)
+		}
+	}
+	if _, _, err := access.AudiencesSQL("f)", tiers); err == nil {
+		t.Error("unsafe alias accepted")
 	}
 }

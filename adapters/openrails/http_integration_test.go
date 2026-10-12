@@ -42,7 +42,7 @@ func (w *world) api(admins ...access.Actor) api {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	srv := httptest.NewServer(checker.Wrap("", h, func(err error) { w.t.Error(err) }))
+	srv := httptest.NewServer(checker.Wrap("", http.StripPrefix("/v1", h), func(err error) { w.t.Error(err) }))
 	w.t.Cleanup(srv.Close)
 	return api{t: w.t, srv: srv}
 }
@@ -53,7 +53,7 @@ func (a api) do(method, path string, as access.Actor, body any, out any) int {
 	if body != nil {
 		_ = json.NewEncoder(&b).Encode(body)
 	}
-	req, _ := http.NewRequest(method, a.srv.URL+path, &b)
+	req, _ := http.NewRequest(method, a.srv.URL+"/v1"+path, &b)
 	testauth.As(req, as)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestJoinAndLibrary(t *testing.T) {
 	post := w.content(access.Rule{Level: access.GroupLevel, Group: free}, "For members", "")
 	postV := w.version(post, nil, "")
 
-	var m offers.Membership
+	var m offers.GroupJoin
 	if got := a.do("POST", "/groups/"+free+"/join", viewer, nil, &m); got != 409 {
 		t.Fatalf("join without an offer: %d", got)
 	}

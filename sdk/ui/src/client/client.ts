@@ -1,4 +1,3 @@
-import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
 import { BansClient } from "./content/bans.js";
 import { CommentsClient } from "./content/comments.js";
@@ -8,11 +7,11 @@ import { PollsClient } from "./content/polls.js";
 import { PostsClient } from "./content/posts.js";
 import { ReactionsClient } from "./content/reactions.js";
 import type { Config, RefBody } from "./generated/wire.js";
+import { GroupsClient } from "./groups.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
 import { NotificationsClient } from "./notifications.js";
-import { TaxonomyClient } from "./taxonomy.js";
 
 export interface ContentKitClientOptions extends HttpOptions {
   /** Upload tuning (transport, part concurrency, retries). */
@@ -42,12 +41,10 @@ export interface ContentKitClient {
   readonly bans: BansClient;
   /** The review queue of held comments and posts. */
   readonly moderation: ModerationClient;
-  /** The taxonomy admin API. */
-  readonly taxonomy: TaxonomyClient;
+  /** Groups: listings, pages, staff writes and memberships. */
+  readonly groups: GroupsClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
-  /** The public catalog: listing totals by kind and audience. */
-  readonly catalog: CatalogClient;
   /** The signed-in person's native and imported notifications. */
   readonly notifications: NotificationsClient;
 
@@ -74,9 +71,8 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     polls: new PollsClient(h, media),
     bans: new BansClient(h),
     moderation: new ModerationClient(h),
-    taxonomy: new TaxonomyClient(h),
+    groups: new GroupsClient(h),
     codes: new CodesClient(h),
-    catalog: new CatalogClient(h),
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     url: (module, ref) => h.mount(module, ref),

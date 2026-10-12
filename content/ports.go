@@ -114,10 +114,10 @@ type GroupAssignment struct {
 	Label   string
 }
 
-// Group is one answer group of a free-text poll with its current size. The
-// ContentKit owns current assignments and counts, so delayed provider side
+// AnswerGroup is one answer group of a free-text poll with its current size.
+// The ContentKit owns current assignments and counts, so delayed provider side
 // effects cannot rewrite results.
-type Group struct {
+type AnswerGroup struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Count int    `json:"count"`

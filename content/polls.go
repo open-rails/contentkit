@@ -74,9 +74,9 @@ type Poll struct {
 	Voted      bool         `json:"voted"`
 	MyOption   string       `json:"my_option,omitempty"`
 	// free_text only
-	AnswerCount int         `json:"answer_count,omitempty"`
-	Groups      []Group     `json:"groups,omitempty"`
-	MyAnswer    *PollAnswer `json:"my_answer,omitempty"`
+	AnswerCount int           `json:"answer_count,omitempty"`
+	Groups      []AnswerGroup `json:"groups,omitempty"`
+	MyAnswer    *PollAnswer   `json:"my_answer,omitempty"`
 }
 
 // PollInput is a new poll.
@@ -428,7 +428,7 @@ func (p *polls) attach(ctx context.Context, actor access.Actor, views []Poll) er
 
 // currentGroups reads the durable assignments accepted for the current answer revisions.
 // Provider-side aggregation is never an authority for membership or counts.
-func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, error) {
+func (p *polls) currentGroups(ctx context.Context, questionID string) ([]AnswerGroup, error) {
 	rows, err := p.s.pool.Query(ctx, `SELECT group_id, coalesce((array_agg(group_label ORDER BY classified_at DESC, id))[1], group_id), count(*)
  FROM `+p.s.t.pollAnswers+` WHERE tenant_id=$1 AND question_id=$2 AND classified_at IS NOT NULL
  GROUP BY group_id ORDER BY count(*) DESC, 2, group_id`, p.s.tenant, questionID)
@@ -436,9 +436,9 @@ func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, 
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Group{}
+	out := []AnswerGroup{}
 	for rows.Next() {
-		var g Group
+		var g AnswerGroup
 		if err := rows.Scan(&g.ID, &g.Label, &g.Count); err != nil {
 			return nil, err
 		}

@@ -8,8 +8,8 @@ import (
 	"github.com/open-rails/contentkit/access"
 )
 
-// Membership is a viewer's free membership of a group.
-type Membership struct {
+// GroupJoin is a viewer's free membership of a group.
+type GroupJoin struct {
 	GroupID string     `json:"group_id"`
 	Key     access.Key `json:"key"`
 	Member  bool       `json:"member"`
@@ -18,7 +18,7 @@ type Membership struct {
 // Join grants actor each group's key free, through Billing: a sellable group
 // whose active offer is free (amount 0). A viewer already holding the key
 // costs no grant. A group without a free offer is ErrConflict.
-func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string) ([]Membership, error) {
+func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
 	targets, err := s.groupTargets(ctx, actor, groups)
 	if err != nil {
 		return nil, err
@@ -56,9 +56,9 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 		held[g] = true
 	}
 	var grants []access.Grant
-	out := make([]Membership, len(offers))
+	out := make([]GroupJoin, len(offers))
 	for i, o := range offers {
-		out[i] = Membership{GroupID: o.Target.ID, Key: o.Key, Member: true}
+		out[i] = GroupJoin{GroupID: o.Target.ID, Key: o.Key, Member: true}
 		if !held[o.Target.ID] {
 			grants = append(grants, access.Grant{Subject: actor.ID, ProductID: o.ProductID})
 		}
@@ -71,19 +71,19 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 
 // Leave takes back each group's free grant from actor; a bought or
 // subscribed membership stays.
-func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string) ([]Membership, error) {
+func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
 	targets, err := s.groupTargets(ctx, actor, groups)
 	if err != nil {
 		return nil, err
 	}
 	keys := make([]string, len(targets))
-	out := make([]Membership, len(targets))
+	out := make([]GroupJoin, len(targets))
 	for i, t := range targets {
 		k, err := s.key(t)
 		if err != nil {
 			return nil, err
 		}
-		keys[i], out[i] = k.String(), Membership{GroupID: t.ID, Key: k}
+		keys[i], out[i] = k.String(), GroupJoin{GroupID: t.ID, Key: k}
 	}
 	products, err := s.billing.Products(ctx, keys)
 	if err != nil {
