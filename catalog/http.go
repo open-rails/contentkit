@@ -23,7 +23,7 @@ var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
 func init() { httpapi.Register(httpapi.Contents, routes) }
 
-const editorsDoc = " Creators, the owner group's editors and root:content:write holders only."
+const editorsDoc = " Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only."
 
 var languageParam = httpapi.Text("language", "the language to show text in; the site's first language, then any, when it has none")
 
@@ -51,7 +51,7 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}},
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Creates a content item as a draft. root:content:write holders, or an owner group's editors in it.",
+		Doc:     "Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,

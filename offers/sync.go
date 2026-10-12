@@ -143,6 +143,12 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 			p = updated[0]
 		}
 	}
+	if t.Kind == GroupTarget && (active == nil || active.terms.RenewHours == nil) {
+		// Withdrawn, free or one-time: no membership renews any more.
+		if err := s.billing.StopRenewals(ctx, []string{p.ID}); err != nil {
+			return "", "", err
+		}
+	}
 	if active == nil {
 		return p.ID, "", nil
 	}

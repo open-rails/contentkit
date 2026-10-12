@@ -79,7 +79,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"staff route, staff", staff, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, an application holding it", app, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
-		{"groups, without the permission", user, "POST", "/groups", []any{}, 403, ""},
+		{"groups of the site's, without the permission", user, "POST", "/groups", []map[string]string{{"kind": "tag", "slug": "nope"}}, 403, ""},
 		{"groups, an application holding it", app, "POST", "/groups", []any{}, 201, ""},
 		{"upload, an application", app, "POST", "/media/upload/abort", map[string]string{"ticket": "x"}, 403, ""},
 		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + album, nil, 401, `Bearer error="invalid_token"`},

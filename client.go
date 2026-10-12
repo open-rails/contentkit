@@ -8,30 +8,42 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
-	"github.com/open-rails/helpers/notify"
-
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/gate"
-	"github.com/open-rails/contentkit/notification"
 )
 
 // inprocessBase is the base URL of the in-process transport; no request
 // leaves the process.
 const inprocessBase = "http://contentkit.inprocess"
 
-// Client is the typed Go client of the HTTP surface, acting as the host
-// itself: holding the Engine is the authority, so it sends no credential and
-// holds every staff permission. Engine.Client makes one over the in-process
-// transport; it is safe for concurrent use.
+// Client is the typed Go client of the HTTP surface: one method per route
+// (client_gen.go, generated from the route catalog), named by its verb and
+// path (PATCH /v1/groups/{id} is PatchGroup). Engine.Client makes one over
+// the in-process transport, acting as the host; NewClient one for a remote
+// ContentKit. It is safe for concurrent use.
 type Client struct {
 	hc   *http.Client
 	base string
 }
 
-// Client is the engine's in-process client.
+// Client is the engine's in-process client, acting as the host itself:
+// holding the Engine is the authority, so it sends no credential and holds
+// every staff permission. Routes for a signed-in person (tier user) refuse
+// it.
 func (e *Engine) Client() *Client {
 	return &Client{hc: &http.Client{Transport: inprocess{e.inproc}}, base: inprocessBase}
+}
+
+// NewClient is a client of the ContentKit served at base, the host's prefix
+// ("https://example.com/api/contentkit"). hc carries the caller's
+// credentials (its Transport sets Authorization); nil is
+// http.DefaultClient, anonymous.
+func NewClient(base string, hc *http.Client) *Client {
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	return &Client{hc: hc, base: strings.TrimRight(base, "/")}
 }
 
 // Error is a refused call: the route's status and stable code
@@ -46,78 +58,95 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("contentkit: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-// PublishNotifications publishes notices in one transaction (POST
-// /v1/notifications/publish), each once per origin and recipient, and
-// returns them as stored; a notice to an erased recipient is dropped.
-func (c *Client) PublishNotifications(ctx context.Context, notices []notify.Input) ([]notify.Item, error) {
-	var out notification.Published
-	err := c.call(ctx, http.MethodPost, "/v1/notifications/publish", notification.Publication{Notifications: notices}, &out)
-	return out.Items, err
+// Reply is a success a generated method leaves undecoded: a stream, or a
+// route answering several body types (Status says which).
+type Reply struct {
+	Status int
+	Header http.Header
+	Body   []byte
 }
 
-// CreateContent creates a draft content item (POST /v1/contents).
-func (c *Client) CreateContent(ctx context.Context, in catalog.ContentInput) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodPost, "/v1/contents", in, &out)
-	return out, err
+// Decode decodes the JSON body into v.
+func (r *Reply) Decode(v any) error { return json.Unmarshal(r.Body, v) }
+
+func (c *Client) call(ctx context.Context, method, path string, query url.Values, in, out any) error {
+	res, err := c.do(ctx, method, path, query, in)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if out == nil || res.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return json.NewDecoder(res.Body).Decode(out)
 }
 
-// UpdateContent edits a content item (PATCH /v1/contents/{id}).
-func (c *Client) UpdateContent(ctx context.Context, id string, patch catalog.ContentPatch) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodPatch, "/v1/contents/"+url.PathEscape(id), patch, &out)
-	return out, err
+func (c *Client) raw(ctx context.Context, method, path string, query url.Values, in any) (*Reply, error) {
+	res, err := c.do(ctx, method, path, query, in)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	return &Reply{Status: res.StatusCode, Header: res.Header, Body: b}, nil
 }
 
-// PublishContent publishes a content item now, or schedules it (POST
-// /v1/contents/{id}/publish).
-func (c *Client) PublishContent(ctx context.Context, id string, in catalog.PublishInput) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodPost, "/v1/contents/"+url.PathEscape(id)+"/publish", in, &out)
-	return out, err
-}
-
-// UnpublishContent takes a content item back to a draft (POST
-// /v1/contents/{id}/unpublish).
-func (c *Client) UnpublishContent(ctx context.Context, id string) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodPost, "/v1/contents/"+url.PathEscape(id)+"/unpublish", nil, &out)
-	return out, err
-}
-
-func (c *Client) call(ctx context.Context, method, path string, in, out any) error {
+// do sends one request; a status of 300 or more is an *Error.
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, in any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	target := c.base + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	res, err := c.hc.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer res.Body.Close()
 	if res.StatusCode >= 300 {
+		defer res.Body.Close()
 		var reply struct {
 			Error string `json:"error"`
 			Code  string `json:"code"`
 		}
 		_ = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&reply)
-		return &Error{Status: res.StatusCode, Code: reply.Code, Message: reply.Error}
+		return nil, &Error{Status: res.StatusCode, Code: reply.Code, Message: reply.Error}
 	}
-	if out == nil || res.StatusCode == http.StatusNoContent {
-		return nil
+	return res, nil
+}
+
+// expand fills a route path's wildcards: pairs of "{name}" and its escaped
+// value.
+func expand(path string, pairs ...string) string {
+	for i := 0; i+1 < len(pairs); i += 2 {
+		path = strings.Replace(path, pairs[i], pairs[i+1], 1)
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	return path
+}
+
+// escapePath escapes each segment of a trailing {name...} value.
+func escapePath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
 }
 
 // inprocess serves a request with the engine's handlers, as the host.

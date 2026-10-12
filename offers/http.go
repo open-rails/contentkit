@@ -40,8 +40,8 @@ type handler struct {
 }
 
 const (
-	contentEditors = " For creators of the content, owners of its owner group and staff holding root:offers:write."
-	groupEditors   = " For owners of the group and staff holding root:offers:write."
+	contentEditors = " For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write."
+	groupEditors   = " For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
 )
 
 var routes = []httpapi.Route[handler]{
@@ -49,9 +49,9 @@ var routes = []httpapi.Route[handler]{
 	edit(httpapi.DELETE, "/contents/{id}/offer", "Withdraws a content item's offer; buyers keep it."+contentEditors, nil, withdrawOffer(contentTarget)),
 	edit(httpapi.PUT, "/contents/{id}/versions/{vid}/offer", "Puts an offer on one version: its version key opens it."+contentEditors, Terms{}, putOffer(versionTarget)),
 	edit(httpapi.DELETE, "/contents/{id}/versions/{vid}/offer", "Withdraws a version's offer; buyers keep it."+contentEditors, nil, withdrawOffer(versionTarget)),
-	edit(httpapi.PUT, "/groups/{id}/offer", "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join."+groupEditors,
+	edit(httpapi.PUT, "/groups/{id}/offer", "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing."+groupEditors,
 		Terms{}, putOffer(groupTarget)),
-	edit(httpapi.DELETE, "/groups/{id}/offer", "Withdraws a group's offer; members and subscribers keep theirs."+groupEditors, nil, withdrawOffer(groupTarget)),
+	edit(httpapi.DELETE, "/groups/{id}/offer", "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews."+groupEditors, nil, withdrawOffer(groupTarget)),
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/groups/{id}/join", Resource: "offers", Doc: "Joins a group free to join: grants the viewer its key.",
 		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
 		Serve: httpapi.H(handler.join)},
@@ -70,8 +70,8 @@ var routes = []httpapi.Route[handler]{
 }
 
 func edit(method, path, doc string, body any, serve func(handler, http.ResponseWriter, *http.Request)) httpapi.Route[handler] {
-	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "offers", Doc: doc, Auth: httpapi.User,
-		Request: body, Responses: []httpapi.Reply{httpapi.OK(Offer{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
+	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "offers", Doc: doc, Auth: httpapi.Editor,
+		Perm: string(access.OffersWrite), Request: body, Responses: []httpapi.Reply{httpapi.OK(Offer{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
 		Serve: httpapi.H(serve)}
 }
 
@@ -204,6 +204,8 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		code, msg = httpapi.CodeConflict, err.Error()
 	case errors.Is(err, access.ErrUnavailable), errors.Is(err, auth.ErrUnavailable):
 		code, msg = httpapi.CodeUnavailable, "billing or auth unavailable; retry"
+	case errors.Is(err, auth.ErrUnauthenticated):
+		code, msg = httpapi.CodeUnauthorized, "authentication required"
 	}
 	if code == httpapi.CodeInternal || code == httpapi.CodeUnavailable {
 		h.s.log.ErrorContext(r.Context(), "offers: request failed", "method", r.Method, "path", r.URL.Path, "err", err)

@@ -76,7 +76,7 @@ func (r *roles) CanIn(ctx context.Context, a access.Actor, scope auth.Scope, per
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return scope.Authority == testauth.Issuer && perm == EditorPermission && r.groups[scope.ID][a.ID], nil
+	return scope.Authority == testauth.Issuer && perm == access.GroupContentWrite("channel") && r.groups[scope.ID][a.ID], nil
 }
 
 type fixture struct {

@@ -68,6 +68,11 @@ export interface Attribute {
   sortable?: boolean;
 }
 
+export interface Avatar {
+  image?: string;
+  renditions?: Rendition[];
+}
+
 export interface BackgroundCue {
   file: string;
   from_page?: string;
@@ -551,11 +556,19 @@ export interface Group {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
   updated_at: string;
   revision: number;
+}
+
+export interface GroupAccess {
+  key: string;
+  offer?: Terms;
+  member: boolean;
+  unknown?: boolean;
 }
 
 export interface GroupCard {
@@ -569,8 +582,10 @@ export interface GroupCard {
   code?: string;
   path?: string;
   cover?: GroupsCover;
+  avatar?: Avatar;
   count: number;
   attributes: Record<string, unknown>;
+  access?: GroupAccess;
   created_at: string;
 }
 
@@ -584,6 +599,7 @@ export interface GroupDetail {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
@@ -600,6 +616,7 @@ export interface GroupDetail {
   children: GroupCard[];
   edges: Edge[];
   counts: Count[];
+  access?: GroupAccess;
 }
 
 export interface GroupInput {
@@ -610,6 +627,7 @@ export interface GroupInput {
   parent_id?: string;
   attributes?: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   names?: Name[];
@@ -628,6 +646,8 @@ export interface GroupKind {
   parent?: string;
   scoped_by?: string;
   owner?: string;
+  max_per_owner?: number;
+  uploads?: UploadLimits;
   sellable?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
@@ -660,8 +680,10 @@ export interface GroupUpdate {
   state?: "active" | "deleted" | "merged";
   attributes?: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
+  names?: Name[];
   text?: GroupsText[];
 }
 
@@ -809,6 +831,32 @@ export interface MultipartReply {
   min_part_size: number;
   max_part_size: number;
   max_parts: number;
+}
+
+export interface MyGroup {
+  id: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: GroupsCover;
+  avatar?: Avatar;
+  count: number;
+  attributes: Record<string, unknown>;
+  access?: GroupAccess;
+  created_at: string;
+  owner: boolean;
+  editor: boolean;
+  member: boolean;
+}
+
+export interface MyGroupPage {
+  groups: MyGroup[];
+  next_cursor?: string;
 }
 
 export interface Name {
@@ -1253,6 +1301,12 @@ export interface Totals {
 export interface Typeahead {
   contents: Card[];
   groups: GroupCard[];
+}
+
+export interface UploadLimits {
+  files_per_hour?: number;
+  bytes_per_day?: number;
+  quota_bytes?: number;
 }
 
 export interface UploadRule {
