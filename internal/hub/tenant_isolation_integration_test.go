@@ -7,9 +7,9 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/contentkit/internal/worker"
 )
 
 const isolationCHDB = "contentkit_tenant_isolation_test"

@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/helpers/notify"
+	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
@@ -164,11 +164,11 @@ func TestEngineIntegration(t *testing.T) {
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
 
 	for name, edit := range map[string]func(*Config, *Deps){
-		"no tenant":     func(c *Config, _ *Deps) { c.Tenant = "" },
+		"no tenant": func(c *Config, _ *Deps) { c.Tenant = "" },
 		"reserved kind": func(c *Config, _ *Deps) {
 			c.Content.Kinds["media"] = kinds.Kind{Route: "m", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}}
 		},
-		"no auth":       func(_ *Config, d *Deps) { d.Auth = nil },
+		"no auth": func(_ *Config, d *Deps) { d.Auth = nil },
 		"media hooks": func(c *Config, d *Deps) {
 			c.Media = &MediaConfig{Config: media.Config{Hooks: media.Hooks{Resolver: galleries{}}}}
 			d.Store = nil
