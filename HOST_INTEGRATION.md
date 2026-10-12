@@ -1295,6 +1295,39 @@ the worker through `store.Lister`/`store.Builder`. `RuntimeConfig.Taxonomy:
 store` serves the admin routes at `/taxonomy` to staff holding
 `root:taxonomy:write`; mounted alone it is `store.Handler(auth)`. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
+### Catalog totals
+
+`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Scope})` sizes the public
+listing per kind: `public` works anyone opens and, per tier, every work its
+holders open (public included); a work counts once across languages and
+versions. Configure `Options.Listing`: the kinds, a listing eligibility (not
+`CountEligibility`: it admits only live, undeleted, listed versions shown on
+this deployment) whose row carries the access columns, and `access.Columns`
+mapping them:
+
+```go
+Listing: &taxonomy.Listing{Kinds: []string{"gallery"},
+	Eligibility: search.Eligibility{SQL: `SELECT CASE WHEN g.is_premium THEN 'premium' ELSE 'free' END AS access
+	  FROM doujins.gallery_versions gv JOIN doujins.galleries g ON g.id = gv.gallery_id AND g.deleted_at IS NULL
+	  WHERE sd.content_kind = 'gallery' AND g.id::text = sd.content_id AND gv.id::text = sd.content_version_id
+	    AND gv.deleted_at IS NULL AND gv.live_at <= now()`},
+	Access: access.Columns{Level: "h.access", TierName: "premium",
+		Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}},
+```
+
+A site's slice is a `taxonomy.CatalogScope`: `AnyOf`/`NoneOf` node keys
+(kind and slug) effective on the counted version. `RuntimeConfig.Catalog:
+store.CatalogHandler(taxonomy.CatalogOptions{Scope: fromHost})` serves the
+open `GET /catalog/totals?kinds=gallery` with `Cache-Control: public,
+max-age=600`:
+
+```json
+{"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400}}}}
+```
+
+A sibling deployment's totals: `taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, kinds)`.
+Counts read your search documents, so a listed work without one is not counted.
+
 ## Preference boundary (reactions and favorites into the signal plane)
 
 Reactions and favorites reach the signal plane straight from their own rows.

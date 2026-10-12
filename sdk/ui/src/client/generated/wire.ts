@@ -742,6 +742,15 @@ export interface TicketBody {
   ticket: string;
 }
 
+export interface Total {
+  public: number;
+  tiers: Record<string, number>;
+}
+
+export interface Totals {
+  kinds: Record<string, Total>;
+}
+
 export interface UploadRule {
   path: string;
   types: string[];

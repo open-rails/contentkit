@@ -16,6 +16,7 @@ it("fills params, encodes them, repeats list queries and drops empty ones, under
   expect(routeURL(h, "GET", "/posts/admin", { query: { draft: false, language: "" } })).toBe("/api/ck/posts/admin?draft=false");
   expect(routeURL(h, "GET", "/counts", { query: { taxonomy_id: ["a", "b"] } })).toBe("https://tax.example/t/counts?taxonomy_id=a&taxonomy_id=b");
   expect(routeURL(h, "GET", "/{code}", { params: { code: "G4VRQ3ZQ5" } })).toBe("/api/ck/codes/G4VRQ3ZQ5");
+  expect(routeURL(h, "GET", "/totals", { query: { kinds: "gallery,video" } })).toBe("/api/ck/catalog/totals?kinds=gallery%2Cvideo");
   expect(() => routeURL(h, "GET", "/posts/{id}", { params: { id: "" } })).toThrow(/needs id/);
   // @ts-expect-error: the route's wildcard is cid, not id
   expect(() => routeURL(h, "GET", "/comments/{cid}/replies", { params: { id: "1" } })).toThrow(/needs cid/);

@@ -33,7 +33,7 @@ func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
 	mux := http.NewServeMux()
 	g := &gate.Gate{Auth: a, Log: s.log}
 	httpapi.Mount(mux, g.Guard, handler{s}, taxonomyRoutes)
-	return accessLog(s.log, mux), nil
+	return accessLog(s.log, "taxonomy admin", mux), nil
 }
 
 func init() { httpapi.Register(httpapi.Taxonomy, taxonomyRoutes) }
@@ -124,10 +124,10 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// accessLog logs each admin request at DEBUG and a 5xx at ERROR, both with the
+// accessLog logs each request of the api at DEBUG and a 5xx at ERROR, both with the
 // captured cause: the only place a SQL constraint name or an internal error
 // text may appear.
-func accessLog(log *slog.Logger, next http.Handler) http.Handler {
+func accessLog(log *slog.Logger, api string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
@@ -137,10 +137,10 @@ func accessLog(log *slog.Logger, next http.Handler) http.Handler {
 			attrs = append(attrs, "err", sw.cause.Error())
 		}
 		if sw.status >= http.StatusInternalServerError {
-			log.Error("taxonomy admin request failed", attrs...)
+			log.Error(api+" request failed", attrs...)
 			return
 		}
-		log.Debug("taxonomy admin request", attrs...)
+		log.Debug(api+" request", attrs...)
 	})
 }
 

@@ -52,6 +52,9 @@ type RuntimeConfig struct {
 	// Taxonomy serves the store's admin API at /taxonomy, for staff holding
 	// access.TaxonomyWrite.
 	Taxonomy TaxonomyAdmin
+	// Catalog serves the public catalog API at /catalog
+	// (taxonomy.Store.CatalogHandler).
+	Catalog http.Handler
 }
 
 // TaxonomyAdmin is *taxonomy.Store: the admin API it serves.
@@ -130,7 +133,8 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 //
 // A host may instead mount the modules alone (content.Runtime.Handler,
 // media.UploadHandler, media.Reader.Handler, contenturl.Router.Handler,
-// taxonomy.Handler, notification.Store.Handler) at paths of its choosing.
+// taxonomy.Handler, taxonomy.Store.CatalogHandler, notification.Store.Handler)
+// at paths of its choosing.
 func (r *Runtime) Handler() http.Handler { return r.handler }
 
 func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices *notification.Store) (http.Handler, error) {
@@ -161,6 +165,9 @@ func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices 
 			return nil, err
 		}
 		mount(httpapi.Taxonomy, h)
+	}
+	if cfg.Catalog != nil {
+		mount(httpapi.PublicCatalog, cfg.Catalog)
 	}
 	return mux, nil
 }

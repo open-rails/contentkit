@@ -4815,6 +4815,56 @@
         ]
       }
     },
+    "/catalog/totals": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The listed works of each kind: how many anyone opens, and how many each tier's holders open. Cacheable for ten minutes.",
+        "parameters": [
+          {
+            "name": "kinds",
+            "in": "query",
+            "description": "content kinds to total; every listed kind by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Totals"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "catalog",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [
+          "unavailable"
+        ],
+        "x-contentkit-error-sets": [
+          "module:catalog",
+          "request"
+        ]
+      }
+    },
     "/notifications/inbox": {
       "get": {
         "tags": [
@@ -7615,6 +7665,38 @@
           }
         }
       },
+      "Total": {
+        "type": "object",
+        "properties": {
+          "public": {
+            "type": "integer"
+          },
+          "tiers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "public",
+          "tiers"
+        ]
+      },
+      "Totals": {
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Total"
+            }
+          }
+        },
+        "required": [
+          "kinds"
+        ]
+      },
       "UploadRule": {
         "type": "object",
         "properties": {
@@ -7800,6 +7882,7 @@
     "media": "/media",
     "codes": "/codes",
     "taxonomy": "/taxonomy",
+    "catalog": "/catalog",
     "notifications": "/notifications"
   },
   "x-contentkit-error-sets": {
@@ -7831,6 +7914,9 @@
       "internal_error"
     ],
     "module:taxonomy": [
+      "internal_error"
+    ],
+    "module:catalog": [
       "internal_error"
     ],
     "module:notifications": [

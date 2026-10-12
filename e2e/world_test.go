@@ -32,6 +32,7 @@ import (
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/workqueue"
+	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/taxonomy"
 )
 
@@ -123,7 +124,9 @@ func newWorld(t *testing.T) *world {
 	if w.rd, err = media.NewReader(media.ReaderOptions{Manifests: w.jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}}); err != nil {
 		t.Fatal(err)
 	}
-	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"}}); err != nil {
+	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"},
+		Listing: &taxonomy.Listing{Kinds: []string{"gallery"}, Eligibility: search.Eligibility{SQL: `SELECT 'free'::text AS access`},
+			Access: access.Columns{Level: "h.access", TierName: "premium", Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}}}); err != nil {
 		t.Fatal(err)
 	}
 	return w
@@ -149,6 +152,10 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 	if err != nil {
 		w.t.Fatal(err)
 	}
+	catalog, err := w.tax.CatalogHandler(taxonomy.CatalogOptions{})
+	if err != nil {
+		w.t.Fatal(err)
+	}
 	cfg := contentkit.RuntimeConfig{
 		EmbeddedConfig: contentkit.EmbeddedConfig{PG: w.pool, PGSchema: w.schema, Tenant: tenant},
 		Auth:           w.ak.Authenticator(),
@@ -156,7 +163,7 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 		Content: content.Options{Resolver: w, ContentKinds: []string{"gallery"},
 			Limits: content.Limits{Disabled: true}},
 		Uploads: w.up, Reader: w.rd, ReadLimit: media.RateLimit{Disabled: true},
-		Codes: router, Taxonomy: w.tax,
+		Codes: router, Taxonomy: w.tax, Catalog: catalog,
 	}
 	if edit != nil {
 		edit(&cfg)
