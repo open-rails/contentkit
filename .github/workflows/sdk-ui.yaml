@@ -1,7 +1,7 @@
 name: sdk-ui
 'on':
   pull_request:
-    branches: [master]
+    branches: [master, 'next/**']
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
     - 'sdk/ui/**'
