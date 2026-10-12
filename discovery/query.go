@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -112,7 +113,7 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	v, err := s.o.Visibility.Viewer(ctx, ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode})
+	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode})
 	if err != nil {
 		return nil, err
 	}

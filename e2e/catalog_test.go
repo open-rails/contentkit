@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/contract"
@@ -290,6 +292,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/offer", nil, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
+	discoveryScenario(t, f, g1, user, anon)
 	mediaScenario(t, f, album, user, anon)
 	versionsScenario(t, w, f, staff, o.ID, owner, user, anon)
 
@@ -427,4 +430,26 @@ func TestRuntimeModeratesCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusOK, staff, "POST", "/moderation/content/"+post.ID+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: held.Items[0].Revision}, nil)
 	f.want(http.StatusOK, "", "GET", "/contents/"+post.ID, nil, nil)
+}
+
+// discoveryScenario reaches discovery's routes over the catalog's content;
+// without a signal plane its signal-backed routes answer not_configured.
+func discoveryScenario(t *testing.T, f *server, gallery, user, anon string) {
+	var page discovery.ContentPage
+	f.want(http.StatusOK, anon, "GET", "/contents?kind=gallery", nil, &page)
+	if !slices.ContainsFunc(page.Contents, func(c discovery.Card) bool { return c.ID == gallery }) {
+		t.Fatalf("the gallery is not listed: %+v", page)
+	}
+	f.want(http.StatusOK, anon, "GET", "/search?q=gallery", nil, nil)
+	f.want(http.StatusOK, anon, "GET", "/typeahead?q=gal", nil, nil)
+	f.want(http.StatusOK, anon, "GET", "/release-dates?kind=gallery", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/me/content-filters", nil, nil)
+	f.want(http.StatusOK, user, "PUT", "/me/content-filters", discovery.ContentFiltersUpdate{Filters: []discovery.FilterSetting{}}, nil)
+	unconfigured := http.StatusNotImplemented
+	f.want(unconfigured, anon, "GET", "/contents/"+gallery+"/similar", nil, nil)
+	f.want(unconfigured, user, "GET", "/recommendations", nil, nil)
+	f.want(unconfigured, user, "GET", "/me/history", nil, nil)
+	f.want(unconfigured, user, "DELETE", "/me/history?content_id="+gallery, nil, nil)
+	f.want(unconfigured, user, "POST", "/signals", discovery.Signals{Signals: []discovery.SignalInput{}}, nil)
+	f.want(unconfigured, user, "POST", "/exposures", discovery.Exposures{Exposures: []discovery.ExposureInput{}}, nil)
 }

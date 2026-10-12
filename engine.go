@@ -467,13 +467,10 @@ func (e *Engine) mount(deps Deps) error {
 	return nil
 }
 
-// mountDiscovery builds the public read routes. Until the catalog (#120)
-// supplies its rule, they list under discovery.FacetVisibility.
+// mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
-	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.resolver, Gate: e.gate,
-		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock,
-		Visibility: discovery.FacetVisibility(discovery.FacetVisibilityOptions{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-			Kinds: e.cfg.Content, Gate: e.gate, Now: deps.Clock})}
+	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
+		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog}
 	if e.media != nil {
 		o.Covers = e.media.versions
 	}

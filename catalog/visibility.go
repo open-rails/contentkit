@@ -16,7 +16,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/search"
 )
 
 // ViewerOptions describes one request's reader.
@@ -227,21 +226,6 @@ func (v *Viewer) Listed(alias string) (string, pgx.NamedArgs) {
 	privileged := "(" + f("owner_group_id") + " = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
 		" cc WHERE cc.tenant_id = " + f("tenant_id") + " AND cc.content_id = " + f("content_id") + " AND cc.user_id = @cv_user)))"
 	return "(" + public + " OR " + held + " OR " + privileged + ")", args
-}
-
-// Eligibility is the search join that keeps content documents (one per
-// content item and language) the viewer's listing shows; documents of other
-// kinds pass.
-func (v *Viewer) Eligibility() *search.Eligibility {
-	pred, args := v.Listed("f")
-	kinds := make([]string, 0, len(v.s.cfg.Kinds))
-	for k := range v.s.cfg.Kinds {
-		kinds = append(kinds, k)
-	}
-	slices.Sort(kinds)
-	args["cv_kinds"] = kinds
-	return &search.Eligibility{SQL: `SELECT 0 AS priority WHERE sd.content_kind <> ALL(@cv_kinds::text[]) OR EXISTS (SELECT 1 FROM ` + v.s.t.facets +
-		` f WHERE f.tenant_id = sd.tenant_id AND f.content_id = sd.content_id AND ` + pred + `)`, Args: args}
 }
 
 // facetRow is one version as the visibility rule reads it.

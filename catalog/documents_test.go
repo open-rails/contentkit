@@ -36,8 +36,11 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	sync()
 	find := func(q, language, actor string) []string {
 		t.Helper()
-		v := f.viewer(actor, "main.test", ViewerOptions{})
-		res, err := search.KeywordSearch(f.ctx, f.pool, q, search.Options{Schema: f.schema, Tenant: tenant, Language: language, Limit: 20, Eligibility: v.Eligibility()})
+		// The listing predicate joined to each document, as discovery's search does.
+		pred, args := f.viewer(actor, "main.test", ViewerOptions{}).Listed("f")
+		join := &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + f.table("content_facets") +
+			` f WHERE f.tenant_id = sd.tenant_id AND f.content_id = sd.content_id AND ` + pred + `)`, Args: args}
+		res, err := search.KeywordSearch(f.ctx, f.pool, q, search.Options{Schema: f.schema, Tenant: tenant, Language: language, Limit: 20, Eligibility: join})
 		if err != nil {
 			t.Fatal(err)
 		}

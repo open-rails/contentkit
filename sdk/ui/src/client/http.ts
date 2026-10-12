@@ -32,6 +32,8 @@ export interface ContentKitMounts {
   versions?: string;
   /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
   offers?: string;
+  /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
+  discovery?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
