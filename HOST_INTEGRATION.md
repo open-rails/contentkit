@@ -761,12 +761,17 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 }
 
 reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds:   []media.Kind{Gallery, accountmedia.User},
+	Kinds:   []media.Kind{Gallery, avatar.User()},
 	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // people's avatars (Authors)
 	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
 
-- **Account avatars.** `Avatars` names the kind whose item ids are the auth's
+- **Account avatars.** Import `github.com/open-rails/contentkit/media/avatar`
+  and register `avatar.User()` for the standard shared user-avatar kind. It
+  accepts JPEG, PNG and WebP up to 10 MiB, renders square WebP images at
+  64, 128, 256 and 512 pixels, and includes a default silhouette. Publish it
+  with the other registry defaults through `media/image.PublishDefaults`.
+  `Avatars` names the kind whose item ids are the auth's
   subjects (the shared `accounts` kind `user`) and the public preset people
   are shown with; `Manifests.Avatars(ctx, ids...)` answers a list in one
   query. Authorize the kind's uploads in `CanUpload` from the actor: a person
