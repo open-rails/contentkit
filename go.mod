@@ -6,6 +6,9 @@ go 1.26.6
 // v1.1.2 is a withdrawal-only marker and retracts itself.
 retract [v1.0.0-0, v1.1.2]
 
+// v0.77.0 changed applied ClickHouse migration bytes; chmigrate ledgers refuse it.
+retract v0.77.0
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/aws/aws-sdk-go-v2 v1.42.1
