@@ -2,12 +2,14 @@ module github.com/open-rails/contentkit/adapters/openrails
 
 go 1.26.9
 
-// Use released ContentKit with AuthKit-owned contracts and released OpenRails.
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.75.0
-	github.com/open-rails/openrails v0.240.0
+	github.com/open-rails/helpers v1.12.0
+	github.com/open-rails/openrails v0.248.0
+	github.com/riverqueue/river v0.47.0
 )
 
 require (
@@ -53,6 +55,7 @@ require (
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/maypok86/otter/v2 v2.3.1-0.20261012174237-6b4979235160 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
@@ -60,11 +63,8 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/mostynb/zstdpool-freelist v0.0.0-20201229113212-927304c0c3b1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
-	github.com/open-rails/authkit v1.24.0 // indirect
-	github.com/open-rails/helpers v1.11.0 // indirect
-	github.com/open-rails/migratekit v1.11.0 // indirect
+	github.com/open-rails/migratekit v1.11.1 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
-	github.com/riverqueue/river v0.47.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.47.0 // indirect
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.47.0 // indirect
 	github.com/riverqueue/river/rivershared v0.47.0 // indirect
@@ -90,3 +90,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
+
+// The adapter tracks ContentKit's tree: access.Billing and offers ship with it.
+replace github.com/open-rails/contentkit => ../..

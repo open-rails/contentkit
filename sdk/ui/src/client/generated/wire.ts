@@ -378,6 +378,28 @@ export interface LanguageTotal {
   tiers: Record<string, number>;
 }
 
+export interface LibraryItem {
+  content_id: string;
+  kind: string;
+  title: string;
+  language?: string;
+  deleted: boolean;
+  whole: boolean;
+  version_ids: string[];
+}
+
+export interface LibraryPage {
+  items: LibraryItem[];
+  next_cursor?: string;
+  complete: boolean;
+}
+
+export interface Membership {
+  group_id: string;
+  key: string;
+  member: boolean;
+}
+
 export interface MergeInput {
   into_taxonomy_id: string;
 }
@@ -463,6 +485,25 @@ export interface NodeUpdate {
   slug?: string;
   state?: "active" | "deleted" | "merged";
   source_revision?: number;
+}
+
+export interface Offer {
+  id: string;
+  target: Target;
+  key: string;
+  terms: Terms;
+  state: "active" | "withdrawn";
+  synced: boolean;
+  product_id?: string;
+  price_id?: string;
+  last_error?: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface OfferPage {
+  offers: Offer[];
+  next_cursor?: string;
 }
 
 export interface Op {
@@ -741,6 +782,19 @@ export interface Restored {
 
 export interface ReviewOutcome {
   decision: "approve" | "reject" | "review";
+}
+
+export interface Target {
+  kind: "content" | "group" | "version";
+  id: string;
+  content_id?: string;
+}
+
+export interface Terms {
+  amount: string;
+  currency: string;
+  access_hours?: number;
+  renew_hours?: number;
 }
 
 export interface TicketBody {

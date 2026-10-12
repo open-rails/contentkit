@@ -1,107 +1,133 @@
 package access
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/kinds"
 )
 
-// Level is an item's access level.
+// Level is a rule's access level.
 type Level string
 
 const (
-	Public       Level = "public"      // anyone
-	TierLevel    Level = "tier"        // holders of any of Rule.Tiers
-	MembersLevel Level = "members"     // members of Rule.Scope
-	PPV          Level = "ppv"         // owners of the item
-	MembersPPV   Level = "members_ppv" // owners; buying it requires membership of Rule.Scope
+	Public     Level = "public"    // anyone
+	TierLevel  Level = "tier"      // holders of any of Rule.Tiers
+	GroupLevel Level = "group"     // holders of Rule.Group's key: members-only content
+	PPV        Level = "ppv"       // buyers of the content or version
+	GroupPPV   Level = "group_ppv" // buyers; buying needs Rule.Group's key first
 )
 
-// ErrRule is a rule with an unknown level or a missing tier or scope.
+// ErrRule is a rule outside the grammar or naming an undeclared tier.
 var ErrRule = errors.New("access: invalid rule")
 
-// Rule is an item's access rule, a host fact. Owning the item (Own) unlocks it
-// at every level.
+// Rule is the access rule stored as JSON on content (content_items.access), on
+// a version as its override (content_versions.access) and on a sellable
+// group (content_groups.access). Whatever the level, a version also opens to
+// holders of its version key, its content key and the key of any group
+// holding it.
 type Rule struct {
-	Level Level
-	Tiers []string              // TierLevel: any of these declared tiers
-	Scope contentref.ContentRef // MembersLevel, MembersPPV: the scope's work reference
+	Level Level    `json:"level"`
+	Tiers []string `json:"tiers,omitempty"`    // TierLevel: any of these configured tiers
+	Group string   `json:"group_id,omitempty"` // GroupLevel, GroupPPV
+	// Preview is the part a viewer who does not open it may still read.
+	Preview *Preview `json:"preview,omitempty"`
+	// FreeAfter makes it public from then on.
+	FreeAfter *time.Time `json:"free_after,omitempty"`
 }
 
-// Item is one work and its rule.
-type Item struct {
-	Ref  contentref.ContentRef
-	Rule Rule
+// Preview is the free part of locked content: its first Pages pages or first
+// Segments segments (chapters).
+type Preview struct {
+	Pages    int `json:"pages,omitempty"`
+	Segments int `json:"segments,omitempty"`
 }
 
-// Unlocks returns the keys any one of which unlocks item under r: Own(item)
-// always, plus the rule's tiers or membership. A Public item needs none.
-func (r Rule) Unlocks(item contentref.ContentRef) ([]Key, error) {
-	k, err := r.keys(item)
-	if err != nil {
-		return nil, err
+// UnmarshalJSON refuses unknown fields; Validate checks the rest.
+func (r *Rule) UnmarshalJSON(b []byte) error {
+	type plain Rule
+	var p plain
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return fmt.Errorf("%w: %w", ErrRule, err)
 	}
-	out := append([]Key{k.own}, k.tiers...)
-	if r.Level == MembersLevel {
-		out = append(out, k.members)
-	}
-	return out, nil
+	*r = Rule(p)
+	return nil
 }
 
-// Sells returns what a paywall offers for item under r: the tiers, the
-// membership or the item itself. requires is the key a buyer must hold first
-// (MembersPPV: the membership). Public sells nothing.
-func (r Rule) Sells(item contentref.ContentRef) (sell []Key, requires *Key, err error) {
-	k, err := r.keys(item)
-	if err != nil {
-		return nil, nil, err
-	}
-	switch r.Level {
-	case TierLevel:
-		return k.tiers, nil, nil
-	case MembersLevel:
-		return []Key{k.members}, nil, nil
-	case PPV:
-		return []Key{k.own}, nil, nil
-	case MembersPPV:
-		m := k.members
-		return []Key{k.own}, &m, nil
-	}
-	return nil, nil, nil
-}
-
-type ruleKeys struct {
-	own     Key
-	tiers   []Key
-	members Key // MembersLevel, MembersPPV
-}
-
-func (r Rule) keys(item contentref.ContentRef) (ruleKeys, error) {
-	var k ruleKeys
-	var err error
-	if k.own, err = MakeOwn(item); err != nil {
-		return k, err
-	}
+// Validate checks r against cfg: a known level with exactly its own fields,
+// configured tiers, a valid group id, and options only on a rule that locks.
+func (r Rule) Validate(cfg kinds.Config) error {
 	switch r.Level {
 	case Public, PPV:
+		if len(r.Tiers) > 0 || r.Group != "" {
+			return fmt.Errorf("%w: level %s takes no tiers or group_id", ErrRule, r.Level)
+		}
 	case TierLevel:
-		if len(r.Tiers) == 0 {
-			return k, fmt.Errorf("%w: %s: level tier names no tier", ErrRule, item)
+		if len(r.Tiers) == 0 || r.Group != "" {
+			return fmt.Errorf("%w: level tier needs tiers and no group_id", ErrRule)
 		}
-		for _, t := range r.Tiers {
-			tk, err := MakeTier(t)
-			if err != nil {
-				return k, fmt.Errorf("%w: %s: %w", ErrRule, item, err)
+		for i, t := range r.Tiers {
+			if !slices.Contains(cfg.Tiers, t) || slices.Contains(r.Tiers[:i], t) {
+				return fmt.Errorf("%w: tier %q is not configured or repeated", ErrRule, t)
 			}
-			k.tiers = append(k.tiers, tk)
 		}
-	case MembersLevel, MembersPPV:
-		if k.members, err = MakeMembers(r.Scope); err != nil {
-			return k, fmt.Errorf("%w: %s: level %s scope: %w", ErrRule, item, r.Level, err)
+	case GroupLevel, GroupPPV:
+		if len(r.Tiers) > 0 {
+			return fmt.Errorf("%w: level %s takes no tiers", ErrRule, r.Level)
+		}
+		if err := contentref.ValidateID(r.Group); err != nil {
+			return fmt.Errorf("%w: level %s group_id: %w", ErrRule, r.Level, err)
 		}
 	default:
-		return k, fmt.Errorf("%w: %s: unknown level %q", ErrRule, item, r.Level)
+		return fmt.Errorf("%w: unknown level %q", ErrRule, r.Level)
 	}
-	return k, nil
+	if r.Level == Public && (r.Preview != nil || r.FreeAfter != nil) {
+		return fmt.Errorf("%w: a public rule takes no preview or free_after", ErrRule)
+	}
+	if p := r.Preview; p != nil && (p.Pages < 0 || p.Segments < 0 || p.Pages == 0 && p.Segments == 0) {
+		return fmt.Errorf("%w: preview needs positive pages or segments", ErrRule)
+	}
+	return nil
+}
+
+// Free reports whether r opens to anyone at now: public, or past FreeAfter.
+func (r Rule) Free(now time.Time) bool {
+	return r.Level == Public || r.FreeAfter != nil && !now.Before(*r.FreeAfter)
+}
+
+// Effective is a version's rule: its override, else its content's.
+func Effective(content Rule, override *Rule) Rule {
+	if override != nil {
+		return *override
+	}
+	return content
+}
+
+// Facet is a rule as the content_facets listing projection stores it:
+// access_level, access_tiers, access_group_id and access_free_after.
+type Facet struct {
+	Level     Level
+	Tiers     []string
+	GroupID   *string
+	FreeAfter *time.Time
+}
+
+// Facet projects r onto content_facets' access columns.
+func (r Rule) Facet() Facet {
+	f := Facet{Level: r.Level, Tiers: slices.Clone(r.Tiers), FreeAfter: r.FreeAfter}
+	if f.Tiers == nil {
+		f.Tiers = []string{}
+	}
+	if r.Group != "" {
+		g := r.Group
+		f.GroupID = &g
+	}
+	return f
 }

@@ -23,11 +23,14 @@ const (
 	ModerationReview Permission = "root:moderation:review"
 	// TaxonomyWrite: the taxonomy admin API, its reads included.
 	TaxonomyWrite Permission = "root:taxonomy:write"
+	// OffersWrite: put and withdraw offers on any content, version or group;
+	// creators and group owners need it for nobody else's.
+	OffersWrite Permission = "root:offers:write"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, TaxonomyWrite}
+	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, TaxonomyWrite, OffersWrite}
 }
 
 func (p Permission) String() string { return string(p) }

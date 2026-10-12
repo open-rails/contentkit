@@ -8,26 +8,45 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
 // Columns.Audiences names, per row, exactly the audiences that open it
-// without owning it: an anonymous visitor (Anyone) or a holder of one tier,
-// as grants.truth decides with nothing owned and no membership.
+// without buying it: an anonymous visitor (Anyone) for a public row, and a
+// holder of the row's tier for a tier row.
 func TestAudiencesMatchTruth(t *testing.T) {
-	pool, table, rows := fixture(t)
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	table := pgx.Identifier{pgtest.EmptySchema(t, ctx, pool), "posts"}.Sanitize()
+	if _, err := pool.Exec(ctx, `CREATE TABLE `+table+` (id int PRIMARY KEY, access_policy text NOT NULL, tier text)`); err != nil {
+		t.Fatal(err)
+	}
+	type row struct{ value, tier string }
+	var rows []row
+	for _, value := range []string{"public", "premium", "tier", "ppv", "bogus"} {
+		for _, tier := range []string{"premium", "gold", "undeclared"} {
+			rows = append(rows, row{value, tier})
+			if _, err := pool.Exec(ctx, `INSERT INTO `+table+` VALUES ($1, $2, $3)`, len(rows), value, tier); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	levels := map[string]access.Level{"public": access.Public, "premium": access.TierLevel, "tier": access.TierLevel, "ppv": access.PPV}
+	fixed := access.Columns{Level: "p.access_policy", TierName: "premium", Levels: levels}
+	perRow := access.Columns{Level: "lower(p.access_policy)", Tier: "p.tier", Levels: levels, ArgPrefix: "acc_"}
 	tiers := []string{"premium", "gold"}
-	for _, cols := range []access.Columns{fixedTier, rowTier} {
+	for _, cols := range []access.Columns{fixed, perRow} {
 		audiences, args, err := cols.Audiences(tiers)
 		if err != nil {
 			t.Fatal(err)
 		}
-		q, err := pool.Query(t.Context(), "SELECT p.id::text, "+audiences+" FROM "+table+" p", pgx.NamedArgs(args))
+		q, err := pool.Query(ctx, "SELECT p.id, "+audiences+" FROM "+table+" p ORDER BY p.id", pgx.NamedArgs(args))
 		if err != nil {
 			t.Fatalf("%v\n%s", err, audiences)
 		}
-		got := map[string][]string{}
+		got := map[int][]string{}
 		for q.Next() {
-			var id string
+			var id int
 			var aud []string
 			if err := q.Scan(&id, &aud); err != nil {
 				t.Fatal(err)
@@ -40,18 +59,21 @@ func TestAudiencesMatchTruth(t *testing.T) {
 		}
 		for i, r := range rows {
 			var want []string
-			for _, a := range append([]string{access.Anyone}, tiers...) {
-				var held []string
-				if a != access.Anyone {
-					held = []string{a}
+			switch levels[r.value] {
+			case access.Public:
+				want = append([]string{access.Anyone}, tiers...)
+			case access.TierLevel:
+				tier := r.tier
+				if cols.TierName != "" {
+					tier = cols.TierName
 				}
-				if (grants{tiers: held}).truth(cols, r, i) {
-					want = append(want, a)
+				if slices.Contains(tiers, tier) {
+					want = []string{tier}
 				}
 			}
 			slices.Sort(want)
-			if strings.Join(got[r.id], ",") != strings.Join(want, ",") {
-				t.Errorf("%s: row %d %s/%s: audiences %q want %q", cols.Level, i, r.value, r.tier, got[r.id], want)
+			if strings.Join(got[i+1], ",") != strings.Join(want, ",") {
+				t.Errorf("%s: row %d %+v: audiences %q want %q", cols.Level, i+1, r, got[i+1], want)
 			}
 		}
 	}
@@ -60,13 +82,13 @@ func TestAudiencesMatchTruth(t *testing.T) {
 		tiers []string
 	}{
 		"no levels":         {access.Columns{Level: "p.access_policy"}, tiers},
-		"both tier sources": {access.Columns{Level: "l", Levels: fixedTier.Levels, Tier: "t", TierName: "premium"}, tiers},
-		"tier unset":        {access.Columns{Level: "l", Levels: rowTier.Levels}, tiers},
-		"tier name absent":  {fixedTier, []string{"gold"}},
-		"bad tier":          {rowTier, []string{"Gold"}},
-		"repeated tier":     {rowTier, []string{"gold", "gold"}},
+		"both tier sources": {access.Columns{Level: "l", Levels: levels, Tier: "t", TierName: "premium"}, tiers},
+		"tier unset":        {access.Columns{Level: "l", Levels: levels}, tiers},
+		"tier name absent":  {fixed, []string{"gold"}},
+		"bad tier":          {perRow, []string{"Gold"}},
+		"repeated tier":     {perRow, []string{"gold", "gold"}},
 		"bad level":         {access.Columns{Level: "l", Levels: map[string]access.Level{"x": "bogus"}}, tiers},
-		"bad prefix":        {access.Columns{Level: "l", Levels: fixedTier.Levels, TierName: "premium", ArgPrefix: "X"}, tiers},
+		"bad prefix":        {access.Columns{Level: "l", Levels: levels, TierName: "premium", ArgPrefix: "X"}, tiers},
 	} {
 		if _, _, err := c.cols.Audiences(c.tiers); err == nil {
 			t.Errorf("%s: no error", name)
