@@ -101,8 +101,12 @@ type GroupKind struct {
 	// ScopedBy makes slugs unique within a group of that kind (character
 	// within series).
 	ScopedBy string `json:"scoped_by,omitempty" yaml:"scoped_by"`
-	// Owner is "site" (staff-managed) or "user" (channels, playlists).
+	// Owner is "site" (staff-managed) or "user" (channels, playlists): a
+	// signed-in person creates a user-owned group and owns it.
 	Owner string `json:"owner,omitempty" yaml:"owner"`
+	// MaxPerOwner caps the active groups of the kind one person owns; 0 is
+	// no cap. Staff are not capped.
+	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
 	// Sellable groups carry offers; their key unlocks every member.
 	Sellable bool `json:"sellable,omitempty" yaml:"sellable"`
 	// AuthScope groups name an AuthKit group whose permissions govern their
@@ -179,6 +183,9 @@ func (c Config) Validate() error {
 		}
 		if gk.Owner != "" && gk.Owner != "site" && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s owner %q", ErrInvalid, name, gk.Owner)
+		}
+		if gk.MaxPerOwner < 0 || gk.MaxPerOwner > 0 && gk.Owner != "user" {
+			return fmt.Errorf("%w: group kind %s: max_per_owner is a non-negative cap of user-owned groups", ErrInvalid, name)
 		}
 		for _, r := range gk.Roles {
 			if !identRE.MatchString(r) {

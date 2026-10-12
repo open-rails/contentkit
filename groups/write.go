@@ -22,12 +22,15 @@ type GroupInput struct {
 	// ScopeID is required for a kind scoped by another (a character's series).
 	ScopeID     GroupID        `json:"scope_id,omitempty"`
 	ParentID    GroupID        `json:"parent_id,omitempty"`
-	Attributes  map[string]any `json:"attributes,omitempty"`
-	Cover       *Cover         `json:"cover,omitempty"`
-	OwnerUserID string         `json:"owner_user_id,omitempty"`
-	AuthScope   string         `json:"auth_scope,omitempty"`
-	Names       []Name         `json:"names,omitempty"`
-	Text        []Text         `json:"text,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Cover      *Cover         `json:"cover,omitempty"`
+	Avatar     *Avatar        `json:"avatar,omitempty"`
+	// OwnerUserID owns a user-owned group; a person creating one owns it.
+	OwnerUserID string `json:"owner_user_id,omitempty"`
+	// AuthScope is staff's (an import's); ContentKit provisions it otherwise.
+	AuthScope string `json:"auth_scope,omitempty"`
+	Names     []Name `json:"names,omitempty"`
+	Text      []Text `json:"text,omitempty"`
 }
 
 // GroupUpdate changes one group's given fields; nil fields are unchanged.
@@ -43,11 +46,33 @@ type GroupUpdate struct {
 	// Attributes replaces every attribute.
 	Attributes map[string]any `json:"attributes,omitempty"`
 	// Cover selects a cover; an empty one returns to the automatic cover.
-	Cover       *Cover  `json:"cover,omitempty"`
+	Cover *Cover `json:"cover,omitempty"`
+	// Avatar selects a user-owned group's avatar; an empty one returns to
+	// the first.
+	Avatar      *Avatar `json:"avatar,omitempty"`
 	OwnerUserID *string `json:"owner_user_id,omitempty"`
 	AuthScope   *string `json:"auth_scope,omitempty"`
+	// Names replaces every name and alias.
+	Names []Name `json:"names,omitempty"`
 	// Text replaces the text of every language.
 	Text []Text `json:"text,omitempty"`
+}
+
+// staffOnly names the fields of u only staff change.
+func (u GroupUpdate) staffOnly() string {
+	switch {
+	case u.Slug != nil:
+		return "slug"
+	case u.ScopeID != nil:
+		return "scope_id"
+	case u.ParentID != nil:
+		return "parent_id"
+	case u.OwnerUserID != nil:
+		return "owner_user_id"
+	case u.AuthScope != nil:
+		return "auth_scope"
+	}
+	return ""
 }
 
 type groupRow struct {
@@ -59,6 +84,7 @@ type groupRow struct {
 	ParentID    *string        `json:"parent_id"`
 	Attributes  map[string]any `json:"attributes"`
 	Cover       *Cover         `json:"cover"`
+	Avatar      *string        `json:"avatar"`
 	OwnerUserID *string        `json:"owner_user_id"`
 	AuthScope   *string        `json:"auth_scope"`
 }
@@ -119,6 +145,19 @@ func validateCover(c *Cover) (*Cover, error) {
 	return &Cover{ContentID: c.ContentID}, nil
 }
 
+// validateAvatar accepts an uploaded avatar's name ("i-{uuid}"); an empty
+// avatar clears the selection (nil).
+func validateAvatar(a *Avatar) (*string, error) {
+	if a == nil || a.Image == "" {
+		return nil, nil
+	}
+	u, ok := strings.CutPrefix(a.Image, "i-")
+	if parsed, err := uuid.Parse(u); !ok || err != nil || parsed.String() != u {
+		return nil, fmt.Errorf("%w: avatar %q is not an image name", ErrInvalid, a.Image)
+	}
+	return &a.Image, nil
+}
+
 // fields checks a group's own fields against its kind.
 func (s *Store) fields(gk kinds.GroupKind, kind string, g *groupRow) error {
 	if (g.ScopeID != "") != (gk.ScopedBy != "") {
@@ -138,6 +177,9 @@ func (s *Store) fields(gk kinds.GroupKind, kind string, g *groupRow) error {
 	}
 	if g.AuthScope != nil && !gk.AuthScope {
 		return fmt.Errorf("%w: %s groups take no auth scope", ErrInvalid, kind)
+	}
+	if g.Avatar != nil && gk.Owner != "user" {
+		return fmt.Errorf("%w: %s groups take no avatar", ErrInvalid, kind)
 	}
 	attrs, err := kinds.ValidateAttributes(gk.Attributes, g.Attributes)
 	if err != nil {
@@ -200,10 +242,18 @@ SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("
 
 // CreateGroups creates groups with their names and text in one transaction.
 // A taken id or slug is ErrConflict; a kind, scope or parent the kinds config
-// does not allow is ErrInvalid.
+// does not allow is ErrInvalid. Written as a person (As), each is of a
+// user-owned kind and the person's own, within the kind's MaxPerOwner
+// (ErrLimit), linked only to groups the person edits; anything else is
+// ErrForbidden. An auth_scope kind's group gets its AuthKit scope (Scopes)
+// after commit, else from the scope sync job.
 func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group, error) {
 	if len(inputs) == 0 {
 		return []Group{}, nil
+	}
+	creator, err := s.creator(ctx, inputs)
+	if err != nil {
+		return nil, err
 	}
 	rows := make([]groupRow, 0, len(inputs))
 	var names []nameRow
@@ -224,8 +274,14 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		} else if err := validateID(in.ID); err != nil {
 			return nil, err
 		}
+		if creator != "" {
+			in.OwnerUserID = creator
+		}
 		row := groupRow{Ordinal: i, ID: string(in.ID), Kind: kind, Slug: slug, Attributes: in.Attributes,
 			OwnerUserID: optional(in.OwnerUserID), AuthScope: optional(in.AuthScope)}
+		if row.Avatar, err = validateAvatar(in.Avatar); err != nil {
+			return nil, err
+		}
 		if in.ScopeID != "" {
 			if err := validateID(in.ScopeID); err != nil {
 				return nil, err
@@ -267,13 +323,22 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 	}
 	out := make([]Group, len(inputs))
 	err = s.run(ctx, func(q Querier) error {
-		if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, id, kind, slug, scope_id, parent_id, attributes, cover, owner_user_id, auth_scope)
- SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, coalesce(r.attributes, '{}'), r.cover, r.owner_user_id, r.auth_scope
- FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, scope_id text, parent_id text, attributes jsonb, cover jsonb, owner_user_id text, auth_scope text)
+		if err := s.lockOwners(ctx, q, rows); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, id, kind, slug, scope_id, parent_id, attributes, cover, avatar, owner_user_id, auth_scope)
+ SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope
+ FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, scope_id text, parent_id text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
  ORDER BY r.ordinal`, s.table("content_groups")), s.tenant, data); err != nil {
 			return err
 		}
 		if err := s.checkLinks(ctx, q, ids); err != nil {
+			return err
+		}
+		if err := s.checkCaps(ctx, q, rows); err != nil {
+			return err
+		}
+		if err := s.mayLink(ctx, q, rows); err != nil {
 			return err
 		}
 		if err := s.insertNames(ctx, q, names); err != nil {
@@ -292,12 +357,15 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		for i, id := range ids {
 			out[i] = created[GroupID(id)]
 		}
-		return s.markDirty(ctx, q, out)
+		if err := s.markDirty(ctx, q, out); err != nil {
+			return err
+		}
+		return s.queueScopes(ctx, q, s.unscoped(out))
 	})
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return s.syncAfter(ctx, out)
 }
 
 func (s *Store) insertText(ctx context.Context, q Querier, rows []textRow) error {
@@ -355,10 +423,26 @@ func (s *Store) Groups(ctx context.Context, ids []GroupID) ([]Group, error) {
 
 // UpdateGroups applies each update in one transaction. A merged group is
 // never updated (ErrConflict). Deleting or restoring a group, or moving it to
-// another parent, re-derives the facets of the content it reaches.
+// another parent, re-derives the facets of the content it reaches, and
+// retires or provisions its AuthKit scope. Written as a person (As), each
+// group is a user-owned one the person owns or holds
+// access.GroupSettingsManage in, its slug, links, owner and scope stay, and
+// a restore stays within the kind's MaxPerOwner (ErrLimit); anything else is
+// ErrForbidden.
 func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Group, error) {
 	if len(updates) == 0 {
 		return []Group{}, nil
+	}
+	staff, err := s.staff(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !staff {
+		for _, u := range updates {
+			if f := u.staffOnly(); f != "" {
+				return nil, fmt.Errorf("%w: only staff change %s", ErrForbidden, f)
+			}
+		}
 	}
 	ids := make([]GroupID, len(updates))
 	for i, u := range updates {
@@ -377,13 +461,18 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err != nil {
 			return err
 		}
+		if err := s.mayEdit(ctx, locked); err != nil {
+			return err
+		}
 		current := map[GroupID]Group{}
 		for _, g := range locked {
 			current[g.ID] = g
 		}
 		var rows []updateRow
 		var texts []textRow
-		var textIDs, reach []string
+		var names []nameRow
+		var textIDs, nameIDs, reach, scoped []string
+		var restored []groupRow
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -398,6 +487,25 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if moved {
 				reach = append(reach, string(g.ID))
 			}
+			if u.State != nil && *u.State != g.State {
+				if s.cfg.GroupKinds[g.Kind].AuthScope || g.AuthScope != "" {
+					scoped = append(scoped, string(g.ID))
+				}
+				if *u.State == StateActive {
+					restored = append(restored, row.groupRow)
+				}
+			}
+			if u.Names != nil {
+				n, err := validateNames(g.ID, u.Names)
+				if err != nil {
+					return err
+				}
+				for _, r := range n {
+					r.Ordinal = len(names)
+					names = append(names, r)
+				}
+				nameIDs = append(nameIDs, string(g.ID))
+			}
 			if u.Text != nil {
 				t, err := validateText(g.ID, u.Text)
 				if err != nil {
@@ -411,11 +519,25 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err != nil {
 			return err
 		}
+		if err := s.lockOwners(ctx, q, restored); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s g SET slug = r.slug, scope_id = r.scope_id, parent_id = r.parent_id, state = r.state,
- attributes = coalesce(r.attributes, '{}'), cover = r.cover, owner_user_id = r.owner_user_id, auth_scope = r.auth_scope, updated_at = now(), revision = g.revision + 1
- FROM jsonb_to_recordset($2::jsonb) AS r(id text, slug text, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb, owner_user_id text, auth_scope text)
+ attributes = coalesce(r.attributes, '{}'), cover = r.cover, avatar = r.avatar, owner_user_id = r.owner_user_id, auth_scope = r.auth_scope, updated_at = now(), revision = g.revision + 1
+ FROM jsonb_to_recordset($2::jsonb) AS r(id text, slug text, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
  WHERE g.tenant_id = $1 AND g.id = r.id`, s.table("content_groups")), s.tenant, data); err != nil {
 			return err
+		}
+		if err := s.checkCaps(ctx, q, restored); err != nil {
+			return err
+		}
+		if len(nameIDs) > 0 {
+			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_names")), s.tenant, nameIDs); err != nil {
+				return err
+			}
+			if err := s.insertNames(ctx, q, names); err != nil {
+				return err
+			}
 		}
 		if len(textIDs) > 0 {
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_text")), s.tenant, textIDs); err != nil {
@@ -441,12 +563,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		for i, u := range updates {
 			out[i] = updated[u.ID]
 		}
-		return s.markDirty(ctx, q, out)
+		if err := s.markDirty(ctx, q, out); err != nil {
+			return err
+		}
+		return s.queueScopes(ctx, q, scoped)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return s.syncAfter(ctx, out)
 }
 
 // updateRow is groupRow plus the state an update writes.
@@ -464,6 +589,9 @@ func (s *Store) apply(g Group, u GroupUpdate) (updateRow, bool, error) {
 	}
 	row := updateRow{groupRow: groupRow{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, ScopeID: string(g.ScopeID), Attributes: g.Attributes,
 		Cover: g.Cover, OwnerUserID: optional(g.OwnerUserID), AuthScope: optional(g.AuthScope)}, State: string(g.State)}
+	if g.Avatar != nil {
+		row.Avatar = optional(g.Avatar.Image)
+	}
 	if g.ParentID != "" {
 		p := string(g.ParentID)
 		row.ParentID = &p
@@ -508,6 +636,11 @@ func (s *Store) apply(g Group, u GroupUpdate) (updateRow, bool, error) {
 	}
 	if u.Cover != nil {
 		if row.Cover, err = validateCover(u.Cover); err != nil {
+			return row, false, err
+		}
+	}
+	if u.Avatar != nil {
+		if row.Avatar, err = validateAvatar(u.Avatar); err != nil {
 			return row, false, err
 		}
 	}

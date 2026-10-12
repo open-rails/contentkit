@@ -29,9 +29,13 @@ import (
 
 // Sentinel errors; callers match them with errors.Is.
 var (
-	ErrInvalid  = errors.New("groups: invalid input")
-	ErrNotFound = errors.New("groups: not found")
-	ErrConflict = errors.New("groups: conflict")
+	ErrInvalid   = errors.New("groups: invalid input")
+	ErrNotFound  = errors.New("groups: not found")
+	ErrConflict  = errors.New("groups: conflict")
+	ErrForbidden = errors.New("groups: forbidden")
+	// ErrLimit is a person owning as many groups of a kind as it allows
+	// (kinds.GroupKind.MaxPerOwner).
+	ErrLimit = errors.New("groups: limit reached")
 )
 
 // GroupID identifies one group within a tenant: a UUIDv7, kept across import.
@@ -80,6 +84,15 @@ type Cover struct {
 	Renditions []Rendition `json:"renditions,omitempty"`
 }
 
+// Avatar is a user-owned group's square picture: an image uploaded to the
+// group's media folder ("avatar/i-{uuid}"), selected by name. Without a
+// selection a read shows the folder's first avatar, else the kind's default.
+type Avatar struct {
+	Image string `json:"image,omitempty"`
+	// Renditions are its public images, filled on reads (Options.Covers).
+	Renditions []Rendition `json:"renditions,omitempty"`
+}
+
 // Rendition is one public image of a cover, as media.PublicRendition.
 type Rendition struct {
 	URL string `json:"url"`
@@ -87,17 +100,19 @@ type Rendition struct {
 	H   int    `json:"h"`
 }
 
-// CoverResolver turns covers into their public renditions, per cover in
-// order, one call per page: media/versions.Service.GroupCovers.
+// CoverResolver turns covers and avatars into their public renditions, per
+// picture in order, one call per page: media/versions.Service.GroupCovers.
 type CoverResolver interface {
 	Covers(ctx context.Context, covers []CoverOf) ([][]Rendition, error)
 }
 
-// CoverOf is one group's cover to resolve.
+// CoverOf is one group's picture to resolve: its cover, or with Preset
+// "avatar" its avatar (Cover.Image the selected one, if any).
 type CoverOf struct {
-	Kind  string
-	ID    GroupID
-	Cover Cover
+	Kind   string
+	ID     GroupID
+	Cover  Cover
+	Preset string
 }
 
 // Group is one group record.
@@ -112,9 +127,13 @@ type Group struct {
 	MergedInto  GroupID        `json:"merged_into,omitempty"`
 	Attributes  map[string]any `json:"attributes"`
 	Cover       *Cover         `json:"cover,omitempty"`
+	Avatar      *Avatar        `json:"avatar,omitempty"`
 	OwnerUserID string         `json:"owner_user_id,omitempty"`
-	AuthScope   string         `json:"auth_scope,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
+	// AuthScope is the AuthKit group whose holders of
+	// access.GroupSettingsManage edit it; ContentKit provisions it for a
+	// kind with auth_scope (Options.Scopes).
+	AuthScope string    `json:"auth_scope,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	Revision    int64          `json:"revision"`
 }
@@ -138,8 +157,16 @@ type Options struct {
 	// already re-derived), so the engine can rebuild what else depends on
 	// them, such as search documents. Optional.
 	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
-	// Covers fills covers' renditions on reads. Optional.
+	// Covers fills covers' and avatars' renditions on reads. Optional.
 	Covers CoverResolver
+	// Sales fills sellable groups' offers and the viewer's standing on
+	// reads: offers.Service. Optional.
+	Sales Sales
+	// Scopes provisions and retires the AuthKit scopes of auth_scope kinds.
+	// Optional: without it auth_scope is whatever staff set.
+	Scopes Scopes
+	// Queue is the River queue of scope syncs; contentkit_groups when empty.
+	Queue string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
@@ -147,14 +174,19 @@ type Options struct {
 // Store is one tenant's groups.
 type Store struct {
 	pool    *pgxpool.Pool
-	tx      Querier
+	tx      pgx.Tx
 	qs      string
 	schema  string
 	tenant  string
 	cfg     kinds.Config
 	changed func(ctx context.Context, q Querier, contentIDs []string) error
 	covers  CoverResolver
+	sales   Sales
+	scopes  Scopes
+	queue   string
 	log     *slog.Logger
+	as      *writer
+	river   *riverBinding
 }
 
 // New validates the options and returns the store.
@@ -177,8 +209,12 @@ func New(opts Options) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+	queue := opts.Queue
+	if queue == "" {
+		queue = "contentkit_groups"
+	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged,
-		covers: opts.Covers, log: log}, nil
+		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, queue: queue, log: log, river: &riverBinding{}}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.

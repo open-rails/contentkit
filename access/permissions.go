@@ -46,3 +46,18 @@ func Names(ps ...Permission) []string {
 	}
 	return out
 }
+
+// GroupSettingsManage is the permission, held in a user-owned group's AuthKit
+// scope (groups' auth_scope), to edit the group, delete or restore it, and
+// put or withdraw its offers and its content's: "{kind}:settings:manage".
+func GroupSettingsManage(kind string) string { return kind + ":settings:manage" }
+
+// GroupMediaWrite is the permission, held in a user-owned group's AuthKit
+// scope, to upload and edit the group's media: "{kind}:media:write".
+func GroupMediaWrite(kind string) string { return kind + ":media:write" }
+
+// GroupPermissions is every permission ContentKit checks in a group kind's
+// AuthKit scopes, as the host's persona of that name declares them.
+func GroupPermissions(kind string) []string {
+	return []string{GroupSettingsManage(kind), GroupMediaWrite(kind)}
+}

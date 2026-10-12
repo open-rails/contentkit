@@ -182,3 +182,47 @@ func (s *Service) languages() []string { return s.kinds.Languages }
 func (s *Service) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, s.pool, fn)
 }
+
+// GroupAccess is a sellable group's sale as a card or page shows it: its
+// key, its active offer and the viewer's standing.
+type GroupAccess struct {
+	Key access.Key `json:"key"`
+	// Offer is the active offer's terms; nil while the group sells nothing.
+	Offer *Terms `json:"offer,omitempty"`
+	// Member: the viewer holds the key (bought, subscribed or joined free).
+	Member bool `json:"member"`
+	// Unknown: the billing read failed, so Member is false and may be wrong.
+	Unknown bool `json:"unknown,omitempty"`
+}
+
+// GroupAccess answers, per group in order, its key, active offer and the
+// viewer's standing: one offers read and at most one billing read
+// (access.Gate.Holds). A failed billing read answers Unknown, not an error.
+func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups []string) ([]GroupAccess, error) {
+	out := make([]GroupAccess, len(groups))
+	keys := make([]access.Key, len(groups))
+	for i, id := range groups {
+		k, err := access.GroupKey(s.tenant, id)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+		keys[i], out[i].Key = k, k
+	}
+	live, err := s.Live(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	held, err := s.gate.Holds(ctx, viewer, keys)
+	unknown := errors.Is(err, access.ErrUnavailable)
+	if err != nil && !unknown {
+		return nil, err
+	}
+	for i, k := range keys {
+		if o, ok := live[k.String()]; ok {
+			t := o.Terms
+			out[i].Offer = &t
+		}
+		out[i].Member, out[i].Unknown = held[i], unknown
+	}
+	return out, nil
+}

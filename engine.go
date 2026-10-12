@@ -416,18 +416,9 @@ func (e *Engine) mount(deps Deps) error {
 		}
 	}
 	c := e.cfg.Content
-	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Logger: e.log}
+	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log}
 	if e.media != nil {
 		opts.Covers = e.media.versions.GroupCovers()
-	}
-	if e.groups, err = groups.New(opts); err != nil {
-		return err
-	}
-	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {
-		return err
-	}
-	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
-		return err
 	}
 	if deps.Billing != nil {
 		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,
@@ -437,6 +428,16 @@ func (e *Engine) mount(deps Deps) error {
 		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
 			return err
 		}
+		opts.Sales = e.offers
+	}
+	if e.groups, err = groups.New(opts); err != nil {
+		return err
+	}
+	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {
+		return err
+	}
+	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
+		return err
 	}
 	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
 	if err != nil {

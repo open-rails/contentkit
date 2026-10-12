@@ -50,6 +50,8 @@ func TestValidate(t *testing.T) {
 		"bad presentation":    func(c *Config) { k := c.Kinds["blog"]; k.Presentation = "page"; c.Kinds["blog"] = k },
 		"filter group kind":   func(c *Config) { c.ContentFilters[0].Group.Kind = "genre" },
 		"enum without values": func(c *Config) { c.Kinds["gallery"].Attributes["format"] = Attribute{Type: "enum"} },
+		"cap on a site kind":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", MaxPerOwner: 3} },
+		"negative cap":        func(c *Config) { c.GroupKinds["channel"] = GroupKind{Owner: "user", MaxPerOwner: -1} },
 	} {
 		c := doujins()
 		mutate(&c)
