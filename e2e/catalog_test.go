@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/helpers/notify"
 
+	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
@@ -350,4 +352,38 @@ func upload(t *testing.T, f *server, bearer string, ref media.RefBody, path stri
 		t.Fatalf("PUT %s: %d %s", path, resp.StatusCode, b)
 	}
 	return plan
+}
+
+// holdTagged holds text containing "[hold]".
+type holdTagged struct{}
+
+func (holdTagged) Screen(_ context.Context, in content.ModerationInput) (content.Verdict, error) {
+	if strings.Contains(in.Text, "[hold]") {
+		return content.Verdict{Decision: content.DecisionReview, Reason: "tagged"}, nil
+	}
+	return content.Verdict{Decision: content.DecisionApprove}, nil
+}
+
+func (holdTagged) StatelessPolicy() {}
+
+// The runtime's moderator screens catalog text too: a held item stays off
+// until a reviewer approves it from the shared queue.
+func TestRuntimeModeratesCatalogIntegration(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	f := serve(t, w.runtime(func(c *contentkit.RuntimeConfig) { c.Content.Moderator = holdTagged{} }))
+	var post catalog.Content
+	f.want(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Hi", Body: "[hold]"}}}, &post)
+	f.want(http.StatusAccepted, staff, "POST", "/v1/contents/"+post.ID+"/publish", catalog.PublishInput{}, &post)
+	if post.Moderation != content.ModerationHeld {
+		t.Fatalf("publish %+v", post)
+	}
+	f.want(http.StatusNotFound, "", "GET", "/v1/contents/"+post.ID, nil, nil)
+	var held content.HeldPage
+	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=content", nil, &held)
+	if len(held.Items) != 1 || held.Items[0].ID != post.ID {
+		t.Fatalf("held %+v", held)
+	}
+	f.want(http.StatusOK, staff, "POST", "/moderation/content/"+post.ID+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: held.Items[0].Revision}, nil)
+	f.want(http.StatusOK, "", "GET", "/v1/contents/"+post.ID, nil, nil)
 }

@@ -11,8 +11,10 @@ export type Mount = string | ((ref: RefBody) => string);
  * baseUrl's fixed sub-paths.
  */
 export interface ContentKitMounts {
-  /** Posts, comments, reactions, favorites, polls, bans, moderation. Default baseUrl. */
+  /** Comments, reactions, favorites, polls, bans, moderation. Default baseUrl. */
   content?: string;
+  /** Content items and catalog totals. Default `{baseUrl}/v1`. */
+  contents?: string;
   /** Media reads and HLS playlists. Default `{baseUrl}/media`. */
   media?: Mount;
   /** Uploads and commits. Default `{baseUrl}/media/upload`. */
@@ -21,8 +23,6 @@ export interface ContentKitMounts {
   codes?: string;
   /** Groups. Default `{baseUrl}/v1`. */
   groups?: string;
-  /** The public catalog. Default `{baseUrl}/catalog`. */
-  catalog?: string;
   /** User inbox. Default `{baseUrl}/notifications`. */
   notifications?: string;
 }

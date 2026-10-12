@@ -1,77 +1,66 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { Sort } from "../client/content/types.js";
-import type { Post, PostInput } from "../client/generated/wire.js";
-import { IMAGE_SCHEME, imageRef, imageRefs } from "../client/content/posts.js";
+import type { CatalogText, Content, ContentInput, ContentPatch } from "../client/generated/wire.js";
+import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
-export interface PostFilter {
-  language?: string;
-  sort?: Sort;
-  /** Staff: every post, drafts and scheduled ones included (root:posts:write). */
-  admin?: boolean;
-  /** With admin: true only drafts, false no drafts. */
-  draft?: boolean;
-  /** With admin: the deleted posts instead of the live ones. */
-  deleted?: boolean;
-  /** With admin: only posts whose title, excerpt or body contains this text. */
-  q?: string;
+export interface ManageFilter extends Omit<ManageQuery, "limit" | "offset"> {
   pageSize?: number;
 }
 
-/** Posts, a page at a time: the published ones, or every one for staff. */
-export function usePosts(f: PostFilter = {}, o: { client?: ContentKitClient } = {}): UseList<Post> {
+/** The content items the caller manages, newest first, a page at a time. */
+export function useManagedContents(f: ManageFilter = {}, o: { client?: ContentKitClient } = {}): UseList<Content> {
   const { client, store, scope } = useContentScope(o.client);
-  const size = f.pageSize ?? 20;
+  const { pageSize, ...q } = f;
+  const size = pageSize ?? 20;
   return useList(
     store,
-    keyOf("posts", scope, !!f.admin, f.language, f.sort, f.draft, f.deleted, f.q, size),
-    { type: "posts", scope: f.admin && f.deleted ? "deleted" : undefined },
-    offsetPages(size, (q, signal) =>
-      f.admin
-        ? client.posts.adminList({ ...q, language: f.language, draft: f.draft, deleted: f.deleted, q: f.q }, signal)
-        : client.posts.list({ ...q, language: f.language, sort: f.sort }, signal),
-    ),
+    keyOf("contents", scope, q.kind, q.state, q.owner_group, q.q, q.language, size),
+    { type: "contents", scope: q.state === "deleted" ? "deleted" : undefined },
+    offsetPages(size, (page, signal) => client.contents.manage({ ...q, ...page }, signal)),
   );
 }
 
-export interface UsePost {
+export interface UseContent {
   /** null before create (or while loading). */
-  post: Post | null;
+  content: Content | null;
   loading: boolean;
   error?: ContentKitError;
   /** Writes in flight. */
   saving: boolean;
-  /** Creates the post; the hook then edits it. */
-  create: (input: PostInput) => Promise<Post>;
-  /** Updates the given fields; a body from the editor is stored with image references (storedBody). */
-  update: (patch: PostInput) => Promise<Post>;
+  /** Creates the item as a draft; the hook then edits it. */
+  create: (input: ContentInput) => Promise<Content>;
+  update: (patch: ContentPatch) => Promise<Content>;
+  /** Sets the text in the hook's language; a body from the editor is stored with image references (storedBody). */
+  putText: (text: CatalogText) => Promise<Content>;
+  /** Publishes now, or schedules for at. */
+  publish: (at?: string) => Promise<Content>;
+  unpublish: () => Promise<Content>;
   remove: () => Promise<void>;
-  /** Restores the deleted post (root:posts:write). */
-  restore: () => Promise<Post>;
+  restore: () => Promise<Content>;
   /** Uploads the cover (null clears it); resolves with a URL that shows it now. */
   setCover: (file: Blob | null) => Promise<string | null>;
   /** Uploads an image for the body; resolves with a URL that shows it now, to place in the editor. */
   uploadImage: (file: Blob) => Promise<string>;
   /**
-   * A URL that shows one of the post's images now, by name ("i-{uuid}") or
+   * A URL that shows one of the item's images now, by name ("i-{uuid}") or
    * reference: a fresh upload from its file, else its public file
-   * (`post.images`), else, while it has none (an unpublished post's), its
+   * (`content.images`), else, while it has none (an unpublished item's), its
    * signed editor view from an editor read. Anything else is returned as is.
    */
   imageSrc: (image: string | null | undefined) => string | undefined;
   /** The cover through imageSrc. */
   coverSrc: string | undefined;
-  /** post.body with its images through imageSrc: what a rich-text editor shows. */
-  editorBody: string | undefined;
+  /** The language's stored text, its body's images through imageSrc: what an editor shows. */
+  text: CatalogText | undefined;
   /** HTML from the editor with every image URL this hook showed turned back into the image's reference. */
   storedBody: (html: string) => string;
 }
 
-/** The names of the images a body still references, once each. */
+/** The names of the images a body references, once each. */
 const refNames = (body: string | undefined) => [...new Set([...(body ?? "").matchAll(imageRefs())].map((m) => m[1]!))];
 const uploadName = (path: string) => {
   const base = path.slice(path.lastIndexOf("/") + 1);
@@ -79,19 +68,17 @@ const uploadName = (path: string) => {
   return dot > 0 ? base.slice(0, dot) : base;
 };
 
-/** Whether readers see the post, and so its images' public files exist. */
-export function isPublished(post: Post, now = Date.now()): boolean {
-  return !post.is_draft && !post.moderation && (!post.live_at || Date.parse(post.live_at) <= now);
-}
-
-/** One post: read, and for staff (root:posts:write) create, update, delete, restore, cover and body images. null creates a new post. */
-export function usePost(id: string | null | undefined, o: { initial?: Post; client?: ContentKitClient } = {}): UsePost {
+/**
+ * One content item of kind for its editors: read, create, text in language,
+ * publish, delete, restore, cover and body images. null creates a new item.
+ */
+export function useContent(id: string | null | undefined, kind: string, language: string, o: { initial?: Content; client?: ContentKitClient } = {}): UseContent {
   const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
-  const pid = id ?? created;
-  const key = pid ? keyOf("post", scope, pid) : null;
-  const r = useResource<Post | null>(store, key, { type: "post", id: pid ?? undefined }, (s) => client.posts.get(pid!, s), { initial: o.initial });
-  const post = r.data ?? null;
+  const cid = id ?? created;
+  const key = cid ? keyOf("content", scope, cid) : null;
+  const r = useResource<Content | null>(store, key, { type: "content", id: cid ?? undefined }, (s) => client.contents.get(cid!, language, s), { initial: o.initial });
+  const content = r.data ?? null;
   const [inflight, setInflight] = useState(0);
   const guarded = useGuarded();
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -103,12 +90,15 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     }
   }, [guarded]);
   const need = useCallback(() => {
-    if (!pid) throw new Error("contentkit-ui: create the post first");
-    return pid;
-  }, [pid]);
+    if (!cid) throw new Error("contentkit-ui: create the item first");
+    return cid;
+  }, [cid]);
+  const stored = content?.text?.[language];
+  const body = stored?.body;
+  const cover = content?.cover;
 
-  // Images: fresh uploads show from their file, published ones from post.images,
-  // the rest (an unpublished post's) from an editor read.
+  // Images: fresh uploads show from their file, published ones from
+  // content.images, the rest (an unpublished item's) from an editor read.
   const [previews, setPreviews] = useState<ReadonlyMap<string, string>>(new Map());
   const blobs = useRef<string[]>([]);
   useEffect(() => {
@@ -117,13 +107,13 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
       for (const u of urls) URL.revokeObjectURL(u);
     };
   }, []);
-  const published = useMemo(() => new Map(Object.entries(post?.images ?? {})), [post?.images]);
+  const published = useMemo(() => new Map(Object.entries(content?.images ?? {})), [content?.images]);
   const pending = useMemo(() => {
-    const names = refNames(post?.body);
-    if (post?.cover && !post.cover_url && !names.includes(post.cover)) names.push(post.cover);
-    return names.filter((n) => !previews.has(n));
-  }, [post?.body, post?.cover, post?.cover_url, previews]);
-  const folder = useMemo(() => client.media.postRef(pid ?? "none"), [client, pid]);
+    const names = refNames(body);
+    if (cover && !cover.url && !names.includes(cover.image)) names.push(cover.image);
+    return names.filter((n) => !previews.has(n) && !published.has(n));
+  }, [body, cover, previews, published]);
+  const folder = useMemo(() => ({ kind, id: cid ?? "none" }), [kind, cid]);
   const read = useMediaRead(folder, { editor: true, read: pending.length ? undefined : null, client });
   const views = useMemo(() => {
     const out = new Map<string, string>();
@@ -162,7 +152,10 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     },
     [previews, published, views],
   );
-  const editorBody = useMemo(() => post?.body.replace(imageRefs(), (ref, n: string) => previews.get(n) ?? views.get(n) ?? ref), [post?.body, previews, views]);
+  const text = useMemo(
+    () => (stored ? { ...stored, body: (stored.body ?? "").replace(imageRefs(), (ref, n: string) => previews.get(n) ?? published.get(n) ?? views.get(n) ?? ref) } : undefined),
+    [stored, previews, published, views],
+  );
   const storedBody = useCallback(
     (html: string) => {
       const back = new Map(shown.current);
@@ -182,56 +175,65 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
   }, []);
 
   const create = useCallback(
-    (input: PostInput) =>
+    (input: ContentInput) =>
       run(async () => {
-        const post = await client.posts.create(input);
-        setCreated(post.id);
-        return post;
+        const c = await client.contents.create(input);
+        setCreated(c.id);
+        return c;
       }),
     [client, run],
   );
-  const update = useCallback(
-    (patch: PostInput) => run(() => client.posts.update(need(), patch.body === undefined ? patch : { ...patch, body: storedBody(patch.body) })),
-    [client, run, need, storedBody],
+  const update = useCallback((patch: ContentPatch) => run(() => client.contents.update(need(), patch)), [client, run, need]);
+  const putText = useCallback(
+    (t: CatalogText) => run(() => client.contents.putText(need(), language, t.body === undefined ? t : { ...t, body: storedBody(t.body) })),
+    [client, run, need, language, storedBody],
   );
-  const remove = useCallback(() => run(() => client.posts.delete(need())), [client, run, need]);
-  const restore = useCallback(() => run(() => client.posts.restore(need())), [client, run, need]);
+  const publish = useCallback((at?: string) => run(() => client.contents.publish(need(), at)), [client, run, need]);
+  const unpublish = useCallback(() => run(() => client.contents.unpublish(need())), [client, run, need]);
+  const remove = useCallback(() => run(() => client.contents.remove(need())), [client, run, need]);
+  const restore = useCallback(() => run(() => client.contents.restore(need())), [client, run, need]);
   const setCover = useCallback(
     (file: Blob | null) =>
       run(async () => {
-        if (!file) return client.posts.setCover(need(), null);
-        const up = await client.media.uploadNamed(client.media.postRef(need()), file);
-        const cover = await client.posts.setCover(need(), up.name);
-        const url = preview(up.name, file) ?? cover;
+        if (!file) {
+          await client.contents.setCover(need(), null);
+          return null;
+        }
+        const up = await client.media.uploadNamed({ kind, id: need() }, file);
+        const saved = await client.contents.setCover(need(), up.name);
+        const url = preview(up.name, file) ?? saved.cover?.url ?? null;
         if (url) shown.current.set(url, up.name);
         return url;
       }),
-    [client, run, need, preview],
+    [client, run, need, kind, preview],
   );
   const uploadImage = useCallback(
     (file: Blob) =>
       run(async () => {
-        const up = await client.media.uploadInline(need(), file);
+        const up = await client.media.uploadInline({ kind, id: need() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
         shown.current.set(url, up.name);
         return url;
       }),
-    [client, run, need, preview],
+    [client, run, need, kind, preview],
   );
   return {
-    post,
+    content,
     loading: !!key && (r.loading || (!r.loaded && o.initial === undefined)),
     error: r.error,
     saving: inflight > 0,
     create,
     update,
+    putText,
+    publish,
+    unpublish,
     remove,
     restore,
     setCover,
     uploadImage,
     imageSrc,
-    coverSrc: imageSrc(post?.cover),
-    editorBody,
+    coverSrc: imageSrc(cover?.image),
+    text,
     storedBody,
   };
 }

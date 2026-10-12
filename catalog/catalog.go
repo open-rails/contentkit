@@ -78,7 +78,8 @@ type Options struct {
 	// Groups answers effective group ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged.
 	Groups Groups
-	// Moderation screens text of content that is or goes live; nil approves.
+	// Moderation screens text of content that is or goes live; nil approves
+	// unless contentkit.NewRuntime binds its content runtime (BindModeration).
 	Moderation Moderation
 	// Body sanitizes text bodies; nil strips tags.
 	Body Sanitizer
@@ -173,6 +174,14 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 
 // Close releases the totals cache.
 func (s *Store) Close() { s.totals.Close() }
+
+// BindModeration screens through m when Options.Moderation is nil, so one
+// moderator serves comments and catalog text; call it before serving.
+func (s *Store) BindModeration(m Moderation) {
+	if s.moderator == nil {
+		s.moderator = m
+	}
+}
 
 // Tenant is the store's tenant.
 func (s *Store) Tenant() string { return s.tenant }

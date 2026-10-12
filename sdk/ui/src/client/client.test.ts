@@ -7,13 +7,13 @@ const read = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files
 
 it("serves every module under baseUrl unless a mount moves it", () => {
   const one = createContentKitClient({ baseUrl: "/api/v1/contentkit/" });
-  expect(["content", "media", "upload", "codes", "groups", "catalog"].map((m) => one.url(m as never))).toEqual([
+  expect(["content", "media", "upload", "codes", "groups", "contents"].map((m) => one.url(m as never))).toEqual([
     "/api/v1/contentkit",
     "/api/v1/contentkit/media",
     "/api/v1/contentkit/media/upload",
     "/api/v1/contentkit/codes",
     "/api/v1/contentkit/v1",
-    "/api/v1/contentkit/catalog",
+    "/api/v1/contentkit/v1",
   ]);
   const split = createContentKitClient({
     baseUrl: "/api/v1/social",

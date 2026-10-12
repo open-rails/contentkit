@@ -49,8 +49,8 @@ type RuntimeConfig struct {
 	Codes     *contenturl.Router // GET /codes/{code}
 	// Groups serves the groups API at /v1 (groups.Store.Handler).
 	Groups GroupsAPI
-	// Contents serves the catalog API at /v1 (catalog.Store.Handler) and
-	// puts held content in the review queue.
+	// Contents serves the catalog API at /v1 (catalog.Store.Handler), puts
+	// held content in the review queue and screens through Content's moderator.
 	Contents *catalog.Store
 }
 
@@ -117,6 +117,7 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 		if err := rt.AddHeldSource(catalog.HeldKind, cfg.Contents); err != nil {
 			return nil, err
 		}
+		cfg.Contents.BindModeration(rt)
 	}
 	notices := rt.Notifications
 	h, err := handler(cfg, c, rt, notices)

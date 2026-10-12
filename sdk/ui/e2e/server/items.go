@@ -49,15 +49,19 @@ func (s *items) reset() {
 
 // Resolve is the host's access.ContentResolver: a known item is visible to
 // everyone unless hidden, open unless locked, and edited by its owner and
-// staff. An account's item (kind user) is its user's; post and poll images
-// resolve through the content module.
+// staff. An account's item (kind user) is its user's; blog items resolve
+// through the catalog, poll images through the content module.
 func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := make(map[contentref.ContentKey]access.Resolution, len(refs))
 	var staff *bool
-	var folders []contentref.ContentRef
+	var blogs, polls []contentref.ContentRef
 	for _, ref := range refs {
-		if isFolder(ref.ContentKind) {
-			folders = append(folders, ref)
+		switch ref.ContentKind {
+		case blogKind:
+			blogs = append(blogs, ref)
+			continue
+		case pollFolder:
+			polls = append(polls, ref)
 			continue
 		}
 		it, ok := h.items.get(ref.Key())
@@ -80,9 +84,14 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 		}
 		out[ref.Key()] = access.Resolution{Visible: !it.Hidden || editor, Accessible: it.Access != "none" || editor, Owner: it.Owner, Editor: editor}
 	}
-	if len(folders) > 0 {
-		// Post and poll images follow their post or poll (a draft's are its editors').
-		res, err := h.rt.Content.MediaResolver().Resolve(ctx, folders, a)
+	for _, part := range []struct {
+		r    access.ContentResolver
+		refs []contentref.ContentRef
+	}{{h.cat.Resolver(), blogs}, {h.rt.Content.MediaResolver(), polls}} {
+		if len(part.refs) == 0 {
+			continue
+		}
+		res, err := part.r.Resolve(ctx, part.refs, a)
 		if err != nil {
 			return nil, err
 		}
@@ -96,8 +105,9 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 const ckUserKind = "user"
 
 // CanUpload is media's upload authorizer: an account's media by its person
-// (their quota) or staff (exempt), post and poll images through the content
-// module (as hosts wire them), every other item's by its editors.
+// (their quota) or staff (exempt), blog images through the catalog and poll
+// images through the content module (as hosts wire them), every other
+// item's by its editors.
 func (h *harness) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	switch {
 	case t.Ref.ContentKind == ckUserKind:
@@ -106,7 +116,9 @@ func (h *harness) CanUpload(ctx context.Context, a access.Actor, t media.UploadT
 		}
 		staff, err := h.editsAllMedia(ctx, a)
 		return media.UploadGrant{Allowed: staff, Exempt: staff}, err
-	case isFolder(t.Ref.ContentKind):
+	case t.Ref.ContentKind == blogKind:
+		return h.cat.CanUpload(ctx, a, t)
+	case t.Ref.ContentKind == pollFolder:
 		return h.rt.Content.CanUpload(ctx, a, t)
 	}
 	res, err := h.Resolve(ctx, []contentref.ContentRef{t.Ref}, a)

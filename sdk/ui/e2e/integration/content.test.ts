@@ -36,70 +36,75 @@ describe("content modules against the real ContentKit", () => {
   };
   const code = (code: string) => expect.objectContaining({ name: "ContentKitError", code });
 
-  it("posts: staff CRUD, the staff list, reactions, and the public list", async () => {
+  it("contents: creators and staff write, the manage list, reactions, anonymous reads, delete and restore", async () => {
     const editor = ck("editor");
-    const draft = await editor.posts.create({ title: "Draft", body: "draft body", language: "en", is_draft: true });
-    const post = await editor.posts.create({ title: "Hello world", body: "first", language: "en" });
-    expect(post).toMatchObject({ title: "Hello world", is_draft: false, code: expect.stringMatching(/^[0-9A-Z]{9}$/), url_slug: "hello-world" });
-    expect(changes).toContainEqual({ type: "post.created", post });
+    const blog = (title: string, body: string) => ({ kind: "blog", text: { en: { title, body } } });
+    const draft = await editor.contents.create(blog("Draft", "draft body"));
+    expect(draft).toMatchObject({ state: "draft", editor: true, code: expect.stringMatching(/^[0-9A-Z]{9}$/), slug: "draft" });
+    expect(changes).toContainEqual({ type: "content.saved", content: draft });
+    const made = await editor.contents.create(blog("Hello world", "first"));
+    const post = await editor.contents.publish(made.id);
+    expect(post).toMatchObject({ state: "published", live: true, title: "Hello world", path: `/blog/${made.code}/hello-world` });
 
-    expect((await ck().posts.list({ language: "en" })).map((p) => p.id)).toContain(post.id);
-    expect((await ck().posts.list()).map((p) => p.id)).not.toContain(draft.id);
-    expect((await editor.posts.adminList({ draft: true })).map((p) => p.id)).toEqual(expect.arrayContaining([draft.id]));
-    expect((await editor.posts.adminList({ draft: false })).map((p) => p.id)).not.toContain(draft.id);
-    await expect(ck("alice").posts.adminList()).rejects.toEqual(code("forbidden"));
-    await expect(ck("alice").posts.create({ title: "x", body: "y" })).rejects.toEqual(code("forbidden"));
-    await expect(ck().posts.get(draft.id)).rejects.toEqual(code("not_found"));
+    expect(await ck().contents.get(post.id, "en")).toMatchObject({ id: post.id, live: true, editor: false, body: "first" });
+    await expect(ck().contents.get(draft.id)).rejects.toEqual(code("not_found"));
+    expect((await editor.contents.manage({ kind: "blog", state: "draft", limit: 100 })).map((c) => c.id)).toContain(draft.id);
+    expect((await editor.contents.manage({ kind: "blog", state: "published", limit: 100 })).map((c) => c.id)).not.toContain(draft.id);
+    // A person manages what they created: here nothing; creating needs content:write.
+    expect(await ck("alice").contents.manage()).toEqual([]);
+    await expect(ck("alice").contents.create(blog("x", "y"))).rejects.toEqual(code("forbidden"));
+    await expect(ck().contents.create(blog("x", "y"))).rejects.toEqual(code("unauthorized"));
 
-    const updated = await editor.posts.update(post.id, { body: "edited" });
-    expect(updated.body).toBe("edited");
-    // A post is a reaction target like any other.
-    expect(await ck("alice").reactions.set({ kind: "post", id: post.id }, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
-    expect(await ck("bob").reactions.set({ kind: "post", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
-    expect(await ck("alice").reactions.get({ kind: "post", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
+    const updated = await editor.contents.putText(post.id, "en", { title: "Hello world", body: "edited" });
+    expect(updated.text?.en?.body).toBe("edited");
+    // A content item is a reaction target like any other.
+    expect(await ck("alice").reactions.set({ kind: "blog", id: post.id }, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
+    expect(await ck("bob").reactions.set({ kind: "blog", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
+    expect(await ck("alice").reactions.get({ kind: "blog", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
 
-    await editor.posts.delete(post.id);
-    expect(changes).toContainEqual({ type: "post.deleted", id: post.id });
-    await expect(editor.posts.get(post.id)).rejects.toEqual(code("not_found"));
+    await editor.contents.remove(post.id);
+    expect(changes).toContainEqual({ type: "content.deleted", id: post.id });
+    await expect(ck().contents.get(post.id)).rejects.toEqual(code("not_found"));
 
-    // Staff search, the deleted list and restore.
+    // The manage search, the deleted list and restore.
     const word = `w${randomUUID().slice(0, 8)}`;
-    const found = await editor.posts.create({ title: `About ${word.toUpperCase()}`, body: "b", language: "en" });
-    expect((await editor.posts.adminList({ q: word })).map((p) => p.id)).toEqual([found.id]);
-    expect((await editor.posts.adminList({ deleted: true, limit: 100 })).find((p) => p.id === post.id)).toMatchObject({ deleted_at: expect.any(String) });
-    expect((await editor.posts.adminList({ limit: 100 })).map((p) => p.id)).not.toContain(post.id);
-    await expect(ck("alice").posts.restore(post.id)).rejects.toEqual(code("forbidden"));
-    const restored = await editor.posts.restore(post.id);
-    expect(restored).toMatchObject({ id: post.id, title: "Hello world", body: "edited" });
+    const found = await editor.contents.create(blog(`About ${word.toUpperCase()}`, "b"));
+    expect((await editor.contents.manage({ q: word })).map((c) => c.id)).toEqual([found.id]);
+    expect((await editor.contents.manage({ state: "deleted", limit: 100 })).find((c) => c.id === post.id)).toMatchObject({ deleted_at: expect.any(String) });
+    expect((await editor.contents.manage({ limit: 100 })).map((c) => c.id)).not.toContain(post.id);
+    await expect(ck("alice").contents.restore(post.id)).rejects.toEqual(code("forbidden"));
+    const restored = await editor.contents.restore(post.id);
+    expect(restored).toMatchObject({ id: post.id, state: "published", title: "Hello world" });
     expect(restored.deleted_at).toBeUndefined();
-    expect(changes).toContainEqual({ type: "post.restored", post: restored });
-    expect((await ck().posts.get(post.id)).id).toBe(post.id);
-    await expect(editor.posts.restore(post.id)).rejects.toEqual(code("not_found"));
+    expect(changes).toContainEqual({ type: "content.saved", content: restored });
+    expect((await ck().contents.get(post.id, "en")).body).toBe("edited");
+    await expect(editor.contents.restore(post.id)).rejects.toEqual(code("not_found"));
   });
 
-  it("media.uploadInline places a body image in the post's folder and resolves its reference; reads resolve references; covers go through the same uploads", async () => {
+  it("media.uploadInline places a body image in the item's folder and resolves its reference; reads resolve references; covers go through the same uploads", async () => {
     const editor = ck("editor");
-    const post = await editor.posts.create({ title: "Pictures", body: "b", language: "en" });
-    const img = await editor.media.uploadInline(post.id, png());
+    const made = await editor.contents.create({ kind: "blog", text: { en: { title: "Pictures", body: "b" } } });
+    const post = await editor.contents.publish(made.id);
+    const folder = { kind: "blog", id: post.id };
+    const img = await editor.media.uploadInline(folder, png());
     expect(img.name).toMatch(/^i-[0-9a-f-]{36}$/);
     expect(img.path).toBe(`${img.name}.png`);
     expect(img.ref).toBe(imageRef(img.name));
     // Published, the upload waited for its public file.
-    expect(img.url).toMatch(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/post/${post.id}/public/${img.name}-[0-9a-f-]{36}\\.webp$`));
-    expect(await editor.posts.inlineImage(post.id, img.name)).toEqual({ ref: img.ref, url: img.url });
-    const withImage = await editor.posts.update(post.id, { body: `see ${img.ref} twice ${img.ref}` });
+    expect(img.url).toMatch(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/blog/${post.id}/public/${img.name}-[0-9a-f-]{36}\\.webp$`));
+    expect(await editor.contents.inlineImage(post.id, img.name)).toEqual({ ref: img.ref, url: img.url });
+    const withImage = await editor.contents.putText(post.id, "en", { title: "Pictures", body: `see ${img.ref} twice ${img.ref}` });
     expect(withImage).toMatchObject({ body: `see ${img.url} twice ${img.url}`, images: { [img.name]: img.url } });
-    expect((await ck().posts.list({ limit: 100 })).find((p) => p.id === post.id)?.body).toBe(withImage.body);
+    expect((await ck().contents.get(post.id, "en")).body).toBe(withImage.body);
     expect((await fetch(img.url!)).status).toBe(200);
 
-    const cover = await editor.posts.uploadCover(post.id, png());
-    expect(cover).toMatch(new RegExp(`/post/${post.id}/public/i-[0-9a-f-]{36}-[0-9a-f-]{36}\\.webp$`));
-    expect(await editor.posts.get(post.id)).toMatchObject({ cover_url: cover, cover: expect.stringMatching(/^i-/) });
-    expect(await editor.posts.uploadCover(post.id, null)).toBeNull();
-    expect(changes).toContainEqual({ type: "post.changed", id: post.id });
+    const up = await editor.media.uploadNamed(folder, png());
+    const covered = await editor.contents.setCover(post.id, up.name);
+    expect(covered.cover).toMatchObject({ image: up.name, url: expect.stringMatching(new RegExp(`/blog/${post.id}/public/i-[0-9a-f-]{36}-[0-9a-f-]{36}\\.webp$`)) });
+    expect((await editor.contents.setCover(post.id, null)).cover).toBeUndefined();
 
-    // Only PostWrite holders upload to a post's folder.
-    await expect(ck("alice").media.uploadInline(post.id, png())).rejects.toEqual(code("forbidden"));
+    // Only the item's editors upload to its folder.
+    await expect(ck("alice").media.uploadInline(folder, png())).rejects.toEqual(code("forbidden"));
   });
 
   it("comments: threads, replies, edits, tombstones, restore, reactions and the latest feed", async () => {
@@ -237,13 +242,13 @@ describe("content modules against the real ContentKit", () => {
     const top = await members("alice").comments.create(video, { body: "members only" });
     expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
     expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: acc.id("bob") });
-    const post = await members("editor").posts.create({ title: "Members", body: "b", language: "en" });
+    const post = await members("editor").contents.publish((await members("editor").contents.create({ kind: "blog", text: { en: { title: "Members", body: "b" } } })).id);
     const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });
     for (const refused of [
       () => members().comments.create(video, { body: "drive-by", anon_name: "Guest" }),
       () => members().comments.react(top.id, 1),
       () => members().reactions.set(video, 1),
-      () => members().reactions.set({ kind: "post", id: post.id }, 1),
+      () => members().reactions.set({ kind: "blog", id: post.id }, 1),
       () => members().polls.vote(poll.id, poll.options[0]!.id),
     ]) {
       await expect(refused()).rejects.toEqual(expect.objectContaining({ code: "unauthorized", status: 401 }));
@@ -349,8 +354,8 @@ describe("content modules against the real ContentKit", () => {
     expect((await ck().groups.get(group!.id, "en")).counts).toEqual([]);
     await expect(ck("alice").groups.create([])).rejects.toEqual(code("forbidden"));
 
-    const post = await ck("editor").posts.create({ title: "Coded post", body: "b", language: "en" });
-    expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "post", content_id: post.id, path: `/blog/${post.code}/coded-post` });
+    const post = await ck("editor").contents.publish((await ck("editor").contents.create({ kind: "blog", text: { en: { title: "Coded post", body: "b" } } })).id);
+    expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "blog", content_id: post.id, path: `/blog/${post.code}/coded-post` });
     await expect(ck().codes.resolve("ZZZZZZZZ9")).rejects.toEqual(code("not_found"));
   });
 

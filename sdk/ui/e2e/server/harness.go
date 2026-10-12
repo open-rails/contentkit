@@ -24,6 +24,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 
 	contentkit "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -60,6 +61,7 @@ type harness struct {
 	manifests  *media.Manifests
 	ring       token.Ring
 	urls       *contenturl.Store
+	cat        *catalog.Store
 	rt         *contentkit.Runtime
 	members    *contentkit.Runtime // takes nothing anonymous
 	onUpload   *media.Uploads
@@ -172,25 +174,34 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
 		return nil, err
 	}
-	h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{
-		Routes:    contenturl.Routes{content.KindPost: "blog", "gallery": "g", "album": "post", "video": "watch", "tag": "tag"},
-		Languages: []string{"en", "de", "ja"},
-		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-			if l.ContentKind == content.KindPost {
-				return h.rt.Content.PostVisibility(r.Context(), l.ContentID)
-			}
-			return contenturl.Visible, nil
-		}})
-	if err != nil {
-		return nil, err
-	}
 	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
 	gallery, album := grouped, grouped
 	gallery.Route, album.Route = "g", "album"
-	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: kindcfg.Config{Languages: []string{"en", "ja"},
-		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album},
+	model := kindcfg.Config{Languages: []string{"en", "ja"},
+		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album,
+			blogKind: {Route: "blog", Presentation: "post", Versions: kindcfg.VersionRules{Languages: "one", Hidden: true}}},
 		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
-			"character": {Route: "characters", ScopedBy: "series"}}}})
+			"character": {Route: "characters", ScopedBy: "series"}}}
+	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model,
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error { return h.cat.ContentChanged(ctx, q, ids) }})
+	if err != nil {
+		return nil, err
+	}
+	if h.cat, err = catalog.New(ctx, catalog.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: model, Auth: h.auth.Authenticator(),
+		Groups: grp, Body: newPostHTML(),
+		Media: &catalog.Media{Images: h.manifests, Expose: jobs, Reader: reader}}); err != nil {
+		return nil, err
+	}
+	// Host items (video, note, ...) keep their own pages; blog pages show while live.
+	routes := model.Routes()
+	routes["video"] = "watch"
+	h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: routes, Languages: []string{"en", "de", "ja"},
+		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
+			if l.ContentKind == blogKind {
+				return h.cat.Visibility(r, l)
+			}
+			return contenturl.Visible, nil
+		}})
 	if err != nil {
 		return nil, err
 	}
@@ -201,10 +212,10 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			UserInfo:       h.auth.UserInfo(),
 			Content: content.Options{
 				Resolver:  h,
-				Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(),
-				Media: &content.Media{Images: h.manifests, Folders: jobs, PostKind: postFolder, PollKind: pollFolder},
-				// Commentable kinds; posts are content's own.
-				ContentKinds: []string{"gallery", "album", "video", content.KindPost},
+				Moderator: moderator{}, Classifier: classifier{},
+				Media: &content.Media{Images: h.manifests, Folders: jobs, PollKind: pollFolder},
+				// Commentable kinds.
+				ContentKinds: []string{"gallery", "album", "video", blogKind},
 				Anonymous:    anonymous,
 				// The suites test the bound; the default may change.
 				CommentMaxLength: 400,
@@ -212,7 +223,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 				Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
 			},
 			Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-			Codes: h.router, Groups: grp,
+			Codes: h.router, Groups: grp, Contents: h.cat,
 		})
 	}
 	// The main mount takes signed-out comments, reactions and votes; the
@@ -226,7 +237,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 
 	if h.river, err = riverkit.New(ctx, h.pool, &river.Config{Schema: riverSchema, Queues: map[string]river.QueueConfig{},
 		FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond},
-		h.auth.RiverJobs(), jobs.RiverJobs()); err != nil {
+		h.auth.RiverJobs(), jobs.RiverJobs(), h.cat.RiverJobs()); err != nil {
 		return nil, err
 	}
 	if err := h.river.Start(ctx); err != nil {
@@ -248,6 +259,9 @@ func (h *harness) close() {
 			_ = h.river.StopAndCancel(hard)
 			cancel()
 		}
+	}
+	if h.cat != nil {
+		h.cat.Close()
 	}
 	if h.auth != nil {
 		if err := h.auth.Close(ctx); err != nil {

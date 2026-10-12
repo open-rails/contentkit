@@ -1,8 +1,9 @@
 # contentkit
 
 `contentkit` is the deterministic content library for the Doujins, Hentai0
-and marketplace hosts: tenant-scoped **interactions** (posts, comments,
-reactions, favorites, polls), **keyword search** over host content, the
+and marketplace hosts: tenant-scoped **content** (items, versions, groups),
+**interactions** (comments, reactions, favorites, polls), **keyword search**
+over that content, the
 ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
 erasure) and the **discovery reads** over both. It needs no model provider,
 API key or vector extension. Semantic search belongs entirely to the separate, deferred User Intelligence
@@ -57,9 +58,10 @@ another tenant is an error, never remapped.
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
-| `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
+| `catalog` | content items of the configured kinds (`kinds.Config.Kinds`; a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images, moderation through the content runtime; `content_facets`, the one visibility rule (`Viewer`: SQL predicates for lists, decisions for items), the `content_events` outbox, search documents, `Totals`, engine jobs and `/v1` routes |
+| `content` | comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF |
+| `worker` | one tenant's document maintenance: dirty queue and bounded backfill over its `Source`s (`*catalog.Store`, `*groups.Store`) |
 | `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
@@ -94,12 +96,11 @@ rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Auth:           ak.Authenticator(), // says who a request is; ContentKit decides what to admit
 	UserInfo:       ak.UserInfo(),      // authors' names
-	Content: content.Options{Schema: "doujins", Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
-	Uploads: uploads, Reader: reader, Codes: router, Groups: groupStore, // optional modules
+	Content: content.Options{Schema: "doujins", Resolver: catalogStore.Resolver(), ContentKinds: []string{"gallery", "blog"}},
+	Uploads: uploads, Reader: reader, Codes: router, Groups: groupStore, Contents: catalogStore, // optional modules
 })
 mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 counts, _ := rt.Content.Counts(ctx, []contentkit.ContentRef{rt.Content.Ref("gallery", "42")})
-_ = worker.SyncOnce(ctx, rt.WorkerOptions(hostWorkerOptions)) // host documents + posts
 ```
 
 `rt` is the `Hub` (search, typeahead, signals, discovery) plus `rt.Content`
@@ -113,11 +114,12 @@ middleware goes in front: each route's gate asks `Auth` who the request is
 
 | Sub-path | Module | Configured by |
 |---|---|---|
-| `/` | content: posts, comments, reactions, favorites, polls, comment bans, moderation | always |
+| `/` | content: comments, reactions, favorites, polls, comment bans, moderation | always |
 | `/media/upload/…` | media uploads | `Uploads` |
 | `/media/…` | media reads and HLS playlists | `Reader`, `ReadLimit` |
 | `/codes/{code}` | content codes | `Codes` |
 | `/v1/…` | groups: listings and pages, writes for `root:groups:write` | `Groups` |
+| `/v1/…` | catalog: contents, their writes, the manage list, totals | `Contents` |
 
 | Tier | Admits |
 |---|---|
@@ -134,9 +136,9 @@ are the resolver's.
 No staff action asks for a recent sign-in. Behind a proxy, set
 `Request.RemoteAddr` to the client's address before the mount: anonymous
 reactions, votes and limits are keyed by it. No content kind may be named
-`media`, `codes`, `v1`, `catalog` or `notifications`. A host can still mount a module alone
+`media`, `codes`, `v1` or `notifications`. A host can still mount a module alone
 (`content.Runtime.Handler`, `media.UploadHandler`, `media.Reader.Handler`,
-`contenturl.Router.Handler`, `groups.Store.Handler`) at a path of its
+`contenturl.Router.Handler`, `groups.Store.Handler`, `catalog.Store.Handler`) at a path of its
 choosing, each with the same `Auth`.
 
 Every route is declared once, in its module's route table
@@ -149,57 +151,34 @@ route or a wire type, run `go generate ./internal/contract`;
 
 ## Search
 
-Documents are one per content reference and language: a gallery with an
-English original, an English colored edition and a Spanish original is three
-documents keyed by version. Hosts mark changes in the transaction that changes
-content and run one worker tick per schedule:
+Documents are one per content item and language, built inside ContentKit:
+catalog and group writes mark them dirty in their own transactions, and one
+worker tick per schedule rebuilds them from the stores:
 
 ```go
-_ = search.MarkDirty(ctx, tx, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: ref, Language: "en"}}})
-
-_ = worker.SyncOnce(ctx, worker.Options{
-	Pool: pool, Schema: schema, Tenant: "doujins",
-	SupportedLanguages: []string{"en", "es"}, ContentKinds: []string{"gallery"},
-	ListContent:           listGalleries,          // bounded pages of refs, for backfill
-	BuildKeywordDocuments: buildGalleryDocuments,  // refs -> KeywordDocument{Title, Aliases, Keywords}
-	Sink:                  nil,                    // optional DocumentSink
-})
+_ = worker.SyncOnce(ctx, worker.Options{Pool: pool, Schema: schema, Tenant: "doujins",
+	SupportedLanguages: []string{"en", "es"}, Sources: []worker.Source{catalogStore, groupStore}})
 ```
 
-The worker records rejected host documents in `content_search_invalid` with
-their dirty-queue revision, validation error and failure time. It continues
-with other documents and backfill, but does not acknowledge the rejected row.
-Inspect that table for repair; marking the document dirty after correcting its
-source advances the revision and retries it. A deletion clears the invalid
-record. Run the PostgreSQL migrations before starting a worker built against
-this schema.
+The worker records rejected documents in `content_search_invalid` with their
+dirty-queue revision, validation error and failure time, continues with the
+rest and retries the row once its source changes. Run the PostgreSQL
+migrations before starting a worker built against this schema.
 
-Querying groups documents per work before paging; the host's eligibility join
-decides, per document, whether that one row is visible and which is preferred:
+Querying groups documents per item before paging; a `catalog.Viewer` keeps
+only what that viewer's listing shows:
 
 ```go
+viewer, _ := catalogStore.Viewer(ctx, catalog.ViewerOptions{Actor: actor, Host: r.Host})
 client, _ := contentkit.NewClient(contentkit.ClientConfig{Pool: pool, Schema: schema, Tenant: "doujins"})
-page, _ := client.Search(ctx, query, contentkit.SearchOptions{
-	Language: "es", ContentKinds: []string{"gallery"}, Limit: 20,
-	Eligibility: &contentkit.Eligibility{SQL: eligibilitySQL, Args: args},
-})
-for _, hit := range page.Hits { /* hit.ContentID (work), hit.Version(), hit.Language, hit.Score */ }
+page, _ := client.Search(ctx, query, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, Limit: 20, Viewer: viewer})
+for _, hit := range page.Hits { /* hit.ContentID, hit.Language, hit.Score */ }
 ```
 
 `SearchHit.Score` is the keyword match tier (exact title 1, alias 0.9,
 token/prefix 0.75–0.77, typo 0.5–0.52). `SearchWithTrace` returns retrieval
 provenance for evaluation. Query limits: 256 characters, 16 tokens, a
 two-second ceiling per request.
-
-## Ports
-
-| Port | Called when | Contract |
-|---|---|---|
-| `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey, Version)`; at-least-once, atomic newer-version wins across both operations, with a retained deletion tombstone; a failing sink keeps the row queued and never blocks the keyword index |
-
-`DocumentSink` is a neutral document change feed for external indexes, caches
-or audit consumers. ContentKit ships no sink implementation or AI-specific
-configuration.
 
 ## Errors
 
@@ -463,6 +442,34 @@ _ = store.SetContentGroups(ctx, []groups.ContentGroups{{ContentID: id, Membershi
 eff, _ := store.EffectiveGroups(ctx, tx, versionIDs) // version id -> active group ids, ancestors included
 page, _ := store.List(ctx, groups.ListOptions{Kind: "series", Language: "es", Sort: groups.SortCount})
 ```
+
+## Catalog
+
+`catalog.Store` owns content items of the kinds in `kinds.Config.Kinds`.
+Writes are batches; each transaction keeps `content_facets` current (groups
+from `EffectiveGroups`), marks search documents dirty and queues
+`content_events`. Published with a future `publish_at` is scheduled until the
+`publish_due` job makes it live. A deleted item stays readable to its key
+holders; `purge_deleted` erases its media after `DeletedRetention` unless it
+was sold.
+
+```go
+cat, _ := catalog.New(ctx, catalog.Options{Pool: pool, Schema: schema, Tenant: "doujins", Kinds: cfg, Auth: ak.Authenticator(),
+	Gate: gate, Groups: groupStore, Body: sanitizer, Media: &catalog.Media{Images: jobs.Manifests(), Expose: jobs, Reader: reader}})
+// groups.Options.ContentChanged = cat.ContentChanged; River: cat.RiverJobs()
+v, _ := cat.Viewer(ctx, catalog.ViewerOptions{Actor: actor, Host: r.Host, Mode: catalog.Hide})
+where, args := v.Listed("f") // a predicate over content_facets f
+items, _ := cat.Contents(ctx, v, ids)
+totals, _ := cat.Totals(ctx, catalog.TotalsQuery{Kinds: []string{"gallery"}, Languages: []string{"en"}})
+cat.Subscribe(func(ctx context.Context, events []catalog.Event) error { return nil })
+```
+
+The `Viewer` is the one visibility rule: live content by its listing
+(`listed`; `members` for key holders; `unlisted` by direct link), the site's
+scope and the viewer's content filters; staff
+(`root:content:view-restricted`), creators and owner-group editors see
+everything. `contentkit.NewRuntime` puts held content in the shared review
+queue and screens catalog text through `content.Options.Moderator`.
 
 ## Signal plane and discovery
 
