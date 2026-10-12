@@ -33,8 +33,7 @@ var rules = []rule{
 	// Auth contracts link only the standard library, never AuthKit's runtime.
 	{pkgs: []string{authkit + "/auth", authkit + "/userinfo"}, only: []string{}},
 	{pkgs: []string{m + "/contentref", m + "/media/token"}, only: []string{}},
-	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref", "github.com/open-rails/authkit/auth"}},
-	{pkgs: []string{m + "/access/accesstest"}, only: []string{m + "/access", m + "/contentref", "github.com/open-rails/authkit/auth"}},
+	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref", m + "/kinds", "github.com/open-rails/authkit/auth"}},
 	{pkgs: []string{m + "/media/layout"}, only: []string{m + "/media/token"}},
 	// The media gateway: stdlib, token, layout and the SigV4 signer. No DB, River, S3
 	// client, CGO, media runtime or content/search/signal.

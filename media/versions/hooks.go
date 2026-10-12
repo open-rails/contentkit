@@ -98,34 +98,24 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 	if err != nil || len(found) == 0 {
 		return err
 	}
-	var targets, versions []Target
-	for _, t := range found {
-		targets = append(targets, t)
-		if t.Version != "" {
-			versions = append(versions, t)
+	var asked []contentref.ContentRef
+	for _, ref := range refs {
+		if _, ok := found[ref.Key()]; ok {
+			asked = append(asked, ref)
 		}
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, targets)
+	res, err := s.o.Resolver.Resolve(ctx, asked, actor)
 	if err != nil {
 		return err
 	}
-	opens := map[Target]Opening{}
-	if len(versions) > 0 {
-		if opens, err = s.o.Access.Open(ctx, actor, versions); err != nil {
-			return err
-		}
-	}
-	for _, ref := range refs {
-		t, ok := found[ref.Key()]
-		if !ok || !sights[t].Visible {
+	for _, ref := range asked {
+		r := res[ref.Key()]
+		if !r.Visible {
 			continue
 		}
-		res := access.Resolution{Visible: true, Editor: sights[t].Editor}
-		if t.Version != "" {
-			k, _ := s.reg.Kind(ref.ContentKind)
-			res.Accessible = opens[t].Opens && k.VersionKind().Publish == nil
-		}
-		out[ref.Key()] = res
+		k, _ := s.reg.Kind(ref.ContentKind)
+		out[ref.Key()] = access.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
+			Accessible: r.Accessible && ref.Version() != "" && k.VersionKind().Publish == nil}
 	}
 	return nil
 }
@@ -152,40 +142,35 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 	if err != nil {
 		return err
 	}
-	var targets []Target
-	var vids []string
+	byKind := map[string][]Target{}
+	pages := map[Target]int{}
 	for _, it := range items {
 		if it.current {
-			targets, vids = append(targets, it.version), append(vids, it.version.Version)
+			byKind[it.contentKind] = append(byKind[it.contentKind], it.version)
+			pages[it.version] = max(pages[it.version], it.pages)
 		}
 	}
-	if len(targets) == 0 {
-		return nil
+	ds := map[Target]decision{}
+	for kind, vs := range byKind {
+		got, err := s.decisions(ctx, actor, kind, vs, pages)
+		if err != nil {
+			return err
+		}
+		for t, d := range got {
+			ds[t] = d
+		}
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, targets)
-	if err != nil {
-		return err
-	}
-	opens, err := s.o.Access.Open(ctx, actor, targets)
-	if err != nil {
-		return err
-	}
-	segs, err := s.segments(ctx, s.o.Pool, vids)
-	if err != nil {
-		return err
-	}
-	now := s.o.Now()
 	for _, ref := range refs {
 		it, ok := items[ref.ContentID]
 		if !ok || !it.current || ref.ContentKind != it.contentKind+media.PublishedSuffix {
 			continue
 		}
-		d := decision{sight: sights[it.version], open: opens[it.version], segs: segs[it.version.Version], pages: it.pages, now: now}
+		d := ds[it.version]
 		switch {
-		case it.kind == kindPlayback && d.playback():
-			out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: d.sight.Editor}
+		case it.kind == kindPlayback && d.whole():
+			out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: d.res.Editor}
 		case it.kind == kindPages && d.shows(it.end):
-			out[ref.Key()] = access.Resolution{Visible: true, Accessible: d.opens(it.end), Editor: d.sight.Editor}
+			out[ref.Key()] = access.Resolution{Visible: true, Accessible: d.opens(it.end), Editor: d.res.Editor}
 		}
 	}
 	return nil
@@ -261,8 +246,8 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 	if !ok {
 		return media.UploadGrant{}, nil
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, []Target{target})
-	if err != nil || !sights[target].Editor {
+	res, err := s.decide(ctx, actor, k.Name, []Target{target})
+	if err != nil || !res[target].Editor {
 		return media.UploadGrant{}, err
 	}
 	if v := k.VersionKind(); target.Version != "" && v.Publish != nil {

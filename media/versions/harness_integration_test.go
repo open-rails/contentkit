@@ -101,7 +101,7 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 
 // siteKinds is the site's one kinds list: galleries and movies, tags and
 // user-owned channels.
-var siteKinds = kinds.Config{Languages: []string{"en"},
+var siteKinds = kinds.Config{Languages: []string{"en"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"},
 	Kinds: map[string]kinds.Kind{
 		"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true, Groups: []string{"tag", "channel"}},
 		"movie":   {Route: "m", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}},
@@ -124,11 +124,11 @@ func (g *grants) CanIn(_ context.Context, a access.Actor, scope auth.Scope, perm
 	return g.scoped[scope.ID] == a.ID && perm == "channel:media:write", nil
 }
 
-// catalog stands in for the catalog's and the gate's decisions over the
-// contract tables (lanes 120-catalog and 121-access implement them): a
-// version is live when it and its content are published, due and not
-// deleted; staff and creators edit; a "tier" rule opens to holders of its
-// tiers and its "free" leading segments to everyone.
+// catalog stands in for the catalog's resolver over the gate (lanes
+// 120-catalog and 121-access implement it) on the contract tables: a version
+// is live when it and its content are published, due and not deleted;
+// staff and creators edit; its effective rule opens when free or when the
+// viewer holds one of its tiers.
 type catalog struct {
 	pool   *pgxpool.Pool
 	schema string
@@ -142,55 +142,31 @@ type catalog struct {
 
 func (c *catalog) t(name string) string { return pgx.Identifier{c.schema, name}.Sanitize() }
 
-func (c *catalog) See(ctx context.Context, actor access.Actor, targets []versions.Target) (map[versions.Target]versions.Sight, error) {
-	out := map[versions.Target]versions.Sight{}
-	for _, t := range targets {
+func (c *catalog) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
 		var live, creator bool
+		var content access.Rule
+		var override *access.Rule
 		err := c.pool.QueryRow(ctx, `SELECT c.state = 'published' AND c.deleted_at IS NULL AND
 	($3 = '' OR v.state = 'published' AND (v.publish_at IS NULL OR v.publish_at <= now()) AND v.deleted_at IS NULL),
-	EXISTS (SELECT 1 FROM `+c.t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4)
+	EXISTS (SELECT 1 FROM `+c.t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4),
+	c.access, v.access
 FROM `+c.t("content_items")+` c LEFT JOIN `+c.t("content_versions")+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = $3
-WHERE c.tenant_id = $1 AND c.id = $2 AND ($3 = '' OR v.id IS NOT NULL)`, c.tenant, t.Content, t.Version, actor.ID).Scan(&live, &creator)
+WHERE c.tenant_id = $1 AND c.id = $2 AND c.kind = $5 AND ($3 = '' OR v.id IS NOT NULL)`,
+			c.tenant, ref.ContentID, ref.Version(), actor.ID, ref.ContentKind).Scan(&live, &creator, &content, &override)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		} else if err != nil {
 			return nil, err
 		}
+		rule := access.Effective(content, override)
+		held := c.tiers[actor.ID]
+		opens := rule.Free(time.Now()) || slices.ContainsFunc(rule.Tiers, func(t string) bool { return !actor.Anonymous && slices.Contains(held, t) })
 		editor := actor.Person() && (creator || actor.ID == c.staff)
-		out[t] = versions.Sight{Visible: live || editor, Live: live, Editor: editor}
+		out[ref.Key()] = access.Resolution{Visible: live || editor, Accessible: opens, Editor: editor}
 	}
 	return out, nil
-}
-
-func (c *catalog) Open(ctx context.Context, actor access.Actor, vs []versions.Target) (map[versions.Target]versions.Opening, error) {
-	out := map[versions.Target]versions.Opening{}
-	for _, t := range vs {
-		var rule struct {
-			Level string   `json:"level"`
-			Tiers []string `json:"tiers"`
-			Free  int      `json:"free"`
-		}
-		var raw []byte
-		if err := c.pool.QueryRow(ctx, `SELECT COALESCE(v.access, c.access) FROM `+c.t("content_versions")+` v
-JOIN `+c.t("content_items")+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = $2`,
-			c.tenant, t.Version).Scan(&raw); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(raw, &rule); err != nil {
-			return nil, err
-		}
-		held, _ := c.Tiers(ctx, actor)
-		opens := rule.Level == "public" || slices.ContainsFunc(rule.Tiers, func(t string) bool { return slices.Contains(held, t) })
-		out[t] = versions.Opening{Opens: opens, Free: rule.Free}
-	}
-	return out, nil
-}
-
-func (c *catalog) Tiers(_ context.Context, actor access.Actor) ([]string, error) {
-	if actor.Anonymous {
-		return nil, nil
-	}
-	return c.tiers[actor.ID], nil
 }
 
 func (c *catalog) RefreshTx(_ context.Context, _ pgx.Tx, ids []string) error {
@@ -261,10 +237,13 @@ func newSite(t *testing.T, o siteOptions) *site {
 	s.cat = &catalog{pool: s.pool, schema: s.schema, tenant: s.tenant, staff: s.staff.ID,
 		tiers: map[string][]string{s.fan.ID: {"premium"}}}
 	s.grants = &grants{staff: s.staff.ID, scoped: map[string]string{}}
-	authn := testauth.Auth{Authz: s.grants}
-	var err error
+	authn := testauth.Auth{Authz: s.grants, Claims: map[string][]string{s.fan.ID: {"premium"}}}
+	gate, err := access.NewGate(access.GateConfig{Tenant: s.tenant, Kinds: siteKinds})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.svc, err = versions.New(versions.Options{Tenant: s.tenant, Schema: s.schema, Pool: s.pool, Kinds: siteKinds, Auth: authn,
-		Visibility: s.cat, Access: s.cat, Facets: s.cat, Watermark: o.watermark, Downloads: o.downloads})
+		Resolver: s.cat, Gate: gate, Facets: s.cat, Watermark: o.watermark, Downloads: o.downloads})
 	if err != nil {
 		t.Fatal(err)
 	}

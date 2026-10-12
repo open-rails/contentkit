@@ -6,8 +6,10 @@
 // and imports versions' media, and serves the reader plan, reader metadata
 // and downloads.
 //
-// The catalog's visibility, the gate's access and the listing projection are
-// other modules' decisions, reached through Visibility, Access and Facets.
+// Whether a viewer sees, opens or edits a content or a version is the
+// catalog's decision over the access gate, ContentKit's own
+// access.ContentResolver; this package adds segments' release and the rule's
+// preview to it. The listing projection is refreshed through Facets.
 package versions
 
 import (
@@ -36,41 +38,14 @@ type Target struct {
 	Version string `json:"version,omitempty"`
 }
 
-// Visibility is the catalog's decision for one viewer.
-type Visibility interface {
-	// See answers per target; one it omits is unseen.
-	See(ctx context.Context, actor access.Actor, targets []Target) (map[Target]Sight, error)
-}
-
-// Sight is what a viewer sees of a content or a version.
-type Sight struct {
-	Visible bool // live, or the viewer edits it
-	Live    bool // live for everyone: published, due and not deleted
-	Editor  bool // staff, a creator or an owner-group editor
-}
-
-// Access is the gate's decision for one viewer.
-type Access interface {
-	// Open answers per version; one it omits is closed.
-	Open(ctx context.Context, actor access.Actor, versions []Target) (map[Target]Opening, error)
-	// Tiers are the site's tiers actor holds.
-	Tiers(ctx context.Context, actor access.Actor) ([]string, error)
-}
-
-// Opening is what a viewer opens of a version.
-type Opening struct {
-	Opens bool // every released segment
-	Free  int  // leading segments open without Opens: the rule's free preview
-}
-
 // Facets refreshes the listing projection of versions whose derived media
 // facts changed, in the writing transaction.
 type Facets interface {
 	RefreshTx(ctx context.Context, tx pgx.Tx, versions []string) error
 }
 
-// Others answer the media kinds that are not content: group covers, posts'
-// and polls' images.
+// Others answer the media kinds of neither contents nor groups: posts' and
+// polls' images.
 type Others interface {
 	access.ContentResolver
 	media.UploadAuthorizer
@@ -78,19 +53,23 @@ type Others interface {
 
 // Options configure a Service.
 type Options struct {
-	Tenant     string // the content tables' tenant
-	Schema     string // ContentKit's schema
-	Pool       *pgxpool.Pool
-	Kinds      kinds.Config       // the site's content and group kinds
-	Auth       auth.Authenticator // the host's: staff and group scope checks
-	Visibility Visibility
-	Access     Access
-	Facets     Facets
-	Others     Others      // nil refuses every other kind
-	Watermark  Watermarker // nil serves prepared archives
-	Downloads  Downloads
-	Logger     *slog.Logger
-	Now        func() time.Time
+	Tenant string // the content tables' tenant
+	Schema string // ContentKit's schema
+	Pool   *pgxpool.Pool
+	Kinds  kinds.Config       // the site's content and group kinds
+	Auth   auth.Authenticator // the host's: staff and group scope checks
+	// Resolver decides contents ({kind, content}) and versions ({kind,
+	// content, version}) for a viewer: Visible (live, or edited by them),
+	// Accessible (opened by them) and Editor.
+	Resolver access.ContentResolver
+	// Gate answers the tiers a viewer holds for download quotas; optional.
+	Gate      *access.Gate
+	Facets    Facets
+	Others    Others      // nil refuses every other kind
+	Watermark Watermarker // nil serves prepared archives
+	Downloads Downloads
+	Logger    *slog.Logger
+	Now       func() time.Time
 }
 
 // Media is the media runtime built over Service.Hooks.
@@ -118,8 +97,8 @@ type tables struct {
 
 // New validates o. Build the media runtime with Hooks, then Bind it.
 func New(o Options) (*Service, error) {
-	if o.Tenant == "" || o.Schema == "" || o.Pool == nil || o.Visibility == nil || o.Access == nil || o.Facets == nil {
-		return nil, errors.New("versions: Tenant, Schema, Pool, Visibility, Access and Facets are required")
+	if o.Tenant == "" || o.Schema == "" || o.Pool == nil || o.Resolver == nil || o.Facets == nil {
+		return nil, errors.New("versions: Tenant, Schema, Pool, Resolver and Facets are required")
 	}
 	if err := o.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("versions: Kinds: %w", err)
@@ -168,6 +147,46 @@ func isSystem(a access.Actor) bool { return a.Kind == system.Kind && a.ID == sys
 // ref is the media ref of a target of kind.
 func (s *Service) ref(kind string, t Target) (contentref.ContentRef, error) {
 	return s.reg.VersionRef(kind, t.Content, t.Version)
+}
+
+// decide resolves targets of kind for actor.
+func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, targets []Target) (map[Target]access.Resolution, error) {
+	refs := make([]contentref.ContentRef, len(targets))
+	for i, t := range targets {
+		refs[i] = contentref.New(s.reg.Namespace(), kind, t.Content).WithVersion(t.Version)
+	}
+	got, err := s.o.Resolver.Resolve(ctx, refs, actor)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[Target]access.Resolution, len(targets))
+	for i, t := range targets {
+		out[t] = got[refs[i].Key()]
+	}
+	return out, nil
+}
+
+// previews are versions' rules' free parts (access.Rule.Preview).
+func (s *Service) previews(ctx context.Context, q querier, versions []string) (map[string]access.Preview, error) {
+	rows, err := q.Query(ctx, `SELECT v.id, c.access, v.access FROM `+s.t.versions+` v
+JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = ANY($2)`, s.o.Tenant, versions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]access.Preview{}
+	for rows.Next() {
+		var id string
+		var content access.Rule
+		var override *access.Rule
+		if err := rows.Scan(&id, &content, &override); err != nil {
+			return nil, err
+		}
+		if p := access.Effective(content, override).Preview; p != nil {
+			out[id] = *p
+		}
+	}
+	return out, rows.Err()
 }
 
 // version is one version row and its content's kind.

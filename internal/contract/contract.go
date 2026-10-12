@@ -26,6 +26,7 @@ import (
 	_ "github.com/open-rails/contentkit/media"
 	_ "github.com/open-rails/contentkit/media/versions"
 	_ "github.com/open-rails/contentkit/notification"
+	_ "github.com/open-rails/contentkit/offers"
 )
 
 // Where each generated file lives, relative to the repository.

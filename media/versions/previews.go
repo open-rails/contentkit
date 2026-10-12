@@ -12,12 +12,13 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// A locked version shows its leading released pages: the Previews preset's
-// uploads in the version's item, each a put of a current page's first
-// rendition blob. They are public files, shown to whoever sees the version.
+// A locked version shows its leading released pages, as many as its access
+// rule's preview names: the Previews preset's uploads in the version's
+// item, each a put of a current page's first rendition blob. They are
+// public files, shown to whoever sees the version.
 
-// applyPreviews brings v's preview uploads to its current pages
-// publication: min(First, pages, released) of them.
+// applyPreviews brings v's preview uploads to its current pages publication
+// and rule: min(First, the rule's preview pages, pages, released).
 func (s *Service) applyPreviews(ctx context.Context, k *media.Kind, v Target) error {
 	unlock, err := s.lockSource(ctx, v)
 	if err != nil {
@@ -38,7 +39,11 @@ func (s *Service) applyPreviews(ctx context.Context, k *media.Kind, v Target) er
 		if err != nil {
 			return err
 		}
-		count = min(public(k, k.Publish.Previews).First, len(snap.Pages), released(segs[v.Version], len(snap.Pages), s.o.Now()))
+		rule, err := s.previews(ctx, s.o.Pool, []string{v.Version})
+		if err != nil {
+			return err
+		}
+		count = min(public(k, k.Publish.Previews).First, rule[v.Version].Pages, len(snap.Pages), released(segs[v.Version], len(snap.Pages), s.o.Now()))
 		ref, err := s.ref(k.Name, v)
 		if err != nil {
 			return err

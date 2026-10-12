@@ -73,30 +73,56 @@ type PlanTrack struct {
 	Duration float64 `json:"duration,omitempty"`
 }
 
-// decision is one viewer's verdict on a span of a version's pages.
+// decision is one viewer's verdict on a span of a version's pages: the
+// resolver's on the version, its segments' release and its rule's preview.
 type decision struct {
-	sight Sight
-	open  Opening
-	segs  []segment
-	pages int
-	now   time.Time
+	res     access.Resolution
+	preview access.Preview
+	segs    []segment
+	pages   int
+	now     time.Time
 }
 
 // shows reports pages [start, end) shown: released, or to an editor.
 func (d decision) shows(end int) bool {
-	return d.sight.Visible && (d.sight.Editor || end <= released(d.segs, d.pages, d.now))
+	return d.res.Visible && (d.res.Editor || end <= released(d.segs, d.pages, d.now))
 }
 
 // opens reports pages [start, end) open: the version opens, or they lie in
-// its free segments.
+// its rule's free segments.
 func (d decision) opens(end int) bool {
-	return d.open.Opens || d.sight.Editor || end <= freeEnd(d.segs, d.open.Free, d.pages)
+	return d.res.Accessible || d.res.Editor || end <= freeEnd(d.segs, d.preview.Segments, d.pages)
 }
 
-// playback reports the version's audio open: every segment released and
-// the version open, or to an editor.
-func (d decision) playback() bool {
-	return d.sight.Visible && (d.sight.Editor || d.open.Opens && released(d.segs, math.MaxInt, d.now) == math.MaxInt)
+// whole reports the whole version open: every segment released and the
+// version open, or to an editor. Its audio and downloads need it.
+func (d decision) whole() bool {
+	return d.res.Visible && (d.res.Editor || d.res.Accessible && released(d.segs, math.MaxInt, d.now) == math.MaxInt)
+}
+
+// decisions are actor's decisions on versions of kind, each over pages.
+func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string, vs []Target, pages map[Target]int) (map[Target]decision, error) {
+	res, err := s.decide(ctx, actor, kind, vs)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(vs))
+	for i, v := range vs {
+		ids[i] = v.Version
+	}
+	previews, err := s.previews(ctx, s.o.Pool, ids)
+	if err != nil {
+		return nil, err
+	}
+	segs, err := s.segments(ctx, s.o.Pool, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[Target]decision, len(vs))
+	for _, v := range vs {
+		out[v] = decision{res: res[v], preview: previews[v.Version], segs: segs[v.Version], pages: pages[v], now: s.o.Now()}
+	}
+	return out, nil
 }
 
 // Plan is t's reader plan for actor.
@@ -109,33 +135,27 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	if err != nil {
 		return nil, err
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, []Target{t})
-	if err != nil {
-		return nil, err
-	}
-	if !sights[t].Visible {
-		return nil, ErrNotFound
-	}
-	opens, err := s.o.Access.Open(ctx, actor, []Target{t})
-	if err != nil {
-		return nil, err
-	}
 	p, err := s.current(ctx, s.o.Pool, t, kindPages)
 	if err != nil {
 		return nil, err
 	}
-	if p == nil {
-		return nil, ErrNotReady
-	}
 	var snap pagesSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return nil, err
+	if p != nil {
+		if err := json.Unmarshal(p.Source, &snap); err != nil {
+			return nil, err
+		}
 	}
-	segs, err := s.segments(ctx, s.o.Pool, []string{t.Version})
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, map[Target]int{t: len(snap.Pages)})
 	if err != nil {
 		return nil, err
 	}
-	d := decision{sight: sights[t], open: opens[t], segs: segs[t.Version], pages: len(snap.Pages), now: s.o.Now()}
+	d := ds[t]
+	switch {
+	case !d.res.Visible:
+		return nil, ErrNotFound
+	case p == nil:
+		return nil, ErrNotReady
+	}
 	cut := released(d.segs, d.pages, d.now)
 	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Pages: len(snap.Pages), Segments: []PlanSegment{},
 		Previews: []PlanPreview{}}
@@ -145,7 +165,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	}
 	readable := map[string]bool{}
 	for _, it := range p.Items {
-		seg := PlanSegment{Position: it.Segment, Start: it.Start, End: it.End, Released: d.sight.Live && it.End <= cut,
+		seg := PlanSegment{Position: it.Segment, Start: it.Start, End: it.End, Released: it.End <= cut,
 			Locked: !d.shows(it.End) || !d.opens(it.End)}
 		if it.Segment != nil {
 			seg.Title, seg.ReleaseAt = byPos[*it.Segment].Title, byPos[*it.Segment].ReleaseAt
@@ -176,7 +196,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		dir := previewDir(k)
 		for _, im := range images[0] {
 			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(im.From, dir), ".webp"))
-			if err != nil || n < 1 || n > min(cut, d.pages) || len(im.Renditions) == 0 {
+			if err != nil || n < 1 || n > min(cut, d.pages, d.preview.Pages) || len(im.Renditions) == 0 {
 				continue
 			}
 			pg := snap.Pages[n-1]
@@ -186,7 +206,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		}
 	}
 	files := map[string]bool{}
-	if k.Publish.Playback != "" && d.playback() {
+	if k.Publish.Playback != "" && d.whole() {
 		pb, err := s.current(ctx, s.o.Pool, t, kindPlayback)
 		if err != nil {
 			return nil, err

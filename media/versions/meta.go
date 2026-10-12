@@ -95,12 +95,12 @@ func (s *Service) SetReaderMeta(ctx context.Context, actor access.Actor, t Targe
 	if err != nil {
 		return err
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, []Target{t})
+	res, err := s.decide(ctx, actor, v.Kind, []Target{t})
 	if err != nil {
 		return err
 	}
-	if !sights[t].Editor {
-		if sights[t].Visible {
+	if !res[t].Editor {
+		if res[t].Visible {
 			return ErrForbidden
 		}
 		return ErrNotFound

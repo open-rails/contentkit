@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"path"
 	"slices"
 	"strings"
@@ -108,12 +107,12 @@ func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 	bucket, key, l := "anonymous", "ip:"+actor.IP, s.dl.anonymous
 	if !actor.Anonymous && actor.ID != "" {
 		bucket, key, l = "user", "user:"+actor.ID, s.dl.user
-		if len(s.dl.tiers) > 0 {
-			held, err := s.o.Access.Tiers(ctx, actor)
+		if len(s.dl.tiers) > 0 && s.o.Gate != nil {
+			f, err := s.o.Gate.Filter(ctx, actor)
 			if err != nil {
 				return err
 			}
-			if i := slices.IndexFunc(s.dl.tiers, func(t string) bool { return slices.Contains(held, t) }); i >= 0 {
+			if i := slices.IndexFunc(s.dl.tiers, f.Tier); i >= 0 {
 				bucket, l = s.dl.tiers[i], s.dl.byTier[s.dl.tiers[i]]
 			}
 		}
@@ -159,23 +158,14 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if z == nil {
 		return nil, ErrNotFound
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, []Target{t})
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, nil)
 	if err != nil {
 		return nil, err
 	}
-	if !sights[t].Visible {
+	switch d := ds[t]; {
+	case !d.res.Visible:
 		return nil, ErrNotFound
-	}
-	opens, err := s.o.Access.Open(ctx, actor, []Target{t})
-	if err != nil {
-		return nil, err
-	}
-	segs, err := s.segments(ctx, s.o.Pool, []string{t.Version})
-	if err != nil {
-		return nil, err
-	}
-	d := decision{sight: sights[t], open: opens[t], segs: segs[t.Version], now: s.o.Now()}
-	if !d.sight.Editor && !(d.open.Opens && released(d.segs, math.MaxInt, d.now) == math.MaxInt) {
+	case !d.whole():
 		return nil, ErrForbidden
 	}
 	ref, err := s.ref(k.Name, t)

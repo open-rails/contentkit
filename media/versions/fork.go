@@ -244,14 +244,14 @@ func (s *Service) RequestFork(ctx context.Context, actor access.Actor, f Fork) e
 	if len(vs) != 2 {
 		return ErrNotFound
 	}
-	sights, err := s.o.Visibility.See(ctx, actor, []Target{f.Version, src})
+	res, err := s.decide(ctx, actor, vs[src].Kind, []Target{f.Version, src})
 	if err != nil {
 		return err
 	}
 	switch {
-	case !sights[f.Version].Visible || !sights[src].Visible:
+	case !res[f.Version].Visible || !res[src].Visible:
 		return ErrNotFound
-	case !sights[f.Version].Editor:
+	case !res[f.Version].Editor:
 		return ErrForbidden
 	}
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.ForkTx(ctx, tx, []Fork{f}) })

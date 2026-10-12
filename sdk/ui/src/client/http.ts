@@ -27,6 +27,8 @@ export interface ContentKitMounts {
   notifications?: string;
   /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
   versions?: string;
+  /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
+  offers?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;

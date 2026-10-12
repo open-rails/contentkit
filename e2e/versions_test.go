@@ -2,48 +2,38 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// books stands in for the catalog's visibility and the gate's access over
-// the contract tables until those modules land: a version is live when it
-// and its content are published, its content's creators edit it, and only
-// a public rule opens it.
+// books stands in for the catalog's resolver over the gate on the contract
+// tables until those modules land: a version is live when it and its
+// content are published, its content's creators edit it, and only a public
+// rule opens it.
 type books struct{ w *world }
 
-func (b books) See(ctx context.Context, a access.Actor, targets []versions.Target) (map[versions.Target]versions.Sight, error) {
-	out := map[versions.Target]versions.Sight{}
-	for _, t := range targets {
-		var live, creator bool
+func (b books) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		var live, creator, public bool
 		err := b.w.pool.QueryRow(ctx, `SELECT c.state = 'published' AND v.state = 'published',
-	EXISTS (SELECT 1 FROM `+b.t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4)
+	EXISTS (SELECT 1 FROM `+b.t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4),
+	c.access->>'level' = 'public'
 FROM `+b.t("content_items")+` c JOIN `+b.t("content_versions")+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id
-WHERE c.tenant_id = $1 AND c.id = $2 AND ($3 = '' OR v.id = $3) LIMIT 1`, tenant, t.Content, t.Version, a.ID).Scan(&live, &creator)
-		if err == pgx.ErrNoRows {
+WHERE c.tenant_id = $1 AND c.id = $2 AND ($3 = '' OR v.id = $3) LIMIT 1`, tenant, ref.ContentID, ref.Version(), a.ID).Scan(&live, &creator, &public)
+		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		} else if err != nil {
 			return nil, err
 		}
-		out[t] = versions.Sight{Visible: live || creator && a.Person(), Live: live, Editor: creator && a.Person()}
-	}
-	return out, nil
-}
-
-func (b books) Open(ctx context.Context, _ access.Actor, vs []versions.Target) (map[versions.Target]versions.Opening, error) {
-	out := map[versions.Target]versions.Opening{}
-	for _, t := range vs {
-		var public bool
-		if err := b.w.pool.QueryRow(ctx, `SELECT access->>'level' = 'public' FROM `+b.t("content_items")+` WHERE tenant_id = $1 AND id = $2`,
-			tenant, t.Content).Scan(&public); err != nil && err != pgx.ErrNoRows {
-			return nil, err
-		}
-		out[t] = versions.Opening{Opens: public}
+		out[ref.Key()] = access.Resolution{Visible: live || creator && a.Person(), Accessible: public, Editor: creator && a.Person()}
 	}
 	return out, nil
 }
@@ -58,7 +48,7 @@ func versionsScenario(t *testing.T, w *world, f *server, owner, user, anon strin
 	site := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"book": {Route: "b", Presentation: "reader",
 		Versions: kinds.VersionRules{Languages: "one"}}}}
 	svc, err := versions.New(versions.Options{Tenant: tenant, Schema: w.schema, Pool: w.pool, Kinds: site, Auth: w.ak.Authenticator(),
-		Visibility: books{w}, Access: books{w}, Facets: books{w}})
+		Resolver: books{w}, Facets: books{w}})
 	if err != nil {
 		t.Fatal(err)
 	}

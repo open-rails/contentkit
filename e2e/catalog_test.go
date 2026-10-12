@@ -220,6 +220,10 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	served := f.checker.Served()
 	var missing []string
 	for _, r := range httpapi.Catalog() {
+		// Offers need OpenRails; adapters/openrails serves them over an embedded engine.
+		if r.Module == httpapi.Offers {
+			continue
+		}
 		if !served[contract.RouteID(r)] {
 			missing = append(missing, contract.RouteID(r))
 		}

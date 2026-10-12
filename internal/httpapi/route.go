@@ -41,10 +41,13 @@ const (
 	// Versions is content versions' reader plan, reader metadata, forks and
 	// downloads (versions.Service.Handler).
 	Versions Module = "versions"
+	// Offers is offers on content, versions and groups, free group joins and
+	// the viewer's library (offers.Service.Handler).
+	Offers Module = "offers"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Versions}
+var Modules = []Module{Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Versions, Offers}
 
 // Prefix is the module's sub-path under the one mount: content at its root,
 // the others beneath their own first segment, which no content kind may take.
@@ -56,14 +59,12 @@ func (m Module) Prefix() string {
 		return "/media"
 	case Codes:
 		return "/codes"
-	case Groups:
+	case Groups, Offers, Versions:
 		return "/v1"
 	case PublicCatalog:
 		return "/catalog"
 	case Notifications:
 		return "/notifications"
-	case Versions:
-		return "/v1"
 	}
 	return ""
 }
@@ -317,6 +318,8 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal}
 	case "module:versions":
 		return []string{CodeInternal, CodeNotFound, CodeUnavailable}
+	case "module:offers":
+		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil
 }

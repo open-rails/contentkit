@@ -12,11 +12,12 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// gallery is a premium gallery version of five pages in three segments,
-// the last released in an hour, with an audio track.
+// gallery is a premium gallery version, previewing three pages, of five
+// pages in three segments, the last released in an hour, with an audio
+// track.
 func gallery(t *testing.T, s *site) (string, versions.Target) {
 	t.Helper()
-	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`)
 	v := s.version(c)
 	ref := s.ref("gallery", v)
 	for i := range 5 {
@@ -101,7 +102,7 @@ func TestPublication(t *testing.T) {
 	}
 
 	// The first segment free: anyone reads it.
-	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"tier","tiers":["premium"],"free":1}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
+	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"tier","tiers":["premium"],"preview":{"pages":3,"segments":1}}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
 	if p := s.plan(anon, v, func(*versions.ReaderPlan) bool { return true }); !eq(locks(p), []bool{false, true, true}) {
 		t.Fatalf("free segment plan %v", locks(p))
 	}
@@ -175,7 +176,7 @@ func TestWithdrawal(t *testing.T) {
 // releases.
 func TestPreviewsFollowReleases(t *testing.T) {
 	s := newSite(t, siteOptions{})
-	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`)
 	v := s.version(c)
 	ref := s.ref("gallery", v)
 	for i := range 4 {
