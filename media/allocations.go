@@ -72,9 +72,9 @@ func (m *Manifests) checkAllocationsIn(ctx context.Context, item Item, keys []st
 		return nil
 	}
 	var live bool
-	err := m.journal.pool.QueryRow(ctx, `SELECT NOT EXISTS (
+	err := m.journal.at(item.Ref().TenantID).pool.QueryRow(ctx, `SELECT NOT EXISTS (
 SELECT 1 FROM unnest($3::text[]) AS requested(key)
-WHERE NOT EXISTS (SELECT 1 FROM `+m.journal.allocations+` a
+WHERE NOT EXISTS (SELECT 1 FROM `+m.journal.at(item.Ref().TenantID).allocations+` a
 WHERE a.tenant_id = $1 AND a.folder_prefix = $2 AND a.object_key = requested.key AND a.incarnation = $4 AND a.retired_at IS NULL))`,
 		item.Ref().TenantID, item.Prefix(), keys, incarnation).Scan(&live)
 	if err != nil {
@@ -90,7 +90,7 @@ func (m *Manifests) retireAllocations(ctx context.Context, item Item, keys []str
 	if len(keys) == 0 {
 		return nil
 	}
-	_, err := m.journal.pool.Exec(ctx, `UPDATE `+m.journal.allocations+`
+	_, err := m.journal.at(item.Ref().TenantID).pool.Exec(ctx, `UPDATE `+m.journal.at(item.Ref().TenantID).allocations+`
 SET retired_at = now() WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,
 		item.Ref().TenantID, item.Prefix(), keys)
 	return err
@@ -99,7 +99,7 @@ SET retired_at = now() WHERE tenant_id = $1 AND folder_prefix = $2 AND object_ke
 // allocationKeys includes writes that have not reached S3 yet. Immediate
 // takedown retires those too; a late upload cannot revive their ownership.
 func (m *Manifests) allocationKeys(ctx context.Context, item Item) ([]string, error) {
-	rows, err := m.journal.pool.Query(ctx, `SELECT object_key FROM `+m.journal.allocations+`
+	rows, err := m.journal.at(item.Ref().TenantID).pool.Query(ctx, `SELECT object_key FROM `+m.journal.at(item.Ref().TenantID).allocations+`
 WHERE tenant_id = $1 AND folder_prefix = $2`, item.Ref().TenantID, item.Prefix())
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ WHERE tenant_id = $1 AND folder_prefix = $2`, item.Ref().TenantID, item.Prefix()
 // protectedAllocations gives an unrecorded producer its bounded grace period,
 // including the interval before its object exists. Retired keys get no grace.
 func (m *Manifests) protectedAllocations(ctx context.Context, item Item, now time.Time, grace time.Duration) (map[string]time.Time, error) {
-	rows, err := m.journal.pool.Query(ctx, `SELECT object_key, created_at FROM `+m.journal.allocations+`
+	rows, err := m.journal.at(item.Ref().TenantID).pool.Query(ctx, `SELECT object_key, created_at FROM `+m.journal.at(item.Ref().TenantID).allocations+`
 WHERE tenant_id = $1 AND folder_prefix = $2 AND retired_at IS NULL AND created_at > $3`,
 		item.Ref().TenantID, item.Prefix(), now.Add(-grace))
 	if err != nil {

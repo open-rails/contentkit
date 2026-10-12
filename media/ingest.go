@@ -130,12 +130,12 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, err
 	}
 	if limited {
-		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
+		if err := u.limiter(req.Ref.TenantID).Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {
 			return IngestResult{}, err
 		}
 		defer func() {
-			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}})
+			_ = u.limiter(req.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}})
 		}()
 	}
 	var res IngestResult

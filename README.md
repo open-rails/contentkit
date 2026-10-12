@@ -374,10 +374,12 @@ private file of its item or none; `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
-(`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, `_S3_BUCKET`, a key
+(`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
+`MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
+(`doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins`),
 `MEDIA_GATEWAY_CORS_ORIGINS` and `MEDIA_GATEWAY_DEFAULTS`
 (`layout.FormatDefaults(media.GatewayConfig(reg).Defaults)`).
 

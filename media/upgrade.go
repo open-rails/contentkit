@@ -102,6 +102,9 @@ func (j *Jobs) Upgrade(ctx context.Context, limit int) (UpgradeStatus, error) {
 		if budget == 0 {
 			break
 		}
+		if j.cfg.Journal.Bound(k.ns) {
+			continue // its owner upgrades it
+		}
 		n, err := j.upgradeKind(ctx, k, budget)
 		budget -= n
 		if err != nil {
@@ -210,7 +213,7 @@ func (j *Jobs) retryUpgradeFailures(ctx context.Context, limit int) error {
 	jr := j.cfg.Journal
 	rows, err := jr.pool.Query(ctx, `SELECT f.tenant_id, f.content_kind, f.content_id FROM `+jr.upgradeFails+` f
 JOIN `+jr.upgrades+` u USING (tenant_id, content_kind) WHERE u.finished_at IS NOT NULL
-AND f.tenant_id = ANY($1) ORDER BY f.failed_at LIMIT $2`, j.cfg.Registry.Namespaces(), limit)
+AND f.tenant_id = ANY($1) ORDER BY f.failed_at LIMIT $2`, j.owned(), limit)
 	if err != nil {
 		return err
 	}
@@ -244,6 +247,9 @@ func (j *Jobs) UpgradeStatus(ctx context.Context) (UpgradeStatus, error) {
 	jr := j.cfg.Journal
 	st := UpgradeStatus{Done: true}
 	for _, k := range j.cfg.Registry.cfg.Kinds {
+		if jr.Bound(k.ns) {
+			continue
+		}
 		ku := KindUpgrade{Namespace: k.ns, Kind: k.Name}
 		err := jr.pool.QueryRow(ctx, `SELECT u.after_id, u.visited, u.upgraded, u.finished_at,
 (SELECT count(*) FROM `+jr.upgradeFails+` f WHERE f.tenant_id = u.tenant_id AND f.content_kind = u.content_kind)
@@ -256,7 +262,7 @@ FROM `+jr.upgrades+` u WHERE u.tenant_id = $1 AND u.content_kind = $2`, k.ns, k.
 		st.Kinds = append(st.Kinds, ku)
 	}
 	rows, err := jr.pool.Query(ctx, `SELECT tenant_id, content_kind, content_id, error, failed_at FROM `+jr.upgradeFails+`
-WHERE tenant_id = ANY($1) ORDER BY failed_at LIMIT 100`, j.cfg.Registry.Namespaces())
+WHERE tenant_id = ANY($1) ORDER BY failed_at LIMIT 100`, j.owned())
 	if err != nil {
 		return st, err
 	}
@@ -452,7 +458,7 @@ func (m *Manifests) convert(ctx context.Context, item Item, stored *Manifest) (*
 		}
 	}
 	slices.Sort(effects.Public)
-	if m.journal.queue != nil && slices.ContainsFunc(next.Files, func(f File) bool { return len(f.Pending) > 0 }) {
+	if m.journal.at(item.Ref().TenantID).queue != nil && slices.ContainsFunc(next.Files, func(f File) bool { return len(f.Pending) > 0 }) {
 		effects.Process = &ProcessJob{Ref: item.Ref(), Place: len(next.StagedNames()) > 0}
 	}
 	return next, effects, nil

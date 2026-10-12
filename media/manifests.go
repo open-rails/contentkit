@@ -733,6 +733,9 @@ func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
 	}
 	var errs []error
 	for _, tenant := range m.reg.Namespaces() {
+		if m.journal.Bound(tenant) {
+			continue // its owner recovers it
+		}
 		var kinds []string
 		for _, kind := range m.reg.cfg.Kinds {
 			if kind.ns == tenant {

@@ -38,7 +38,7 @@ services:
     environment:
       MEDIA_GATEWAY_LISTEN: 127.0.0.1:${E2E_GATEWAY_PORT:-54792}
       MEDIA_GATEWAY_S3_ENDPOINT: http://127.0.0.1:${E2E_MINIO_PORT:-54791}
-      MEDIA_GATEWAY_S3_BUCKET: ckui-e2e
+      MEDIA_GATEWAY_BUCKETS: "e2e=ckui-e2e; accounts=ckui-e2e"
       MEDIA_GATEWAY_S3_ACCESS_KEY_ID: contentkit
       MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY: contentkit-secret
       # The harness's fault proxy forwards with the browser's Host.

@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -96,10 +98,11 @@ func (f *fixture) key(rest string) string { return f.ns + "/" + rest }
 
 func (f *fixture) config(t *testing.T) gateway.Config {
 	return gateway.Config{
-		Endpoint: f.env.Config.Endpoint, Bucket: f.env.Config.Bucket, Region: f.env.Config.Region,
+		Endpoint: f.env.Config.Endpoint, Region: f.env.Config.Region,
 		AccessKeyID: f.env.Config.AccessKeyID, SecretAccessKey: f.env.Config.SecretAccessKey,
 		Ring:     ring(t, k2, &k1),
 		Hosts:    map[string][]string{host: {"accounts", f.ns}, "other.test": {"accounts"}},
+		Buckets:  map[string]string{"accounts": f.env.Config.Bucket, f.ns: f.env.Config.Bucket},
 		Origins:  []string{origin},
 		Defaults: []layout.Default{{Namespace: f.ns, Kind: "gallery", Files: map[string]string{"cover-460.webp": defaultName()}}},
 	}
@@ -402,6 +405,50 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // TestBinary runs the built cmd/media-gateway with its environment config.
+// Each namespace is read from its own bucket: one gateway serves every app.
+func TestNamespaceBuckets(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	client := f.env.Store.Client()
+	other := "ck-other-" + f.ns[1:]
+	if _, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &other}); err != nil {
+		t.Fatal(err)
+	}
+	shared := "s" + f.ns[1:]
+	key := shared + "/user/1/public/avatar-64.webp"
+	t.Cleanup(func() {
+		for _, b := range []string{f.env.Config.Bucket, other} {
+			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &b, Key: &key})
+		}
+		_, _ = client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &other})
+	})
+	for b, body := range map[string]string{f.env.Config.Bucket: "wrong bucket", other: "own bucket"} {
+		if _, err := client.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &key, Body: strings.NewReader(body)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := f.config(t)
+	cfg.Hosts = map[string][]string{host: {f.ns, shared}}
+	cfg.Buckets = map[string]string{f.ns: f.env.Config.Bucket, shared: other}
+	srv := serve(t, cfg)
+	for path, want := range map[string]string{
+		"/v1/" + key: "own bucket",
+		f.path("gallery/456/public/cover-460.webp"): "cover",
+	} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != want {
+			t.Errorf("%s: %d %q, want %q", path, resp.StatusCode, body, want)
+		}
+	}
+}
+
 func TestBinary(t *testing.T) {
 	f := seed(t)
 	dir := t.TempDir()
@@ -418,7 +465,7 @@ func TestBinary(t *testing.T) {
 	cmd := exec.Command(bin, "-listen", "127.0.0.1:0", "-hosts", "media.test=accounts; 127.0.0.1="+f.ns)
 	cmd.Env = []string{
 		"MEDIA_GATEWAY_S3_ENDPOINT=" + f.env.Config.Endpoint,
-		"MEDIA_GATEWAY_S3_BUCKET=" + f.env.Config.Bucket,
+		"MEDIA_GATEWAY_BUCKETS=accounts=" + f.env.Config.Bucket + "; " + f.ns + "=" + f.env.Config.Bucket,
 		"MEDIA_GATEWAY_S3_ACCESS_KEY_ID=" + f.env.Config.AccessKeyID,
 		"MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY=" + f.env.Config.SecretAccessKey,
 		"MEDIA_GATEWAY_TOKEN_KEY_FILE=" + keyFile,

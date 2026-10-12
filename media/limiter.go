@@ -102,6 +102,16 @@ func NewPGLimiter(pool *pgxpool.Pool, schema string, limits PGLimits) (*PGLimite
 		releases: q("content_media_releases")}, nil
 }
 
+// over is l's limits over t's tables; nil without l.
+func (l *PGLimiter) over(t *PGLimiter) *PGLimiter {
+	if l == nil || t == nil || l.usage == t.usage {
+		return l
+	}
+	b := *t
+	b.limits = l.limits
+	return &b
+}
+
 func (l *PGLimiter) PrepareRelease(ctx context.Context, r QuotaRelease) (bool, error) {
 	if r.Tenant == "" || r.Folder == "" || r.Owner == "" || r.Operation == "" || r.Bytes < 0 {
 		return false, errors.New("media: release needs a tenant, folder, owner, operation and nonnegative bytes")

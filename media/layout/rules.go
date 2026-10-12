@@ -54,6 +54,45 @@ func CheckHosts(in map[string][]string) (map[string][]string, error) {
 	return out, nil
 }
 
+// ParseBuckets parses "doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins":
+// each namespace's bucket. A shared namespace lives in its owning app's bucket.
+func ParseBuckets(s string) (map[string]string, error) {
+	m := map[string]string{}
+	for _, e := range fields(s, ";") {
+		ns, bucket, ok := strings.Cut(e, "=")
+		ns = strings.TrimSpace(ns)
+		if _, dup := m[ns]; !ok || dup {
+			return nil, fmt.Errorf("layout: buckets entry %q: want one {namespace}={bucket} per namespace", e)
+		}
+		m[ns] = strings.TrimSpace(bucket)
+	}
+	return CheckBuckets(m)
+}
+
+// FormatBuckets is ParseBuckets' inverse, with namespaces sorted.
+func FormatBuckets(m map[string]string) string {
+	var parts []string
+	for _, ns := range slices.Sorted(maps.Keys(m)) {
+		parts = append(parts, ns+"="+m[ns])
+	}
+	return strings.Join(parts, "; ")
+}
+
+// CheckBuckets validates a namespace -> bucket map. It returns a copy.
+func CheckBuckets(in map[string]string) (map[string]string, error) {
+	if len(in) == 0 {
+		return nil, fmt.Errorf("layout: buckets are required")
+	}
+	out := make(map[string]string, len(in))
+	for ns, bucket := range in {
+		if !ValidSegment(ns) || !ValidSegment(bucket) {
+			return nil, fmt.Errorf("layout: namespace %q needs a valid namespace and bucket, got %q", ns, bucket)
+		}
+		out[ns] = bucket
+	}
+	return out, nil
+}
+
 // ParseDefaults parses "doujins/gallery: cover-460.webp=sha256-{digest}.webp".
 func ParseDefaults(s string) ([]Default, error) {
 	var out []Default

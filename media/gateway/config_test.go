@@ -30,8 +30,8 @@ func TestDefaultSelection(t *testing.T) {
 }
 
 func TestNewValidates(t *testing.T) {
-	base := Config{Endpoint: "http://localhost:9000", Bucket: "media", AccessKeyID: "a", SecretAccessKey: "s",
-		Hosts: map[string][]string{"media.doujins.ai": {"doujins"}}}
+	base := Config{Endpoint: "http://localhost:9000", AccessKeyID: "a", SecretAccessKey: "s",
+		Hosts: map[string][]string{"media.doujins.ai": {"doujins"}}, Buckets: map[string]string{"doujins": "dev-doujins"}}
 	if _, err := New(base); err != nil {
 		t.Fatal(err)
 	}
@@ -46,9 +46,13 @@ func TestNewValidates(t *testing.T) {
 		"bad template": func(c *Config) {
 			c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery", Files: map[string]string{"cover-{h}.webp": "fixed.webp"}}}
 		},
-		"no names":       func(c *Config) { c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery"}} },
-		"bad endpoint":   func(c *Config) { c.Endpoint = "localhost:9000" },
-		"bad bucket":     func(c *Config) { c.Bucket = "a/b" },
+		"no names":     func(c *Config) { c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery"}} },
+		"bad endpoint": func(c *Config) { c.Endpoint = "localhost:9000" },
+		"bad bucket":   func(c *Config) { c.Buckets = map[string]string{"doujins": "a/b"} },
+		"no buckets":   func(c *Config) { c.Buckets = nil },
+		"unbacked namespace": func(c *Config) {
+			c.Hosts = map[string][]string{"media.doujins.ai": {"doujins", "accounts"}}
+		},
 		"no credentials": func(c *Config) { c.SecretAccessKey = "" },
 	} {
 		c := base

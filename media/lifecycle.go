@@ -101,7 +101,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 				}
 			}
 		}
-		mutation.effects.Cancel = j.cfg.Journal.queue != nil
+		mutation.effects.Cancel = j.cfg.Journal.at(item.Ref().TenantID).queue != nil
 		if owner != "" && j.cfg.Limiter != nil {
 			charged, err := j.uploadBytes(ctx, item.Prefix())
 			if err != nil {
@@ -120,9 +120,10 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 // safely run after reset because these physical names are permanently retired.
 func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUID) error {
 	var c manifestCommit
-	err := pgx.BeginFunc(ctx, j.cfg.Journal.pool, func(tx pgx.Tx) error {
+	jr := j.cfg.Journal.at(item.Ref().TenantID)
+	err := pgx.BeginFunc(ctx, jr.pool, func(tx pgx.Tx) error {
 		var err error
-		c, err = j.cfg.Journal.load(ctx, tx, item.Ref().TenantID, operation)
+		c, err = jr.load(ctx, tx, item.Ref().TenantID, operation)
 		return err
 	})
 	if err != nil {

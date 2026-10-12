@@ -1,6 +1,6 @@
 // Package gateway is the media gateway run by cmd/media-gateway. For the
-// namespaces served on the request's host it streams, from a private bucket
-// with its own read-only key:
+// namespaces served on the request's host it streams, from each namespace's
+// private bucket with one read-only key:
 //
 //	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, the configured immutable default
 //	/v1/{ns}/{kind}/{id}/private/sha256-{hex}-{uuid}  with the item's unexpired token (?t= or an mt cookie);
@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -40,10 +41,11 @@ const (
 
 // Config configures a Handler.
 type Config struct {
-	Endpoint, Bucket, Region     string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // a key that can read only */private/* and */public/*
+	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
+	AccessKeyID, SecretAccessKey string // a key that can read only */private/* and */public/* of every bucket
 	Ring                         token.Ring
 	Hosts                        map[string][]string // lower-case host name (no port) -> namespaces served on it; required
+	Buckets                      map[string]string   // namespace -> its app's bucket; required for every served namespace
 	Origins                      []string            // exact CORS origins ("scheme://host[:port]") allowed with credentials
 	Defaults                     []layout.Default    // deployment selection from image.PublishDefaults
 	Client                       *http.Client        // default: a tuned transport without compression
@@ -63,8 +65,8 @@ var emptySHA256 = hex.EncodeToString(func() []byte { s := sha256.Sum256(nil); re
 
 // New validates cfg.
 func New(cfg Config) (*Handler, error) {
-	if cfg.Endpoint == "" || !layout.ValidSegment(cfg.Bucket) || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
-		return nil, errors.New("gateway: Endpoint, a valid Bucket and S3 credentials are required")
+	if cfg.Endpoint == "" || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+		return nil, errors.New("gateway: Endpoint and S3 credentials are required")
 	}
 	base, err := url.Parse(strings.TrimRight(cfg.Endpoint, "/"))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
@@ -72,6 +74,16 @@ func New(cfg Config) (*Handler, error) {
 	}
 	if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
 		return nil, err
+	}
+	if cfg.Buckets, err = layout.CheckBuckets(cfg.Buckets); err != nil {
+		return nil, err
+	}
+	for host, nss := range cfg.Hosts {
+		for _, ns := range nss {
+			if cfg.Buckets[ns] == "" {
+				return nil, fmt.Errorf("gateway: host %q serves namespace %q, which has no bucket", host, ns)
+			}
+		}
 	}
 	defaults, err := layout.CompileDefaults(cfg.Defaults)
 	if err != nil {
@@ -142,13 +154,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			dl = new(q.Get("dl"))
 		}
 	}
-	resp, err := h.fetch(r, key)
+	resp, err := h.fetch(r, o.ns, key)
 	if err == nil && missing(resp.StatusCode) && o.area == "public" {
 		if name := h.defaultName(o); name != "" {
 			_ = resp.Body.Close()
 			o.name = name
 			key = o.key(layout.DefaultID)
-			resp, err = h.fetch(r, key)
+			resp, err = h.fetch(r, o.ns, key)
 		}
 	}
 	if err != nil {
@@ -234,9 +246,9 @@ var (
 	forwardResponse = []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"}
 )
 
-func (h *Handler) fetch(r *http.Request, key string) (*http.Response, error) {
+func (h *Handler) fetch(r *http.Request, ns, key string) (*http.Response, error) {
 	u := *h.base
-	u.Path = h.base.Path + "/" + h.cfg.Bucket + "/" + key
+	u.Path = h.base.Path + "/" + h.cfg.Buckets[ns] + "/" + key
 	up, err := http.NewRequestWithContext(r.Context(), r.Method, u.String(), nil)
 	if err != nil {
 		return nil, err

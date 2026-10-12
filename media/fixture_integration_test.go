@@ -287,15 +287,24 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey}}); err != nil {
 		t.Fatal(err)
 	}
-	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Bucket: env.Config.Bucket, Region: env.Config.Region,
+	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Region: env.Config.Region,
 		AccessKeyID: env.Config.AccessKeyID, SecretAccessKey: env.Config.SecretAccessKey, Ring: ring,
-		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}})
+		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Buckets: buckets(f.reg.Namespaces(), env.Config.Bucket)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.gateway = httptest.NewServer(h)
 	t.Cleanup(f.gateway.Close)
 	return f
+}
+
+// buckets maps every namespace to the one test bucket.
+func buckets(nss []string, bucket string) map[string]string {
+	m := map[string]string{}
+	for _, ns := range nss {
+		m[ns] = bucket
+	}
+	return m
 }
 
 // drop deletes every object under prefix (the shared namespace lives outside
