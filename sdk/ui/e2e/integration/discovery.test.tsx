@@ -97,15 +97,22 @@ describe("discovery against the real ContentKit", () => {
     const t = await tag(`grp-${r}`, `Grape ${word}`);
     const [one] = await seedContents(staff, [{ kind: "comic", titles: { en: `Kiwi ${word}` }, groups: [t.id], versions: [{ languages: ["en"] }] }]);
     const c = client(h, cfg, null);
+    // Keyword documents trail writes by the search sync job: wait until both are indexed.
+    await waitFor(async () => {
+      const [found, typed] = await Promise.all([c.discovery.search({ q: word, kind: "comic" }), c.discovery.typeahead({ q: word })]);
+      expect([found.contents.map((x) => x.id), typed.groups.map((g) => g.id)]).toEqual([[one!.id], [t.id]]);
+    }, indexed);
+
     const { result, rerender } = renderHook(({ q }: { q: string }) => useSearch({ q, kind: "comic" }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: "" } });
     expect(result.current.items).toEqual([]);
     expect(result.current.loading).toBe(false);
     rerender({ q: word });
-    await waitFor(() => expect(result.current.items.map((x) => x.id)).toEqual([one!.id]), indexed);
+    await waitFor(() => expect(result.current.items.map((x) => x.id)).toEqual([one!.id]), wait);
+    expect(result.current.items[0]!.groups.tag?.map((g) => g.id)).toEqual([t.id]);
 
-    const { result: ta } = renderHook(({ q }: { q: string }) => useTypeahead(q, { debounce: 10 }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: word.slice(0, 5) } });
-    await waitFor(() => expect(ta.current.contents.map((x) => x.id)).toContain(one!.id), indexed);
-    await waitFor(() => expect(ta.current.groups.map((g) => g.id)).toContain(t.id), indexed);
+    const { result: ta } = renderHook(({ q }: { q: string }) => useTypeahead(q, { debounce: 10 }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: word.slice(0, 6) } });
+    await waitFor(() => expect([ta.current.contents.map((x) => x.id), ta.current.groups.map((g) => g.id)]).toEqual([[one!.id], [t.id]]), wait);
+    expect(ta.current.query).toBe(word.slice(0, 6));
   });
 
   it("useReleaseDates: per day, how many contents and how many are free", async () => {
