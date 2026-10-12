@@ -1,0 +1,63 @@
+package server
+
+import (
+	"testing"
+	"time"
+)
+
+const sample = `
+engine:
+  tenant: site
+  database: {schema: site_contentkit}
+  content:
+    languages: [en, ja]
+    kinds:
+      gallery: {route: g, presentation: reader, versions: {languages: one}, groups: [tag]}
+    group_kinds:
+      tag: {route: tag}
+  interactions:
+    anonymous: {comments: true}
+    limits: {comment: [{count: 5, per: 5m}]}
+  media:
+    base_url: https://media.site.test
+    kinds:
+      - name: gallery
+        uploads: [{path: "originals/{name}", types: [image/png], max_bytes: 1048576, max: 10}]
+    delivery: {mode: url}
+  clickhouse: {database: site_signal, addr: "clickhouse:9000", username: contentkit}
+auth:
+  token: {issuer: https://contentkit.site.test, issued_audiences: [contentkit]}
+  resource: {id: https://contentkit.site.test}
+openrails: {base_url: https://billing.site.test}
+s3: {bucket: media, endpoint: http://minio:9000, use_path_style: true}
+routes: [content, media, upload, codes]
+prefix: /api/contentkit
+addr: ":8080"
+drain_delay: 5s
+`
+
+// The file is plain data in every section's own field names (media's
+// registry included); secrets come only from the environment.
+func TestLoad(t *testing.T) {
+	env := map[string]string{"CONTENTKIT_MEDIA_TOKEN_KEY": "k1:c2VjcmV0", "CONTENTKIT_OPENRAILS_API_KEY": "or_key", "CONTENTKIT_S3_SECRET_ACCESS_KEY": "s3"}
+	c, err := Load([]byte(sample), func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := c.Engine
+	if e.Tenant != "site" || e.Database.Schema != "site_contentkit" || e.Content.Kinds["gallery"].Route != "g" || e.Content.GroupKinds["tag"].Route != "tag" ||
+		!e.Interactions.Anonymous.Comments || e.Interactions.Limits.Comment[0].Per != 5*time.Minute || e.ClickHouse.Addr != "clickhouse:9000" {
+		t.Fatalf("engine %+v", e)
+	}
+	m := e.Media
+	if m == nil || m.BaseURL != "https://media.site.test" || len(m.Kinds) != 1 || m.Kinds[0].Uploads[0].MaxBytes != 1<<20 || m.Delivery.SigningKey != "k1:c2VjcmV0" {
+		t.Fatalf("media %+v", m)
+	}
+	if c.Auth.Token.Issuer != "https://contentkit.site.test" || c.Auth.Resource.ID != "https://contentkit.site.test" || c.OpenRails.APIKey != "or_key" ||
+		c.S3.SecretAccessKey != "s3" || !c.S3.UsePathStyle || c.DrainDelay != 5*time.Second || len(c.Routes) != 4 {
+		t.Fatalf("server %+v", c)
+	}
+	if _, err := Load([]byte("engine: {tenant: x, unknown: 1}"), func(string) string { return "" }); err == nil {
+		t.Fatal("an unknown field was accepted")
+	}
+}

@@ -182,6 +182,9 @@ func TestEngineIntegration(t *testing.T) {
 		}
 	}
 
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|TaxonomyRoutes|NotificationRoutes {
+		t.Fatalf("route groups %b", g)
+	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
 		t.Fatal("Routes without groups")
 	}

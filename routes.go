@@ -118,6 +118,18 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 	return out, nil
 }
 
+// RouteGroups is every route group the engine can serve: those whose module
+// its Config and Deps provide.
+func (e *Engine) RouteGroups() RouteGroups {
+	var out RouteGroups
+	for _, g := range groupModules {
+		if e.modules[g.module] != nil {
+			out |= g.group
+		}
+	}
+	return out
+}
+
 func needs(m httpapi.Module) string {
 	switch m {
 	case httpapi.Upload, httpapi.Media:
