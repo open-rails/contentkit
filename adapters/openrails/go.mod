@@ -8,7 +8,7 @@ go 1.26.9
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/contentkit v0.73.1-0.20261012013112-6267d058e14e
+	github.com/open-rails/contentkit v0.73.1-0.20261012020652-853a9f7acea0
 	github.com/open-rails/openrails v0.240.0
 )
 
