@@ -3,8 +3,8 @@ package openrails_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
