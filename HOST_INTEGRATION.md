@@ -709,12 +709,24 @@ table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** An item is `{namespace}/{kind}/{id}/`: the host's version id is
-  the item id (ContentKit has no versions; a work's versions are separate
-  items). It holds `manifest.json` (gzip JSON, never served), `private/`
-  (hash-named blobs: uploads, derived files, editor views), `public/`
-  (published renditions such as `cover-460-{generation}.webp`) and `temp/`
-  (in-flight server-side writes).
+- **Items.** An item is `{namespace}/{kind}/{id}/`, or for a content kind
+  (`Kind.Versions`, derived from the kinds config by `media.ForContent`) a
+  version's `{namespace}/{kind}/{content}/{version}/` beside its content's
+  item, which holds the `Content` uploads (the cover). An item holds
+  `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
+  uploads, derived files, editor views), `public/` (published renditions
+  such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
+  writes).
+- **Content versions.** `media/versions` answers media's hooks from the
+  content model: editors (staff, creators, owner-group editors) upload, a
+  person their own avatar; reads follow the catalog's `Visibility` and the
+  gate's `Access`; a version's media writes its pages, duration, size and
+  audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
+  kind reaches viewers only through `{kind}.published` items: one per
+  segment of its pages, a locked version's previews, and one playback item,
+  planned by `GET /contents/{id}/versions/{vid}/reader`. Forks, page-archive
+  imports, reader metadata and downloads (a host watermark, quota buckets)
+  complete it.
 - **Manifest.** An ordered virtual file system over the item's private
   blobs: each Upload's files in natural order unless an op reorders them,
   then each private preset's outputs in their uploads' order. A derived file
@@ -722,7 +734,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
+- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
