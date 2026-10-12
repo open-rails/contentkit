@@ -29,6 +29,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // The deployment's names; compose.yaml gives the worker the same ones.
@@ -159,7 +160,15 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.reg, err = media.NewRegistry(mc); err != nil {
 		return nil, err
 	}
-	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool)}); err != nil {
+	queue, err := workqueue.New(h.pool, h.reg, workerSchema)
+	if err != nil {
+		return nil, err
+	}
+	journal, err := media.NewPGJournal(h.pool, schema, queue)
+	if err != nil {
+		return nil, err
+	}
+	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool), Journal: journal}); err != nil {
 		return nil, err
 	}
 	signing, err := token.ParseKey(c.tokenKey)
