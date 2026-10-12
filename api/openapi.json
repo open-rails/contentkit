@@ -3753,51 +3753,49 @@
         ]
       }
     },
-    "/taxonomy/nodes": {
+    "/v1/groups": {
       "get": {
         "tags": [
-          "taxonomy"
+          "groups"
         ],
-        "summary": "Lists nodes: filtered, ordered and paged.",
+        "summary": "Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged.",
         "parameters": [
           {
             "name": "kind",
             "in": "query",
-            "description": "only nodes of this kind",
+            "description": "only groups of this kind",
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "state",
+            "name": "parent",
             "in": "query",
-            "description": "only nodes in these states; active by default",
-            "style": "form",
-            "explode": true,
+            "description": "only children of this group",
             "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
+              "type": "string"
             }
           },
           {
-            "name": "id",
+            "name": "scope",
             "in": "query",
-            "description": "only these taxonomy ids",
-            "style": "form",
-            "explode": true,
+            "description": "only groups scoped by this group",
             "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
+              "type": "string"
             }
           },
           {
             "name": "slug",
             "in": "query",
-            "description": "only the node with this slug",
+            "description": "only the group with this slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "letter",
+            "in": "query",
+            "description": "only sort names starting with this letter (a-z), or with anything else (#)",
             "schema": {
               "type": "string"
             }
@@ -3805,31 +3803,7 @@
           {
             "name": "language",
             "in": "query",
-            "description": "the language names resolve in",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language_mode",
-            "in": "query",
-            "description": "what a node without a name in language gets: fallback (the default), strict or required",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "name_prefix",
-            "in": "query",
-            "description": "names starting with this",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "description": "names containing this",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
             "schema": {
               "type": "string"
             }
@@ -3837,501 +3811,15 @@
           {
             "name": "content_kind",
             "in": "query",
-            "description": "count contents of this kind",
+            "description": "count contents of this kind; every kind by default",
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "min_count",
-            "in": "query",
-            "description": "only nodes with at least this many contents",
-            "schema": {
-              "type": "integer"
             }
           },
           {
             "name": "sort",
             "in": "query",
-            "description": "name, count, created, oldest or updated; taxonomy id by default",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "the previous page's next_cursor (default order only)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "nodes to skip",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "page size",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodePage"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      },
-      "post": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Creates nodes with their names.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/NodeInput"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Node"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/nodes/{id}": {
-      "get": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "A node with its names and edges.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      },
-      "patch": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Updates a node's given fields.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NodeUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Node"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "conflict",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Marks a node deleted.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Node"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/nodes/{id}/names": {
-      "put": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Replaces a node's names.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Name"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "conflict",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      },
-      "post": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Adds names to a node.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Name"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "conflict",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Removes names from a node.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Name"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/nodes/{id}/assignments": {
-      "get": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "The contents assigned to a node, paged.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "content_kind",
-            "in": "query",
-            "description": "only contents of this kind",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "relation",
-            "in": "query",
-            "description": "only this relation",
+            "description": "name (the default), count or newest",
             "schema": {
               "type": "string"
             }
@@ -4347,7 +3835,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "page size: 50 by default, at most 500",
+            "description": "page size: 50 by default, at most 200",
             "schema": {
               "type": "integer"
             }
@@ -4359,7 +3847,54 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssignmentPage"
+                  "$ref": "#/components/schemas/GroupPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Creates groups with their names and text.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GroupInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
                 }
               }
             }
@@ -4373,25 +3908,505 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "taxonomy",
+        "x-contentkit-module": "groups",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
+          "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:taxonomy",
+          "module:groups",
           "auth",
           "request"
         ]
       }
     },
-    "/taxonomy/nodes/{id}/merge": {
+    "/v1/groups/{id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Updates a group's given fields; state restores or deletes it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Marks a group deleted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/names": {
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Replaces a group's names and aliases.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Name"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
       "post": {
         "tags": [
-          "taxonomy"
+          "groups"
         ],
-        "summary": "Merges a node into another: its assignments, names and edges move, and its URL redirects.",
+        "summary": "Adds names and aliases to a group; a new canonical name demotes the old one to an alias.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Name"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Removes names and aliases from a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Name"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/edges": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Adds edges from a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EdgeInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Edge"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Removes edges from a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EdgeInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Edge"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/merge": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects.",
         "parameters": [
           {
             "name": "id",
@@ -4432,46 +4447,59 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "taxonomy",
+        "x-contentkit-module": "groups",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:taxonomy",
+          "module:groups",
           "auth",
           "request"
         ]
       }
     },
-    "/taxonomy/edges": {
-      "post": {
+    "/v1/groups/{id}/members": {
+      "get": {
         "tags": [
-          "taxonomy"
+          "groups"
         ],
-        "summary": "Adds edges.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Edge"
-                }
-              }
+        "summary": "A group's memberships in member order, paged.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 500",
+            "schema": {
+              "type": "integer"
             }
           }
-        },
+        ],
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgesWritten"
+                  "$ref": "#/components/schemas/MemberPage"
                 }
               }
             }
@@ -4485,24 +4513,94 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "taxonomy",
+        "x-contentkit-module": "groups",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Adds contents or versions to a group, or updates their position, window and state.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Membership"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:taxonomy",
+          "module:groups",
           "auth",
           "request"
         ]
       },
       "delete": {
         "tags": [
-          "taxonomy"
+          "groups"
         ],
-        "summary": "Removes edges.",
+        "summary": "Removes contents or versions from a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4510,7 +4608,7 @@
               "schema": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/Edge"
+                  "$ref": "#/components/schemas/Membership"
                 }
               }
             }
@@ -4522,7 +4620,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgesWritten"
+                  "$ref": "#/components/schemas/Written"
                 }
               }
             }
@@ -4536,30 +4634,30 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "taxonomy",
+        "x-contentkit-module": "groups",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:taxonomy",
+          "module:groups",
           "auth",
           "request"
         ]
       }
     },
-    "/taxonomy/assignments": {
-      "post": {
+    "/v1/groups/{id}/members/order": {
+      "put": {
         "tags": [
-          "taxonomy"
+          "groups"
         ],
-        "summary": "Assigns nodes to contents.",
+        "summary": "Orders an ordered group: the listed members first, in list order.",
         "parameters": [
           {
-            "name": "suppress_counts",
-            "in": "query",
-            "description": "skip count maintenance; rebuild the counts afterwards",
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "boolean"
+              "type": "string"
             }
           }
         ],
@@ -4568,10 +4666,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Assignment"
-                }
+                "$ref": "#/components/schemas/Order"
               }
             }
           }
@@ -4582,7 +4677,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssignmentsWritten"
+                  "$ref": "#/components/schemas/Written"
                 }
               }
             }
@@ -4596,284 +4691,136 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "taxonomy",
+        "x-contentkit-module": "groups",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "A content's memberships, its versions' included, with the groups they name.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      },
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentGroups"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:taxonomy",
+          "module:groups",
           "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Removes assignments.",
-        "parameters": [
-          {
-            "name": "suppress_counts",
-            "in": "query",
-            "description": "skip count maintenance; rebuild the counts afterwards",
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Assignment"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssignmentsWritten"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/effective": {
-      "post": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "The effective tags (work and version) of each content.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/ContentRef"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EffectiveTagsOf"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/counts": {
-      "get": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Content counts of nodes, by taxonomy id.",
-        "parameters": [
-          {
-            "name": "taxonomy_id",
-            "in": "query",
-            "description": "the nodes to count",
-            "style": "form",
-            "explode": true,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/components/schemas/Count"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/taxonomy/counts/rebuild": {
-      "post": {
-        "tags": [
-          "taxonomy"
-        ],
-        "summary": "Recomputes every count, after bulk loads written with suppress_counts.",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CountsRebuilt"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "taxonomy",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:taxonomy:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:taxonomy",
-          "auth"
-        ]
-      }
-    },
-    "/catalog/totals": {
-      "get": {
-        "tags": [
-          "catalog"
-        ],
-        "summary": "Each kind's works, in all and per language: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
-        "parameters": [
-          {
-            "name": "kinds",
-            "in": "query",
-            "description": "content kinds to total; every listed kind by default",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "languages",
-            "in": "query",
-            "description": "languages to break the totals down by; every counted language by default",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Totals"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {}
-        ],
-        "x-contentkit-module": "catalog",
-        "x-contentkit-auth": "open",
-        "x-contentkit-errors": [
-          "unavailable"
-        ],
-        "x-contentkit-error-sets": [
-          "module:catalog",
           "request"
         ]
       }
@@ -5240,73 +5187,23 @@
           "votes"
         ]
       },
-      "Assignment": {
+      "AnswerGroup": {
         "type": "object",
         "properties": {
-          "tenant_id": {
+          "id": {
             "type": "string"
           },
-          "content_kind": {
+          "label": {
             "type": "string"
           },
-          "content_id": {
-            "type": "string"
-          },
-          "content_version_id": {
-            "type": "string"
-          },
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "relation": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "proposed"
-            ]
-          },
-          "source_revision": {
+          "count": {
             "type": "integer"
           }
         },
         "required": [
-          "tenant_id",
-          "content_kind",
-          "content_id",
-          "taxonomy_id",
-          "relation",
-          "source_revision"
-        ]
-      },
-      "AssignmentPage": {
-        "type": "object",
-        "properties": {
-          "assignments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Assignment"
-            }
-          },
-          "next_cursor": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "assignments"
-        ]
-      },
-      "AssignmentsWritten": {
-        "type": "object",
-        "properties": {
-          "assignments": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "assignments"
+          "id",
+          "label",
+          "count"
         ]
       },
       "BanInput": {
@@ -5574,6 +5471,48 @@
           "comment_max_length"
         ]
       },
+      "ContentGroups": {
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            }
+          }
+        }
+      },
+      "ContentMemberships": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupCard"
+            }
+          }
+        },
+        "required": [
+          "content_id",
+          "memberships",
+          "groups"
+        ]
+      },
       "ContentRef": {
         "type": "object",
         "properties": {
@@ -5626,16 +5565,19 @@
           "count"
         ]
       },
-      "CountsRebuilt": {
+      "Cover": {
         "type": "object",
         "properties": {
-          "nodes": {
-            "type": "integer"
+          "image": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "auto": {
+            "type": "boolean"
           }
-        },
-        "required": [
-          "nodes"
-        ]
+        }
       },
       "Crop": {
         "type": "object",
@@ -5663,45 +5605,32 @@
       "Edge": {
         "type": "object",
         "properties": {
-          "from_taxonomy_id": {
+          "from": {
             "type": "string"
           },
           "relation": {
-            "type": "string",
-            "enum": [
-              "alias_of",
-              "artist_of",
-              "child",
-              "member_of",
-              "parent",
-              "synonym",
-              "voice_of"
-            ]
-          },
-          "to_taxonomy_id": {
             "type": "string"
           },
-          "source_revision": {
-            "type": "integer"
+          "to": {
+            "type": "string"
           }
         },
         "required": [
-          "from_taxonomy_id",
+          "from",
           "relation",
-          "to_taxonomy_id",
-          "source_revision"
+          "to"
         ]
       },
-      "EdgesWritten": {
+      "EdgeInput": {
         "type": "object",
         "properties": {
-          "edges": {
-            "type": "integer"
+          "relation": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
           }
-        },
-        "required": [
-          "edges"
-        ]
+        }
       },
       "Edit": {
         "type": "object",
@@ -5713,55 +5642,6 @@
             "type": "integer"
           }
         }
-      },
-      "EffectiveTag": {
-        "type": "object",
-        "properties": {
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "relation": {
-            "type": "string"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "content",
-              "version"
-            ]
-          }
-        },
-        "required": [
-          "taxonomy_id",
-          "kind",
-          "slug",
-          "relation",
-          "scope"
-        ]
-      },
-      "EffectiveTagsOf": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "$ref": "#/components/schemas/ContentRef"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EffectiveTag"
-            }
-          }
-        },
-        "required": [
-          "content",
-          "tags"
-        ]
       },
       "EncodeProgress": {
         "type": "object",
@@ -6134,18 +6014,341 @@
           "id": {
             "type": "string"
           },
-          "label": {
+          "kind": {
             "type": "string"
           },
-          "count": {
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "merged_into": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
             "type": "integer"
           }
         },
         "required": [
           "id",
-          "label",
-          "count"
+          "kind",
+          "slug",
+          "state",
+          "attributes",
+          "created_at",
+          "updated_at",
+          "revision"
         ]
+      },
+      "GroupCard": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name",
+          "count",
+          "attributes",
+          "created_at"
+        ]
+      },
+      "GroupDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "merged_into": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            }
+          },
+          "parent": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupCard"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            }
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Count"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "state",
+          "attributes",
+          "created_at",
+          "updated_at",
+          "revision",
+          "name",
+          "names",
+          "text",
+          "children",
+          "edges",
+          "counts"
+        ]
+      },
+      "GroupInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            }
+          }
+        }
+      },
+      "GroupPage": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupCard"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "groups"
+        ]
+      },
+      "GroupUpdate": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            }
+          }
+        }
       },
       "HeldItem": {
         "type": "object",
@@ -6350,28 +6553,73 @@
           "revision"
         ]
       },
-      "LanguageTotal": {
+      "MemberPage": {
         "type": "object",
         "properties": {
-          "public": {
-            "type": "integer"
-          },
-          "tiers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer"
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
             }
+          },
+          "next_cursor": {
+            "type": "string"
           }
         },
         "required": [
-          "public",
-          "tiers"
+          "members"
         ]
+      },
+      "MemberRef": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Membership": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "active_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "active_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "proposed"
+            ]
+          }
+        }
       },
       "MergeInput": {
         "type": "object",
         "properties": {
-          "into_taxonomy_id": {
+          "into": {
             "type": "string"
           }
         }
@@ -6379,32 +6627,32 @@
       "MergeReport": {
         "type": "object",
         "properties": {
-          "from_taxonomy_id": {
+          "from": {
             "type": "string"
           },
-          "into_taxonomy_id": {
+          "into": {
             "type": "string"
           },
-          "assignments_moved": {
+          "memberships_moved": {
             "type": "integer"
           },
           "names_moved": {
             "type": "integer"
           },
-          "edges_rewritten": {
+          "edges_moved": {
             "type": "integer"
           },
-          "assignments_merged": {
+          "groups_moved": {
             "type": "integer"
           }
         },
         "required": [
-          "from_taxonomy_id",
-          "into_taxonomy_id",
-          "assignments_moved",
+          "from",
+          "into",
+          "memberships_moved",
           "names_moved",
-          "edges_rewritten",
-          "assignments_merged"
+          "edges_moved",
+          "groups_moved"
         ]
       },
       "MultipartReply": {
@@ -6445,252 +6693,13 @@
           },
           "name": {
             "type": "string"
-          },
-          "normalized": {
-            "type": "string"
-          },
-          "source_revision": {
-            "type": "integer"
           }
         },
         "required": [
           "language",
           "kind",
-          "name",
-          "source_revision"
+          "name"
         ]
-      },
-      "Node": {
-        "type": "object",
-        "properties": {
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "tenant_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "source_revision": {
-            "type": "integer"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "taxonomy_id",
-          "tenant_id",
-          "kind",
-          "slug",
-          "state",
-          "source_revision",
-          "created_at",
-          "updated_at"
-        ]
-      },
-      "NodeDetail": {
-        "type": "object",
-        "properties": {
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "tenant_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "source_revision": {
-            "type": "integer"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Edge"
-            }
-          },
-          "counts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Count"
-            }
-          }
-        },
-        "required": [
-          "taxonomy_id",
-          "tenant_id",
-          "kind",
-          "slug",
-          "state",
-          "source_revision",
-          "created_at",
-          "updated_at",
-          "names",
-          "edges",
-          "counts"
-        ]
-      },
-      "NodeInput": {
-        "type": "object",
-        "properties": {
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "source_revision": {
-            "type": "integer"
-          }
-        }
-      },
-      "NodePage": {
-        "type": "object",
-        "properties": {
-          "nodes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NodeRow"
-            }
-          },
-          "next_cursor": {
-            "type": "string"
-          },
-          "total": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "nodes",
-          "total"
-        ]
-      },
-      "NodeRow": {
-        "type": "object",
-        "properties": {
-          "taxonomy_id": {
-            "type": "string"
-          },
-          "tenant_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "source_revision": {
-            "type": "integer"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "name": {
-            "type": "string"
-          },
-          "name_language": {
-            "type": "string"
-          },
-          "count": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "taxonomy_id",
-          "tenant_id",
-          "kind",
-          "slug",
-          "state",
-          "source_revision",
-          "created_at",
-          "updated_at",
-          "count"
-        ]
-      },
-      "NodeUpdate": {
-        "type": "object",
-        "properties": {
-          "slug": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "source_revision": {
-            "type": "integer"
-          }
-        }
       },
       "Op": {
         "type": "object",
@@ -6740,6 +6749,17 @@
           },
           "takedown": {
             "type": "boolean"
+          }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberRef"
+            }
           }
         }
       },
@@ -6897,7 +6917,7 @@
           "groups": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Group"
+              "$ref": "#/components/schemas/AnswerGroup"
             }
           },
           "my_answer": {
@@ -7688,6 +7708,23 @@
           "decision"
         ]
       },
+      "Text": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "sort_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ]
+      },
       "TicketBody": {
         "type": "object",
         "properties": {
@@ -7695,45 +7732,6 @@
             "type": "string"
           }
         }
-      },
-      "Total": {
-        "type": "object",
-        "properties": {
-          "public": {
-            "type": "integer"
-          },
-          "tiers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer"
-            }
-          },
-          "languages": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/LanguageTotal"
-            }
-          }
-        },
-        "required": [
-          "public",
-          "tiers",
-          "languages"
-        ]
-      },
-      "Totals": {
-        "type": "object",
-        "properties": {
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/Total"
-            }
-          }
-        },
-        "required": [
-          "kinds"
-        ]
       },
       "UploadRule": {
         "type": "object",
@@ -7797,6 +7795,17 @@
             "type": "number"
           }
         }
+      },
+      "Written": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count"
+        ]
       },
       "ErrorCode": {
         "type": "string",
@@ -7919,7 +7928,7 @@
     "upload": "/media/upload",
     "media": "/media",
     "codes": "/codes",
-    "taxonomy": "/taxonomy",
+    "groups": "/v1",
     "catalog": "/catalog",
     "notifications": "/notifications"
   },
@@ -7951,10 +7960,7 @@
     "module:codes": [
       "internal_error"
     ],
-    "module:taxonomy": [
-      "internal_error"
-    ],
-    "module:catalog": [
+    "module:groups": [
       "internal_error"
     ],
     "module:notifications": [
