@@ -554,46 +554,40 @@ work tags ∪ that version's tags (never a sibling's). Mark every version's
 alias changes. Ungrouped records (tags, artists, series) are one document per
 language referenced by their group id as `ContentRef{tag, <group id>}`.
 
-## Eligibility join (host-owned, trusted)
+## Discovery (`/v1`, route group `discovery`)
 
-`Eligibility{SQL, Args}` is trusted host SQL joined laterally to each
-candidate document (`sd.tenant_id`, `sd.content_kind`, `sd.content_id`,
-`sd.content_version_id`, `sd.language`) inside every retrieval route, before
-any limit:
+Hosts list, search and recommend only through these routes
+([docs/api/routes.md](docs/api/routes.md)); ContentKit applies access, site
+scope, content filters, listing and language itself, over
+`content_facets`, and answers one card per content item with the version
+that fits the reader (`display_language` first, then position).
 
-- return **no row** when the document is not eligible for this request;
-- return **one row** with `priority` (integer; lower is preferred among a
-  work's equal matches, e.g. `0` for the language default);
-- ownership, access, publication **and every requested version trait** must
-  hold on that one row. Never OR across sibling versions.
+- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `traits`,
+  `attribute=name:value` (declared filterable attributes), `released_on`
+  (`YYYY-MM-DD` or `YYYY-MM`, in `tz`), `view_status`
+  (`unseen|in_progress|completed`, signed in), `language` (only content
+  serving it), `display_language`, `mode` (`lock` marks locked cards,
+  `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
+  `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `position` in the first of `groups`, `random`), `cursor`, `limit`.
+- `GET /search` (`q`, the same filters; `relevance` personalized for a
+  signed-in reader, or any list sort of the best 1000 matches), `GET
+  /typeahead` (contents and groups).
+- `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
+  (co-engagement by default), admitted through the reader's visibility.
+- `GET /release-dates` (`by=day|month`, the list filters): counts and free
+  counts per date.
+- `GET|PUT /me/content-filters`: the configured `content_filters`, each the
+  reader may show or hide, and `include_deleted`.
+- `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
+  `session` names the browser), `POST /exposures`.
 
-ContentKit groups documents per work `(tenant, kind, content_id)` across the
-searched languages before `Offset`/`Limit`. Each hit returns the matched
-document's reference (`ContentID` = the work, `Version()` = the matched
-version or `""`) and `Language`; `Score` ranks the work by its best document in
-any searched language. Hosts re-check authorization while hydrating.
-
-## Filter policy (host-owned)
-
-- `FilterSQL`/`FilterArgs`: a WHERE fragment on `sd`, named args only.
-- Reserved arg names: `tenant`, `language`, `q`, `prefix`, `limit`, `kinds`,
-  `candidates`; names must be unique across `FilterArgs` and `Eligibility.Args`.
-- Never concatenate user input into either.
-
-## Pages and candidate depth
-
-- `Limit`: page size in works; `Offset`: works skipped; both apply after grouping.
-- `CandidateLimit`: the document window per language source before grouping.
-  Defaults to `max(100, 2*(Offset+Limit))`, capped at 10000. Pass the same
-  value on every page when a `Truncated` window must stay identical.
-- `HasMore` is true when works follow the page or when `Truncated`.
-
-## Language strictness
-
-- `LanguageModeExact` (default): requested language only.
-- `LanguageModeFallbackEnglish`: requested language + English; a work matched
-  in both is returned once, represented by its requested-language document;
-  ties never prefer English.
+A card carries title and path in the display language, cover renditions, the
+version (languages, traits, pages, duration), the version's groups with pages
+by kind, likes, favorites and all-time viewers, the access decision
+(`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
+reader's favorite and progress, `published_at` and attributes. Signal reads
+answer 501 `not_configured` without ClickHouse.
 
 ## Search documents
 
@@ -1267,7 +1261,7 @@ each host erases its own tenant.
 
 ## Discovery candidates
 
-`SimilarTo` and `Recommend` get candidates from one port:
+Similar and recommended lists get candidates from one port:
 
 ```go
 type Candidates interface { // package discovery
@@ -1276,56 +1270,28 @@ type Candidates interface { // package discovery
 }
 ```
 
-Candidates are ranked best-first; oversample past `q.Limit`. The hub then
-applies the same policy to every source: tenant and `ContentKinds`, never the
-anchor, seen works (per options), always disliked works, dedupe, limit, and the
-`Recommend` popularity fill. `Deps.Candidates` nil =
-`discovery.Engagement` (co-engagement seeded from the subject's top works).
-To switch sources, set that one field; wrap it in `Fallback` so errors and thin
-results fall back to engagement:
-
-```go
-engagement, err := discovery.NewEngagement(ch, "hub", "doujins")
-cfg.Candidates = discovery.Fallback{Primary: aiSource, Secondary: engagement, OnError: logErr}
-```
+Candidates are ranked best-first; oversample past `q.Limit`. The
+`Recommender` applies one policy to every source: tenant and kinds, never the
+anchor, seen and disliked works, the reader's visibility (admission in one
+batch), dedupe, limit, and the popularity fill. `Deps.Candidates` nil is
+`discovery.Engagement`; wrap a provider in `discovery.Fallback` so errors and
+thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-Hosts rank by a named policy, never by the default rank: resolve the configured
-name at startup and build one `popularity.Ranker` per hub.
-
-```go
-policy, err := popularity.ByName(cfg.PopularityPolicy) // "" = v1; unknown names refuse startup
-ranker, err := popularity.New(popularity.Config{Source: hub, Policy: policy, Cache: cache, Catalog: catalog})
-
-window, err := popularity.WindowForPeriod(period, time.Now()) // 7d|30d|90d|365d|all, else error
-top, err := ranker.Popular(ctx, "gallery", window, offset+limit)     // ClickHouse RankExpr, global; slice for the page
-scores, err := ranker.Scores(ctx, "gallery", artistGalleryIDs, window) // Go over Metrics: host-selected candidates
-artists, err := ranker.Groups(ctx, "gallery", "artist", window)       // member sums through the Catalog port
-```
-
-- `Hit` carries the score next to the raw metrics: show `Viewers` and
-  `MeanEngagement()` as public counts, never anything derived from the score.
-- Register `popularity.SessionScorer` (or your own `signal.Scorer`) per content
-  kind so session scores are coverage of the selected version × dwell.
-- `Catalog.Memberships(tenant, contentKind, groupKind, ids)` maps ranked
-  works to their group ids; `*groups.Store` implements it. ContentKit never
-  records a signal against a group.
-- Cache keys carry tenant, policy name, kind, window and bounds; two policies
-  sharing one cache never read each other's entries.
-- `Popular` serves at most `Config.MaxDepth` works (default 2000) and reads
-  power-of-two prefixes, so a request-chosen offset can neither deepen a read
-  nor add cache entries. `popularity.NewMemoryCache(maxBytes)` is LRU within
-  its byte budget; a host cache passed as `Cache` must be bounded too.
-
-See [docs/popularity-policy.md](docs/popularity-policy.md) for the formula,
-priors, the judged fixture and the host adoption steps.
+The engine's `contentkit_popularity` job (hourly, with ClickHouse) copies
+`popularity.PolicyV1` scores per period (`7d`, `30d`, `90d`, `365d`, `all`),
+each window's rating (Wilson lower bound of the subjects whose feedback is
+positive) and all-time viewers into `content_facets.popularity`, so a filtered
+`popular` or `top_rated` sort is one Postgres query. A view is scored by
+`popularity.SessionScore` against its version: pages (reader kinds, 8 s of
+dwell a page), seconds (player kinds) or scroll percent (post kinds). See
+[docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
 
 ## Migration checklist
 
 - Create and reuse one `contentkit.Engine` per tenant.
-- Index per-version documents; move visibility/trait policy into `Eligibility`.
-- Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
+- Read lists, search and recommendations through the discovery routes; send views as `POST /signals`.
 - `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.

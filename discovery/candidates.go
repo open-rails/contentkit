@@ -1,8 +1,3 @@
-// Package discovery produces "similar to this work" and "for you" lists. A
-// Candidates source generates ranked candidates; Recommender applies the
-// shared policy (tenant, kinds, anchor, seen and disliked exclusions, dedupe,
-// limit, popularity fill) so every source gets it. Engagement is the default
-// co-engagement source; Fallback composes a new source over it.
 package discovery
 
 import (
@@ -12,7 +7,11 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// Candidates generates ranked candidate works. Order is rank. Implementations
+// Candidates generates ranked candidate works for similar and "for you"
+// lists; Recommender applies the shared policy (tenant, kinds, anchor, seen
+// and disliked exclusions, admission, dedupe, limit, popularity fill) so
+// every source gets it. Engagement is the default co-engagement source;
+// Fallback composes a new source over it. Order is rank. Implementations
 // should oversample past Limit: Recommender filters afterward and truncates.
 type Candidates interface {
 	Similar(ctx context.Context, anchor contentref.ContentRef, q Query) ([]Candidate, error)

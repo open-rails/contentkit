@@ -86,6 +86,48 @@ export interface BanNotice {
   until?: string;
 }
 
+export interface Card {
+  id: string;
+  kind: string;
+  code: string;
+  path: string;
+  title: string;
+  language: string;
+  cover: PublicRendition[];
+  version: CardVersion;
+  groups: Record<string, Chip[]>;
+  counts: Counts;
+  access: CardAccess;
+  viewer?: ViewerState;
+  published_at?: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface CardAccess {
+  allowed: boolean;
+  unknown?: boolean;
+  sell?: string[];
+  requires?: string;
+  preview?: Preview;
+  free_after?: string;
+}
+
+export interface CardVersion {
+  id: string;
+  languages: string[];
+  traits: string[];
+  label?: string;
+  pages?: number;
+  duration_ms?: number;
+}
+
+export interface Chip {
+  id: string;
+  slug: string;
+  name: string;
+  path?: string;
+}
+
 export interface Comment {
   id: string;
   reply_to_id?: string;
@@ -162,6 +204,24 @@ export interface ContentFilter {
   labels?: Record<string, string>;
 }
 
+export interface ContentFilterState {
+  group: GroupCard;
+  label: string;
+  default_visible: boolean;
+  visible: boolean;
+  overridden: boolean;
+}
+
+export interface ContentFilters {
+  filters: ContentFilterState[];
+  include_deleted: boolean;
+}
+
+export interface ContentFiltersUpdate {
+  filters: FilterSetting[];
+  include_deleted: boolean;
+}
+
 export interface ContentGroups {
   kinds?: string[];
   memberships: Membership[];
@@ -179,6 +239,11 @@ export interface ContentModel {
   kinds: Record<string, Kind>;
   group_kinds: Record<string, GroupKind>;
   content_filters: ContentFilter[];
+}
+
+export interface ContentPage {
+  contents: Card[];
+  next_cursor?: string;
 }
 
 export interface ContentRef {
@@ -200,6 +265,12 @@ export interface Count {
   count: number;
 }
 
+export interface Counts {
+  likes: number;
+  favorites: number;
+  views: number;
+}
+
 export interface Cover {
   image?: string;
   content_id?: string;
@@ -212,6 +283,12 @@ export interface Crop {
   y: number;
   w: number;
   h: number;
+}
+
+export interface DateCount {
+  date: string;
+  count: number;
+  free: number;
 }
 
 export interface Edge {
@@ -270,6 +347,23 @@ export interface ErrorReply {
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
+}
+
+export interface ExposureInput {
+  render_id: string;
+  stage: string;
+  revision?: number;
+  query_id?: string;
+  surface?: string;
+  ranker?: string;
+  language?: string;
+  occurred_at?: string;
+  shown: Placement[];
+}
+
+export interface Exposures {
+  session?: string;
+  exposures: ExposureInput[];
 }
 
 export interface Failure {
@@ -335,6 +429,11 @@ export interface FileInfo {
   failed?: Failure;
   editor_url?: string;
   progress?: EncodeProgress;
+}
+
+export interface FilterSetting {
+  group_id: string;
+  visible: boolean;
 }
 
 export interface ForegroundCue {
@@ -685,6 +784,11 @@ export interface Pending {
   status: string;
 }
 
+export interface Placement {
+  content_id: string;
+  position: number;
+}
+
 export interface PlanPage {
   name: string;
   w: number;
@@ -865,6 +969,11 @@ export interface PresignReply {
   process_on_upload?: boolean;
 }
 
+export interface Preview {
+  pages?: number;
+  segments?: number;
+}
+
 export interface PublicImage {
   from: string;
   preset: string;
@@ -949,6 +1058,11 @@ export interface RefBody {
   version?: string;
 }
 
+export interface ReleaseDates {
+  dates: DateCount[];
+  next_cursor?: string;
+}
+
 export interface Rendition {
   url: string;
   w: number;
@@ -987,6 +1101,26 @@ export interface ReviewOutcome {
   decision: "approve" | "reject" | "review";
 }
 
+export interface SignalInput {
+  content_id: string;
+  version_id?: string;
+  type: string;
+  event_id: string;
+  revision?: number;
+  occurred_at: string;
+  duration_s?: number;
+  progress?: number;
+  resume?: string;
+  render_id?: string;
+  surface?: string;
+  position?: number;
+}
+
+export interface Signals {
+  session?: string;
+  signals: SignalInput[];
+}
+
 export interface Target {
   kind: "content" | "group" | "version";
   id: string;
@@ -1008,6 +1142,11 @@ export interface Text {
 
 export interface TicketBody {
   ticket: string;
+}
+
+export interface Typeahead {
+  contents: Card[];
+  groups: GroupCard[];
 }
 
 export interface UploadRule {
@@ -1035,6 +1174,16 @@ export interface VideoLimits {
   max_fps?: number;
   max_pixels?: number;
   max_work?: number;
+}
+
+export interface ViewerState {
+  favorited: boolean;
+  seen: boolean;
+  completed: boolean;
+  progress: number;
+  progress_max: number;
+  resume?: string;
+  last_view_at?: string;
 }
 
 export interface Written {

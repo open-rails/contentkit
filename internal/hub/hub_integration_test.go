@@ -37,20 +37,6 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		CH:         ch,
 		CHDatabase: hubTestCHDB,
 		Tenant:     testTenant,
-		Scorers: map[string]signal.Scorer{
-			"gallery": signal.ScorerFunc(func(_ context.Context, s signal.Signal) (signal.Scored, error) {
-				score := int16(0)
-				if s.ProgressMax > 0 {
-					score = int16(100 * s.Progress / s.ProgressMax)
-				}
-				return signal.Scored{
-					Score:       score,
-					Progress:    s.Progress,
-					ProgressMax: s.ProgressMax,
-					Completed:   s.ProgressMax > 0 && 10*s.Progress >= 9*s.ProgressMax,
-				}, nil
-			}),
-		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -61,7 +47,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 
 	// Record signals: u1 completes g1; many anons view g2 (popular); a0 views
 	// both so g2 is co-engaged with g1.
-	g1View := signal.Signal{ContentRef: g1, Subject: user, Type: signal.TypeView, EventID: "u1-g1", OccurredAt: day(1, 10), Progress: 20, ProgressMax: 20, Resume: "p:20"}
+	g1View := signal.Signal{ContentRef: g1, Subject: user, Type: signal.TypeView, EventID: "u1-g1", OccurredAt: day(1, 10), Progress: 20, ProgressMax: 20, Score: 100, Completed: true, Resume: "p:20"}
 	batch := []signal.Signal{g1View}
 	for i := 0; i < 8; i++ {
 		batch = append(batch, signal.Signal{ContentRef: g2, Subject: signal.Subject{AnonKey: fmt.Sprintf("a%d", i)}, Type: signal.TypeView,
@@ -72,13 +58,13 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		t.Fatalf("RecordSignals: %v", err)
 	}
 
-	// Scorer applied: g1 state must be completed with score 100.
+	// g1's state is completed with score 100.
 	states, err := hub.States(ctx, user, []ContentRef{g1})
 	if err != nil {
 		t.Fatalf("States: %v", err)
 	}
 	if s := states[g1.Key()]; !s.Completed || s.LastScore != 100 || s.Resume != "p:20" {
-		t.Fatalf("scorer not applied: %+v", s)
+		t.Fatalf("state: %+v", s)
 	}
 
 	// History.
@@ -132,30 +118,6 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	}
 	if rank[cid(2)] > rank[cid(1)] {
 		t.Fatalf("personalization must rank popular g2 above completed g1: %+v", pers)
-	}
-
-	// SimilarTo: co-engagement from g1 yields g2 (a0 read both), never the anchor.
-	sim, err := hub.SimilarTo(ctx, g1, SimilarOptions{})
-	if err != nil {
-		t.Fatalf("SimilarTo: %v", err)
-	}
-	if len(sim) != 1 || !sim[0].Equal(g2) {
-		t.Fatalf("similar: %+v", sim)
-	}
-
-	// Recommend: u1's seed is g1 -> co-engagement suggests g2; g1 (seen) must
-	// never be recommended.
-	recs, err := hub.Recommend(ctx, user, RecommendOptions{ContentKinds: []string{"gallery"}, Limit: 5})
-	if err != nil {
-		t.Fatalf("Recommend: %v", err)
-	}
-	if len(recs) == 0 || !recs[0].Equal(g2) {
-		t.Fatalf("g2 should lead recs: %+v", recs)
-	}
-	for _, r := range recs {
-		if r.Equal(g1) {
-			t.Fatalf("seen work recommended: %+v", recs)
-		}
 	}
 
 	// Replay idempotency through the hub: re-record u1's g1 session.

@@ -114,14 +114,14 @@ func TestEvalRunSuite_Integration(t *testing.T) {
 }
 
 // TestEvalConfigDiff_Integration proves the eval can compare two configurations
-// side by side: a host filter that hides gallery 1 regresses recall on the
+// side by side: an eligibility join that hides gallery 1 regresses recall on the
 // cases that judge it, and the comparator flags it.
 func TestEvalConfigDiff_Integration(t *testing.T) {
 	ctx, client := newEvalTestClient(t)
 	suite := loadGoldenSuite(t)
 
 	full := runGolden(ctx, t, client, suite, "keyword", SearchOptions{})
-	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{FilterSQL: "sd.content_id <> @hidden", FilterArgs: map[string]any{"hidden": cid(1)}})
+	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{Eligibility: &Eligibility{SQL: "SELECT 0 AS priority WHERE sd.content_id <> @hidden", Args: map[string]any{"hidden": cid(1)}}})
 	if full.Metrics.RecallAtK != 1 || filtered.Metrics.RecallAtK >= 1 {
 		t.Fatalf("recall full=%v filtered=%v", full.Metrics.RecallAtK, filtered.Metrics.RecallAtK)
 	}

@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (103). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (115). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -155,6 +155,23 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/v1/groups/{id}/join` | user | — | 200 `GroupJoin` | Leaves a group joined free; a bought membership stays. |
 | GET | `/v1/me/library` | user | — | 200 `LibraryPage` | The content the viewer bought, newest first, deleted content included. Query: `language`, `cursor`, `limit`. |
 | GET | `/v1/offers` | staff `root:offers:write` | — | 200 `OfferPage` | Offers, newest first, with their OpenRails sync state. Query: `state`, `unsynced`, `cursor`, `limit`. |
+
+## Discovery: lists, search, similar and recommended contents, release dates, content filters, history and signals (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/contents` | public | — | 200 `ContentPage` | Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `cursor`, `limit`. |
+| GET | `/v1/search` | public | — | 200 `ContentPage` | Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise. Query: `q`, `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `personalize`, `cursor`, `limit`. |
+| GET | `/v1/typeahead` | public | — | 200 `Typeahead` | Suggests contents and groups while the reader types, tolerating typos and partial words. Query: `q`, `kind`, `group_kinds`, `language`, `display_language`, `mode`, `limit`. |
+| GET | `/v1/contents/{id}/similar` | public | — | 200 `ContentPage` | Contents like this one (co-engagement, or the configured source), of its kind unless kind names another. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/recommendations` | user | — | 200 `ContentPage` | Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/release-dates` | public | — | 200 `ReleaseDates` | The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free. Query: `by`, `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
+| GET | `/v1/me/content-filters` | user | — | 200 `ContentFilters` | The reader's content filters: each configured filter's group, default and setting; every read applies them. Query: `language`. |
+| PUT | `/v1/me/content-filters` | user | `ContentFiltersUpdate` | 200 `ContentFilters` | Replaces the reader's content filter settings and whether lists include deleted content they hold. Query: `language`. |
+| GET | `/v1/me/history` | user | — | 200 `ContentPage` | The contents the reader engaged with, most recent first, with their progress. Query: `kind`, `status`, `card_groups`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
+| DELETE | `/v1/me/history` | user | — | 204 — | Erases the reader's history: of one content item, one kind or everything. Query: `kind`, `content_id`. |
+| POST | `/v1/signals` | public | `Signals` | 204 — | Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version. |
+| POST | `/v1/exposures` | public | `Exposures` | 204 — | Records result lists a client served, rendered or showed, for click attribution. |
 
 ## Error codes
 
