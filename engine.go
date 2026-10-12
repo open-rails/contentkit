@@ -88,6 +88,7 @@ type Engine struct {
 }
 
 type engineMedia struct {
+	folders  bool // the registry declares the post and poll kinds
 	reg      *media.Registry
 	store    media.Store
 	jobs     *media.Jobs
@@ -268,6 +269,11 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	reg := mc.Config
 	reg.Hooks = media.Hooks{Resolver: e.resolver, CanUpload: e.uploader, PurgePublic: deps.PurgePublic}
 	m := &engineMedia{store: deps.Store}
+	declared := map[string]bool{}
+	for _, k := range mc.Kinds {
+		declared[k.Name] = true
+	}
+	m.folders = declared[postFolder] && declared[pollFolder]
 	var err error
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err

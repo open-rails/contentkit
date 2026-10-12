@@ -15,9 +15,9 @@ const (
 )
 
 // owns reports a reference ContentKit answers for itself: post and poll
-// images, with media on.
+// images, when the registry declares their kinds.
 func (e *Engine) owns(ref contentref.ContentRef) bool {
-	return e.media != nil && (ref.ContentKind == postFolder || ref.ContentKind == pollFolder)
+	return e.media != nil && e.media.folders && (ref.ContentKind == postFolder || ref.ContentKind == pollFolder)
 }
 
 // engineResolver answers for ContentKit's own items and asks the host's

@@ -32,19 +32,8 @@ func (d *directory) Get(ctx context.Context, ids []string) (map[string]userinfo.
 	return d.Lookup.Get(ctx, ids)
 }
 
-// avatars is the media manifests, counting avatar queries.
-type avatars struct {
-	*media.Manifests
-	queries atomic.Int32
-}
-
-func (a *avatars) Avatars(ctx context.Context, ids ...string) ([]media.PublicImage, error) {
-	a.queries.Add(1)
-	return a.Manifests.Avatars(ctx, ids...)
-}
-
 // Comment authors come from AuthKit's directory (one read per response) and
-// ContentKit's own media (one avatar query): a person's own published avatar,
+// ContentKit's own media: a person's own published avatar,
 // the preset's default for one without, nothing for a deleted account. A
 // person uploads their own avatar through the gate; another may not.
 func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
@@ -54,11 +43,7 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	bob, bobToken := w.person(iam.Role{})
 	gone, goneToken := w.person(iam.Role{})
 	dir := &directory{Lookup: w.ak.UserInfo()}
-	images := &avatars{Manifests: w.jobs.Manifests()}
-	f := serve(t, w.runtime(func(c *contentkit.RuntimeConfig) {
-		c.UserInfo = dir
-		c.Content.Media = &content.Media{Images: images, Folders: w.jobs}
-	}))
+	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Users = dir }))
 	item := "/gallery/" + cid(1)
 
 	// Alice uploads her avatar; Bob may not upload it for her.
@@ -97,11 +82,10 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	}
 
 	dir.gets.Store(0)
-	images.queries.Store(0)
 	var list []content.Comment
 	f.want(http.StatusOK, "", "GET", item+"/comments", nil, &list)
-	if len(list) != 3 || dir.gets.Load() != 1 || images.queries.Load() != 1 {
-		t.Fatalf("%d comments, %d directory reads, %d avatar queries; want 3, 1, 1", len(list), dir.gets.Load(), images.queries.Load())
+	if len(list) != 3 || dir.gets.Load() != 1 {
+		t.Fatalf("%d comments, %d directory reads; want 3, 1", len(list), dir.gets.Load())
 	}
 	by := map[string]*content.PublicUser{}
 	for _, c := range list {

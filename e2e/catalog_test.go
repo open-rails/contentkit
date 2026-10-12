@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
@@ -22,6 +23,7 @@ import (
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/taxonomy"
 )
 
@@ -35,7 +37,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
 	anon := ""
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	item := "/gallery/" + cid(1)
 
 	// What signed-out visitors may do: nothing here (the default).
@@ -54,8 +56,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/posts/admin", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "PATCH", "/posts/"+post.ID, content.PostInput{Excerpt: ptr("Short")}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
-	f.want(http.StatusNotImplemented, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
 
 	// Codes resolve the post's code.
 	var resolved contenturl.Resolved
@@ -112,6 +114,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, user, "PUT", "/notifications/"+id+"/dismiss", nil, nil)
 	f.want(http.StatusOK, user, "GET", "/notifications/inbox?dismissed=true", nil, nil)
 	f.want(http.StatusOK, user, "DELETE", "/notifications/"+id+"/dismiss", nil, nil)
+	// The host's service publishes; people may not.
+	welcome := notification.Publication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: u.ID},
+		Origin: notify.Origin{System: "host", Scope: w.tenant, ID: "welcome"}, Kind: "host.welcome", CreatedAt: time.Now().UTC()}}}
+	var published notification.Published
+	f.want(http.StatusOK, staff, "POST", "/notifications/publish", welcome, &published)
+	if len(published.Items) != 1 {
+		t.Fatalf("published %+v", published)
+	}
+	f.want(http.StatusForbidden, user, "POST", "/notifications/publish", welcome, nil)
 
 	// Reactions on host content.
 	for _, verb := range []string{"like", "dislike"} {
@@ -141,8 +152,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	var option content.PollOption
 	f.want(http.StatusCreated, staff, "POST", "/polls/"+poll.ID+"/options", content.PollOptionPatch{Label: ptr("C")}, &option)
 	f.want(http.StatusOK, staff, "PATCH", "/polls/"+poll.ID+"/options/"+option.ID, content.PollOptionPatch{Position: ptr(5)}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/polls/"+poll.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/polls/"+poll.ID+"/options/"+option.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/polls/"+poll.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/polls/"+poll.ID+"/options/"+option.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/polls/"+poll.ID+"/options/"+option.ID, nil, nil)
 	f.want(http.StatusBadRequest, staff, "DELETE", "/polls/"+poll.ID+"/options/"+poll.Options[0].ID, nil, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/polls/"+poll.ID, nil, nil)
@@ -281,7 +292,7 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 2 || presets[0].Kind != "gallery" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+	if len(presets) != 4 || presets[0].Kind != "gallery" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
 		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" {
 		t.Fatalf("presets %+v", presets)
 	}
