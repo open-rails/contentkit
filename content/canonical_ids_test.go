@@ -9,17 +9,18 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // foldingResolver finds content whatever the letter case of its id and keeps
 // the requested reference, like a host resolving `WHERE id = $1::uuid`.
 type foldingResolver map[string]bool
 
-func (f foldingResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (f foldingResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
 		if f[strings.ToLower(r.ContentID)] {
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+			out[r.Key()] = resolve.Resolution{Visible: true, Accessible: true}
 		}
 	}
 	return out, nil

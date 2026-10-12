@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
@@ -103,7 +104,7 @@ func (denyAll) Can(context.Context, access.Actor, string) (bool, error) { return
 // calls.
 type fakeResolver struct {
 	mu      sync.Mutex
-	entries map[string]access.Resolution
+	entries map[string]resolve.Resolution
 	calls   int
 }
 
@@ -111,9 +112,9 @@ func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.entries == nil {
-		f.entries = map[string]access.Resolution{}
+		f.entries = map[string]resolve.Resolution{}
 	}
-	f.entries[kind+":"+id] = access.Resolution{Visible: visible, Accessible: accessible}
+	f.entries[kind+":"+id] = resolve.Resolution{Visible: visible, Accessible: accessible}
 }
 
 // setCanonical is set for a visible, accessible route id the resolver maps to
@@ -122,11 +123,11 @@ func (f *fakeResolver) setCanonical(kind, id, canonical string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.entries == nil {
-		f.entries = map[string]access.Resolution{}
+		f.entries = map[string]resolve.Resolution{}
 	}
-	f.entries[kind+":"+id] = access.Resolution{Visible: true, Accessible: true, Ref: contentref.New(testTenant, kind, canonical)}
+	f.entries[kind+":"+id] = resolve.Resolution{Visible: true, Accessible: true, Ref: contentref.New(testTenant, kind, canonical)}
 	// The canonical reference resolves too, as a real resolver's does.
-	f.entries[kind+":"+canonical] = access.Resolution{Visible: true, Accessible: true}
+	f.entries[kind+":"+canonical] = resolve.Resolution{Visible: true, Accessible: true}
 }
 
 // setOwned is set for a visible, accessible target owned by owner.
@@ -134,16 +135,16 @@ func (f *fakeResolver) setOwned(kind, id, owner string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.entries == nil {
-		f.entries = map[string]access.Resolution{}
+		f.entries = map[string]resolve.Resolution{}
 	}
-	f.entries[kind+":"+id] = access.Resolution{Visible: true, Accessible: true, Owner: owner}
+	f.entries[kind+":"+id] = resolve.Resolution{Visible: true, Accessible: true, Owner: owner}
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	out := map[contentref.ContentKey]access.Resolution{}
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
 		if res, ok := f.entries[r.ContentKind+":"+r.ContentID]; ok {
 			if res.Ref.ContentID != "" {

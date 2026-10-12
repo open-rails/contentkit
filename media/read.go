@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -142,7 +143,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 // sign every URL through it.
 type Grant struct {
 	Item       Item
-	Resolution access.Resolution
+	Resolution resolve.Resolution
 	Manifest   *Manifest
 	Expires    time.Time
 	item       string // the item token; "" without access
@@ -161,7 +162,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	res, err := access.ResolveOne(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
+	res, err := resolve.One(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
 	}

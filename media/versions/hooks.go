@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -20,9 +21,9 @@ type resolver struct{ s *Service }
 // publishing kind's originals reach viewers through published items alone.
 // A published item shows while its publication is current and its pages
 // are released, and opens like its version, or within the free segments.
-func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	s := r.s
-	out := map[contentref.ContentKey]access.Resolution{}
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	var owned, published, grouped, others []contentref.ContentRef
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
@@ -35,7 +36,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		case s.isGroupKind(k.Name):
 			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
-			out[ref.Key()] = access.Resolution{Visible: true, Editor: actor.Person() && actor.ID == ref.ContentID}
+			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: actor.Person() && actor.ID == ref.ContentID}
 		default:
 			others = append(others, ref)
 		}
@@ -93,7 +94,7 @@ WHERE t.version = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_
 	return out, rows.Err()
 }
 
-func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]access.Resolution) error {
+func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
 	found, err := s.existing(ctx, refs)
 	if err != nil || len(found) == 0 {
 		return err
@@ -114,7 +115,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 			continue
 		}
 		k, _ := s.reg.Kind(ref.ContentKind)
-		out[ref.Key()] = access.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
+		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
 			Accessible: r.Accessible && ref.Version() != "" && k.VersionKind().Publish == nil}
 	}
 	return nil
@@ -130,7 +131,7 @@ type pubItem struct {
 	pages                 int
 }
 
-func (s *Service) resolvePublished(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]access.Resolution) error {
+func (s *Service) resolvePublished(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -168,9 +169,9 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 		d := ds[it.version]
 		switch {
 		case it.kind == kindPlayback && d.whole():
-			out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: d.res.Editor}
+			out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: d.res.Editor}
 		case it.kind == kindPages && d.shows(it.end):
-			out[ref.Key()] = access.Resolution{Visible: true, Accessible: d.opens(it.end), Editor: d.res.Editor}
+			out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: d.opens(it.end), Editor: d.res.Editor}
 		}
 	}
 	return nil

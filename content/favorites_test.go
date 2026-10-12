@@ -12,6 +12,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -235,7 +236,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 // Interactions are gated by Visible and Accessible: an item the actor can
 // only see takes a favorite, not a reaction.
 func TestInteractionsGateOnAccessible(t *testing.T) {
-	res := &fakeResolver{entries: map[string]access.Resolution{
+	res := &fakeResolver{entries: map[string]resolve.Resolution{
 		"widget:" + cid(1): {Visible: true},
 		"widget:" + cid(2): {Visible: true, Accessible: true},
 	}}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -76,7 +77,7 @@ type PlanTrack struct {
 // decision is one viewer's verdict on a span of a version's pages: the
 // resolver's on the version, its segments' release and its rule's preview.
 type decision struct {
-	res     access.Resolution
+	res     resolve.Resolution
 	preview access.Preview
 	segs    []segment
 	pages   int

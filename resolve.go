@@ -6,6 +6,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -16,7 +17,7 @@ const pollFolder = "poll"
 // catalog nor groups own, through the content module.
 type pollMedia struct{ e *Engine }
 
-func (p pollMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (p pollMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	var polls []contentref.ContentRef
 	for _, ref := range refs {
 		if ref.ContentKind == pollFolder && p.e.media.polls {
@@ -24,7 +25,7 @@ func (p pollMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, ac
 		}
 	}
 	if len(polls) == 0 {
-		return map[contentref.ContentKey]access.Resolution{}, nil
+		return map[contentref.ContentKey]resolve.Resolution{}, nil
 	}
 	return p.e.content.MediaResolver().Resolve(ctx, polls, actor)
 }

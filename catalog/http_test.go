@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -266,6 +267,6 @@ func TestModerationHoldIntegration(t *testing.T) {
 // content runtime it serves.
 type lateResolver struct{ s *Store }
 
-func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	return l.s.Resolver().Resolve(ctx, refs, a)
 }

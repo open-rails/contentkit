@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
 )
@@ -48,7 +49,7 @@ type Options struct {
 	Visibility Visibility
 	// Resolver decides direct reads: the anchor of a similar list and the
 	// content a signal names.
-	Resolver access.ContentResolver
+	Resolver resolve.Resolver
 	// Gate decides each card's access.
 	Gate *access.Gate
 	// Groups names the groups on cards and in typeahead.

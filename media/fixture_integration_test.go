@@ -22,6 +22,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -145,31 +146,31 @@ func miniRegistry(t testing.TB, ns string) *media.Registry {
 	return r
 }
 
-// resolver is the app's ContentResolver: verdicts per item id; anonymous
+// resolver is the app's resolve.Resolver: verdicts per item id; anonymous
 // viewers get anon.
 type resolver struct {
 	mu       sync.Mutex
 	calls    atomic.Int32
-	verdicts map[string]access.Resolution
-	anon     map[string]access.Resolution
+	verdicts map[string]resolve.Resolution
+	anon     map[string]resolve.Resolution
 	err      error
 }
 
-func (r *resolver) set(id string, res access.Resolution) {
+func (r *resolver) set(id string, res resolve.Resolution) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.verdicts[id] = res
-	r.anon[id] = access.Resolution{Visible: res.Visible, Accessible: res.Accessible}
+	r.anon[id] = resolve.Resolution{Visible: res.Visible, Accessible: res.Accessible}
 }
 
-func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	r.calls.Add(1)
 	if r.err != nil {
 		return nil, r.err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := map[contentref.ContentKey]access.Resolution{}
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, ref := range refs {
 		if a.Anonymous {
 			out[ref.Key()] = r.anon[ref.ContentID]
@@ -259,7 +260,7 @@ func newFixture(t *testing.T) *fixture {
 func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fixture {
 	t.Helper()
 	f := &fixture{t: t, env: env, ns: env.Tenant, shared: "acct" + strings.ReplaceAll(env.Tenant, "-", ""),
-		res:  &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}},
+		res:  &resolver{verdicts: map[string]resolve.Resolution{}, anon: map[string]resolve.Resolution{}},
 		auth: &authorizer{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
 	t.Cleanup(func() { f.drop(f.shared + "/") })
 	cfg := testConfig(f.ns, f.shared)
@@ -330,7 +331,7 @@ func (f *fixture) ref(kind string, n int) contentref.ContentRef {
 
 // visible makes item n visible to everyone with full access, and editable.
 func (f *fixture) visible(n int) {
-	f.res.set(cid(n), access.Resolution{Visible: true, Accessible: true, Editor: true})
+	f.res.set(cid(n), resolve.Resolution{Visible: true, Accessible: true, Editor: true})
 }
 
 // upload presigns body for path and PUTs it like the browser does,

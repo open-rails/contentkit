@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 )
@@ -197,12 +198,12 @@ func TestMediaResolverShowsPollFolders(t *testing.T) {
 		t.Fatalf("create poll: %d", code)
 	}
 	refs := []contentref.ContentRef{rt.Ref("poll", poll.ID), rt.Ref("poll", contentref.NewID()), rt.Ref("gallery", poll.ID), contentref.New("other", "poll", poll.ID)}
-	full := func(editor bool) access.Resolution {
-		return access.Resolution{Visible: true, Accessible: true, Editor: editor}
+	full := func(editor bool) resolve.Resolution {
+		return resolve.Resolution{Visible: true, Accessible: true, Editor: editor}
 	}
 	for _, c := range []struct {
 		actor access.Actor
-		want  access.Resolution
+		want  resolve.Resolution
 	}{{access.Actor{Anonymous: true}, full(false)}, {access.Actor{ID: "reader"}, full(false)}, {mediaAdmin, full(true)}} {
 		got, err := rt.MediaResolver().Resolve(ctx, refs, c.actor)
 		if err != nil {

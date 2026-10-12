@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // comments is the threaded comment module over a content key. Threading is
@@ -561,7 +562,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	}
 	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
 		// The content's owner, when the resolver still answers for it.
-		res, err := access.ResolveOne(ctx, c.rt.resolver, target.ref, actor)
+		res, err := resolve.One(ctx, c.rt.resolver, target.ref, actor)
 		if err != nil {
 			return Comment{}, err
 		}

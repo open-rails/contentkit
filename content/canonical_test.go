@@ -7,18 +7,19 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // aliasResolver canonicalizes any alias of gallery 123 ("slug-123", "123") to
 // its canonical id; the tenant is left for the runtime to pin.
 type aliasResolver struct{}
 
-func (aliasResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (aliasResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
 		switch r.ContentID {
 		case "slug-123", "123", cid(123):
-			out[r.Key()] = access.Resolution{Ref: contentref.New("", r.ContentKind, cid(123)), Visible: true, Accessible: true}
+			out[r.Key()] = resolve.Resolution{Ref: contentref.New("", r.ContentKind, cid(123)), Visible: true, Accessible: true}
 		}
 	}
 	return out, nil
@@ -68,14 +69,14 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 // is a distinct key from the work's.
 type versionResolver struct{}
 
-func (versionResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (versionResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
 		switch r.ContentID {
 		case cid(1):
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+			out[r.Key()] = resolve.Resolution{Visible: true, Accessible: true}
 		case cid(1) + "@v2":
-			out[r.Key()] = access.Resolution{Ref: contentref.NewVersion(r.TenantID, r.ContentKind, cid(1), "v2"), Visible: true, Accessible: true}
+			out[r.Key()] = resolve.Resolution{Ref: contentref.NewVersion(r.TenantID, r.ContentKind, cid(1), "v2"), Visible: true, Accessible: true}
 		}
 	}
 	return out, nil
@@ -108,10 +109,10 @@ func TestCanonicalRef_VersionIsADistinctKey(t *testing.T) {
 // foreignResolver answers with another tenant's reference.
 type foreignResolver struct{}
 
-func (foreignResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (foreignResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
-		out[r.Key()] = access.Resolution{Ref: contentref.New("other", r.ContentKind, r.ContentID), Visible: true, Accessible: true}
+		out[r.Key()] = resolve.Resolution{Ref: contentref.New("other", r.ContentKind, r.ContentID), Visible: true, Accessible: true}
 	}
 	return out, nil
 }

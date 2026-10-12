@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // Config is the app's media registry (NewRegistry).
@@ -286,7 +287,7 @@ func Rung(n int) *MP4 { return &MP4{Rung: n} }
 type Hooks struct {
 	// Resolver says who may see an item: the read API, Expose and a new
 	// item's first commit (Uploads) use it, and both require it.
-	Resolver access.ContentResolver
+	Resolver resolve.Resolver
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
 	// PurgePublic hears of public URLs overwritten, deleted or first

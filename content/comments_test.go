@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -139,15 +140,15 @@ func TestComments_AccessGating(t *testing.T) {
 
 type commentThreadResolver struct {
 	defaultVersion string
-	versions       map[string]access.Resolution
+	versions       map[string]resolve.Resolution
 	err            error
 }
 
-func (r *commentThreadResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (r *commentThreadResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	out := make(map[contentref.ContentKey]access.Resolution)
+	out := make(map[contentref.ContentKey]resolve.Resolution)
 	for _, requested := range refs {
 		id, version, _ := strings.Cut(requested.ContentID, ":")
 		if requested.ContentVersionID != nil {
@@ -165,7 +166,7 @@ func (r *commentThreadResolver) Resolve(_ context.Context, refs []contentref.Con
 }
 
 func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
-	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
 		"en": {Visible: true, Accessible: true},
 		"ja": {Visible: true, Accessible: true},
 	}}
@@ -176,12 +177,12 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 	h := rt.Handler()
 	path := "/comments/" + root.ID + "/replies"
 
-	res.versions["ja"] = access.Resolution{}
+	res.versions["ja"] = resolve.Resolution{}
 	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("hidden stored version: %d %s, want 404", rec.Code, rec.Body.String())
 	}
-	res.versions["en"] = access.Resolution{}
-	res.versions["ja"] = access.Resolution{Visible: true} // Locked content still permits reading replies.
+	res.versions["en"] = resolve.Resolution{}
+	res.versions["ja"] = resolve.Resolution{Visible: true} // Locked content still permits reading replies.
 	rec := doJSON(t, h, actor, "GET", path, nil)
 	var replies []Comment
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 1 || replies[0].ID != reply.ID {
@@ -196,7 +197,7 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 		t.Fatalf("resolver failure: %d %s, want 500", rec.Code, rec.Body.String())
 	}
 	res.err = nil
-	res.versions["ja"] = access.Resolution{Visible: true, Accessible: true}
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
 	unregistered, _ := newTestRuntime(t, Options{Schema: rt.schema, Resolver: res, ContentKinds: []string{"gallery"}})
 	if rec := doJSON(t, unregistered.Handler(), actor, "GET", path, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("unregistered stored kind: %d %s, want 404", rec.Code, rec.Body.String())
@@ -204,7 +205,7 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 }
 
 func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
-	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
 		"en": {Visible: true, Accessible: true},
 		"ja": {Visible: true, Accessible: true},
 	}}
@@ -213,9 +214,9 @@ func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
 	en := mustComment(t, rt, actor, "gallery_thread", cid(1)+":en", CommentInput{Body: "English comment"})
 	ja := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese comment"})
 	for _, version := range []string{"en", "ja"} {
-		res.versions["en"] = access.Resolution{}
-		res.versions["ja"] = access.Resolution{}
-		res.versions[version] = access.Resolution{Visible: true}
+		res.versions["en"] = resolve.Resolution{}
+		res.versions["ja"] = resolve.Resolution{}
+		res.versions[version] = resolve.Resolution{Visible: true}
 		rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
 		var feed []FeedItem
 		wantID := en.ID
@@ -229,7 +230,7 @@ func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
 }
 
 func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
-	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
 		"en": {Visible: true, Accessible: true},
 		"ja": {Visible: true, Accessible: true},
 	}}
@@ -255,7 +256,7 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 	for _, target := range []string{"hidden", "missing", "resolver error"} {
 		t.Run(target, func(t *testing.T) {
 			res.err = nil
-			res.versions["ja"] = access.Resolution{}
+			res.versions["ja"] = resolve.Resolution{}
 			status := http.StatusNotFound
 			switch target {
 			case "missing":
@@ -274,8 +275,8 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 		})
 	}
 	res.err = nil
-	res.versions["en"] = access.Resolution{}
-	res.versions["ja"] = access.Resolution{Visible: true} // Comment reactions do not consume locked media.
+	res.versions["en"] = resolve.Resolution{}
+	res.versions["ja"] = resolve.Resolution{Visible: true} // Comment reactions do not consume locked media.
 	for i, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
 		method, suffix, _ := strings.Cut(action, " ")
 		rec := doJSON(t, h, actor, method, path+suffix, nil)
@@ -290,12 +291,12 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 		t.Fatalf("anonymous visible target: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	assertStored(t, 1, 0, 2)
-	res.versions["ja"] = access.Resolution{}
+	res.versions["ja"] = resolve.Resolution{}
 	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "DELETE", path+"/reaction", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("hidden target after reacting: %d %s, want 404", rec.Code, rec.Body.String())
 	}
 	assertStored(t, 1, 0, 2)
-	res.versions["ja"] = access.Resolution{Visible: true, Accessible: true}
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
 	for _, state := range []string{ModerationHeld, ModerationRejected} {
 		if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET moderation = $2 WHERE id = $1`, cm.ID, state); err != nil {
 			t.Fatal(err)

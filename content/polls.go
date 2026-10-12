@@ -20,7 +20,7 @@ import (
 // either multiple_choice (options, anon-capable one-vote-per-(poll,user)/
 // (poll,ip) tallying) or free_text (one editable answer per signed-in actor,
 // grouped by the host's AnswerClassifier). It is not tied to host content, so
-// it never gates on the access.ContentResolver: writes gate on the root:polls:write perm;
+// it never gates on the resolve.Resolver: writes gate on the root:polls:write perm;
 // reads/votes/answers are public until the poll closes. Questions carry the
 // tenant; options, votes and answers hang off their question.
 type polls struct {

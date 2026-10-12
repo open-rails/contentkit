@@ -17,11 +17,12 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/notification"
 )
 
 // KindComment is the reserved content kind of comments: reactions on comments
-// are keyed by it and never pass through the access.ContentResolver.
+// are keyed by it and never pass through the resolve.Resolver.
 const KindComment = "comment"
 
 // Options configures a Runtime. Pool, Schema, Tenant, Auth and Resolver are
@@ -45,8 +46,8 @@ type Options struct {
 	// ak.UserInfo()): authors' names and usernames, read once per response
 	// and never copied. Nil shows authors by id.
 	UserInfo userinfo.Lookup
-	// Resolver is the gating surface (access.ContentResolver). Required.
-	Resolver access.ContentResolver
+	// Resolver is the gating surface (resolve.Resolver). Required.
+	Resolver resolve.Resolver
 
 	// PreferenceSyncOverlap bounds how long a preference write may take to
 	// commit and still be picked up by SyncPreferences.
@@ -107,7 +108,7 @@ type Runtime struct {
 	tenant         string
 	guard          *gate.Gate
 	userInfo       userinfo.Lookup
-	resolver       access.ContentResolver
+	resolver       resolve.Resolver
 	media          *Media
 	processor      ContentProcessor
 	moderator      ContentModerator
@@ -305,14 +306,14 @@ func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor
 }
 
 // resolveTarget is gate that also returns the resolution (its Owner).
-func (rt *Runtime) resolveTarget(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, access.Resolution, error) {
+func (rt *Runtime) resolveTarget(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, resolve.Resolution, error) {
 	if !rt.routable(kind, id) {
-		return contentref.ContentRef{}, access.Resolution{}, ErrNotFound
+		return contentref.ContentRef{}, resolve.Resolution{}, ErrNotFound
 	}
 	requested := rt.Ref(kind, id)
 	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
 	if err != nil {
-		return contentref.ContentRef{}, access.Resolution{}, err
+		return contentref.ContentRef{}, resolve.Resolution{}, err
 	}
 	ref, err := rt.admit(requested, batch, needAccessible)
 	return ref, batch[requested.Key()], err
@@ -332,7 +333,7 @@ func (rt *Runtime) gateRef(ctx context.Context, requested contentref.ContentRef,
 
 // admit applies requested's resolution from a batch: the canonical reference
 // if the target exists and is visible (and accessible when required).
-func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]access.Resolution, needAccessible bool) (contentref.ContentRef, error) {
+func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]resolve.Resolution, needAccessible bool) (contentref.ContentRef, error) {
 	res, ok := batch[requested.Key()]
 	if !ok {
 		return contentref.ContentRef{}, ErrNotFound
@@ -360,7 +361,7 @@ func (rt *Runtime) routable(kind, id string) bool {
 func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) (contentref.ContentRef, error) {
 	requested := rt.Ref(kind, id)
 	if rt.routable(kind, id) {
-		if res, err := access.ResolveOne(ctx, rt.resolver, requested, actor); err == nil {
+		if res, err := resolve.One(ctx, rt.resolver, requested, actor); err == nil {
 			if ref, err := rt.canonicalRef(requested, res.Ref); err == nil {
 				return ref, nil
 			}

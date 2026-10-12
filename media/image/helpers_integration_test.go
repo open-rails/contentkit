@@ -23,6 +23,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -77,10 +78,10 @@ func (allow) CanUpload(context.Context, access.Actor, media.UploadTarget) (media
 
 type visible struct{}
 
-func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
-		out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+		out[r.Key()] = resolve.Resolution{Visible: true, Accessible: true}
 	}
 	return out, nil
 }

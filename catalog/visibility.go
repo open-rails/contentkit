@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -413,20 +414,20 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 	return v.decide(ctx, ids)
 }
 
-// Resolver is the access.ContentResolver of content items for media
+// Resolver is the resolve.Resolver of content items for media
 // (media/versions) and interactions: a content reference (kind, content) or
 // one of its versions is visible by the rule for direct reads (live, deleted
 // and held by its own keys, or edited by the viewer), accessible when the
 // viewer opens it (a content reference: any of its visible versions), with
 // staff, creators and owner-group editors as Editor and the first creator as
 // Owner. A reference it omits is unseen.
-func (s *Store) Resolver() access.ContentResolver { return resolver{s} }
+func (s *Store) Resolver() resolve.Resolver { return resolver{s} }
 
 type resolver struct{ s *Store }
 
-func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	s := r.s
-	out := map[contentref.ContentKey]access.Resolution{}
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	var ids []string
 	for _, ref := range refs {
 		if _, ok := s.cfg.Kinds[ref.ContentKind]; ok && ref.TenantID == s.tenant && !slices.Contains(ids, ref.ContentID) {
@@ -446,7 +447,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		if ref.TenantID != s.tenant || iv == nil || !iv.visible || len(iv.versions) == 0 || iv.versions[0].kind != ref.ContentKind {
 			continue
 		}
-		res := access.Resolution{Ref: ref, Editor: iv.editor, Owner: owners[ref.ContentID]}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: owners[ref.ContentID]}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
