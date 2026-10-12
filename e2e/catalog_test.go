@@ -213,6 +213,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusBadRequest, anon, "GET", "/catalog/totals?kinds=post", nil, nil)
 
 	mediaScenario(t, f, user, anon)
+	versionsScenario(t, w, f, owner, user, anon)
 
 	served := f.checker.Served()
 	var missing []string
