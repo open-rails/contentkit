@@ -114,6 +114,17 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 // Manifests is the jobs' manifest store; hosts may share it.
 func (j *Jobs) Manifests() *Manifests { return j.manifests }
 
+// owned are the registry's namespaces no other app's journal owns.
+func (j *Jobs) owned() []string {
+	var out []string
+	for _, ns := range j.cfg.Registry.Namespaces() {
+		if !j.cfg.Journal.Bound(ns) {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
+
 // RiverJobs contributes media's workers, queue and periodic sweep pass to
 // the host's helpers/river composition. It composes once.
 func (j *Jobs) RiverJobs() riverhelpers.Contribution {
@@ -336,6 +347,9 @@ func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error)
 	}
 	if j.cfg.Processes == nil {
 		return 0, errors.New("media: Regenerate needs JobsConfig.Processes")
+	}
+	if j.cfg.Journal.Bound(k.ns) {
+		return 0, fmt.Errorf("media: kind %q lives in namespace %q, which its owner regenerates", k.Name, k.ns)
 	}
 	n := 0
 	root := k.ns + "/" + k.Name + "/"

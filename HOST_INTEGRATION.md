@@ -833,10 +833,15 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
   `accounts/{kind}/{id}/` and is served on every importing site's media host
-  (account avatars). An app's own namespace is never a shared one. Every app
-  importing a shared kind (hosts and media workers) must lock in one
-  Postgres database: `PGLocker` takes advisory locks, which are per database,
-  and Ceph RGW has no conditional PUT to fall back on.
+  (account avatars). An app's own namespace is never a shared one. One app
+  owns a shared namespace: it lives in that app's bucket and journal, and its
+  worker processes it. Every other importing app binds it,
+  `journal.Bind("accounts", ownerJournal)` with
+  `media.RouteStore(own, map[string]media.Store{"accounts": ownerStore})`, so
+  all writers share one commit ledger and the owner alone sweeps, upgrades
+  and regenerates it. Apps sharing a namespace use one Postgres database:
+  `PGLocker` takes advisory locks, which are per database, and Ceph RGW has
+  no conditional PUT to fall back on.
 - The stock worker reads the registry as JSON (`json.Marshal(reg)` into
   `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
 
@@ -1162,14 +1167,16 @@ the host's periodic jobs. The worker migrates its schema itself.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
 - **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
-  namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
+  namespaces it serves (`media.<domain>=<tenant>,accounts`) and
+  `MEDIA_GATEWAY_BUCKETS` each namespace's bucket (a shared one is in its
+  owner's); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
   `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
-- **Bucket**: private (no public ACL or policy); the gateway's key reads only
-  `*/private/*` and `*/public/*`; only the hosts write.
+- **Bucket**: one per app, private (no public ACL or policy); the gateway's
+  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache: names are fixed and
   overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
   revalidated by ETag), so wire `Hooks.PurgePublic` to purge every URL it is

@@ -36,8 +36,9 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 	if len(qs) == 0 {
 		return out, nil
 	}
-	cols := make([][]string, 5)
-	for _, q := range qs {
+	// One read per journal: a bound namespace's projection is its owner's.
+	groups := map[*PGJournal][]int{}
+	for i, q := range qs {
 		item, err := m.reg.Item(q.Ref)
 		if err != nil {
 			return nil, err
@@ -45,22 +46,38 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 		if q.Preset != "" && item.Kind().public(q.Preset) == nil {
 			return nil, fmt.Errorf("media: kind %q has no public preset %q", item.Kind().Name, q.Preset)
 		}
-		for i, v := range []string{q.Ref.TenantID, q.Ref.ContentKind, q.Ref.ContentID, q.Name, q.Preset} {
-			cols[i] = append(cols[i], v)
+		j := m.journal.at(q.Ref.TenantID)
+		groups[j] = append(groups[j], i)
+	}
+	for j, at := range groups {
+		if err := m.images(ctx, j, qs, at, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// images fills out[at[n]] from j's projection.
+func (m *Manifests) images(ctx context.Context, j *PGJournal, qs []ImageQuery, at []int, out [][]PublicImage) error {
+	cols := make([][]string, 5)
+	for _, i := range at {
+		q := qs[i]
+		for c, v := range []string{q.Ref.TenantID, q.Ref.ContentKind, q.Ref.ContentID, q.Name, q.Preset} {
+			cols[c] = append(cols[c], v)
 		}
 	}
 	// Two arms keep a named lookup on the primary key's full prefix.
 	const pick = `SELECT q.n, p.ordinal, p.upload_path, p.preset, p.renditions FROM q JOIN %[1]s p
 ON p.tenant_id = q.tenant_id AND p.content_kind = q.content_kind AND p.content_id = q.content_id`
-	t := m.journal.publications
-	rows, err := m.journal.pool.Query(ctx, `WITH q AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+	t := j.publications
+	rows, err := j.pool.Query(ctx, `WITH q AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
 WITH ORDINALITY AS q(tenant_id, content_kind, content_id, upload_name, preset, n))
 `+fmt.Sprintf(pick, t)+` AND p.upload_name = q.upload_name WHERE q.upload_name <> '' AND (q.preset = '' OR p.preset = q.preset)
 UNION ALL
 `+fmt.Sprintf(pick, t)+` WHERE q.upload_name = '' AND (q.preset = '' OR p.preset = q.preset)
 ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], cols[3], cols[4])
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -71,19 +88,19 @@ ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], cols[3], cols[4])
 			projections []projectedRendition
 		)
 		if err := rows.Scan(&n, &ordinal, &path, &pset, &renditions); err != nil {
-			return nil, err
+			return err
 		}
 		if err := json.Unmarshal(renditions, &projections); err != nil {
-			return nil, fmt.Errorf("media: decode projected renditions: %w", err)
+			return fmt.Errorf("media: decode projected renditions: %w", err)
 		}
-		ref := qs[n-1].Ref
+		i := at[n-1]
 		image := PublicImage{From: path, Preset: pset}
 		for _, r := range projections {
-			image.Renditions = append(image.Renditions, PublicRendition{URL: m.reg.PublicURL(ref, r.Name), W: r.W, H: r.H})
+			image.Renditions = append(image.Renditions, PublicRendition{URL: m.reg.PublicURL(qs[i].Ref, r.Name), W: r.W, H: r.H})
 		}
-		out[n-1] = append(out[n-1], image)
+		out[i] = append(out[i], image)
 	}
-	return out, rows.Err()
+	return rows.Err()
 }
 
 // PublicImages returns ref's current public images (Images for one item). A
@@ -271,6 +288,11 @@ func (p *projection) without(item Item, retired []string) *projection {
 
 // project writes p in its own transaction.
 func (j *PGJournal) project(ctx context.Context, p *projection) error {
+	if p != nil {
+		if o := j.at(p.ref.TenantID); o != j {
+			return o.project(ctx, p)
+		}
+	}
 	if p == nil {
 		return nil
 	}
@@ -280,6 +302,11 @@ func (j *PGJournal) project(ctx context.Context, p *projection) error {
 // projectTx replaces the item's projected publications in tx, leaving
 // unchanged rows untouched.
 func (j *PGJournal) projectTx(ctx context.Context, tx pgx.Tx, p *projection) error {
+	if p != nil {
+		if o := j.at(p.ref.TenantID); o != j {
+			return o.projectTx(ctx, tx, p)
+		}
+	}
 	if p == nil {
 		return nil
 	}

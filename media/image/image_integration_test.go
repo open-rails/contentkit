@@ -689,9 +689,13 @@ func TestPublishDefaults(t *testing.T) {
 			t.Fatal(err)
 		}
 		rules := media.GatewayConfig(e.reg, newer.Defaults)
-		h, err := gateway.New(gateway.Config{Endpoint: e.Config.Endpoint, Bucket: e.Config.Bucket,
+		buckets := map[string]string{}
+		for _, ns := range rules.Namespaces {
+			buckets[ns] = e.Config.Bucket
+		}
+		h, err := gateway.New(gateway.Config{Endpoint: e.Config.Endpoint,
 			Region: e.Config.Region, AccessKeyID: e.Config.AccessKeyID, SecretAccessKey: e.Config.SecretAccessKey,
-			Hosts: map[string][]string{"media.test": rules.Namespaces}, Defaults: rules.Defaults})
+			Hosts: map[string][]string{"media.test": rules.Namespaces}, Buckets: buckets, Defaults: rules.Defaults})
 		if err != nil {
 			t.Fatal(err)
 		}

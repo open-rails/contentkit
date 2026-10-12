@@ -43,8 +43,8 @@ func (p PublicImage) SrcSet() string {
 }
 
 // GatewayRules are the media gateway's rules for an app's media host: the
-// namespaces it serves there (MEDIA_GATEWAY_HOSTS, with
-// layout.FormatHosts) and the default public names of its kinds
+// namespaces it serves there (MEDIA_GATEWAY_HOSTS, with layout.FormatHosts;
+// each one's bucket in MEDIA_GATEWAY_BUCKETS) and the default public names of its kinds
 // (MEDIA_GATEWAY_DEFAULTS, with layout.FormatDefaults).
 type GatewayRules struct {
 	Namespaces []string

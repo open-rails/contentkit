@@ -4,15 +4,16 @@
 //
 //	-listen        MEDIA_GATEWAY_LISTEN          default :8080
 //	-s3-endpoint   MEDIA_GATEWAY_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
-//	-s3-bucket     MEDIA_GATEWAY_S3_BUCKET
 //	-s3-region     MEDIA_GATEWAY_S3_REGION       default us-east-1
 //	-hosts         MEDIA_GATEWAY_HOSTS           required: each media host and the namespaces it serves,
 //	                                            e.g. "media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts"
+//	-buckets       MEDIA_GATEWAY_BUCKETS         required: each served namespace's bucket (a shared one in its owner's),
+//	                                            e.g. "doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins"
 //	-cors-origins  MEDIA_GATEWAY_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
 //	                                            e.g. https://doujins.ai; empty breaks hls.js (warned)
 //	-defaults      MEDIA_GATEWAY_DEFAULTS        public names that fall back to the kind's _default item,
 //	                                            e.g. "doujins/gallery: cover-460.webp=sha256-{64 lowercase hex}.webp"
-//	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/*
+//	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/* of those buckets
 //	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
 package main
@@ -48,9 +49,9 @@ func run(log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("media-gateway", flag.ContinueOnError)
 	listen := fs.String("listen", env("MEDIA_GATEWAY_LISTEN", ":8080"), "listen address")
 	endpoint := fs.String("s3-endpoint", env("MEDIA_GATEWAY_S3_ENDPOINT", ""), "S3 endpoint")
-	bucket := fs.String("s3-bucket", env("MEDIA_GATEWAY_S3_BUCKET", ""), "bucket")
 	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
 	hosts := fs.String("hosts", env("MEDIA_GATEWAY_HOSTS", ""), "host=namespace,…; …")
+	buckets := fs.String("buckets", env("MEDIA_GATEWAY_BUCKETS", ""), "namespace=bucket; …")
 	origins := fs.String("cors-origins", env("MEDIA_GATEWAY_CORS_ORIGINS", ""), "CORS origins")
 	defaults := fs.String("defaults", env("MEDIA_GATEWAY_DEFAULTS", ""), "namespace/kind: logical-name=immutable-name,…; …")
 	if err := fs.Parse(args); err != nil {
@@ -80,14 +81,18 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("MEDIA_GATEWAY_HOSTS: %w", err)
 	}
+	bucketMap, err := layout.ParseBuckets(*buckets)
+	if err != nil {
+		return fmt.Errorf("MEDIA_GATEWAY_BUCKETS: %w", err)
+	}
 	defs, err := layout.ParseDefaults(*defaults)
 	if err != nil {
 		return fmt.Errorf("MEDIA_GATEWAY_DEFAULTS: %w", err)
 	}
 	h, err := gateway.New(gateway.Config{
-		Endpoint: *endpoint, Bucket: *bucket, Region: *region,
+		Endpoint: *endpoint, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Hosts: hostMap, Origins: list(*origins), Defaults: defs, Logger: log,
+		Ring: ring, Hosts: hostMap, Buckets: bucketMap, Origins: list(*origins), Defaults: defs, Logger: log,
 	})
 	if err != nil {
 		return err
@@ -111,7 +116,7 @@ func run(log *slog.Logger, args []string) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String(), "bucket", *bucket, "hosts", layout.FormatHosts(hostMap), "defaults", layout.FormatDefaults(defs))
+	log.Info("listening", "addr", ln.Addr().String(), "hosts", layout.FormatHosts(hostMap), "buckets", layout.FormatBuckets(bucketMap), "defaults", layout.FormatDefaults(defs))
 	select {
 	case err := <-done:
 		return err
