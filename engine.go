@@ -37,6 +37,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -69,18 +70,19 @@ type Engine struct {
 	gate        *access.Gate
 	classifier  bool // free-text answers to reclassify
 
-	hub     *hub.Hub
-	ch      signal.Conn
-	ownCH   clickhouse.Conn
-	content *content.Runtime
-	notices *notification.Store
-	groups  *groups.Store
-	catalog *catalog.Store
-	offers  *offers.Service
-	media   *engineMedia
-	modules map[httpapi.Module]http.Handler
-	inproc  http.Handler
-	probes  []Probe
+	hub      *hub.Hub
+	ch       signal.Conn
+	ownCH    clickhouse.Conn
+	content  *content.Runtime
+	notices  *notification.Store
+	groups   *groups.Store
+	catalog  *catalog.Store
+	offers   *offers.Service
+	discover *discovery.Service
+	media    *engineMedia
+	modules  map[httpapi.Module]http.Handler
+	inproc   http.Handler
+	probes   []Probe
 
 	mu        sync.Mutex
 	jobs      *jobs
@@ -135,7 +137,7 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		return nil, err
 	}
 	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Tenant, DefaultLanguage: cfg.Content.Languages[0],
-		CH: e.ch, CHDatabase: cfg.ClickHouse.Database, Candidates: deps.Candidates}); err != nil {
+		CH: e.ch, CHDatabase: cfg.ClickHouse.Database}); err != nil {
 		return nil, err
 	}
 	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log}); err != nil {
@@ -443,6 +445,9 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
 		return err
 	}
+	if err := e.mountDiscovery(deps); err != nil {
+		return err
+	}
 	if e.offers != nil {
 		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
 			return err
@@ -460,6 +465,24 @@ func (e *Engine) mount(deps Deps) error {
 	e.modules[httpapi.Codes] = router.Handler()
 	e.inproc = e.dispatch("", e.modules)
 	return nil
+}
+
+// mountDiscovery builds the public read routes. Until the catalog (#120)
+// supplies its rule, they list under discovery.FacetVisibility.
+func (e *Engine) mountDiscovery(deps Deps) error {
+	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.resolver, Gate: e.gate,
+		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock,
+		Visibility: discovery.FacetVisibility(discovery.FacetVisibilityOptions{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
+			Kinds: e.cfg.Content, Gate: e.gate, Now: deps.Clock})}
+	if e.media != nil {
+		o.Covers = e.media.versions
+	}
+	var err error
+	if e.discover, err = discovery.New(o); err != nil {
+		return err
+	}
+	e.modules[httpapi.Discovery], err = e.discover.Handler(e.auth)
+	return err
 }
 
 // StartOption adjusts Start.

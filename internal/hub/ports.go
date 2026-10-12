@@ -1,7 +1,7 @@
-// Package hub is the engine's search, signal and discovery planes for one
-// tenant: keyword search and typeahead, the ClickHouse signal plane and the
-// discovery reads over both. The engine's jobs and routes use it; hosts reach
-// it only through ContentKit's API.
+// Package hub is the engine's search and signal planes for one tenant:
+// keyword search and typeahead, and the ClickHouse signal plane. The
+// discovery routes and the engine's jobs use it; hosts reach it only through
+// ContentKit's API.
 package hub
 
 import (
@@ -22,5 +22,8 @@ type GroupID = contentref.GroupID
 // DocumentKey identifies one keyword document: a ContentRef in one language.
 type DocumentKey = search.DocumentKey
 
-// KeywordDocument is the search input for one document.
+// KeywordDocument is the host's canonical search input for one document.
 type KeywordDocument = search.KeywordDocument
+
+// Eligibility is the per-document visibility join; see search.Eligibility.
+type Eligibility = search.Eligibility

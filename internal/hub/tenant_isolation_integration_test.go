@@ -130,7 +130,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		if err != nil || len(pop) != 2 || pop[0].TenantID != tenant {
 			t.Fatalf("%s popular: %+v %v", tenant, pop, err)
 		}
-		co, err := h.SimilarTo(ctx, g1, SimilarOptions{})
+		co, err := h.store.CoEngaged(ctx, tenant, g1, signal.CoEngagedOptions{})
 		if err != nil || len(co) != 1 || co[0].TenantID != tenant {
 			t.Fatalf("%s co-engagement: %+v %v", tenant, co, err)
 		}

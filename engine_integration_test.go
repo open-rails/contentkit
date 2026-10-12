@@ -182,7 +182,7 @@ func TestEngineIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
 		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
 	}
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes {
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
@@ -193,7 +193,7 @@ func TestEngineIntegration(t *testing.T) {
 			t.Fatalf("group %d served without its module", g)
 		}
 	}
-	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | GroupRoutes | NotificationRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | DiscoveryRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,6 +235,18 @@ func TestEngineIntegration(t *testing.T) {
 	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/groups?kind=tag", nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/nowhere/at/all/x", nil, nil)
+
+	// Discovery shares /v1 with content and groups; without a signal plane its
+	// signal reads are not configured.
+	var listed struct {
+		Contents []json.RawMessage `json:"contents"`
+	}
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents?kind=gallery", nil, &listed)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/search?q=moonlit", nil, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/typeahead?q=moon", nil, nil)
+	s.call(http.StatusOK, user, "GET", "/api/ck/v1/me/content-filters", nil, nil)
+	s.call(http.StatusNotImplemented, user, "GET", "/api/ck/v1/me/history", nil, nil)
+	s.call(http.StatusUnauthorized, anon, "GET", "/api/ck/v1/recommendations", nil, nil)
 
 	// The public content model, without server-only parts.
 	var model kindsroute.ContentModel

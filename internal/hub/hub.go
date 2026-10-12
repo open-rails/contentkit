@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -11,13 +10,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
 
-// ErrSignalPlaneDisabled is returned by signal/discovery methods when the hub
-// was constructed without a ClickHouse connection.
+// ErrSignalPlaneDisabled is returned by signal methods when the hub was
+// constructed without a ClickHouse connection.
 var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
 
 // Config configures one tenant's hub.
@@ -29,11 +27,11 @@ type Config struct {
 	// Content-plane defaults (as in ClientConfig).
 	DefaultLanguage string
 	DefaultLimit    int
-	// DefaultRRFK controls deterministic popularity/discovery fusion (default 60).
+	// DefaultRRFK controls deterministic popularity fusion in personalized search (default 60).
 	DefaultRRFK int
 
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
-	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
+	// (signal methods return ErrSignalPlaneDisabled). CHDatabase
 	// is the hub's dedicated ClickHouse database; apply
 	// migrations.ClickHouse and gate startup on signal.CheckSchema.
 	CH         signal.Conn
@@ -42,26 +40,15 @@ type Config struct {
 	// Tenant is the single tenant of this embedded hub. Required: every
 	// document, signal, cursor and result carries it.
 	Tenant string
-
-	// Scorers maps content kind → host Scorer. When a signal arrives for a
-	// registered kind, the scorer's result overwrites Score / Progress /
-	// ProgressMax / Completed before recording.
-	Scorers map[string]signal.Scorer
-
-	// Candidates sources SimilarTo and Recommend (requires CH). Nil =
-	// discovery.Engagement (co-engagement) over this hub's signal store.
-	Candidates discovery.Candidates
 }
 
-// Hub is one tenant's search, signal and discovery planes: the engine's
-// internal surface the discovery routes build on.
+// Hub is one tenant's search client and signal plane: the engine's internal
+// surface the discovery routes build on.
 type Hub struct {
 	defaultRRFK int
 	client      *Client
 	store       *signal.Store
 	tenant      string
-	scorers     map[string]signal.Scorer
-	discovery   discovery.Recommender
 }
 
 // New builds the hub of one tenant.
@@ -80,7 +67,6 @@ func New(cfg Config) (*Hub, error) {
 		client:      client,
 		defaultRRFK: cfg.DefaultRRFK,
 		tenant:      client.Tenant(),
-		scorers:     cfg.Scorers,
 	}
 	if h.defaultRRFK <= 0 {
 		h.defaultRRFK = 60
@@ -91,19 +77,6 @@ func New(cfg Config) (*Hub, error) {
 			return nil, err
 		}
 		h.store = store
-		candidates := cfg.Candidates
-		if candidates == nil {
-			candidates = discovery.Engagement{Store: store, Tenant: h.tenant, RRFK: h.defaultRRFK}
-		}
-		h.discovery = discovery.Recommender{
-			Candidates:   candidates,
-			Store:        store,
-			Tenant:       h.tenant,
-			DefaultLimit: client.defaultLimit,
-			RRFK:         h.defaultRRFK,
-		}
-	} else if cfg.Candidates != nil {
-		return nil, fmt.Errorf("contentkit: Candidates requires the signal plane (CH)")
 	}
 	return h, nil
 }
@@ -129,8 +102,8 @@ func (h *Hub) requireStore() (*signal.Store, error) {
 // --- Content plane ---
 
 // Personalization fuses signal aggregates into search ranking. Recall is
-// unchanged — this is a ranking-only layer over the candidate set. A
-// per-request toggle the host flips (e.g. only for logged-in users).
+// unchanged: a ranking-only layer over the candidate set, which discovery
+// applies for signed-in readers.
 type Personalization struct {
 	Subject signal.Subject
 
@@ -315,33 +288,8 @@ func (h *Hub) Typeahead(ctx context.Context, userText string, opts TypeaheadOpti
 	return h.client.Typeahead(ctx, userText, opts)
 }
 
-// RecHit is one ranked work of SimilarTo or Recommend.
-type RecHit = discovery.Hit
-
-// SimilarOptions controls SimilarTo (see discovery.SimilarOptions).
-type SimilarOptions = discovery.SimilarOptions
-
-// RecommendOptions controls Recommend (see discovery.RecommendOptions).
-type RecommendOptions = discovery.RecommendOptions
-
-// SimilarTo returns works like the anchor ("more like this") from the
-// configured Candidates source (default: co-engagement).
-func (h *Hub) SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error) {
-	if h.store == nil {
-		return nil, ErrSignalPlaneDisabled
-	}
-	return h.discovery.Similar(ctx, ref, opts)
-}
-
-// Recommend returns "for you" works for a subject from the configured
-// Candidates source, excluding seen (unless IncludeSeen) and disliked works,
-// with a popularity fill for cold start. The host hydrates the references.
-func (h *Hub) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error) {
-	if h.store == nil {
-		return nil, ErrSignalPlaneDisabled
-	}
-	return h.discovery.Recommend(ctx, subject, opts)
-}
+// Signals is the signal plane's store; nil without one.
+func (h *Hub) Signals() *signal.Store { return h.store }
 
 // RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
 // for this tenant (see signal.Store.RefreshCoEngagement). Run periodically.
@@ -424,28 +372,13 @@ func (h *Hub) Attribution(ctx context.Context, opts signal.AttributionOptions) (
 
 // --- Signal plane ---
 
-// RecordSignals applies each content kind's registered Scorer, then records
-// the batch (see signal.Store.RecordSignals). A scorer error records nothing.
+// RecordSignals records the batch (see signal.Store.RecordSignals).
 func (h *Hub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
 	}
-	out := make([]signal.Signal, 0, len(signals))
-	for _, s := range signals {
-		if scorer, ok := h.scorers[s.ContentKind]; ok && scorer != nil {
-			scored, err := scorer.Score(ctx, s)
-			if err != nil {
-				return fmt.Errorf("contentkit: scorer for %q: %w", s.ContentKind, err)
-			}
-			s.Score = scored.Score
-			s.Progress = scored.Progress
-			s.ProgressMax = scored.ProgressMax
-			s.Completed = scored.Completed
-		}
-		out = append(out, s)
-	}
-	return store.RecordSignals(ctx, h.tenant, out)
+	return store.RecordSignals(ctx, h.tenant, signals)
 }
 
 // --- Discovery plane ---

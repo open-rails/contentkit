@@ -23,6 +23,7 @@ import (
 	_ "github.com/open-rails/contentkit/catalog"
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
+	_ "github.com/open-rails/contentkit/discovery"
 	_ "github.com/open-rails/contentkit/groups"
 	_ "github.com/open-rails/contentkit/internal/kindsroute"
 	_ "github.com/open-rails/contentkit/media"

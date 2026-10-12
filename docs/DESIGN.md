@@ -19,9 +19,9 @@ clarification of 2026-09-17: semantic search stays entirely outside ContentKit.
 ## Mechanism vs meaning
 
 ContentKit owns storage, indexing, aggregation and the queries. Content kinds,
-signal types, scoring weights, completion rules and visibility are host data:
-no business noun appears in a schema. Hosts supply a `Scorer` per kind, a
-`ContentCatalog` for the unseen universe and an `Eligibility` join for search.
+signal types, scoring weights and completion rules are configuration: no
+business noun appears in a schema. Visibility is ContentKit's own rule over
+`content_facets`, applied in every list, search and count.
 
 ## Tenant is a key
 

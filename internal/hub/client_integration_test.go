@@ -42,12 +42,13 @@ func TestClientSearch_Integration_Keyword(t *testing.T) {
 		t.Fatalf("candidate/result limits not separated: hits=%+v trace=%+v err=%v", limited, limitedTrace, err)
 	}
 
-	// Host filter and typeahead.
-	filtered, err := client.Search(ctx, "two factor", SearchOptions{Language: "en", ContentKinds: kinds, eligibility: where("sd.content_id = @allowed_id", map[string]any{"allowed_id": cid(1)})})
+	// Eligibility and typeahead.
+	only := &Eligibility{SQL: "SELECT 0 AS priority WHERE sd.content_id = @allowed_id", Args: map[string]any{"allowed_id": cid(1)}}
+	filtered, err := client.Search(ctx, "two factor", SearchOptions{Language: "en", ContentKinds: kinds, Eligibility: only})
 	if err != nil || !reflect.DeepEqual(ids(filtered.Hits), []string{cid(1)}) {
 		t.Fatalf("filtered: %+v %v", filtered, err)
 	}
-	suggestions, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "en", ContentKinds: kinds, eligibility: where("sd.content_id = @allowed_id", map[string]any{"allowed_id": cid(1)})})
+	suggestions, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "en", ContentKinds: kinds, Eligibility: only})
 	if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != cid(1) {
 		t.Fatalf("filtered typeahead: %+v %v", suggestions, err)
 	}

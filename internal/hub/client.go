@@ -7,7 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/normalize"
 	"github.com/open-rails/contentkit/search"
 )
@@ -90,21 +89,9 @@ type SearchOptions struct {
 	// value on every page when a truncated window must stay identical.
 	CandidateLimit int
 
-	// Viewer is the reader: content documents show only as its listing
-	// would show their items (catalog.Viewer). Without it every document is
-	// eligible: pass the request's Viewer whenever a person reads.
-	Viewer *catalog.Viewer
-
-	// eligibility stands in for Viewer in the package's own tests.
-	eligibility *search.Eligibility
-}
-
-// join is the eligibility join of the request.
-func join(v *catalog.Viewer, test *search.Eligibility) *search.Eligibility {
-	if v != nil {
-		return v.Eligibility()
-	}
-	return test
+	// Eligibility keeps the documents the reader may see (the discovery
+	// routes' visibility join); without it every document is eligible.
+	Eligibility *Eligibility
 }
 
 // SearchHit is one content item, represented by its matched document.
@@ -246,7 +233,7 @@ func hitFromGroup(g group) SearchHit {
 
 func (c *Client) searchOptions(lang string, limit int, kinds []string, opts SearchOptions) search.Options {
 	return search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit,
-		Eligibility: join(opts.Viewer, opts.eligibility)}
+		Eligibility: opts.Eligibility}
 }
 
 // searchKeyword runs one language's keyword window and returns its trace source index.
@@ -276,9 +263,8 @@ type TypeaheadOptions struct {
 	ContentKinds  []string
 	Limit         int
 	MinSimilarity float32
-	// Viewer is the reader; see SearchOptions.
-	Viewer      *catalog.Viewer
-	eligibility *search.Eligibility
+	// Eligibility groups suggestions per content item; see SearchOptions.
+	Eligibility *Eligibility
 }
 
 // TypeaheadHit is one suggested content item and its matched document.
@@ -318,7 +304,7 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 
 	var docs []groupedDoc
 	for i, lang := range languages {
-		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: join(opts.Viewer, opts.eligibility)})
+		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
 		if err != nil {
 			return nil, err
 		}

@@ -170,46 +170,11 @@ or re-ingestion is required.
 
 ## Host adoption
 
-### doujins (#893)
-
-- Delete `internal/services/discovery/popularity.go` (`PopularityPolicy`,
-  `PolicyV1`, `PolicyByName`, `PolicyNames`, `RankExpr`) and `GalleryScorer`;
-  register `popularity.SessionScorer{SecondsPerUnit: 8, CoveredKey:
-  "unique_pages_viewed"}` for kind `gallery` (versions are
-  `ref.WithVersion(id)` of the same kind, so one scorer covers both).
-- `popularity.policy` config → `popularity.ByName(name)` at startup, then
-  `popularity.New(popularity.Config{Source: hub, Policy: policy, Cache: cache,
-  Catalog: catalog})`. `Reader.Policy`/`ParentRankingGalleryLimit` become
-  `Config.Policy`/`Config.GroupCandidateLimit`.
-- `Reader.popularRanking` → `ranker.Popular(ctx, "gallery", window,
-  offset+limit)` sliced; `GalleryPopularity`/`scoreCandidates` →
-  `ranker.Candidates`/`Scores`; `PopularEntities`/`parentRanking` →
-  `ranker.Groups(ctx, "gallery", "artist"|"series"|"character"|"tag",
-  window)` with a `Catalog` over `gallery_artists ∪ galleries.publisher_id`,
-  `gallery_series`, `gallery_characters`, `gallery_tags ∪ gallery_version_tags`
-  (the `parentGalleryQueries` SQL, keyed by gallery id).
-- `WindowForPeriod`, `PopularityPeriods`, `DefaultPopularityPeriod` →
-  `popularity.WindowForPeriod(period, time.Now())`, `popularity.Periods`,
-  `popularity.DefaultPeriod`.
-- `view_count` = `Hit.Viewers`, `avg_engagement` = `Hit.MeanEngagement()`.
-- Keep the host fixture as a recorder/API test; the judged fixture lives here.
-  The host `docs/popularity-policy.md` keeps only host facts (endpoints, config
-  key) and links here.
-
-### hentai0
-
-- `discovery.Reader.PopularVideosPage` calls `Hub.Popular` under the default
-  rank and `PersonalizeVideoRanking` calls `Hub.PopularityFor`; replace with
-  `ranker.Popular` / `ranker.Scores` so videos rank under the same named
-  policy.
-- `windowFor` accepts `1d` and silently defaults unknown periods to 30 days;
-  replace it with `popularity.WindowForPeriod` (literal 7/30/90/365/all, error
-  otherwise) and drop `1d` from the API.
-- `VideoScorer` scores `-30 + 130·watched/duration` on the legacy scale;
-  replace it with `popularity.SessionScorer{SecondsPerUnit: 0}` (`Progress` =
-  watched seconds, `ProgressMax` = duration: score = 100 × coverage, completed
-  at 90%). Sessions already recorded keep their legacy scores; `engage` clamps.
-- Add `popularity.policy` to config (`v1`) and refuse startup on unknown names.
+Hosts rank nothing themselves: `GET /v1/contents?sort=popular:{period}` reads
+the scores the engine's `contentkit_popularity` job copies into
+`content_facets.popularity`, under every filter, and `POST /v1/signals`
+scores views with `SessionScore`. Delete host popularity readers, scorers and
+period parsing.
 
 ## Operations and limits
 

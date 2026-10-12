@@ -29,7 +29,8 @@ func TestMergeNamedArgs(t *testing.T) {
 	}
 	for _, name := range []string{"tenant", "language", "q", "prefix", "limit", "kinds", "candidates"} {
 		args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0, "candidates": nil}
-		_, _, _, err := hostClauses(Options{Schema: "s", Tenant: "t", Language: "en", ContentKinds: []string{"k"}, Eligibility: &Eligibility{SQL: "SELECT 0 AS priority", Args: map[string]any{name: 2}}}, args)
+		_, _, _, err := hostClauses(Options{Schema: "s", Tenant: "t", Language: "en", ContentKinds: []string{"k"},
+			Eligibility: &Eligibility{SQL: "SELECT 0 AS priority", Args: map[string]any{name: 2}}}, args)
 		if err == nil {
 			t.Fatalf("reserved arg %s accepted", name)
 		}

@@ -1,7 +1,6 @@
 // Package search is ContentKit's keyword retrieval over content_search_documents:
 // exact names and aliases, native-script prefixes and bounded typos for every
-// language, with the visibility join (catalog.Viewer.Eligibility) applied
-// inside every route.
+// language, with the visibility join (Eligibility) applied inside every route.
 package search
 
 import (
@@ -16,9 +15,9 @@ import (
 // MaxCandidateLimit bounds one route's document window.
 const MaxCandidateLimit = 10_000
 
-// Eligibility is ContentKit's own SQL (the catalog's visibility rule) joined
-// laterally to every candidate document (alias sd: tenant_id, content_kind,
-// content_id, content_version_id, language).
+// Eligibility is ContentKit's own SQL (the discovery routes' rendering of the
+// visibility rule) joined laterally to every candidate document (alias sd:
+// tenant_id, content_kind, content_id, content_version_id, language).
 // It returns no row when the document is not eligible for this request, or one
 // row with the column priority (integer: preferred document among a content
 // item's equal matches, lower first). Ownership, access, publication and every
@@ -38,6 +37,8 @@ type Options struct {
 	ContentKinds []string
 	Limit        int
 
+	// Eligibility binds pgx '@name' placeholders other than the reserved
+	// tenant, language, q, prefix, limit, kinds and candidates.
 	Eligibility *Eligibility
 }
 
@@ -87,10 +88,10 @@ func mergeNamedArgs(dst pgx.NamedArgs, extra map[string]any) error {
 	for k, v := range extra {
 		k = strings.TrimSpace(k)
 		if k == "" {
-			return fmt.Errorf("empty eligibility arg key")
+			return fmt.Errorf("empty eligibility argument name")
 		}
 		if _, exists := dst[k]; exists {
-			return fmt.Errorf("eligibility arg %q conflicts with a reserved arg", k)
+			return fmt.Errorf("eligibility argument %q conflicts with a reserved one", k)
 		}
 		dst[k] = v
 	}
@@ -131,6 +132,6 @@ func EligibilityJoin(e *Eligibility, args pgx.NamedArgs) (join, priority string,
 	if err := mergeNamedArgs(args, e.Args); err != nil {
 		return "", "", err
 	}
-	// LATERAL binds sd inside the query; a missing column fails loudly.
+	// LATERAL binds sd inside the eligibility query; a missing column fails loudly.
 	return ` JOIN LATERAL (SELECT h.priority::int AS priority FROM (` + e.SQL + `) AS h LIMIT 1) e ON true`, `e.priority`, nil
 }

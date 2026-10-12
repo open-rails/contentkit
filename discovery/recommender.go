@@ -27,7 +27,15 @@ type SimilarOptions struct {
 	// ExcludeSeenFor drops works this subject has already seen (and always
 	// drops works they negatively reacted to).
 	ExcludeSeenFor *signal.Subject
+
+	// Admit keeps the works the reader may be shown; nil admits all.
+	Admit Admit
 }
+
+// Admit decides which candidate works a list may show, in one batch: the
+// reader's visibility. Recommender oversamples its sources so admission
+// still fills the list.
+type Admit func(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error)
 
 // RecommendOptions controls Recommend ("for you": subject → works).
 type RecommendOptions struct {
@@ -50,6 +58,9 @@ type RecommendOptions struct {
 	// PopularWindow is the popularity window used to fill out results on
 	// cold start or thin candidate sets (zero = all time, like every Window).
 	PopularWindow signal.Window
+
+	// Admit keeps the works the reader may be shown; nil admits all.
+	Admit Admit
 }
 
 // Recommender turns a Candidates source into tenant-scoped discovery lists.
@@ -101,7 +112,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	}
 	limit := r.limit(opts.Limit)
 	kinds := trimAll(opts.ContentKinds)
-	q := Query{ContentKinds: kinds, Limit: limit, Window: opts.Window}
+	q := Query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit), Window: opts.Window}
 	fallback, hasFallback := fallbackSource(r.Candidates)
 	source := r.Candidates
 	if hasFallback {
@@ -116,7 +127,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	if err != nil {
 		return nil, err
 	}
-	f := r.newFilter(limit, kinds)
+	f := r.newFilter(limit, kinds, opts.Admit)
 	f.exclude[anchor.Content().Key()] = struct{}{}
 	apply := func(cands []Candidate, first bool) error {
 		if opts.ExcludeSeenFor != nil {
@@ -132,10 +143,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 				return err
 			}
 		}
-		for _, c := range cands {
-			f.push(c.Ref, float32(c.Score))
-		}
-		return nil
+		return f.pushAll(ctx, cands)
 	}
 	if err := apply(cands, true); err != nil {
 		return nil, err
@@ -170,7 +178,7 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	limit := r.limit(opts.Limit)
 	q := Query{
 		ContentKinds:     kinds,
-		Limit:            limit,
+		Limit:            oversample(limit, opts.Admit),
 		SeedLimit:        opts.SeedLimit,
 		SeedContentKinds: trimAll(opts.SeedContentKinds),
 	}
@@ -188,12 +196,12 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	if err != nil {
 		return nil, err
 	}
-	f := r.newFilter(limit, kinds)
+	f := r.newFilter(limit, kinds, opts.Admit)
 	if err := f.loadSubject(ctx, r, subject, kinds, kinds, opts.IncludeSeen); err != nil {
 		return nil, err
 	}
-	for _, c := range cands {
-		f.push(c.Ref, float32(c.Score))
+	if err := f.pushAll(ctx, cands); err != nil {
+		return nil, err
 	}
 	// Fallback fullness is based on eligible hits, not raw candidates.
 	if hasFallback && !f.full() {
@@ -203,54 +211,70 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 				return nil, err
 			}
 			fallback.report(err)
-		} else {
-			for _, c := range secondary {
-				f.push(c.Ref, float32(c.Score))
-			}
+		} else if err := f.pushAll(ctx, secondary); err != nil {
+			return nil, err
 		}
 	}
 
 	// Popular scores live on another scale, so fill hits follow the
 	// candidates with decaying tail scores.
 	for _, kind := range kinds {
-		if f.full() {
-			break
-		}
-		// Oversample so exclusions still leave enough to fill.
-		pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: opts.PopularWindow, Limit: clampInt((limit-len(f.out))*3, 20, 500)})
-		if err != nil {
-			return nil, err
-		}
 		var tail float32
 		if n := len(f.out); n > 0 {
 			tail = f.out[n-1].Score
 		}
-		for i, p := range pop {
-			if f.full() {
+		// Oversample so exclusions still leave enough to fill, deeper while
+		// a full read leaves the list short.
+		for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
+			pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: opts.PopularWindow, Limit: depth})
+			if err != nil {
+				return nil, err
+			}
+			fill := make([]Candidate, len(pop))
+			for i, p := range pop {
+				score := tail / 2
+				if tail == 0 {
+					score = 1 / float32(r.rrfK()+i+1)
+				}
+				fill[i] = Candidate{Ref: p.ContentRef, Score: float64(score)}
+			}
+			if err := f.pushAll(ctx, fill); err != nil {
+				return nil, err
+			}
+			if len(pop) < depth || depth >= maxFillDepth {
 				break
 			}
-			score := tail / 2
-			if tail == 0 {
-				score = 1 / float32(r.rrfK()+i+1)
-			}
-			f.push(p.ContentRef, score)
 		}
 	}
 	return f.out, nil
 }
 
-// filter applies the shared policy: tenant, kinds, exclusions, dedupe, limit.
+// maxFillDepth bounds the popularity read a filtered fill goes to.
+const maxFillDepth = 2000
+
+// oversample is the candidate count asked of a source: admission drops some.
+func oversample(limit int, admit Admit) int {
+	if admit == nil {
+		return limit
+	}
+	return clampInt(limit*3, limit, 300)
+}
+
+// filter applies the shared policy: tenant, kinds, exclusions, admission,
+// dedupe, limit.
 type filter struct {
 	tenant  string
 	limit   int
 	kinds   map[string]struct{} // nil = any
 	exclude map[contentref.ContentKey]struct{}
 	seen    map[string]map[string]struct{}
+	admit   Admit
 	out     []Hit
 }
 
-func (r Recommender) newFilter(limit int, kinds []string) *filter {
-	f := &filter{tenant: r.Tenant, limit: limit, exclude: map[contentref.ContentKey]struct{}{}, seen: map[string]map[string]struct{}{}, out: make([]Hit, 0, limit)}
+func (r Recommender) newFilter(limit int, kinds []string, admit Admit) *filter {
+	f := &filter{tenant: r.Tenant, limit: limit, exclude: map[contentref.ContentKey]struct{}{}, seen: map[string]map[string]struct{}{},
+		admit: admit, out: make([]Hit, 0, limit)}
 	if len(kinds) > 0 {
 		f.kinds = make(map[string]struct{}, len(kinds))
 		for _, k := range kinds {
@@ -294,25 +318,57 @@ func (f *filter) loadSeen(ctx context.Context, r Recommender, subject signal.Sub
 
 func (f *filter) full() bool { return len(f.out) >= f.limit }
 
-func (f *filter) push(ref contentref.ContentRef, score float32) {
-	if f.full() || ref.TenantID != f.tenant || ref.Validate() != nil {
-		return
+// pushAll appends candidates in order until full: those the policy keeps,
+// then admitted in one batch.
+func (f *filter) pushAll(ctx context.Context, cands []Candidate) error {
+	if f.full() {
+		return nil
+	}
+	kept := make([]Hit, 0, len(cands))
+	batch := map[contentref.ContentKey]bool{}
+	for _, c := range cands {
+		if ref, ok := f.keeps(c.Ref); ok && !batch[ref.Key()] {
+			batch[ref.Key()] = true
+			kept = append(kept, Hit{ContentRef: ref, Score: float32(c.Score)})
+		}
+	}
+	if f.admit != nil && len(kept) > 0 {
+		refs := make([]contentref.ContentRef, len(kept))
+		for i, h := range kept {
+			refs[i] = h.ContentRef
+		}
+		admitted, err := f.admit(ctx, refs)
+		if err != nil {
+			return err
+		}
+		kept = slices.DeleteFunc(kept, func(h Hit) bool { return !admitted[h.Key()] })
+	}
+	for _, h := range kept {
+		if f.full() {
+			break
+		}
+		f.exclude[h.Key()] = struct{}{}
+		f.out = append(f.out, h)
+	}
+	return nil
+}
+
+// keeps is the policy on one candidate, as its work.
+func (f *filter) keeps(ref contentref.ContentRef) (contentref.ContentRef, bool) {
+	if ref.TenantID != f.tenant || ref.Validate() != nil {
+		return ref, false
 	}
 	ref = ref.Content()
 	if f.kinds != nil {
 		if _, ok := f.kinds[ref.ContentKind]; !ok {
-			return
+			return ref, false
 		}
 	}
-	key := ref.Key()
-	if _, ok := f.exclude[key]; ok {
-		return
+	if _, ok := f.exclude[ref.Key()]; ok {
+		return ref, false
 	}
-	if _, ok := f.seen[ref.ContentKind][ref.ContentID]; ok {
-		return
-	}
-	f.exclude[key] = struct{}{}
-	f.out = append(f.out, Hit{ContentRef: ref, Score: score})
+	_, seen := f.seen[ref.ContentKind][ref.ContentID]
+	return ref, !seen
 }
 
 // trimAll trims, drops empties and deduplicates.
