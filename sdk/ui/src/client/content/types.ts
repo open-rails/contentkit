@@ -45,4 +45,4 @@ export type ContentChange =
   | { type: "ban.saved"; scope: BanScope; ban: CommentBan }
   | { type: "ban.lifted"; scope: BanScope; user: string }
   | { type: "moderation.resolved"; kind: HeldKind; id: string; decision: Decision }
-  | { type: "taxonomy.changed" };
+  | { type: "groups.changed" };

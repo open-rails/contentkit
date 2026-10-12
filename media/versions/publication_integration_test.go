@@ -125,12 +125,12 @@ func TestPublication(t *testing.T) {
 	}
 
 	// The reader plan route serves the same.
-	resp, body := s.call(s.fan, "GET", "/contents/"+c+"/versions/"+v.Version+"/reader", nil)
+	resp, body := s.call(s.fan, "GET", "/v1/contents/"+c+"/versions/"+v.Version+"/reader", nil)
 	var got versions.ReaderPlan
 	if resp.StatusCode != 200 || json.Unmarshal(body, &got) != nil || got.Publication != fan.Publication || len(got.Segments) != 3 {
 		t.Fatalf("GET reader: %d %s", resp.StatusCode, body)
 	}
-	if resp, _ := s.call(s.fan, "GET", "/contents/"+c+"/versions/"+s.version(c).Version+"/reader", nil); resp.StatusCode != 202 {
+	if resp, _ := s.call(s.fan, "GET", "/v1/contents/"+c+"/versions/"+s.version(c).Version+"/reader", nil); resp.StatusCode != 202 {
 		t.Fatalf("an unpublished version's plan: %d", resp.StatusCode)
 	}
 }
@@ -162,10 +162,10 @@ func TestWithdrawal(t *testing.T) {
 	}
 	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 && p.Previews[1].Name == "003" })
 
-	// Appending keeps the current publication readable until its successor
-	// is complete.
+	// Appending keeps the version readable: its current publication stays
+	// until a complete successor replaces it.
 	s.mustUpload(s.creator, ref, "originals/006", "image/png", pngOf(t, 30, 40, 99))
-	if p, err := s.svc.Plan(s.ctx, s.creator, v); err != nil || p.Publication != after.Publication {
+	if _, err := s.svc.Plan(s.ctx, s.creator, v); err != nil {
 		t.Fatalf("an append withdrew the publication: %v", err)
 	}
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 5 })

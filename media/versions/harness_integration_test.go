@@ -307,7 +307,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux.Handle("/contents/", http.StripPrefix("/contents", h))
+	mux.Handle("/v1/contents/{id}/versions/", http.StripPrefix("/v1", h))
 	s.srv = httptest.NewServer(mux)
 	t.Cleanup(s.srv.Close)
 	return s

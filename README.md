@@ -33,7 +33,7 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 | `tenant_id` | one site: `doujins`, `hentai0`, the marketplace |
 | `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
-| `taxonomy_id` | a generic ContentKit record: tag, artist, series, creator, character, voice actor |
+| `group_id` | a group: tag, artist, series, character, channel, playlist, featured rail |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |
 
 A language is metadata on a document or version, never part of a reference.
@@ -44,7 +44,7 @@ another tenant is an error, never remapped.
 
 | Package | Owns |
 |---|---|
-| `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
+| `contentref` | `ContentRef`, `ContentKey`, `GroupID` |
 | `contenturl` | uniform content URLs `[/{lang}]/{route}/{CODE}[/{slug}]`: permanent 9-character codes per tenant, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
 | `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
@@ -60,9 +60,9 @@ another tenant is an error, never remapped.
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
-| `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
+| `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
-| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
@@ -95,7 +95,7 @@ rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	Auth:           ak.Authenticator(), // says who a request is; ContentKit decides what to admit
 	UserInfo:       ak.UserInfo(),      // authors' names
 	Content: content.Options{Schema: "doujins", Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
-	Uploads: uploads, Reader: reader, Codes: router, Taxonomy: store, // optional modules
+	Uploads: uploads, Reader: reader, Codes: router, Groups: groupStore, // optional modules
 })
 mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 counts, _ := rt.Content.Counts(ctx, []contentkit.ContentRef{rt.Content.Ref("gallery", "42")})
@@ -117,7 +117,7 @@ middleware goes in front: each route's gate asks `Auth` who the request is
 | `/media/upload/…` | media uploads | `Uploads` |
 | `/media/…` | media reads and HLS playlists | `Reader`, `ReadLimit` |
 | `/codes/{code}` | content codes | `Codes` |
-| `/taxonomy/…` | taxonomy admin, for `root:taxonomy:write` | `Taxonomy` |
+| `/v1/…` | groups: listings and pages, writes for `root:groups:write` | `Groups` |
 
 | Tier | Admits |
 |---|---|
@@ -134,9 +134,9 @@ are the resolver's.
 No staff action asks for a recent sign-in. Behind a proxy, set
 `Request.RemoteAddr` to the client's address before the mount: anonymous
 reactions, votes and limits are keyed by it. No content kind may be named
-`media`, `codes` or `taxonomy`. A host can still mount a module alone
+`media`, `codes`, `v1`, `catalog` or `notifications`. A host can still mount a module alone
 (`content.Runtime.Handler`, `media.UploadHandler`, `media.Reader.Handler`,
-`contenturl.Router.Handler`, `taxonomy.Store.Handler`) at a path of its
+`contenturl.Router.Handler`, `groups.Store.Handler`) at a path of its
 choosing, each with the same `Auth`.
 
 Every route is declared once, in its module's route table
@@ -450,40 +450,22 @@ per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
 content URLs, React hooks and styled components. See
 [sdk/ui/README.md](sdk/ui/README.md).
 
-## Taxonomy
+## Groups
 
-Nodes, names, edges and assignments are tenant-scoped; effective tags are the
-work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
-filter hold on one eligible version inside the same join as search. The PostgreSQL baseline always installs the taxonomy tables; see
-[docs/taxonomy-migration.md](docs/taxonomy-migration.md).
-
-```go
-store, _ := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "doujins",
-	Kinds: []string{"tag", "artist", "character", "series", "voice_actor"}, Languages: []string{"en", "es"},
-	CountEligibility: &search.Eligibility{SQL: releasedVersionSQL}})
-_ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersion(v2), TaxonomyID: "colored"}}, taxonomy.AssignOptions{})
-tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
-filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
-page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
-// RuntimeConfig.Taxonomy: store, served at /taxonomy for root:taxonomy:write
-```
-
-`ListNodes` backs a catalog index page directly: the display name in the
-request language (falling back to the store's configured order, or pinned with
-`LanguageMode`), the per-language content count, an A-Z index, a name+alias
-search, hide-empty, five orders and offset paging with a total. The zero
-`ListOptions` keeps the keyset contract a full admin sync wants.
+Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
+owner, sellable, auth_scope, windows, version_level, roles, attributes).
+Writes are batches in one transaction; memberships keep
+`content_facets.group_ids` current, `Recount` (an engine job) rebuilds
+per-language counts and automatic covers from the facets, and
+`RefreshWindows` re-derives facets as rail windows open and close.
 
 ```go
-page, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es",
-	ContentKind: "gallery", MinCount: 1, Sort: taxonomy.SortCount, Offset: 40, Limit: 20})
-// page.Total, and per row: Name, NameLanguage, Count.
-letter, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es", NamePrefix: "a"})
-cast, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "character", Related: "s-fate", Relation: taxonomy.RelationMemberOf})
+store, _ := groups.New(groups.Options{Pool: pool, Schema: schema, Tenant: "doujins", Kinds: cfg})
+made, _ := store.CreateGroups(ctx, []groups.GroupInput{{Kind: "series", Slug: "fate", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Fate"}}}})
+_ = store.SetContentGroups(ctx, []groups.ContentGroups{{ContentID: id, Memberships: []groups.Membership{{GroupID: made[0].ID}}}})
+eff, _ := store.EffectiveGroups(ctx, tx, versionIDs) // version id -> active group ids, ancestors included
+page, _ := store.List(ctx, groups.ListOptions{Kind: "series", Language: "es", Sort: groups.SortCount})
 ```
-
-Worker: `ContentKinds: append(hostKinds, store.Kinds()...)`, `ListContent:
-store.Lister(listGalleries)`, `BuildKeywordDocuments: store.Builder(buildGalleryDocuments)`.
 
 ## Signal plane and discovery
 
@@ -508,7 +490,7 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
 - Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
   `popularity.New(popularity.Config{Source: hub, Policy: policy})`, then
-  `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
+  `ranker.Popular` / `ranker.Scores` / `ranker.Groups`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - `SimilarTo` and `Recommend` draw candidates from `EmbeddedConfig.Candidates`
   (default: co-engagement); see

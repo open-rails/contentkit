@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/authkit"
@@ -26,14 +27,14 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 const (
@@ -58,7 +59,7 @@ type world struct {
 	queue  *workqueue.Queue
 	up     *media.Uploads
 	rd     *media.Reader
-	tax    *taxonomy.Store
+	grp    *groups.Store
 	router *contenturl.Router
 	owner  string // the gallery's owner, when a test has one
 }
@@ -129,12 +130,27 @@ func newWorld(t *testing.T) *world {
 	if w.rd, err = media.NewReader(media.ReaderOptions{Manifests: w.jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}}); err != nil {
 		t.Fatal(err)
 	}
-	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"},
-		Listing: &taxonomy.Listing{Kinds: []string{"gallery"}, Eligibility: search.Eligibility{SQL: `SELECT 'free'::text AS access`},
-			Access: access.Columns{Level: "h.access", TierName: "premium", Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}}}); err != nil {
+	if w.grp, err = groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: kinds.Config{Languages: []string{"en"},
+		Kinds:      map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag", "series"}}},
+		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true}}}}); err != nil {
 		t.Fatal(err)
 	}
 	return w
+}
+
+// galleries writes gallery contents cid(n), each with the version
+// cid(n*10), as ContentKit's content routes will.
+func (w *world) galleries(ns ...int) {
+	w.t.Helper()
+	for _, n := range ns {
+		q := pgx.Identifier{w.schema}.Sanitize()
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_items (tenant_id, id, kind) VALUES ($1, $2, 'gallery')`, tenant, cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_versions (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, tenant, cid(n*10), cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+	}
 }
 
 // runtime is the host's one ContentKit: Auth and UserInfo are AuthKit's,
@@ -157,10 +173,6 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	catalog, err := w.tax.CatalogHandler(taxonomy.CatalogOptions{})
-	if err != nil {
-		w.t.Fatal(err)
-	}
 	cfg := contentkit.RuntimeConfig{
 		EmbeddedConfig: contentkit.EmbeddedConfig{PG: w.pool, PGSchema: w.schema, Tenant: tenant},
 		Auth:           w.ak.Authenticator(),
@@ -168,7 +180,7 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 		Content: content.Options{Resolver: w, ContentKinds: []string{"gallery"},
 			Limits: content.Limits{Disabled: true}},
 		Uploads: w.up, Reader: w.rd, ReadLimit: media.RateLimit{Disabled: true},
-		Codes: router, Taxonomy: w.tax, Catalog: catalog,
+		Codes: router, Groups: w.grp,
 	}
 	if edit != nil {
 		edit(&cfg)
@@ -313,7 +325,8 @@ func pngBytes(t *testing.T, w int) []byte {
 	return b.Bytes()
 }
 
-// mount serves h at module path under the one mount, beside the runtime.
-func (s *server) mount(path string, h http.Handler) {
-	s.mux.Handle(prefix+path+"/", http.StripPrefix(prefix+path, h))
+// mount serves h at pattern under the one mount, beside the runtime, with
+// its module's prefix stripped.
+func (s *server) mount(pattern, module string, h http.Handler) {
+	s.mux.Handle(prefix+pattern, http.StripPrefix(prefix+module, h))
 }

@@ -20,7 +20,7 @@ func TestFork(t *testing.T) {
 	c, from := gallery(t, s)
 	src := s.plan(s.creator, from, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
 	to := s.version(c)
-	path := "/contents/" + c + "/versions/" + to.Version + "/fork"
+	path := "/v1/contents/" + c + "/versions/" + to.Version + "/fork"
 	body := versions.ForkBody{From: from.Version, Playback: true, Segments: true}
 	if resp, _ := s.call(s.stranger, "POST", path, body); resp.StatusCode != 403 {
 		t.Fatalf("a stranger forked: %d", resp.StatusCode)
@@ -83,7 +83,7 @@ func TestReaderMeta(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c, v := gallery(t, s)
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
-	path := "/contents/" + c + "/versions/" + v.Version + "/reader"
+	path := "/v1/contents/" + c + "/versions/" + v.Version + "/reader"
 	page, anchor := "001", "a1"
 	meta := versions.ReaderMeta{SchemaVersion: 1,
 		Anchors:    []versions.Anchor{{ID: "a1", Page: "001", OffsetPercent: 50}, {ID: "a5", Page: "005", OffsetPercent: 10}},
@@ -128,7 +128,7 @@ func TestDownload(t *testing.T) {
 		f, ok := s.manifest(ref).Get("download/pages.zip")
 		return ok && f.Blob != ""
 	})
-	path := "/contents/" + c + "/versions/" + v.Version + "/download"
+	path := "/v1/contents/" + c + "/versions/" + v.Version + "/download"
 	if resp, _ := s.call(access.Actor{}, "GET", path, nil); resp.StatusCode != 403 {
 		t.Fatalf("anonymous download of a premium version: %d", resp.StatusCode)
 	}

@@ -27,12 +27,13 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
+	kindcfg "github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // The deployment's names; compose.yaml gives the worker the same ones.
@@ -183,7 +184,13 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	tax, err := taxonomy.New(taxonomy.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: []string{"tag", "series", "character"}, Languages: []string{"en", "ja"}})
+	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
+	gallery, album := grouped, grouped
+	gallery.Route, album.Route = "g", "album"
+	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: kindcfg.Config{Languages: []string{"en", "ja"},
+		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album},
+		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
+			"character": {Route: "characters", ScopedBy: "series"}}}})
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +212,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 				Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
 			},
 			Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-			Codes: h.router, Taxonomy: tax,
+			Codes: h.router, Groups: grp,
 		})
 	}
 	// The main mount takes signed-out comments, reactions and votes; the

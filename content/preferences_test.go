@@ -27,7 +27,7 @@ var localeWorks = map[string]string{
 
 // galleryWork is a host canonical rule: every language edition votes on its
 // one work; an explicit version stays; posts export under their own id;
-// taxonomy stays out of the boundary entirely.
+// groups stay out of the boundary entirely.
 func galleryWork(r contentref.ContentRef) (contentref.ContentRef, bool) {
 	switch r.ContentKind {
 	case "gallery":

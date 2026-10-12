@@ -79,13 +79,13 @@ the personalised blend). The fixture asserts both agree on every work within
 1e-9 and exactly on the invariance pairs. Public counts (`Hit.Viewers`,
 `Hit.MeanEngagement()`) are the raw metrics, never derived from the rank.
 
-## Taxonomy popularity (`Ranker.Taxonomy`, `Catalog` port)
+## Group popularity (`Ranker.Groups`, `Catalog` port)
 
-Artists, series, tags, creators, characters and seasons never receive signals.
-`Taxonomy(kind, taxonomyKind, window)` takes the top `TaxonomyCandidateLimit`
-(default 2,000) ranked works, asks the host `Catalog` which taxonomy records
-each work is assigned to, and sums member scores per record (a work assigned
-twice to one record counts once). The listing is approximate: a record whose
+Artists, series, tags, characters and seasons never receive signals.
+`Groups(kind, groupKind, window)` takes the top `GroupCandidateLimit`
+(default 2,000) ranked works, asks the `Catalog` (`*groups.Store`) which groups
+each work is in, and sums member scores per group (a work in one group twice
+counts once). The listing is approximate: a record whose
 members all fall below the cutoff is absent, a record with many lower-ranked
 members can rank below one with fewer higher-ranked members, and
 `ContentCount`/`Viewers`/`MeanScore` describe only that slice. The bound is part
@@ -150,8 +150,8 @@ counts and coverage against the selected version (es half-readers score 50, not
 the window and +3/−1 all time; `7d` ranks only today's readers, `30d` everything
 but before_window, `90d`/`365d`/`all` everything with before_window = window_start
 = window_end = once_readers exactly; a second tenant reusing an id in the same
-database is invisible and ranks alone; taxonomy scores are the member sums
-through the `Catalog` and the signal plane holds no taxonomy rows; another policy
+database is invisible and ranks alone; group scores are the member sums
+through the `Catalog` and the signal plane holds no group rows; another policy
 name never reads v1's cache entry.
 
 ## Adversarial viewer-volume qualification
@@ -180,11 +180,11 @@ or re-ingestion is required.
 - `popularity.policy` config → `popularity.ByName(name)` at startup, then
   `popularity.New(popularity.Config{Source: hub, Policy: policy, Cache: cache,
   Catalog: catalog})`. `Reader.Policy`/`ParentRankingGalleryLimit` become
-  `Config.Policy`/`Config.TaxonomyCandidateLimit`.
+  `Config.Policy`/`Config.GroupCandidateLimit`.
 - `Reader.popularRanking` → `ranker.Popular(ctx, "gallery", window,
   offset+limit)` sliced; `GalleryPopularity`/`scoreCandidates` →
   `ranker.Candidates`/`Scores`; `PopularEntities`/`parentRanking` →
-  `ranker.Taxonomy(ctx, "gallery", "artist"|"series"|"character"|"tag",
+  `ranker.Groups(ctx, "gallery", "artist"|"series"|"character"|"tag",
   window)` with a `Catalog` over `gallery_artists ∪ galleries.publisher_id`,
   `gallery_series`, `gallery_characters`, `gallery_tags ∪ gallery_version_tags`
   (the `parentGalleryQueries` SQL, keyed by gallery id).

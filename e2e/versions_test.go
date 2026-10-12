@@ -65,7 +65,7 @@ func versionsScenario(t *testing.T, w *world, f *server, owner, user, anon strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mount("/contents", h)
+	f.mount("/v1/contents/{id}/versions/", "/v1", h)
 	book, v1, v2 := cid(40), cid(41), cid(42)
 	for _, q := range []struct {
 		sql  string
@@ -81,10 +81,10 @@ func versionsScenario(t *testing.T, w *world, f *server, owner, user, anon strin
 			t.Fatalf("%s: %v", q.sql, err)
 		}
 	}
-	path := "/contents/" + book + "/versions/" + v1
+	path := "/v1/contents/" + book + "/versions/" + v1
 	var pending versions.Pending
 	f.want(202, anon, "GET", path+"/reader", nil, &pending)
-	f.want(404, anon, "GET", "/contents/"+cid(43)+"/versions/"+cid(44)+"/reader", nil, nil)
+	f.want(404, anon, "GET", "/v1/contents/"+cid(43)+"/versions/"+cid(44)+"/reader", nil, nil)
 	f.want(401, anon, "PUT", path+"/reader", versions.ReaderMeta{SchemaVersion: 1}, nil)
 	f.want(403, user, "PUT", path+"/reader", versions.ReaderMeta{SchemaVersion: 1}, nil)
 	f.want(204, owner, "PUT", path+"/reader", versions.ReaderMeta{SchemaVersion: 1}, nil)
