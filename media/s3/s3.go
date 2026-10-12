@@ -3,6 +3,7 @@
 package s3
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -241,14 +242,21 @@ func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) 
 		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", media.ErrPreconditionFailed, src)
 	}
 	source := s.bucket + "/" + src
-	return s.copy(ctx, source, dst, head)
+	return s.copy(ctx, source, dst, head, o.ContentType)
 }
 
-func (s *Store) copy(ctx context.Context, source, dst string, head media.Object) (media.Object, error) {
+func (s *Store) copy(ctx context.Context, source, dst string, head media.Object, contentType string) (media.Object, error) {
 	src := head.Key
 	ifMatch := optional(head.ETag)
+	typ := cmp.Or(contentType, head.ContentType)
 	if head.Size <= s.part {
-		out, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch})
+		in := &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch}
+		if typ != head.ContentType {
+			// REPLACE drops whatever it is not given.
+			in.MetadataDirective, in.ContentType = types.MetadataDirectiveReplace, &typ
+			in.CacheControl, in.Metadata = optional(head.CacheControl), head.Metadata
+		}
+		out, err := s.client.CopyObject(ctx, in)
 		if err != nil {
 			return media.Object{}, mapErr("copy", src, err)
 		}
@@ -256,10 +264,10 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object)
 		if out.CopyObjectResult != nil {
 			etag = aws.ToString(out.CopyObjectResult.ETag)
 		}
-		return media.Object{Key: dst, Size: head.Size, ETag: etag, ContentType: head.ContentType, CacheControl: head.CacheControl}, nil
+		return media.Object{Key: dst, Size: head.Size, ETag: etag, ContentType: typ, CacheControl: head.CacheControl}, nil
 	}
 	up, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &dst,
-		ContentType: optional(head.ContentType), CacheControl: optional(head.CacheControl), Metadata: head.Metadata})
+		ContentType: optional(typ), CacheControl: optional(head.CacheControl), Metadata: head.Metadata})
 	if err != nil {
 		return media.Object{}, mapErr("copy", dst, err)
 	}
@@ -286,7 +294,7 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object)
 	if err != nil {
 		return abort(mapErr("complete copy", dst, err))
 	}
-	return media.Object{Key: dst, Size: head.Size, ETag: aws.ToString(out.ETag), ContentType: head.ContentType, CacheControl: head.CacheControl}, nil
+	return media.Object{Key: dst, Size: head.Size, ETag: aws.ToString(out.ETag), ContentType: typ, CacheControl: head.CacheControl}, nil
 }
 
 // PresignPut signs Content-Type, Content-Length and x-amz-checksum-sha256, so

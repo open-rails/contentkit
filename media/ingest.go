@@ -28,14 +28,18 @@ const (
 	ingestAttempts    = 5
 )
 
-// IngestRequest streams one file of unknown or huge size from the host (a
+// IngestRequest brings one file of unknown or huge size from the host (a
 // server-side import, not a browser upload) into Ref and puts it at Path.
 type IngestRequest struct {
 	Ref  contentref.ContentRef
 	Path string
 	Type string
 	Body io.Reader // read once, sequentially
-	Size int64     // expected size, checked when > 0; required when the actor is rate- or quota-limited
+	// From copies this key of Ref's bucket server-side instead of reading a
+	// Body; it must lie outside ContentKit's namespaces (copy an item's
+	// upload with OpCopy).
+	From string
+	Size int64 // expected size, checked when > 0; required when the actor is rate- or quota-limited
 	Meta map[string]any
 
 	// Resume continues a multipart write a previous Ingest left behind:
@@ -67,15 +71,24 @@ type IngestResult struct {
 }
 
 // Ingest writes req.Body to a staged upload in temp/, one checksum-bound
-// PUT when it fits in one part, else a multipart write, and commits a put
-// of it: the worker places and processes it like a browser upload.
+// PUT when it fits in one part, else a multipart write, or copies req.From
+// there, and commits a put of it: the worker places and processes it like a
+// browser upload.
 func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequest) (IngestResult, error) {
 	item, err := u.item(req.Ref)
 	if err != nil {
 		return IngestResult{}, err
 	}
-	if req.Path == "" || req.Type == "" || req.Body == nil || req.Size < 0 {
-		return IngestResult{}, uploadErr(CodeInvalid, "ingest needs a path, type and body")
+	if req.Path == "" || req.Type == "" || (req.Body == nil) == (req.From == "") || req.Size < 0 {
+		return IngestResult{}, uploadErr(CodeInvalid, "ingest needs a path, a type and either a body or a copy source")
+	}
+	if req.From != "" {
+		if ns, _, _ := strings.Cut(req.From, "/"); slices.Contains(u.reg.Namespaces(), ns) {
+			return IngestResult{}, uploadErr(CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", req.From)
+		}
+		if req.Resume != nil || req.OnUpload != nil {
+			return IngestResult{}, uploadErr(CodeInvalid, "a copy has no multipart write to resume")
+		}
 	}
 	if req.PartSize == 0 {
 		req.PartSize = IngestPartSize
@@ -103,6 +116,9 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, ErrConditionalPutRequired
 	}
 	limited := u.o.Limiter != nil && !grant.Exempt
+	if req.From != "" {
+		return u.ingestCopy(ctx, actor, item, up, grant.Owner, limited, req)
+	}
 	if limited && req.Size == 0 {
 		return IngestResult{}, uploadErr(CodeInvalid, "a limited uploader must declare the size")
 	}
@@ -154,6 +170,53 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	}
 	res.Manifest = man
 	return res, nil
+}
+
+// ingestCopy copies req.From to a fresh staged upload, so no byte passes
+// through this process, and commits it. A copy the commit did not adopt is
+// dropped at once: a retry copies again under a new name.
+func (u *Uploads) ingestCopy(ctx context.Context, actor access.Actor, item Item, up Upload, owner string, limited bool, req IngestRequest) (_ IngestResult, err error) {
+	src, err := u.o.Store.Head(ctx, req.From)
+	if errors.Is(err, ErrNotFound) {
+		return IngestResult{}, uploadErr(CodeNotFound, "copy source %q not found", req.From)
+	} else if err != nil {
+		return IngestResult{}, err
+	}
+	if req.Size > 0 && src.Size != req.Size {
+		return IngestResult{}, uploadErr(CodeInvalid, "copy source holds %d bytes; declared %d", src.Size, req.Size)
+	}
+	if err := allows(up, req.Type, src.Size); err != nil {
+		return IngestResult{}, err
+	}
+	temp := NewStaged()
+	key, _ := item.Staged(temp)
+	if err := u.o.Manifests.allocate(ctx, item, key); err != nil {
+		return IngestResult{}, err
+	}
+	defer func() {
+		if err != nil {
+			// Only an unadopted copy goes; a failed drop leaves it to the sweep.
+			_ = u.o.Manifests.DropUnreferenced(context.WithoutCancel(ctx), req.Ref, Unreferenced{Staged: []string{temp}})
+		}
+	}()
+	if limited {
+		if err := u.limiter(req.Ref.TenantID).Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
+			Owner: owner, Key: key, Size: src.Size}); err != nil {
+			return IngestResult{}, err
+		}
+		defer func() {
+			_ = u.limiter(req.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
+		}()
+	}
+	obj, err := u.o.Store.Copy(ctx, req.From, key, CopyOptions{IfMatch: src.ETag, ContentType: req.Type})
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("media: copy %s: %w", req.From, err)
+	}
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
+	if err != nil {
+		return IngestResult{}, err
+	}
+	return IngestResult{Staged: temp, Size: obj.Size, Manifest: man}, nil
 }
 
 func (u *Uploads) ingestOne(ctx context.Context, up Upload, req IngestRequest, key string, body []byte) (IngestResult, error) {

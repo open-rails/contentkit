@@ -137,5 +137,5 @@ func (s *Store) CopyVersion(ctx context.Context, v media.ObjectVersion, dst stri
 	}
 	head := media.Object{Key: v.Key, Size: aws.ToInt64(out.ContentLength), ETag: aws.ToString(out.ETag),
 		ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl), Metadata: out.Metadata}
-	return s.copy(ctx, s.bucket+"/"+v.Key+"?versionId="+url.QueryEscape(v.VersionID), dst, head)
+	return s.copy(ctx, s.bucket+"/"+v.Key+"?versionId="+url.QueryEscape(v.VersionID), dst, head, "")
 }

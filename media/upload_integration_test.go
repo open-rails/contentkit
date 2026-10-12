@@ -800,3 +800,83 @@ func TestIngest(t *testing.T) {
 		t.Fatalf("temp/ kept %s %v", o.Key, err)
 	}
 }
+
+// lostCopyStore copies, then loses the response.
+type lostCopyStore struct{ media.Store }
+
+func (s lostCopyStore) Copy(ctx context.Context, src, dst string, o media.CopyOptions) (media.Object, error) {
+	if _, err := s.Store.Copy(ctx, src, dst, o); err != nil {
+		return media.Object{}, err
+	}
+	return media.Object{}, errors.New("response lost")
+}
+
+// Ingest with From copies an object of the bucket server-side, stored as
+// the requested type; a copy it does not commit is not left behind.
+func TestIngestCopy(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.ref("gallery", 1)
+	item, _ := f.reg.Item(g)
+	ctx := context.Background()
+	body := bytes.Repeat([]byte("legacy master "), 1<<16)
+	src := "import-" + f.ns + "/12/master.bin"
+	if _, err := f.env.Store.Put(ctx, src, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/octet-stream"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.env.Store.Delete(context.Background(), src) })
+	temp := func() []string {
+		var keys []string
+		for o, err := range f.env.Store.List(ctx, item.TempPrefix()) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys = append(keys, o.Key)
+		}
+		return keys
+	}
+	req := media.IngestRequest{Ref: g, Path: "import/legacy.zip", Type: "application/zip", From: src, Size: int64(len(body))}
+
+	lost, err := media.NewUploads(media.UploadOptions{Store: lostCopyStore{f.env.Store}, Manifests: f.ms})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lost.Ingest(ctx, f.editor, req); err == nil || len(temp()) > 0 {
+		t.Fatalf("a lost copy response: %v, temp/ %v", err, temp())
+	}
+	for i, bad := range []media.IngestRequest{
+		{Ref: g, Path: req.Path, Type: req.Type, From: src, Size: req.Size + 1},
+		{Ref: g, Path: req.Path, Type: req.Type, From: src, Body: bytes.NewReader(body)},
+		{Ref: g, Path: req.Path, Type: req.Type, From: f.ns + "/gallery/2/temp/" + media.NewStaged()},
+		{Ref: g, Path: req.Path, Type: req.Type, From: src, OnUpload: func(media.IngestUpload) error { return nil }},
+	} {
+		if _, err := f.up.Ingest(ctx, f.editor, bad); code(err) != media.CodeInvalid {
+			t.Fatalf("bad request %d: %v", i, err)
+		}
+	}
+	if _, err := f.up.Ingest(ctx, f.editor, media.IngestRequest{Ref: g, Path: req.Path, Type: req.Type, From: src + ".gone"}); code(err) != media.CodeNotFound {
+		t.Fatalf("a missing source: %v", err)
+	}
+
+	res, err := f.up.Ingest(ctx, f.editor, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, _ := item.Staged(res.Staged)
+	obj, err := f.env.Store.Head(ctx, staged)
+	if err != nil || obj.Size != req.Size || res.Size != req.Size || obj.ContentType != req.Type {
+		t.Fatalf("copied %+v %+v %v", res, obj, err)
+	}
+	if u, ok := res.Manifest.Get(req.Path); !ok || u.Staged != res.Staged {
+		t.Fatalf("committed %v", paths(res.Manifest))
+	}
+	if u, _ := f.place(g).Get(req.Path); !matchesBlob(u.Blob, body) || u.Staged != "" {
+		t.Fatalf("placed %+v", u)
+	}
+	if keys := temp(); len(keys) > 0 {
+		t.Fatalf("temp/ kept %v", keys)
+	}
+	if _, err := f.env.Store.Head(ctx, src); err != nil {
+		t.Fatalf("the source went: %v", err)
+	}
+}
