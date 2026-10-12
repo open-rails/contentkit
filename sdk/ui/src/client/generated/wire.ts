@@ -225,6 +225,7 @@ export interface Content {
   slug?: string;
   description?: string;
   body?: string;
+  decision: Decision;
   images?: Record<string, string>;
   cover?: CatalogCover;
   state: ContentState;

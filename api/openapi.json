@@ -2635,7 +2635,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state.",
+        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.",
         "parameters": [
           {
             "name": "id",
@@ -8853,6 +8853,9 @@
           "body": {
             "type": "string"
           },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
           "images": {
             "type": "object",
             "additionalProperties": {
@@ -8954,6 +8957,7 @@
           "path",
           "language",
           "title",
+          "decision",
           "state",
           "listing",
           "live",

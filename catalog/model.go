@@ -138,8 +138,13 @@ type Content struct {
 	Title       string `json:"title"`
 	Slug        string `json:"slug,omitempty"`
 	Description string `json:"description,omitempty"`
-	// Body shows each inline image with a current public file as its URL.
+	// Body shows each inline image with a current public file as its URL;
+	// only editors and viewers Decision allows get it. Description is the
+	// teaser everyone reads.
 	Body string `json:"body,omitempty"`
+	// Decision is the viewer's access to the item: allowed when they open any
+	// of its versions, else its first version's paywall.
+	Decision Decision `json:"decision"`
 	// Images maps each resolved image name of Body and the cover to its URL.
 	Images       map[string]string `json:"images,omitempty"`
 	Cover        *Cover            `json:"cover,omitempty"`

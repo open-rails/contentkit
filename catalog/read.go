@@ -79,7 +79,10 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		}
 		lang := s.pickLanguage(v.language, shown)
 		t := shown[lang]
-		c.Language, c.Title, c.Slug, c.Description, c.Body = lang, t.Title, t.Slug, t.Description, t.Body
+		c.Language, c.Title, c.Slug, c.Description = lang, t.Title, t.Slug, t.Description
+		if c.Decision = bundle(iv); c.Decision.Allowed {
+			c.Body = t.Body
+		}
 		if iv.editor {
 			c.Text = texts[id]
 			if it.moderation != "approved" {
@@ -163,6 +166,23 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		out[i] = built[id]
 	}
 	return out, nil
+}
+
+// bundle is the viewer's access to an item's body: allowed when they edit it
+// or open any of its versions, else its first version's paywall.
+func bundle(iv *itemView) Decision {
+	if iv.editor {
+		return Decision{Allowed: true}
+	}
+	for _, r := range iv.versions {
+		if iv.decisions[r.versionID].Allowed {
+			return Decision{Allowed: true}
+		}
+	}
+	if len(iv.versions) == 0 {
+		return Decision{}
+	}
+	return iv.decisions[iv.versions[0].versionID]
 }
 
 func compare(a, b string) int {
