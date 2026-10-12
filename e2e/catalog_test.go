@@ -11,17 +11,22 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/helpers/notify"
 
+	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/notification"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // One mount serves every module at its sub-path, and every route answers
@@ -34,12 +39,18 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
 	anon := ""
-	f := serve(t, w.runtime(nil))
+	bill := w.billing()
+	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Billing = bill }))
 	item := "/gallery/" + cid(1)
 
 	// What signed-out visitors may do: nothing here (the default).
 	var cfg content.Config
 	f.want(http.StatusOK, anon, "GET", "/config", nil, &cfg)
+	var model kindsroute.ContentModel
+	f.want(http.StatusOK, anon, "GET", "/kinds", nil, &model)
+	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tags" {
+		t.Fatalf("content model %+v", model)
+	}
 	if cfg.Anonymous != (content.Anonymous{}) {
 		t.Fatalf("config %+v", cfg)
 	}
@@ -53,8 +64,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/posts/admin", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "PATCH", "/posts/"+post.ID, content.PostInput{Excerpt: ptr("Short")}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
-	f.want(http.StatusNotImplemented, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
 
 	// Codes resolve the post's code.
 	var resolved contenturl.Resolved
@@ -111,6 +122,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, user, "PUT", "/notifications/"+id+"/dismiss", nil, nil)
 	f.want(http.StatusOK, user, "GET", "/notifications/inbox?dismissed=true", nil, nil)
 	f.want(http.StatusOK, user, "DELETE", "/notifications/"+id+"/dismiss", nil, nil)
+	// The host's service publishes; people may not.
+	welcome := notification.Publication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: u.ID},
+		Origin: notify.Origin{System: "host", Scope: w.tenant, ID: "welcome"}, Kind: "host.welcome", CreatedAt: time.Now().UTC()}}}
+	var published notification.Published
+	f.want(http.StatusOK, staff, "POST", "/notifications/publish", welcome, &published)
+	if len(published.Items) != 1 {
+		t.Fatalf("published %+v", published)
+	}
+	f.want(http.StatusForbidden, user, "POST", "/notifications/publish", welcome, nil)
 
 	// Reactions on host content.
 	for _, verb := range []string{"like", "dislike"} {
@@ -140,8 +160,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	var option content.PollOption
 	f.want(http.StatusCreated, staff, "POST", "/polls/"+poll.ID+"/options", content.PollOptionPatch{Label: ptr("C")}, &option)
 	f.want(http.StatusOK, staff, "PATCH", "/polls/"+poll.ID+"/options/"+option.ID, content.PollOptionPatch{Position: ptr(5)}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/polls/"+poll.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/polls/"+poll.ID+"/options/"+option.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/polls/"+poll.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/polls/"+poll.ID+"/options/"+option.ID+"/image", content.ImageInput{Image: ptr("")}, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/polls/"+poll.ID+"/options/"+option.ID, nil, nil)
 	f.want(http.StatusBadRequest, staff, "DELETE", "/polls/"+poll.ID+"/options/"+poll.Options[0].ID, nil, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/polls/"+poll.ID, nil, nil)
@@ -171,48 +191,66 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 
 	// Groups: public reads, writes behind root:groups:write.
 	w.galleries(1, 2)
-	f.want(http.StatusForbidden, user, "POST", "/v1/groups", []groups.GroupInput{}, nil)
+	f.want(http.StatusForbidden, user, "POST", "/groups", []groups.GroupInput{}, nil)
 	name := func(n string) groups.Name { return groups.Name{Language: "en", Kind: groups.NameCanonical, Name: n} }
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/v1/groups", []groups.GroupInput{
+	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
 		{Kind: "tag", Slug: "color", Names: []groups.Name{name("Color")}},
 		{Kind: "tag", Slug: "colour", Names: []groups.Name{name("Colour")}},
 		{Kind: "series", Slug: "saga", Names: []groups.Name{name("Saga")}},
 	}, &made)
 	color, colour, saga := string(made[0].ID), string(made[1].ID), string(made[2].ID)
-	f.want(http.StatusConflict, staff, "POST", "/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
+	f.want(http.StatusConflict, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
 	var page groups.GroupPage
-	f.want(http.StatusOK, anon, "GET", "/v1/groups?kind=tag&language=en&sort=name&limit=1", nil, &page)
+	f.want(http.StatusOK, anon, "GET", "/groups?kind=tag&language=en&sort=name&limit=1", nil, &page)
 	if len(page.Groups) != 1 || page.Groups[0].Name != "Color" || page.Groups[0].Path == "" || page.NextCursor == "" {
 		t.Fatalf("groups page %+v", page)
 	}
-	f.want(http.StatusOK, anon, "GET", "/v1/groups/"+color+"?language=en", nil, nil)
-	f.want(http.StatusNotFound, anon, "GET", "/v1/groups/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
-	f.want(http.StatusBadRequest, anon, "GET", "/v1/groups/not-an-id", nil, nil)
-	f.want(http.StatusOK, staff, "PATCH", "/v1/groups/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/v1/groups/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/v1/groups/"+color+"/names", []groups.Name{name("Color")}, nil)
+	f.want(http.StatusOK, anon, "GET", "/groups/"+color+"?language=en", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
+	f.want(http.StatusBadRequest, anon, "GET", "/groups/not-an-id", nil, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/groups/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+color+"/names", []groups.Name{name("Color")}, nil)
 	edges := []groups.EdgeInput{{Relation: "related", To: groups.GroupID(colour)}}
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+color+"/edges", edges, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/v1/groups/"+color+"/edges", edges, nil)
-	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+cid(1)+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
 		{GroupID: groups.GroupID(color)}, {GroupID: groups.GroupID(saga)}, {GroupID: groups.GroupID(colour), VersionID: cid(10)}}}, nil)
 	var held groups.ContentMemberships
-	f.want(http.StatusOK, staff, "GET", "/v1/contents/"+cid(1)+"/groups?language=en", nil, &held)
+	f.want(http.StatusOK, staff, "GET", "/contents/"+cid(1)+"/groups?language=en", nil, &held)
 	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
 		t.Fatalf("content groups %+v", held)
 	}
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/v1/groups/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: cid(2)}, {ContentID: cid(1)}}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: cid(2)}, {ContentID: cid(1)}}}, nil)
 	var members groups.MemberPage
-	f.want(http.StatusOK, staff, "GET", "/v1/groups/"+saga+"/members?limit=10", nil, &members)
+	f.want(http.StatusOK, staff, "GET", "/groups/"+saga+"/members?limit=10", nil, &members)
 	if len(members.Members) != 2 || members.Members[0].ContentID != cid(2) {
 		t.Fatalf("members %+v", members)
 	}
-	f.want(http.StatusOK, staff, "DELETE", "/v1/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/v1/groups/"+saga, nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
+
+	// Offers on content, a version and a sellable group, over a real OpenRails merchant.
+	var offer offers.Offer
+	f.want(http.StatusForbidden, user, "PUT", "/contents/"+cid(1)+"/offer", map[string]any{"amount": "4.99"}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/offer", map[string]any{"amount": "4.99"}, &offer)
+	if offer.Terms.Amount != 4_990_000 {
+		t.Fatalf("offer %+v", offer)
+	}
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/versions/"+cid(10)+"/offer", map[string]any{"amount": "1.50"}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/contents/"+cid(1)+"/versions/"+cid(10)+"/offer", nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/offer", map[string]any{"amount": "9.99"}, nil)
+	f.want(http.StatusConflict, user, "POST", "/groups/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, user, "DELETE", "/groups/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/offer", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/me/library", nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/offers?state=active", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/offers", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/contents/"+cid(1)+"/offer", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
 	mediaScenario(t, f, user, anon)
 	versionsScenario(t, w, f, owner, user, anon)
@@ -220,10 +258,6 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	served := f.checker.Served()
 	var missing []string
 	for _, r := range httpapi.Catalog() {
-		// Offers need OpenRails; adapters/openrails serves them over an embedded engine.
-		if r.Module == httpapi.Offers {
-			continue
-		}
 		if !served[contract.RouteID(r)] {
 			missing = append(missing, contract.RouteID(r))
 		}
@@ -235,7 +269,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 }
 
 func mediaScenario(t *testing.T, f *server, user, anon string) {
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	ref := media.RefBody{Kind: "album", ID: cid(1)}
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
 	presign := func(path string) media.PresignBody { return presignPNG(ref, path, body) }
@@ -263,11 +297,11 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 		f.want(http.StatusBadRequest, user, "POST", p, media.TicketBody{Ticket: "forged"}, nil)
 	}
 	f.want(http.StatusBadRequest, user, "POST", "/media/upload/parts", media.PartsBody{Ticket: "forged", Parts: []media.PartBody{{Number: 1, Size: 1, SHA256: hex.EncodeToString(sum[:])}}}, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=gallery&id="+cid(1)+"&path=originals/001&t=1", nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=album&id="+cid(1)+"&path=originals/001&t=1", nil, nil)
 
 	// An editor read carries the kind's upload rules; a viewer's does not.
 	var read media.ReadResult
-	f.want(http.StatusOK, user, "GET", "/media/gallery/"+cid(1)+"?editor", nil, &read)
+	f.want(http.StatusOK, user, "GET", "/media/album/"+cid(1)+"?editor", nil, &read)
 	if len(read.Files) != 2 || !read.Files[0].Upload || len(read.Uploads) != 3 {
 		t.Fatalf("editor read %+v", read)
 	}
@@ -278,17 +312,17 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 		t.Fatalf("cover rule %+v", r)
 	}
 	var viewer media.ReadResult
-	f.want(http.StatusOK, anon, "GET", "/media/gallery/"+cid(1)+"?limit=10&editor", nil, &viewer)
+	f.want(http.StatusOK, anon, "GET", "/media/album/"+cid(1)+"?limit=10&editor", nil, &viewer)
 	if viewer.Uploads != nil {
 		t.Fatalf("a viewer read the upload rules: %+v", viewer.Uploads)
 	}
-	f.want(http.StatusNotFound, anon, "GET", "/media/gallery/"+cid(2), nil, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/gallery/"+cid(1)+"/hls/master.m3u8?audio=ja", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/media/album/"+cid(2), nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/album/"+cid(1)+"/hls/master.m3u8?audio=ja", nil, nil)
 
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 2 || presets[0].Kind != "gallery" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+	if len(presets) != 6 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
 		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" {
 		t.Fatalf("presets %+v", presets)
 	}

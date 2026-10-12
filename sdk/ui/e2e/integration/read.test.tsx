@@ -123,7 +123,7 @@ describe("useMediaRead against the real ContentKit", () => {
     await pages(ref, 1);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
-    const path = `/api/contentkit/media/gallery/${ref.id}`;
+    const path = `/api/contentkit/v1/media/gallery/${ref.id}`;
     await h.faults([{ fault: "api", path, method: "GET", status: 429, code: "rate_limited", error: "slow down", retry_after: 1, times: 1 }]);
     const { result } = renderHook(() => useMediaRead(ref, { client: c }));
     await waitFor(() => expect(result.current.read?.files).toHaveLength(1), { timeout: 5000 });

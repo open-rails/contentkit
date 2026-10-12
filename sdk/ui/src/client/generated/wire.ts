@@ -58,6 +58,13 @@ export interface AnswerGroup {
   count: number;
 }
 
+export interface Attribute {
+  type: string;
+  values?: string[];
+  filterable?: boolean;
+  sortable?: boolean;
+}
+
 export interface BackgroundCue {
   file: string;
   from_page?: string;
@@ -149,6 +156,12 @@ export interface Config {
   comment_max_length: number;
 }
 
+export interface ContentFilter {
+  group: GroupRef;
+  default_visible: boolean;
+  labels?: Record<string, string>;
+}
+
 export interface ContentGroups {
   kinds?: string[];
   memberships: Membership[];
@@ -158,6 +171,14 @@ export interface ContentMemberships {
   content_id: string;
   memberships: Membership[];
   groups: GroupCard[];
+}
+
+export interface ContentModel {
+  languages: string[];
+  tiers: string[];
+  kinds: Record<string, Kind>;
+  group_kinds: Record<string, GroupKind>;
+  content_filters: ContentFilter[];
 }
 
 export interface ContentRef {
@@ -415,9 +436,28 @@ export interface GroupJoin {
   member: boolean;
 }
 
+export interface GroupKind {
+  route?: string;
+  ordered?: boolean;
+  parent?: string;
+  scoped_by?: string;
+  owner?: string;
+  sellable?: boolean;
+  auth_scope?: boolean;
+  windows?: boolean;
+  version_level?: boolean;
+  roles?: string[];
+  attributes?: Record<string, Attribute>;
+}
+
 export interface GroupPage {
   groups: GroupCard[];
   next_cursor?: string;
+}
+
+export interface GroupRef {
+  kind: string;
+  slug: string;
 }
 
 export interface GroupUpdate {
@@ -465,6 +505,17 @@ export interface InlineImage {
   url: string | null;
 }
 
+export interface Input {
+  recipient: Recipient;
+  origin: Origin;
+  kind: string;
+  data: unknown;
+  created_at: string;
+  status?: string;
+  action_requested?: boolean;
+  severity?: string;
+}
+
 export interface Item {
   id: string;
   recipient: Recipient;
@@ -480,6 +531,16 @@ export interface Item {
   resolved_at: string | null;
   updated_at: string;
   revision: number;
+}
+
+export interface Kind {
+  route: string;
+  presentation: string;
+  versions: VersionRules;
+  segments?: boolean;
+  groups?: string[];
+  attributes?: Record<string, Attribute>;
+  sort?: string;
 }
 
 export interface LibraryItem {
@@ -824,6 +885,14 @@ export interface PublicUser {
   avatar_srcset?: string;
 }
 
+export interface Publication {
+  notifications: Input[];
+}
+
+export interface Published {
+  items: Item[];
+}
+
 export interface ReactionCounts {
   likes: number;
   dislikes: number;
@@ -953,6 +1022,12 @@ export interface UploadRule {
   video?: VideoLimits;
   min_aspect?: number;
   max_aspect?: number;
+}
+
+export interface VersionRules {
+  languages: string;
+  traits?: string[];
+  hidden?: boolean;
 }
 
 export interface VideoLimits {

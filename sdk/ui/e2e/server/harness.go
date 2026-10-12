@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
 	riverkit "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
@@ -27,12 +25,10 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/groups"
-	kindcfg "github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
@@ -41,38 +37,53 @@ const (
 	tenant       = "e2e" // the ContentKit tenant and media namespace
 	schema       = "e2e" // ContentKit's tables
 	authSchema   = "auth"
-	riverSchema  = "e2e_river"        // the host's River: AuthKit's and media's jobs
+	riverSchema  = "e2e_river"        // the host's River: AuthKit's and ContentKit's jobs
 	workerSchema = "e2e_media_worker" // the media worker's River
 	apiPrefix    = "/api/contentkit"
-	// onUploadPrefix serves a second upload API with ProcessOnUpload, as a
-	// host splitting its mounts would.
+	// onUploadPrefix serves a second ContentKit whose uploads process as they
+	// land, as a host splitting its mounts would.
 	onUploadPrefix = "/api/contentkit-on-upload"
-	// membersPrefix serves a second Runtime that takes nothing anonymous.
+	// membersPrefix serves a ContentKit that takes nothing anonymous.
 	membersPrefix = "/api/contentkit-members"
 )
 
 type harness struct {
-	pool       *pgxpool.Pool
-	auth       *authkit.Client
-	outbox     *authtest.Outbox
-	store      *mediaS3.Store
+	pool     *pgxpool.Pool
+	auth     *authkit.Client
+	outbox   *authtest.Outbox
+	store    *mediaS3.Store
+	ck       *contentkit.Engine
+	members  *contentkit.Engine // takes nothing anonymous
+	onUpload *contentkit.Engine // processes uploads as they land
+	river    *river.Client[pgx.Tx]
+	items    *items
+	faults   *faults
+	staff    auth.Scope // AuthKit's root scope (the root group), where staff hold their permissions
+	// Fixture views of ContentKit's storage, standing in for the media
+	// worker and for content the host still owns: the registry, manifests,
+	// token ring, and the codes of host items.
 	reg        *media.Registry
 	manifests  *media.Manifests
 	ring       token.Ring
 	urls       *contenturl.Store
-	rt         *contentkit.Runtime
-	members    *contentkit.Runtime // takes nothing anonymous
-	onUpload   *media.Uploads
-	river      *river.Client[pgx.Tx]
-	items      *items
-	faults     *faults
-	staff      auth.Scope // AuthKit's root scope (the root group), where staff hold their permissions
 	router     *contenturl.Router
 	s3Endpoint *url.URL
 	bucket     string
 	origin     string
 	media      string
 }
+
+// site is the content model: ContentKit's posts, and the group kinds.
+var site = func() kinds.Config {
+	return kinds.Config{Languages: []string{"en", "de", "ja"},
+		Kinds: map[string]kinds.Kind{"post": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}},
+		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
+			"character": {Route: "characters", ScopedBy: "series"}}}
+}
+
+// hostKinds are the items the host owns (/__test/items): commentable, with
+// plain media.
+var hostKinds = []string{"gallery", "album", "video"}
 
 func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, err error) {
 	h := &harness{items: newItems(), bucket: c.bucket, origin: c.origin, media: mediaOrigin}
@@ -93,32 +104,55 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.staff, err = h.auth.Scope(ctx, iam.RootGroup()); err != nil {
 		return nil, err
 	}
-
-	db := stdlib.OpenDBFromPool(h.pool)
-	err = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: db, Schema: schema})
-	_ = db.Close()
-	if err != nil {
-		return nil, fmt.Errorf("migrate contentkit: %w", err)
-	}
-	if err := workqueue.Migrate(ctx, h.pool, workerSchema); err != nil {
-		return nil, fmt.Errorf("migrate media worker queue: %w", err)
-	}
 	if err := riverkit.ApplyMigrations(ctx, h.pool, riverSchema); err != nil {
 		return nil, err
 	}
-
 	if h.store, err = openBucket(ctx, c); err != nil {
 		return nil, err
 	}
-	kinds, err := os.ReadFile(c.kinds)
+	registry, err := os.ReadFile(c.kinds)
 	if err != nil {
 		return nil, err
 	}
-	mc, err := media.ParseConfig(kinds)
+	mc, err := media.ParseConfig(registry)
 	if err != nil {
 		return nil, err
 	}
-	mc.BaseURL, mc.Hooks = mediaOrigin, media.Hooks{Resolver: h, CanUpload: h}
+	mc.BaseURL = mediaOrigin
+
+	// One ContentKit per mount, over one schema: AuthKit and the host's
+	// hooks for the items it still owns passed straight in.
+	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
+		Interactions: contentkit.InteractionsConfig{HostKinds: hostKinds,
+			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
+			// The suites test the bound; the default may change.
+			CommentMaxLength: 400,
+			// Generous for a shared suite; a test reaches the comment limit with its own account.
+			Limits: contentkit.LimitsConfig{Comment: []contentkit.Rate{{Count: 20, Per: time.Minute}}},
+		},
+		Media: &contentkit.MediaConfig{Config: mc, WorkerSchema: workerSchema,
+			// One-second token windows: a refreshed read signs a new token.
+			Delivery:    contentkit.DeliveryConfig{SigningKey: c.tokenKey, Window: time.Second},
+			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true},
+			Issuance: contentkit.IssuanceConfig{Disabled: true}},
+	}
+	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Users: h.auth.UserInfo(), Store: h.store,
+		Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(), Resolver: h, CanUpload: h}
+	if h.ck, err = contentkit.New(ctx, cfg, deps); err != nil {
+		return nil, err
+	}
+	members, onUpload := cfg, cfg
+	members.Interactions.Anonymous = content.Anonymous{}
+	uploading := *cfg.Media
+	uploading.ProcessOnUpload = true
+	onUpload.Media = &uploading
+	if h.members, err = contentkit.New(ctx, members, deps); err != nil {
+		return nil, err
+	}
+	if h.onUpload, err = contentkit.New(ctx, onUpload, deps); err != nil {
+		return nil, err
+	}
+
 	if h.reg, err = media.NewRegistry(mc); err != nil {
 		return nil, err
 	}
@@ -130,11 +164,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: h.store, Registry: h.reg, Locker: media.PGLocker(h.pool), Journal: journal, Processes: queue, Pool: h.pool})
-	if err != nil {
+	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool), Journal: journal}); err != nil {
 		return nil, err
 	}
-	h.manifests = jobs.Manifests()
 	signing, err := token.ParseKey(c.tokenKey)
 	if err != nil {
 		return nil, err
@@ -142,91 +174,21 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.ring, err = token.NewRing(signing, nil); err != nil {
 		return nil, err
 	}
-	frames, err := video.NewFrames(h.store)
-	if err != nil {
-		return nil, err
-	}
-	newUploads := func(onUpload bool) (*media.Uploads, error) {
-		return media.NewUploads(media.UploadOptions{Store: h.store, Manifests: h.manifests, Tickets: &h.ring, Frames: frames,
-			ProcessOnUpload: onUpload, Commits: media.RateLimit{Disabled: true}})
-	}
-	uploads, err := newUploads(false)
-	if err != nil {
-		return nil, err
-	}
-	if h.onUpload, err = newUploads(true); err != nil {
-		return nil, err
-	}
-	progress, err := workqueue.NewProgressSource(h.pool, workerSchema)
-	if err != nil {
-		return nil, err
-	}
-	// One-second token windows: a refreshed read signs a new token.
-	reader, err := media.NewReader(media.ReaderOptions{Manifests: h.manifests, Queue: queue, Progress: progress,
-		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signing, Window: time.Second},
-		Issuance: media.Issuance{Disabled: true}})
-	if err != nil {
-		return nil, err
-	}
-
 	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
 		return nil, err
 	}
-	h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{
-		Routes:    contenturl.Routes{content.KindPost: "blog", "gallery": "g", "album": "post", "video": "watch", "tag": "tag"},
-		Languages: []string{"en", "de", "ja"},
-		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-			if l.ContentKind == content.KindPost {
-				return h.rt.Content.PostVisibility(r.Context(), l.ContentID)
-			}
-			return contenturl.Visible, nil
-		}})
-	if err != nil {
-		return nil, err
-	}
-	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
-	gallery, album := grouped, grouped
-	gallery.Route, album.Route = "g", "album"
-	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: kindcfg.Config{Languages: []string{"en", "ja"},
-		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album},
-		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
-			"character": {Route: "characters", ScopedBy: "series"}}}})
-	if err != nil {
-		return nil, err
-	}
-	newRuntime := func(anonymous content.Anonymous) (*contentkit.Runtime, error) {
-		return contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-			EmbeddedConfig: contentkit.EmbeddedConfig{PG: h.pool, PGSchema: schema, Tenant: tenant},
-			Auth:           h.auth.Authenticator(),
-			UserInfo:       h.auth.UserInfo(),
-			Content: content.Options{
-				Resolver:  h,
-				Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(),
-				Media: &content.Media{Images: h.manifests, Folders: jobs, PostKind: postFolder, PollKind: pollFolder},
-				// Commentable kinds; posts are content's own.
-				ContentKinds: []string{"gallery", "album", "video", content.KindPost},
-				Anonymous:    anonymous,
-				// The suites test the bound; the default may change.
-				CommentMaxLength: 400,
-				// Generous for a shared suite; a test reaches the comment limit with its own account.
-				Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
-			},
-			Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-			Codes: h.router, Groups: grp,
-		})
-	}
-	// The main mount takes signed-out comments, reactions and votes; the
-	// members mount, over the same schema, takes nothing anonymous.
-	if h.rt, err = newRuntime(content.Anonymous{Comments: true, Reactions: true, Votes: true}); err != nil {
-		return nil, err
-	}
-	if h.members, err = newRuntime(content.Anonymous{}); err != nil {
+	routes := site().Routes()
+	routes["gallery"], routes["album"], routes["video"] = "g", "post", "watch"
+	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: routes, Languages: site().Languages}); err != nil {
 		return nil, err
 	}
 
+	// The host's River runs AuthKit's jobs and the main mount's ContentKit
+	// jobs; the other mounts run theirs on their own River in its schema,
+	// as replicas would.
 	if h.river, err = riverkit.New(ctx, h.pool, &river.Config{Schema: riverSchema, Queues: map[string]river.QueueConfig{},
 		FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond},
-		h.auth.RiverJobs(), jobs.RiverJobs()); err != nil {
+		h.auth.RiverJobs(), h.ck.RiverJobs()); err != nil {
 		return nil, err
 	}
 	if err := h.river.Start(ctx); err != nil {
@@ -235,6 +197,14 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err := h.auth.Start(ctx, authkit.WithRiverClient(h.river)); err != nil {
 		return nil, err
 	}
+	if err := h.ck.Start(ctx, contentkit.WithRiverClient(h.river)); err != nil {
+		return nil, err
+	}
+	for _, e := range []*contentkit.Engine{h.members, h.onUpload} {
+		if err := e.Start(ctx); err != nil {
+			return nil, err
+		}
+	}
 	h.faults = newFaults(h)
 	return h, nil
 }
@@ -242,6 +212,11 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 func (h *harness) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	for _, e := range []*contentkit.Engine{h.ck, h.members, h.onUpload} {
+		if err := e.Close(ctx); err != nil {
+			log.Printf("close contentkit: %v", err)
+		}
+	}
 	if h.river != nil {
 		if err := h.river.Stop(ctx); err != nil {
 			hard, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -33,7 +33,7 @@ function until(q: ItemUploadQueue, ok: (s: QueueSnapshot) => boolean): Promise<Q
 function losing(rec: Recorder, lose: () => boolean, onUpload = false, retries?: number) {
   return createContentKitClient({
     baseUrl: `${h.origin}${cfg.api}`,
-    mounts: onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/media/upload` } : undefined,
+    mounts: onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/v1/media/upload` } : undefined,
     token: () => owner.access_token,
     media: { retries, retryDelay: () => 0, transport: rec.transport },
     fetch: async (input, init) => {
@@ -139,7 +139,7 @@ it("does not remove an existing file when a cancelled staging create is rejected
   // The staging create reaches the server only after the item is removed.
   const c = createContentKitClient({
     baseUrl: `${h.origin}${cfg.api}`,
-    mounts: { upload: `${h.origin}${cfg.on_upload_api}/media/upload` },
+    mounts: { upload: `${h.origin}${cfg.on_upload_api}/v1/media/upload` },
     token: () => owner.access_token,
     media: { retryDelay: () => 0, transport: rec.transport },
     fetch: async (input, init) => {

@@ -29,7 +29,7 @@ describe("uploads and reads against the real ContentKit", () => {
   const client = ({ user = alice, onUpload = false, ...media }: { user?: TestUser | null; onUpload?: boolean; retries?: number; concurrency?: number; transport?: Transport; fetch?: typeof fetch } = {}) =>
     createContentKitClient({
       baseUrl: `${h.origin}${cfg.api}`,
-      mounts: onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/media/upload` } : undefined,
+      mounts: onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/v1/media/upload` } : undefined,
       token: () => user?.access_token,
       fetch: media.fetch,
       media: { retryDelay: () => 200, ...media },

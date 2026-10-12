@@ -7,12 +7,8 @@ stores local receipts, and serves the application's inbox and UI. The reusable
 read/archive state, tracked workflow state and erasure. Hosts own identity
 mapping, rendering, optional-event preferences, scheduling and domain actions.
 
-`contentkit.Migrate` installs the shared store in the host-selected schema.
-Run it before starting an upgraded runtime. Hosts applying the exported
-`migrations.Postgres` filesystem themselves must also apply
-`notify/postgres.Migrate` or `MigrateDB`; the shared library has its own ledger.
-`Runtime.Notifications` and `Runtime.Content.Notifications` are the same store,
-scoped to `contentkit:<tenant>`.
+`contentkit.New` installs the shared store in ContentKit's schema, scoped to
+`contentkit:<tenant>`; the shared library has its own ledger.
 
 ## Native and host-authored events
 
@@ -30,17 +26,17 @@ contain content/comment/actor references, never copied comment bodies or
 anonymous IPs. Resolve references through current content access checks when
 displaying or following them; retained history does not grant access.
 
-Hosts publish their own selected kinds with `Publish`, or join a domain
-transaction with `PublishTx`:
+Hosts publish their own selected kinds through the engine's client (`POST
+/v1/notifications/publish`, `root:notifications:publish`, in one transaction):
 
 ```go
-_, err := rt.Notifications.Publish(ctx, notify.Input{
+_, err := ck.Client().PublishNotifications(ctx, []notify.Input{{
     Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
     Origin: notify.Origin{System: "host-app", Scope: tenant, ID: stableEventID},
     Kind: "export.ready",
     Data: json.RawMessage(`{"export_id":"..."}`),
     CreatedAt: occurredAt,
-})
+}})
 ```
 
 An origin identifies the producer deployment, namespace and stable source event.
@@ -52,9 +48,9 @@ a user-visible JSON object without credentials or private operator details.
 
 ## Inbox and frontend
 
-`Runtime.Handler()` mounts these person-only routes. Every recipient comes from
-the authenticated subject; query parameters cannot select another user, tenant
-or operator audience. There is no browser publication or source-ACK endpoint.
+The notification route group serves these person-only routes. Every recipient
+comes from the authenticated subject; query parameters cannot select another
+user, tenant or operator audience. Only the host's service publishes.
 
 | Method and path | Behavior |
 | --- | --- |
@@ -120,7 +116,7 @@ source, err := openrails.New(openrails.Options{
 if err != nil { return err }
 if err := source.Register(ctx); err != nil { return err }
 
-result, err := source.Consume(ctx, rt.Notifications,
+result, err := source.Consume(ctx, publisher, // a notify.Publisher; consumption moves into the engine (#117 follow-up)
     func(ctx context.Context, event openrails.Event) (string, bool, error) {
         // Resolve a verified merchant/customer association from host records.
         // false deliberately skips this event; an error leaves it pending.
@@ -166,15 +162,14 @@ deps.OnEvent = func(ctx context.Context, event iam.Event) error {
     if event.Kind != iam.EventUserEmailChanged { return nil }
     userID, deliver, err := lookupAuthAccount(ctx, accountIssuer, event.UserID)
     if err != nil || !deliver { return err }
-    _, err = rt.Notifications.Publish(ctx, notify.Input{
+    _, err = ck.Client().PublishNotifications(ctx, []notify.Input{{
         Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
         Origin: notify.Origin{System: "authkit:" + accountIssuer,
             Scope: accountIssuer, Subject: event.UserID, ID: event.ID},
         Kind: string(event.Kind), CreatedAt: event.OccurredAt,
         Data: json.RawMessage(`{}`), // select only fields this user should see
-    })
-    if errors.Is(err, notify.ErrRecipientErased) { return nil }
-    return err
+    }})
+    return err // an erased recipient's notice is dropped, not an error
 }
 ```
 
@@ -184,7 +179,7 @@ or manufacture random event IDs on each retry. This example uses AuthKit
 v1.24's durable `Deps.OnEvent` contract, alongside the native authentication and
 user-info contracts used by ContentKit. Notification policy remains opt-in.
 
-`Runtime.EraseSubjects` (and standalone `content.Runtime.EraseSubjects`) removes
+`Engine.EraseSubjects` removes
 and permanently fences the user inbox before other content cleanup. Delayed
 imports cannot recreate it. Interactions on retained published comments skip
 notification to an erased recipient. Keep failed host erasure obligations

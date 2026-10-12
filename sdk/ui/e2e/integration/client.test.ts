@@ -441,10 +441,10 @@ describe("reads", () => {
     expect([still.type, still.size > 0]).toEqual(["image/jpeg", true]);
     const api = `${h.origin}${cfg.api}`;
     expect(urls).toEqual([
-      `${api}/media/video/${ref.id}?prefix=low-res%2F&offset=50&limit=25&download=1&editor=1`,
-      `${api}/media/upload/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&w=320`,
+      `${api}/v1/media/video/${ref.id}?prefix=low-res%2F&offset=50&limit=25&download=1&editor=1`,
+      `${api}/v1/media/upload/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&w=320`,
     ]);
-    expect(spy.hlsBase(ref, "hls/")).toBe(`${api}/media/video/${ref.id}/hls/hls/`);
-    expect(createContentKitClient({ baseUrl: "http://x", mounts: { upload: "/u" } }).media.hlsBase(ref, "hls/")).toBe(`http://x/media/video/${ref.id}/hls/hls/`);
+    expect(spy.hlsBase(ref, "hls/")).toBe(`${api}/v1/media/video/${ref.id}/hls/hls/`);
+    expect(createContentKitClient({ baseUrl: "http://x", mounts: { upload: "/u" } }).media.hlsBase(ref, "hls/")).toBe(`http://x/v1/media/video/${ref.id}/hls/hls/`);
   });
 });

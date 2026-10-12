@@ -32,7 +32,7 @@ const (
 type Options struct {
 	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
-	// Schema is the host-selected schema holding all ContentKit tables.
+	// Schema is ContentKit's schema.
 	Schema string
 	// Tenant scopes every row, index, cursor and result. Required.
 	Tenant string
@@ -107,7 +107,7 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	// Notifications is this tenant's user inbox, shared with contentkit.Runtime.
+	// Notifications is this tenant's user inbox.
 	Notifications     *notification.Store
 	store             *store
 	schema            string
@@ -219,7 +219,7 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
 		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0`); err != nil {
-		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)
+		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (contentkit.New applies it): %w", rt.schema, err)
 	}
 	return nil
 }

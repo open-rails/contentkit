@@ -16,7 +16,7 @@ function server(routes: Record<string, Handler>) {
   const calls: string[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://x");
-    const key = `${init?.method ?? "GET"} ${url.pathname}`;
+    const key = `${init?.method ?? "GET"} ${url.pathname.replace(/^\/v1/, "")}`;
     calls.push(key + url.search);
     const h = routes[key];
     if (!h) return json(404, { error: "not found", code: "not_found" });
