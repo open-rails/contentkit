@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/authkit"
@@ -27,6 +28,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
@@ -34,7 +36,6 @@ import (
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 const (
@@ -59,7 +60,8 @@ type world struct {
 	queue  *workqueue.Queue
 	up     *media.Uploads
 	rd     *media.Reader
-	tax    *taxonomy.Store
+	cfg    kinds.Config
+	grp    *groups.Store
 	cat    *catalog.Store
 	router *contenturl.Router
 	owner  string // the gallery's owner, when a test has one
@@ -126,17 +128,37 @@ func newWorld(t *testing.T) *world {
 	if w.rd, err = media.NewReader(media.ReaderOptions{Manifests: w.jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}}); err != nil {
 		t.Fatal(err)
 	}
-	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"}}); err != nil {
+	w.cfg = kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"},
+		Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag", "series"}},
+			"blog":  {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+			"album": {Route: "album", Presentation: "reader", Segments: true, Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}}},
+		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true}}}
+	if w.grp, err = groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.cfg,
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return w.cat.ContentChanged(ctx, q, ids)
+		}}); err != nil {
 		t.Fatal(err)
 	}
-	if w.cat, err = catalog.New(ctx, catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Auth: w.ak.Authenticator(),
-		Kinds: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"},
-			Kinds: map[string]kinds.Kind{"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
-				"album": {Route: "album", Presentation: "reader", Segments: true, Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}}}}}); err != nil {
+	if w.cat, err = catalog.New(ctx, catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Auth: w.ak.Authenticator(), Kinds: w.cfg, Groups: w.grp}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(w.cat.Close)
 	return w
+}
+
+// galleries writes gallery contents cid(n), each with the version
+// cid(n*10), as ContentKit's content routes will.
+func (w *world) galleries(ns ...int) {
+	w.t.Helper()
+	for _, n := range ns {
+		q := pgx.Identifier{w.schema}.Sanitize()
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_items (tenant_id, id, kind) VALUES ($1, $2, 'gallery')`, tenant, cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_versions (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, tenant, cid(n*10), cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+	}
 }
 
 // runtime is the host's one ContentKit: Auth and UserInfo are AuthKit's,
@@ -147,9 +169,7 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	routes := w.cat.Routes()
-	routes["tag"] = "tag"
-	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: routes, Languages: []string{"en"}, Visibility: w.cat.Visibility})
+	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: w.cfg.Routes(), Languages: []string{"en"}, Visibility: w.cat.Visibility})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -160,16 +180,13 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 		Content: content.Options{Resolver: w, ContentKinds: []string{"gallery"},
 			Limits: content.Limits{Disabled: true}},
 		Uploads: w.up, Reader: w.rd, ReadLimit: media.RateLimit{Disabled: true},
-		Codes: router, Taxonomy: w.tax,
+		Codes: router, Groups: w.grp, Contents: w.cat,
 	}
 	if edit != nil {
 		edit(&cfg)
 	}
 	rt, err := contentkit.NewRuntime(w.t.Context(), cfg)
 	if err != nil {
-		w.t.Fatal(err)
-	}
-	if err := rt.Content.AddHeldSource(catalog.HeldKind, w.cat); err != nil {
 		w.t.Fatal(err)
 	}
 	return rt
@@ -236,8 +253,7 @@ type server struct {
 	broken  []string
 }
 
-func (w *world) serve(rt *contentkit.Runtime) *server {
-	t := w.t
+func serve(t *testing.T, rt *contentkit.Runtime) *server {
 	t.Helper()
 	checker, err := contract.NewChecker(os.DirFS(".."))
 	if err != nil {
@@ -246,7 +262,6 @@ func (w *world) serve(rt *contentkit.Runtime) *server {
 	s := &server{t: t, checker: checker}
 	mux := http.NewServeMux()
 	mux.Handle(prefix+"/", http.StripPrefix(prefix, rt.Handler()))
-	mux.Handle(prefix+"/v1/", http.StripPrefix(prefix+"/v1", w.cat.Handler()))
 	s.h = checker.Wrap(prefix, mux, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

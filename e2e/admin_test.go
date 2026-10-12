@@ -13,9 +13,8 @@ import (
 	"github.com/open-rails/authkit/iam"
 
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // A user page reads the person's site-wide comment ban: none (404), the ban
@@ -27,7 +26,7 @@ func TestGlobalCommentBanOfUser(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
 	target := "/global-comment-bans/" + u.ID
 
 	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
@@ -66,7 +65,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
 	item := "/gallery/" + cid(1)
 
 	var first, reply, gone content.Comment
@@ -121,65 +120,55 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/comments/admin?author="+u.ID, nil, nil)
 }
 
-// A node's page lists its contents: every assignment in either state, paged
-// by cursor in content order, by content kind and by relation.
-func TestTaxonomyNodeAssignments(t *testing.T) {
+// A group's page lists its memberships: content- and version-level, every
+// role and state, paged by cursor in member order.
+func TestGroupMembers(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
+	w.galleries(1, 2, 3)
 
-	var nodes []taxonomy.Node
-	f.want(http.StatusCreated, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{
-		{Kind: "tag", Slug: "color", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Color"}}},
-		{Kind: "tag", Slug: "empty", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Empty"}}},
-	}, &nodes)
-	color, empty := string(nodes[0].TaxonomyID), string(nodes[1].TaxonomyID)
-	ref := func(kind string, n int) contentref.ContentRef {
-		return contentref.ContentRef{ContentKind: kind, ContentID: cid(n)}
-	}
-	version := ref("gallery", 2)
-	version.ContentVersionID = ptr(cid(20))
-	at := func(r contentref.ContentRef, relation string, state taxonomy.AssignmentState) taxonomy.Assignment {
-		return taxonomy.Assignment{ContentRef: r, TaxonomyID: taxonomy.TaxonomyID(color), Relation: relation, State: state}
-	}
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/assignments", []taxonomy.Assignment{
-		at(ref("gallery", 3), "", ""), at(ref("gallery", 1), "", ""), at(version, "", ""), at(ref("gallery", 2), "", taxonomy.AssignmentProposed),
-		at(ref("post", 1), "", ""), at(ref("gallery", 1), "featured", ""),
+	var made []groups.Group
+	f.want(http.StatusCreated, staff, "POST", "/v1/groups", []groups.GroupInput{
+		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
+		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
+	}, &made)
+	color, empty := string(made[0].ID), string(made[1].ID)
+	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+color+"/members", []groups.Membership{
+		{ContentID: cid(3)}, {ContentID: cid(1)}, {ContentID: cid(2), VersionID: cid(20)}, {ContentID: cid(2), State: groups.MembershipProposed},
+		{ContentID: cid(1), Role: "featured"},
 	}, nil)
 
-	page := func(id string, q url.Values) taxonomy.AssignmentPage {
+	page := func(id string, q url.Values) groups.MemberPage {
 		t.Helper()
-		var p taxonomy.AssignmentPage
-		f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+id+"/assignments?"+q.Encode(), nil, &p)
+		var p groups.MemberPage
+		f.want(http.StatusOK, staff, "GET", "/v1/groups/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
-	key := func(as []taxonomy.Assignment) string {
+	key := func(ms []groups.Membership) string {
 		s := ""
-		for _, a := range as {
-			s += fmt.Sprintf("%s/%s", a.ContentKind, a.ContentID[len(a.ContentID)-2:])
-			if a.ContentVersionID != nil {
-				s += "@" + (*a.ContentVersionID)[len(*a.ContentVersionID)-2:]
+		for _, m := range ms {
+			s += m.ContentID[len(m.ContentID)-2:]
+			if m.VersionID != "" {
+				s += "@" + m.VersionID[len(m.VersionID)-2:]
 			}
-			s += ":" + a.Relation
-			if a.State == taxonomy.AssignmentProposed {
+			if m.Role != "" {
+				s += ":" + m.Role
+			}
+			if m.State == groups.MembershipProposed {
 				s += "?"
 			}
 			s += " "
 		}
 		return s
 	}
-	want := "gallery/01:featured gallery/01:tag gallery/02:tag? gallery/02@20:tag gallery/03:tag post/01:tag "
+	want := "01 01:featured 02? 02@20 03 "
 	var walked string
 	cursor := ""
 	for i := 0; ; i++ {
 		p := page(color, url.Values{"limit": {"2"}, "cursor": {cursor}})
-		for _, a := range p.Assignments {
-			if string(a.TaxonomyID) != color || a.TenantID != tenant {
-				t.Fatalf("assignment %+v", a)
-			}
-		}
-		walked += key(p.Assignments)
+		walked += key(p.Members)
 		if cursor = p.NextCursor; cursor == "" {
 			if i != 2 {
 				t.Fatalf("%d pages", i+1)
@@ -190,22 +179,16 @@ func TestTaxonomyNodeAssignments(t *testing.T) {
 	if walked != want {
 		t.Fatalf("walked\n %s\nwant\n %s", walked, want)
 	}
-	if got := key(page(color, nil).Assignments); got != want {
+	if got := key(page(color, nil).Members); got != want {
 		t.Fatalf("one page: %s", got)
 	}
-	if got := key(page(color, url.Values{"content_kind": {"post"}}).Assignments); got != "post/01:tag " {
-		t.Fatalf("by kind: %s", got)
+	if p := page(empty, nil); len(p.Members) != 0 || p.NextCursor != "" {
+		t.Fatalf("empty group: %+v", p)
 	}
-	if got := key(page(color, url.Values{"relation": {"featured"}}).Assignments); got != "gallery/01:featured " {
-		t.Fatalf("by relation: %s", got)
-	}
-	if p := page(empty, nil); len(p.Assignments) != 0 || p.NextCursor != "" {
-		t.Fatalf("empty node: %+v", p)
-	}
-	f.want(http.StatusNotFound, staff, "GET", "/taxonomy/nodes/"+uuid.Must(uuid.NewV7()).String()+"/assignments", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/not-an-id/assignments", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/"+color+"/assignments?cursor=%21", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/taxonomy/nodes/"+color+"/assignments", nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", "/v1/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/not-an-id/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/"+color+"/members?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/v1/groups/"+color+"/members", nil, nil)
 }
 
 // An item's editor (a writer, not exempt) regenerates its media: an upload
@@ -215,7 +198,7 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	_, editor := w.person(iam.Role{})
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
 	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
@@ -277,7 +260,7 @@ func TestAdminPollsByStateAndSearch(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
 	create := func(question string, liveAt *time.Time) content.Poll {
 		var p content.Poll
 		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,

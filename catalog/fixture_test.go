@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/access/accesstest"
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
@@ -48,7 +49,7 @@ func config() kinds.Config {
 			"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		},
 		GroupKinds: map[string]kinds.GroupKind{
-			"tag":     {Route: "tags"},
+			"tag":     {Route: "tags", VersionLevel: true},
 			"channel": {Owner: "user", Sellable: true, AuthScope: true},
 		},
 	}
@@ -80,6 +81,7 @@ type fixture struct {
 	pool   *pgxpool.Pool
 	schema string
 	s      *Store
+	groups *groups.Store
 	ent    *accesstest.Entitlements
 	roles  *roles
 	mu     sync.Mutex
@@ -101,8 +103,14 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(),
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return f.s.ContentChanged(ctx, q, ids)
+		}}); err != nil {
+		t.Fatal(err)
+	}
 	opts := Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: f.roles}, Gate: gate,
-		Groups: f.effectiveGroups, Now: f.now}
+		Groups: f.groups, Now: f.now}
 	if mutate != nil {
 		mutate(&opts)
 	}
@@ -128,65 +136,26 @@ func (f *fixture) advance(d time.Duration) {
 
 func (f *fixture) table(name string) string { return pgx.Identifier{f.schema, name}.Sanitize() }
 
-// effectiveGroups is each version's groups: its content's active memberships
-// and its own, of active groups. The groups module owns the real rule.
-func (f *fixture) effectiveGroups(ctx context.Context, q Querier, versionIDs []string) (map[string][]string, error) {
-	rows, err := q.Query(ctx, `SELECT v.id, m.group_id FROM `+f.table("content_versions")+` v
- JOIN `+f.table("content_memberships")+` m ON m.tenant_id = v.tenant_id AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.id)
- JOIN `+f.table("content_groups")+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
- WHERE v.tenant_id = $1 AND v.id = ANY($2) AND m.state = 'active'`, tenant, versionIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]string{}
-	for rows.Next() {
-		var v, g string
-		if err := rows.Scan(&v, &g); err != nil {
-			return nil, err
-		}
-		out[v] = append(out[v], g)
-	}
-	return out, rows.Err()
-}
-
-// group creates an active group, named in English, with an AuthKit scope for
-// channels.
+// group creates an active group named in English (channels with an
+// AuthKit scope) through the groups module.
 func (f *fixture) group(kind, slug string) string {
 	f.t.Helper()
-	id := contentref.NewID()
-	var scope *string
+	in := groups.GroupInput{Kind: kind, Slug: slug, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(slug[:1]) + slug[1:]}}}
 	if kind == "channel" {
-		s := "scope-" + slug
-		scope = &s
+		in.AuthScope, in.OwnerUserID = "scope-"+slug, "owner-"+slug
 	}
-	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_groups")+` (tenant_id, id, kind, slug, auth_scope) VALUES ($1, $2, $3, $4, $5)`,
-		tenant, id, kind, slug, scope); err != nil {
+	got, err := f.groups.CreateGroups(f.ctx, []groups.GroupInput{in})
+	if err != nil {
 		f.t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_group_names")+` (tenant_id, group_id, language, kind, name) VALUES ($1, $2, 'en', 'name', initcap($3))`,
-		tenant, id, slug); err != nil {
-		f.t.Fatal(err)
-	}
-	return id
+	return string(got[0].ID)
 }
 
-// join adds content (or one version) to a group and refreshes its facets in
-// the same transaction, as the groups module does.
+// join adds content (or one version) to a group through the groups module,
+// which refreshes its facets and tells the catalog.
 func (f *fixture) join(groupID, contentID, versionID string) {
 	f.t.Helper()
-	err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
-		var v *string
-		if versionID != "" {
-			v = &versionID
-		}
-		if _, err := tx.Exec(f.ctx, `INSERT INTO `+f.table("content_memberships")+` (tenant_id, group_id, content_id, version_id) VALUES ($1, $2, $3, $4)`,
-			tenant, groupID, contentID, v); err != nil {
-			return err
-		}
-		return f.s.RefreshFacets(f.ctx, tx, []string{contentID})
-	})
-	if err != nil {
+	if err := f.groups.AddMemberships(f.ctx, []groups.Membership{{GroupID: groups.GroupID(groupID), ContentID: contentID, VersionID: versionID}}); err != nil {
 		f.t.Fatal(err)
 	}
 }

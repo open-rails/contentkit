@@ -2,12 +2,9 @@ package catalog
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/open-rails/contentkit/internal/codes"
@@ -203,69 +200,13 @@ func (s *Store) checkVersionLanguages(k kinds.Kind, ls []string) ([]string, erro
 }
 
 // checkAttributes validates attrs against the declared ones and normalizes
-// each value: string, int, bool, enum (one of the values) or time (RFC 3339).
+// each value (kinds.ValidateAttributes).
 func checkAttributes(declared map[string]kinds.Attribute, attrs map[string]any) (map[string]any, error) {
-	out := make(map[string]any, len(attrs))
-	for name, v := range attrs {
-		a, ok := declared[name]
-		if !ok {
-			return nil, invalid("attribute %q is not declared", name)
-		}
-		if v == nil {
-			continue
-		}
-		switch a.Type {
-		case "string":
-			sv, ok := v.(string)
-			if !ok || utf8.RuneCountInString(sv) > maxDescription {
-				return nil, invalid("attribute %s must be a string", name)
-			}
-			out[name] = sv
-		case "enum":
-			sv, ok := v.(string)
-			if !ok || !slices.Contains(a.Values, sv) {
-				return nil, invalid("attribute %s must be one of %v", name, a.Values)
-			}
-			out[name] = sv
-		case "bool":
-			bv, ok := v.(bool)
-			if !ok {
-				return nil, invalid("attribute %s must be a boolean", name)
-			}
-			out[name] = bv
-		case "int":
-			n, ok := integer(v)
-			if !ok {
-				return nil, invalid("attribute %s must be an integer", name)
-			}
-			out[name] = n
-		case "time":
-			sv, _ := v.(string)
-			ts, err := time.Parse(time.RFC3339, sv)
-			if err != nil {
-				return nil, invalid("attribute %s must be an RFC 3339 time", name)
-			}
-			out[name] = ts.UTC().Format(time.RFC3339)
-		}
+	out, err := kinds.ValidateAttributes(declared, attrs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	return out, nil
-}
-
-func integer(v any) (int64, bool) {
-	switch n := v.(type) {
-	case float64:
-		if n == math.Trunc(n) && math.Abs(n) < 1<<53 {
-			return int64(n), true
-		}
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case json.Number:
-		i, err := n.Int64()
-		return i, err == nil
-	}
-	return 0, false
 }
 
 func (s *Store) checkCreators(cs []Creator) ([]Creator, error) {

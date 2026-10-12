@@ -23,9 +23,9 @@ import (
 	_ "github.com/open-rails/contentkit/catalog"
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
+	_ "github.com/open-rails/contentkit/groups"
 	_ "github.com/open-rails/contentkit/media"
 	_ "github.com/open-rails/contentkit/notification"
-	_ "github.com/open-rails/contentkit/taxonomy"
 )
 
 // Where each generated file lives, relative to the repository.

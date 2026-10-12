@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -48,10 +49,12 @@ type Querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// EffectiveGroups answers each version's effective group ids (its content's
-// memberships, its own and what they imply), read in q's transaction. The
-// groups module implements it.
-type EffectiveGroups func(ctx context.Context, q Querier, versionIDs []string) (map[string][]string, error)
+// Groups answers each version's effective group ids (its content's
+// memberships, its own and what they imply), read in q's transaction:
+// *groups.Store.
+type Groups interface {
+	EffectiveGroups(ctx context.Context, q groups.Querier, versionIDs []string) (map[string][]string, error)
+}
 
 // Moderation screens text before it publishes: content.Runtime.
 type Moderation interface {
@@ -72,8 +75,9 @@ type Options struct {
 	Auth auth.Authenticator
 	// Gate answers viewers' entitlements; nil holds nothing but public.
 	Gate *access.Gate
-	// Groups answers effective group ids for content_facets; nil: none.
-	Groups EffectiveGroups
+	// Groups answers effective group ids for content_facets; nil: none. Wire
+	// its Options.ContentChanged to Store.ContentChanged.
+	Groups Groups
 	// Moderation screens text of content that is or goes live; nil approves.
 	Moderation Moderation
 	// Body sanitizes text bodies; nil strips tags.
@@ -96,7 +100,7 @@ type Store struct {
 	t         tables
 	guard     *gate.Gate
 	accessG   *access.Gate
-	groups    EffectiveGroups
+	groups    Groups
 	moderator Moderation
 	body      Sanitizer
 	media     *Media

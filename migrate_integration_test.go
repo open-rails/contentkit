@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
@@ -43,26 +43,27 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	if _, err := pool.Exec(ctx, "CREATE TABLE "+q+".host_entities(tenant_id text, id text, PRIMARY KEY(tenant_id,id))"); err != nil {
 		t.Fatal(err)
 	}
-	store, err := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "site", Kinds: []string{"tag"}, Languages: []string{"en"}})
+	store, err := groups.New(groups.Options{Pool: pool, Schema: schema, Tenant: "site", Kinds: kinds.Config{Languages: []string{"en"},
+		Kinds:      map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}}},
+		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateNodes(ctx, []taxonomy.NodeInput{{TaxonomyID: taxonomy.TaxonomyID(tax(1)), Kind: "tag", Slug: "color", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Color"}}}}); err != nil {
+	if _, err := store.CreateGroups(ctx, []groups.GroupInput{{ID: groups.GroupID(grp(1)), Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	// Host IDs are opaque by default. A host may add its own tenant-scoped FK
-	// when content assignments and host rows share the same lifecycle.
-	if _, err := pool.Exec(ctx, "ALTER TABLE "+q+".content_assignments ADD CONSTRAINT host_content_fk FOREIGN KEY(tenant_id,content_id) REFERENCES "+q+".host_entities(tenant_id,id); INSERT INTO "+q+".host_entities VALUES('site','"+cid(1)+"'),('other','"+cid(2)+"')"); err != nil {
+	// Memberships reference ContentKit's own content, within the tenant.
+	if _, err := pool.Exec(ctx, "INSERT INTO "+q+".content_items(tenant_id,id,kind) VALUES('site',$1,'gallery'),('other',$2,'gallery')", cid(1), cid(2)); err != nil {
 		t.Fatal(err)
 	}
-	insert := "INSERT INTO " + q + ".content_assignments(tenant_id,content_kind,content_id,taxonomy_id,relation) VALUES('site','gallery',$1,$2,'tag')"
-	if _, err := pool.Exec(ctx, insert, cid(1), tax(1)); err != nil {
-		t.Fatalf("valid host and internal foreign keys: %v", err)
+	insert := "INSERT INTO " + q + ".content_memberships(tenant_id,group_id,content_id) VALUES('site',$1,$2)"
+	if _, err := pool.Exec(ctx, insert, grp(1), cid(1)); err != nil {
+		t.Fatalf("valid memberships: %v", err)
 	}
-	for _, refs := range [][2]string{{cid(2), tax(1)}, {cid(1), tax(2)}} {
+	for _, refs := range [][2]string{{grp(1), cid(2)}, {grp(2), cid(1)}} {
 		_, err := pool.Exec(ctx, insert, refs[0], refs[1])
 		if pgerr, ok := err.(interface{ SQLState() string }); !ok || pgerr.SQLState() != "23503" {
-			t.Fatalf("foreign keys must reject cross-tenant host or missing taxonomy: %v", err)
+			t.Fatalf("foreign keys must reject cross-tenant content or a missing group: %v", err)
 		}
 	}
 	if err := Migrate(ctx, cfg); err != nil {
@@ -76,19 +77,19 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != len(chain) {
 		t.Fatalf("migration ledger rows: %d, want %d %v", count, len(chain), err)
 	}
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id=$1 AND normalized='color'", tax(1)).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("catalog preserved on rerun: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_group_names WHERE group_id=$1 AND normalized='color'", grp(1)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("groups preserved on rerun: %d %v", count, err)
 	}
-	for _, table := range []string{"host_entities", "content_comments", "content_items", "content_facets", "content_preference_sync", "content_search_documents", "content_search_invalid", "content_nodes", "content_media_releases"} {
+	for _, table := range []string{"host_entities", "content_comments", "content_items", "content_facets", "content_preference_sync", "content_search_documents", "content_search_invalid", "content_groups", "content_media_releases"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || !exists {
 			t.Fatalf("missing same-schema table %s: %v", table, err)
 		}
 	}
-	for _, table := range []string{"content_media_slots", "content_media_slot_backfill", "content_posts"} {
+	for _, table := range []string{"content_media_slots", "content_media_slot_backfill", "content_nodes", "content_node_names", "content_edges", "content_assignments", "content_node_counts", "content_posts"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || exists {
-			t.Fatalf("migration 0006 keeps %s: %v", table, err)
+			t.Fatalf("a retired table survives: %s: %v", table, err)
 		}
 	}
 }

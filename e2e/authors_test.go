@@ -55,7 +55,7 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	gone, goneToken := w.person(iam.Role{})
 	dir := &directory{Lookup: w.ak.UserInfo()}
 	images := &avatars{Manifests: w.jobs.Manifests()}
-	f := w.serve(w.runtime(func(c *contentkit.RuntimeConfig) {
+	f := serve(t, w.runtime(func(c *contentkit.RuntimeConfig) {
 		c.UserInfo = dir
 		c.Content.Media = &content.Media{Images: images, Folders: w.jobs}
 	}))

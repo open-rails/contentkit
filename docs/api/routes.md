@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (95). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, contents `/v1`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`, notifications `/notifications`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (95). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, contents `/v1`, upload `/media/upload`, media `/media`, codes `/codes`, groups `/v1`, notifications `/notifications`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -70,7 +70,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/v1/contents/{id}/restore` | public | — | 200 `Content` | Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only. |
 | POST | `/v1/contents/{id}/publish` | public | `PublishInput` | 200 `Content`<br>202 `Content` | Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only. |
 | POST | `/v1/contents/{id}/unpublish` | public | — | 200 `Content` | Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only. |
-| PUT | `/v1/contents/{id}/text/{language}` | public | `Text` | 200 `Content`<br>202 `Content` | Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/text/{language}` | public | `CatalogText` | 200 `Content`<br>202 `Content` | Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only. |
 | DELETE | `/v1/contents/{id}/text/{language}` | public | — | 200 `Content` | Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only. |
 | PUT | `/v1/contents/{id}/creators` | public | `CreatorsInput` | 200 `Content` | Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only. |
 | POST | `/v1/contents/{id}/images` | public | `ImageInput` | 200 `InlineImage` | The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only. |
@@ -106,27 +106,27 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 |---|---|---|---|---|---|
 | GET | `/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
 
-## Taxonomy admin (`/taxonomy`)
+## Groups: listings, pages, writes and memberships (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/taxonomy/nodes` | staff `root:taxonomy:write` | — | 200 `NodePage` | Lists nodes: filtered, ordered and paged. Query: `kind`, `state`, `id`, `slug`, `language`, `language_mode`, `name_prefix`, `q`, `content_kind`, `min_count`, `sort`, `cursor`, `offset`, `limit`. |
-| POST | `/taxonomy/nodes` | staff `root:taxonomy:write` | `NodeInput[]` | 201 `Node[]` | Creates nodes with their names. |
-| GET | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `NodeDetail` | A node with its names and edges. |
-| PATCH | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | `NodeUpdate` | 200 `Node` | Updates a node's given fields. |
-| DELETE | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `Node` | Marks a node deleted. |
-| PUT | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Replaces a node's names. |
-| POST | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Adds names to a node. |
-| DELETE | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Removes names from a node. |
-| GET | `/taxonomy/nodes/{id}/assignments` | staff `root:taxonomy:write` | — | 200 `AssignmentPage` | The contents assigned to a node, paged. Query: `content_kind`, `relation`, `cursor`, `limit`. |
-| POST | `/taxonomy/nodes/{id}/merge` | staff `root:taxonomy:write` | `MergeInput` | 200 `MergeReport` | Merges a node into another: its assignments, names and edges move, and its URL redirects. |
-| POST | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Adds edges. |
-| DELETE | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Removes edges. |
-| POST | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Assigns nodes to contents. Query: `suppress_counts`. |
-| DELETE | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Removes assignments. Query: `suppress_counts`. |
-| POST | `/taxonomy/effective` | staff `root:taxonomy:write` | `ContentRef[]` | 200 `EffectiveTagsOf[]` | The effective tags (work and version) of each content. |
-| GET | `/taxonomy/counts` | staff `root:taxonomy:write` | — | 200 `Record<string, Count[]>` | Content counts of nodes, by taxonomy id. Query: `taxonomy_id`. |
-| POST | `/taxonomy/counts/rebuild` | staff `root:taxonomy:write` | — | 200 `CountsRebuilt` | Recomputes every count, after bulk loads written with suppress_counts. |
+| GET | `/v1/groups` | open | — | 200 `GroupPage` | Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged. Query: `kind`, `parent`, `scope`, `slug`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
+| GET | `/v1/groups/{id}` | open | — | 200 `GroupDetail` | An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor. Query: `language`. |
+| POST | `/v1/groups` | staff `root:groups:write` | `GroupInput[]` | 201 `Group[]` | Creates groups with their names and text. |
+| PATCH | `/v1/groups/{id}` | staff `root:groups:write` | `GroupUpdate` | 200 `Group` | Updates a group's given fields; state restores or deletes it. |
+| DELETE | `/v1/groups/{id}` | staff `root:groups:write` | — | 200 `Group` | Marks a group deleted. |
+| PUT | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Replaces a group's names and aliases. |
+| POST | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Adds names and aliases to a group; a new canonical name demotes the old one to an alias. |
+| DELETE | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Removes names and aliases from a group. |
+| POST | `/v1/groups/{id}/edges` | staff `root:groups:write` | `EdgeInput[]` | 200 `Edge[]` | Adds edges from a group. |
+| DELETE | `/v1/groups/{id}/edges` | staff `root:groups:write` | `EdgeInput[]` | 200 `Edge[]` | Removes edges from a group. |
+| POST | `/v1/groups/{id}/merge` | staff `root:groups:write` | `MergeInput` | 200 `MergeReport` | Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects. |
+| GET | `/v1/groups/{id}/members` | staff `root:groups:write` | — | 200 `MemberPage` | A group's memberships in member order, paged. Query: `cursor`, `limit`. |
+| POST | `/v1/groups/{id}/members` | staff `root:groups:write` | `Membership[]` | 200 `Written` | Adds contents or versions to a group, or updates their position, window and state. |
+| DELETE | `/v1/groups/{id}/members` | staff `root:groups:write` | `Membership[]` | 200 `Written` | Removes contents or versions from a group. |
+| PUT | `/v1/groups/{id}/members/order` | staff `root:groups:write` | `Order` | 200 `Written` | Orders an ordered group: the listed members first, in list order. |
+| GET | `/v1/contents/{id}/groups` | staff `root:groups:write` | — | 200 `ContentMemberships` | A content's memberships, its versions' included, with the groups they name. Query: `language`. |
+| PUT | `/v1/contents/{id}/groups` | staff `root:groups:write` | `ContentGroups` | 200 `ContentMemberships` | Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default). Query: `language`. |
 
 ## Notifications (`/notifications`)
 

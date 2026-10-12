@@ -10,21 +10,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 )
 
-// Routes are the URL routes of the kinds config: each content kind's and
-// group kind's, for contenturl.RouterOptions.Routes.
-func (s *Store) Routes() contenturl.Routes {
-	out := contenturl.Routes{}
-	for name, k := range s.cfg.Kinds {
-		out[name] = k.Route
-	}
-	for name, g := range s.cfg.GroupKinds {
-		if g.Route != "" {
-			out[name] = g.Route
-		}
-	}
-	return out
-}
-
 // Visibility is contenturl.RouterOptions.Visibility for content kinds: a
 // page shows while its item is live for an anonymous visitor of the
 // request's site, is Gone once a live item was deleted (or erased), and is

@@ -29,7 +29,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	_, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := w.serve(w.runtime(nil))
+	f := serve(t, w.runtime(nil))
 	item := "/gallery/" + cid(1)
 	comment := content.CommentInput{Body: "hello"}
 
@@ -78,8 +78,8 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"staff route, staff", staff, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, an application holding it", app, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
-		{"taxonomy, without the permission", user, "GET", "/taxonomy/nodes", nil, 403, ""},
-		{"taxonomy, an application holding it", app, "GET", "/taxonomy/nodes", nil, 200, ""},
+		{"groups, without the permission", user, "POST", "/v1/groups", []any{}, 403, ""},
+		{"groups, an application holding it", app, "POST", "/v1/groups", []any{}, 201, ""},
 		{"upload, an application", app, "POST", "/media/upload/abort", map[string]string{"ticket": "x"}, 403, ""},
 		{"media read, a forged credential", owner + "x", "GET", "/media/gallery/" + cid(1), nil, 401, `Bearer error="invalid_token"`},
 		{"media read, anonymous", "", "GET", "/media/gallery/" + cid(1), nil, 200, ""},

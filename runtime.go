@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -46,13 +47,15 @@ type RuntimeConfig struct {
 	// ReadLimit is the read API's per-viewer limit (media.HandlerOptions.Limit).
 	ReadLimit media.RateLimit
 	Codes     *contenturl.Router // GET /codes/{code}
-	// Taxonomy serves the store's admin API at /taxonomy, for staff holding
-	// access.TaxonomyWrite.
-	Taxonomy TaxonomyAdmin
+	// Groups serves the groups API at /v1 (groups.Store.Handler).
+	Groups GroupsAPI
+	// Contents serves the catalog API at /v1 (catalog.Store.Handler) and
+	// puts held content in the review queue.
+	Contents *catalog.Store
 }
 
-// TaxonomyAdmin is *taxonomy.Store: the admin API it serves.
-type TaxonomyAdmin interface {
+// GroupsAPI is *groups.Store: the API it serves.
+type GroupsAPI interface {
 	Handler(a auth.Authenticator) (http.Handler, error)
 }
 
@@ -110,6 +113,11 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Contents != nil {
+		if err := rt.AddHeldSource(catalog.HeldKind, cfg.Contents); err != nil {
+			return nil, err
+		}
+	}
 	notices := rt.Notifications
 	h, err := handler(cfg, c, rt, notices)
 	if err != nil {
@@ -127,15 +135,32 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 //
 // A host may instead mount the modules alone (content.Runtime.Handler,
 // media.UploadHandler, media.Reader.Handler, contenturl.Router.Handler,
-// taxonomy.Handler, notification.Store.Handler)
+// groups.Store.Handler, notification.Store.Handler)
 // at paths of its choosing.
 func (r *Runtime) Handler() http.Handler { return r.handler }
 
 func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices *notification.Store) (http.Handler, error) {
 	mux := http.NewServeMux()
+	// Modules sharing a prefix (/v1) each take their own routes under it.
+	shared := map[string]*http.ServeMux{}
 	mount := func(m httpapi.Module, h http.Handler) {
-		if p := m.Prefix(); p != "" {
-			mux.Handle(p+"/", http.StripPrefix(p, h))
+		p := m.Prefix()
+		if p != "/v1" {
+			if p != "" {
+				mux.Handle(p+"/", http.StripPrefix(p, h))
+			}
+			return
+		}
+		sub := shared[p]
+		if sub == nil {
+			sub = http.NewServeMux()
+			shared[p] = sub
+			mux.Handle(p+"/", http.StripPrefix(p, sub))
+		}
+		for _, r := range httpapi.Catalog() {
+			if r.Module == m {
+				sub.Handle(r.Key(), h)
+			}
 		}
 	}
 	mux.Handle("/", rt.Handler())
@@ -153,12 +178,15 @@ func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices 
 	if cfg.Codes != nil {
 		mount(httpapi.Codes, cfg.Codes.Handler())
 	}
-	if cfg.Taxonomy != nil {
-		h, err := cfg.Taxonomy.Handler(c.Auth)
+	if cfg.Groups != nil {
+		h, err := cfg.Groups.Handler(c.Auth)
 		if err != nil {
 			return nil, err
 		}
-		mount(httpapi.Taxonomy, h)
+		mount(httpapi.Groups, h)
+	}
+	if cfg.Contents != nil {
+		mount(httpapi.Contents, cfg.Contents.Handler())
 	}
 	return mux, nil
 }

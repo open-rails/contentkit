@@ -49,24 +49,10 @@ export interface Anonymous {
   votes: boolean;
 }
 
-export interface Assignment {
-  tenant_id: string;
-  content_kind: string;
-  content_id: string;
-  content_version_id?: string;
-  taxonomy_id: string;
-  relation: string;
-  state?: "active" | "proposed";
-  source_revision: number;
-}
-
-export interface AssignmentPage {
-  assignments: Assignment[];
-  next_cursor?: string;
-}
-
-export interface AssignmentsWritten {
-  assignments: number;
+export interface AnswerGroup {
+  id: string;
+  label: string;
+  count: number;
 }
 
 export interface BanInput {
@@ -78,6 +64,20 @@ export interface BanNotice {
   scope: string;
   reason?: string;
   until?: string;
+}
+
+export interface CatalogCover {
+  image: string;
+  url?: string;
+}
+
+export interface CatalogText {
+  title: string;
+  slug?: string;
+  description?: string;
+  body?: string;
+  sort_key?: string;
+  aliases?: string[];
 }
 
 export interface Comment {
@@ -161,7 +161,7 @@ export interface Content {
   description?: string;
   body?: string;
   images?: Record<string, string>;
-  cover?: Cover;
+  cover?: CatalogCover;
   state: ContentState;
   listing: Listing;
   publish_at?: string;
@@ -175,7 +175,7 @@ export interface Content {
   groups: GroupSummary[];
   versions: Version[];
   editor: boolean;
-  text?: Record<string, Text>;
+  text?: Record<string, CatalogText>;
   moderation?: ModerationState;
   moderation_reason?: string;
   ever_sold?: boolean;
@@ -185,9 +185,14 @@ export interface Content {
   deleted_at?: string;
 }
 
+export interface ContentGroups {
+  kinds?: string[];
+  memberships: Membership[];
+}
+
 export interface ContentInput {
   kind: string;
-  text?: Record<string, Text>;
+  text?: Record<string, CatalogText>;
   listing?: Listing;
   access?: Rule;
   restrictions?: string[];
@@ -195,6 +200,12 @@ export interface ContentInput {
   owner_group_id?: string;
   creators?: Creator[];
   versions?: VersionInput[];
+}
+
+export interface ContentMemberships {
+  content_id: string;
+  memberships: Membership[];
+  groups: GroupCard[];
 }
 
 export interface ContentPatch {
@@ -225,15 +236,6 @@ export interface Count {
   count: number;
 }
 
-export interface CountsRebuilt {
-  nodes: number;
-}
-
-export interface Cover {
-  image: string;
-  url?: string;
-}
-
 export interface Creator {
   user_id: string;
   role?: string;
@@ -259,32 +261,19 @@ export interface Decision {
 }
 
 export interface Edge {
-  from_taxonomy_id: string;
-  relation: "alias_of" | "artist_of" | "child" | "member_of" | "parent" | "synonym" | "voice_of";
-  to_taxonomy_id: string;
-  source_revision: number;
+  from: string;
+  relation: string;
+  to: string;
 }
 
-export interface EdgesWritten {
-  edges: number;
+export interface EdgeInput {
+  relation: string;
+  to: string;
 }
 
 export interface Edit {
   crop?: Crop;
   rotate?: number;
-}
-
-export interface EffectiveTag {
-  taxonomy_id: string;
-  kind: string;
-  slug: string;
-  relation: string;
-  scope: "content" | "version";
-}
-
-export interface EffectiveTagsOf {
-  content: ContentRef;
-  tags: EffectiveTag[];
 }
 
 export interface EncodeProgress {
@@ -402,8 +391,82 @@ export interface Frame {
 
 export interface Group {
   id: string;
-  label: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  state: "active" | "deleted" | "merged";
+  merged_into?: string;
+  attributes: Record<string, unknown>;
+  cover?: GroupsCover;
+  owner_user_id?: string;
+  auth_scope?: string;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+
+export interface GroupCard {
+  id: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: GroupsCover;
   count: number;
+  attributes: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface GroupDetail {
+  id: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  state: "active" | "deleted" | "merged";
+  merged_into?: string;
+  attributes: Record<string, unknown>;
+  cover?: GroupsCover;
+  owner_user_id?: string;
+  auth_scope?: string;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  names: Name[];
+  text: GroupsText[];
+  parent?: GroupCard;
+  scope?: GroupCard;
+  children: GroupCard[];
+  edges: Edge[];
+  counts: Count[];
+}
+
+export interface GroupInput {
+  id?: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  attributes?: Record<string, unknown>;
+  cover?: GroupsCover;
+  owner_user_id?: string;
+  auth_scope?: string;
+  names?: Name[];
+  text?: GroupsText[];
+}
+
+export interface GroupPage {
+  groups: GroupCard[];
+  next_cursor?: string;
 }
 
 export interface GroupSummary {
@@ -411,6 +474,30 @@ export interface GroupSummary {
   kind: string;
   slug: string;
   name: string;
+}
+
+export interface GroupUpdate {
+  slug?: string;
+  scope_id?: string;
+  parent_id?: string;
+  state?: "active" | "deleted" | "merged";
+  attributes?: Record<string, unknown>;
+  cover?: GroupsCover;
+  owner_user_id?: string;
+  auth_scope?: string;
+  text?: GroupsText[];
+}
+
+export interface GroupsCover {
+  image?: string;
+  content_id?: string;
+  auto?: boolean;
+}
+
+export interface GroupsText {
+  language: string;
+  description?: string;
+  sort_key?: string;
 }
 
 export interface HeldItem {
@@ -468,17 +555,38 @@ export interface LanguageTotal {
   tiers: Record<string, number>;
 }
 
+export interface MemberPage {
+  members: Membership[];
+  next_cursor?: string;
+}
+
+export interface MemberRef {
+  content_id: string;
+  version_id?: string;
+}
+
+export interface Membership {
+  group_id?: string;
+  content_id?: string;
+  version_id?: string;
+  role?: string;
+  position?: number;
+  active_from?: string;
+  active_until?: string;
+  state?: "active" | "proposed";
+}
+
 export interface MergeInput {
-  into_taxonomy_id: string;
+  into: string;
 }
 
 export interface MergeReport {
-  from_taxonomy_id: string;
-  into_taxonomy_id: string;
-  assignments_moved: number;
+  from: string;
+  into: string;
+  memberships_moved: number;
   names_moved: number;
-  edges_rewritten: number;
-  assignments_merged: number;
+  edges_moved: number;
+  groups_moved: number;
 }
 
 export interface MultipartReply {
@@ -492,67 +600,6 @@ export interface Name {
   language: string;
   kind: "alias" | "name";
   name: string;
-  normalized?: string;
-  source_revision: number;
-}
-
-export interface Node {
-  taxonomy_id: string;
-  tenant_id: string;
-  kind: string;
-  slug: string;
-  state: "active" | "deleted" | "merged";
-  source_revision: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface NodeDetail {
-  taxonomy_id: string;
-  tenant_id: string;
-  kind: string;
-  slug: string;
-  state: "active" | "deleted" | "merged";
-  source_revision: number;
-  created_at: string;
-  updated_at: string;
-  names: Name[];
-  edges: Edge[];
-  counts: Count[];
-}
-
-export interface NodeInput {
-  taxonomy_id?: string;
-  kind: string;
-  slug: string;
-  names?: Name[];
-  source_revision: number;
-}
-
-export interface NodePage {
-  nodes: NodeRow[];
-  next_cursor?: string;
-  total: number;
-}
-
-export interface NodeRow {
-  taxonomy_id: string;
-  tenant_id: string;
-  kind: string;
-  slug: string;
-  state: "active" | "deleted" | "merged";
-  source_revision: number;
-  created_at: string;
-  updated_at: string;
-  name?: string;
-  name_language?: string;
-  count: number;
-}
-
-export interface NodeUpdate {
-  slug?: string;
-  state?: "active" | "deleted" | "merged";
-  source_revision?: number;
 }
 
 export interface Op {
@@ -571,6 +618,10 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
+}
+
+export interface Order {
+  members: MemberRef[];
 }
 
 export interface OrderInput {
@@ -626,7 +677,7 @@ export interface Poll {
   voted: boolean;
   my_option?: string;
   answer_count?: number;
-  groups?: Group[];
+  groups?: AnswerGroup[];
   my_answer?: PollAnswer;
 }
 
@@ -821,15 +872,6 @@ export interface SegmentsInput {
   segments: Segment[];
 }
 
-export interface Text {
-  title: string;
-  slug?: string;
-  description?: string;
-  body?: string;
-  sort_key?: string;
-  aliases?: string[];
-}
-
 export interface TicketBody {
   ticket: string;
 }
@@ -907,4 +949,8 @@ export interface VideoLimits {
   max_fps?: number;
   max_pixels?: number;
   max_work?: number;
+}
+
+export interface Written {
+  count: number;
 }

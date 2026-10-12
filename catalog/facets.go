@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -41,7 +42,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 			return err
 		}
 		if len(versions) > 0 {
-			if groups, err = s.groups(ctx, q, versions); err != nil {
+			if groups, err = s.groups.EffectiveGroups(ctx, q, versions); err != nil {
 				return err
 			}
 		}
@@ -107,4 +108,36 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 		return err
 	}
 	return search.MarkDirty(ctx, q, s.schema, marks)
+}
+
+// ContentChanged is groups.Options.ContentChanged: after the groups module
+// re-derived the items' group_ids in q's transaction, it queues their search
+// documents (group names are keywords) and records the change.
+func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs []string) error {
+	ids := slices.Compact(slices.Sorted(slices.Values(contentIDs)))
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.markDocuments(ctx, q, ids); err != nil {
+		return err
+	}
+	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	var events []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ContentID, &e.Kind); err != nil {
+			rows.Close()
+			return err
+		}
+		e.Type = EventContentUpdated
+		events = append(events, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return s.emit(ctx, q, events...)
 }
