@@ -96,7 +96,7 @@ func TestHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/groups", strings.NewReader(`[]`))
+	req := httptest.NewRequest("POST", "/groups", strings.NewReader(`[{"kind":"tag","slug":"site"}]`))
 	req.Header.Set("Authorization", "Bearer "+user)
 	none.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
