@@ -1,5 +1,6 @@
 import { ContentKitError, aborted, readContentKitError } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
+import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
@@ -18,8 +19,8 @@ export interface ContentKitMounts {
   upload?: Mount;
   /** Content-code lookup. Default `{baseUrl}/codes`. */
   codes?: string;
-  /** Taxonomy. Default `{baseUrl}/taxonomy`. */
-  taxonomy?: string;
+  /** Groups. Default `{baseUrl}/v1`. */
+  groups?: string;
   /** The public catalog. Default `{baseUrl}/catalog`. */
   catalog?: string;
   /** User inbox. Default `{baseUrl}/notifications`. */
@@ -88,16 +89,7 @@ export class Http {
       return trim(m(ref));
     }
     if (m !== undefined) return trim(m);
-    switch (module) {
-      case "content":
-        return this.base;
-      case "media":
-        return `${this.base}/media`;
-      case "upload":
-        return `${this.base}/media/upload`;
-      default:
-        return `${this.base}/${module}`;
-    }
+    return this.base + CONTENTKIT_MODULES[module];
   }
 
   async request<T>(url: string, { method, body, signal, blob }: RequestOptions = {}): Promise<T> {

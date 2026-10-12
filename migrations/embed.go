@@ -16,7 +16,7 @@ import (
 //go:embed postgres/*.sql clickhouse/*.sql
 var files embed.FS
 
-// Postgres installs all content, keyword and taxonomy tables in one host schema.
+// Postgres installs all content, keyword and group tables in one host schema.
 var Postgres fs.FS = mustSubFS("postgres")
 
 // ClickHouse installs the signal-plane tables in the selected database.

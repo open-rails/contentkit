@@ -42,8 +42,6 @@ export type SocialOperation =
   | "post.save"
   | "moderation.load"
   | "moderation.resolve"
-  | "taxonomy.load"
-  | "taxonomy.save"
   | "media.save"
   | "notifications.load"
   | "notifications.read"

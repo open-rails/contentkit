@@ -73,7 +73,7 @@ the second `subscribe` / `onChange` argument, or `null` when the scope changed d
 operation. This does not change the operation's result or its authentication.
 
 - **Mounts.** Without `mounts`, modules live under `baseUrl`: content at the
-  root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/taxonomy`.
+  root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/v1` (groups).
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
   `xhrSetup` for players (`<MediaGallery xhrSetup={contentkit.media.xhrSetup} />`).
@@ -83,11 +83,11 @@ operation. This does not change the operation's result or its authentication.
 - **Content modules**, one per resource, each method one route of the
   generated route table with its generated types: `posts`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
-  `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
-  queue a `cursor`); staff lists are `posts.adminList` (`q` searches,
+  `moderation`, `groups`, `codes`. Lists take `limit`/`offset` (the review
+  queue and group listings a `cursor`); staff lists are `posts.adminList` (`q` searches,
   `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList` (`state`, `q`),
-  `comments.adminList` (`contentKind`, `author`); `taxonomy.nodeAssignments(id)`
-  pages a node's contents.
+  `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
+  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
   `media.uploadInline(postId, file)` resolves a body image's reference
@@ -477,23 +477,6 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
 
-- **`TaxonomyManager`**: the taxonomy per kind (`kinds`: `kind`, `label`,
-  `relations` such as a character `member_of` a series, `cover` in a media
-  kind). Each kind's nodes by name, state, language, minimum count and order
-  at `basePath/{kind}`; a node at `basePath/{kind}/{id}`: slug, names and
-  aliases per language, host fields (`renderFields`), relations with a
-  typeahead (both directions), cover, counts and assigned contents
-  (`renderContent`); create, delete, restore, and merge with a typed
-  confirmation. Props: `kinds`, `languages`, `contentKind`, `renderFields`,
-  `renderContent`, `pageSize`. `useTaxonomyManagerAccess()`. Host-owned
-  fields stay in host tables.
-
-  ```tsx
-  <TaxonomyManager client={contentkit} basePath="/admin/taxonomy" navigation={nav} languages={["en", "ja"]}
-    kinds={[{ kind: "tag", label: "Tags" }, { kind: "series", label: "Series", cover: { kind: "series" } },
-      { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series" }] }]} />
-  ```
-
 - **`MediaItemPanel`**: one video item for its editors: encode state and
   progress, failures with their reason, replace the source, subtitle
   sidecars (language, label, forced), the poster from a frame or an image,
@@ -569,7 +552,7 @@ pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
 ```
 
 The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
-`contentkit.Runtime` (content, taxonomy, codes, media upload and read) with
+`contentkit.Runtime` (content, groups, codes, media upload and read) with
 AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
 media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
 the stack up under its own project name and takes it down; the server exits

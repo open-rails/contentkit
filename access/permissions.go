@@ -21,13 +21,14 @@ const (
 	CommentsBan Permission = "root:comments:ban"
 	// ModerationReview: list and resolve held comments and posts.
 	ModerationReview Permission = "root:moderation:review"
-	// TaxonomyWrite: the taxonomy admin API, its reads included.
-	TaxonomyWrite Permission = "root:taxonomy:write"
+	// GroupsWrite: create, edit, merge and delete groups, and set content's
+	// memberships.
+	GroupsWrite Permission = "root:groups:write"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, TaxonomyWrite}
+	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite}
 }
 
 func (p Permission) String() string { return string(p) }

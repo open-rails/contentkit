@@ -1,4 +1,4 @@
-import { CommentModeration, MediaItemPanel, PollManager, PostManager, TaxonomyManager, UploadQueue, UserCommentStanding, type AdminNavigation, type TaxonomyKind } from "@openrails/contentkit-ui";
+import { CommentModeration, MediaItemPanel, PollManager, PostManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -8,9 +8,7 @@ import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
-// (with the package's rich-text editor), /admin/taxonomy/* TaxonomyManager
-// (tags; series with covers; characters, members of series),
-// /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// (with the package's rich-text editor), /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -32,16 +30,6 @@ document.documentElement.classList.toggle("dark", dark);
 const kinds = [{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }];
 const languages = [{ value: "en", label: "English" }, { value: "ja", label: "日本語" }];
 const postHref = (p: { code: string; url_slug: string }) => `#/blog/${p.code}/${p.url_slug}`;
-const taxonomyKinds: TaxonomyKind[] = [
-  { kind: "tag", label: "Tags" },
-  { kind: "series", label: "Series", cover: { kind: "series" } },
-  { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series", inverseLabel: "Characters" }] },
-];
-const restricted = (n: { taxonomy_id: string }) => (
-  <label data-demo="host-field" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-    <input type="checkbox" /> Restricted (host field of {n.taxonomy_id.slice(0, 8)})
-  </label>
-);
 const subtitleLanguages = [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }];
 const createItem = async (): Promise<RefBody> => {
   const res = await fetch("/__test/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: q.get("kind") ?? "file", owner: viewer }) });
@@ -59,7 +47,6 @@ const createItem = async (): Promise<RefBody> => {
 function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
 }
-const contentLink = (ref: { content_kind: string; content_id: string }) => <a href={`#${ref.content_kind}/${ref.content_id}`}>{`${ref.content_kind} ${ref.content_id.slice(0, 8)}`}</a>;
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
 
 function Page({ children }: { children: ReactNode }) {
@@ -90,8 +77,6 @@ function Alone() {
           <Created />
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
-      ) : at.startsWith("/admin/taxonomy") ? (
-        <TaxonomyManager {...common} basePath="/admin/taxonomy" kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} />
       ) : at.startsWith("/admin/posts") ? (
         <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
       ) : (
@@ -112,7 +97,6 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
-        <Link to="/admin/taxonomy/series">Series</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -131,12 +115,6 @@ function Hosted() {
               <Created />
               <UploadQueue client={client} createItem={createItem} path={q.get("path") ?? "file"} language={lang} />
             </>
-          }
-        />
-        <Route
-          path="/admin/taxonomy/*"
-          element={
-            <TaxonomyManager client={client} basePath="/admin/taxonomy" navigation={navigation} kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} pageSize={size} language={lang} />
           }
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />

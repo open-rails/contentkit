@@ -6,8 +6,10 @@ package kinds
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
+	"time"
 )
 
 // ErrInvalid is a Config that cannot be served.
@@ -178,6 +180,11 @@ func (c Config) Validate() error {
 		if gk.Owner != "" && gk.Owner != "site" && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s owner %q", ErrInvalid, name, gk.Owner)
 		}
+		for _, r := range gk.Roles {
+			if !identRE.MatchString(r) {
+				return fmt.Errorf("%w: group kind %s role %q", ErrInvalid, name, r)
+			}
+		}
 		if err := validateAttributes("group kind "+name, gk.Attributes); err != nil {
 			return err
 		}
@@ -254,6 +261,81 @@ func validateAttributes(owner string, attrs map[string]Attribute) error {
 		}
 	}
 	return nil
+}
+
+// ValidateAttributes checks values against the declared attributes and returns
+// them normalized: ints as int64, times as RFC 3339 UTC. A nil value drops the
+// attribute; an undeclared one or a value of the wrong type is ErrInvalid.
+func ValidateAttributes(declared map[string]Attribute, values map[string]any) (map[string]any, error) {
+	out := make(map[string]any, len(values))
+	for name, v := range values {
+		a, ok := declared[name]
+		if !ok {
+			return nil, fmt.Errorf("%w: attribute %q is not declared", ErrInvalid, name)
+		}
+		if v == nil {
+			continue
+		}
+		n, err := a.normalize(v)
+		if err != nil {
+			return nil, fmt.Errorf("%w: attribute %s: %v", ErrInvalid, name, err)
+		}
+		out[name] = n
+	}
+	return out, nil
+}
+
+func (a Attribute) normalize(v any) (any, error) {
+	switch a.Type {
+	case "string":
+		if s, ok := v.(string); ok {
+			return s, nil
+		}
+	case "bool":
+		if b, ok := v.(bool); ok {
+			return b, nil
+		}
+	case "int":
+		switch n := v.(type) {
+		case int:
+			return int64(n), nil
+		case int64:
+			return n, nil
+		case float64:
+			if n == math.Trunc(n) && math.Abs(n) <= 1<<53 {
+				return int64(n), nil
+			}
+		}
+	case "enum":
+		if s, ok := v.(string); ok && slices.Contains(a.Values, s) {
+			return s, nil
+		}
+	case "time":
+		switch t := v.(type) {
+		case time.Time:
+			return t.UTC().Format(time.RFC3339Nano), nil
+		case string:
+			if p, err := time.Parse(time.RFC3339Nano, t); err == nil {
+				return p.UTC().Format(time.RFC3339Nano), nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("%v is not a valid %s", v, a.Type)
+}
+
+// Routes maps every content kind and group kind with a route to it: the
+// first path segment of its pages (contenturl.Routes).
+func (c Config) Routes() map[string]string {
+	out := map[string]string{}
+	for name, k := range c.Kinds {
+		out[name] = k.Route
+	}
+	for name, gk := range c.GroupKinds {
+		if gk.Route != "" {
+			out[name] = gk.Route
+		}
+	}
+	return out
 }
 
 // SiteFor returns the site serving host; the first site when none matches.
