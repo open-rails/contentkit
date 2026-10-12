@@ -35,14 +35,12 @@ var (
 		}
 		return out
 	}()
-	// permMedia, the host's own, lets staff edit every item's media.
-	permMedia = rbac.Root.Permission("media", "edit")
 	// roles are what /__test/users hands out.
 	roles = map[string]iam.Role{
-		"staff": rbac.Root.Role("staff", permMedia, perm[access.PostsWrite], perm[access.PollsWrite], perm[access.CommentsModerate],
+		"staff": rbac.Root.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
 			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.GroupsWrite]),
 		"moderator": rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
-		"editor":    rbac.Root.Role("editor", perm[access.PostsWrite], perm[access.PollsWrite]),
+		"editor":    rbac.Root.Role("editor", perm[access.ContentWrite], perm[access.PollsWrite]),
 	}
 )
 
@@ -91,12 +89,6 @@ func behindProxy(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// editsAllMedia reports staff: permMedia in the root group, checked live by
-// AuthKit through the actor's Verified.
-func (h *harness) editsAllMedia(ctx context.Context, a access.Actor) (bool, error) {
-	return a.Can(ctx, h.staff, permMedia.String())
 }
 
 // testUser is a signed-in account the control surface hands a test.

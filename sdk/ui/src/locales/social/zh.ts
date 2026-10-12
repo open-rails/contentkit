@@ -206,7 +206,7 @@ export const social: typeof en = {
     stale: "列出后内容已被编辑，请重新审核。",
     loadMore: "显示更多",
     queueComments: "评论",
-    queuePosts: "文章",
+    queueContent: "文章",
     noAccess: "你没有审核评论的权限。",
     author: "作者",
     authorPlaceholder: "按用户 ID 筛选",

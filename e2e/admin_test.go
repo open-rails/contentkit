@@ -23,9 +23,8 @@ import (
 func TestGlobalCommentBanOfUser(t *testing.T) {
 	w := newWorld(t)
 	staffUser, staff := w.person(w.staff)
-	o, owner := w.person(iam.Role{})
+	_, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
 	f := serve(t, w.engine(nil))
 	target := "/global-comment-bans/" + u.ID
 
@@ -64,9 +63,9 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	_, staff := w.person(w.staff)
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
 	f := serve(t, w.engine(nil))
-	item := "/gallery/" + cid(1)
+	g, _ := w.published(f, staff, "gallery", o.ID)
+	item := "/gallery/" + g
 
 	var first, reply, gone content.Comment
 	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "one"}, &first)
@@ -93,7 +92,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 		t.Fatalf("by author: %s", ids(all))
 	}
 	for _, c := range all {
-		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != cid(1) {
+		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != g {
 			t.Fatalf("comment %s by %s (%+v) on %s/%s", c.ID, c.UserID, c.Author, c.ContentKind, c.ContentID)
 		}
 	}
@@ -127,7 +126,10 @@ func TestGroupMembers(t *testing.T) {
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
-	w.galleries(1, 2, 3)
+	g1, _ := w.published(f, staff, "gallery")
+	g2, v2 := w.published(f, staff, "gallery")
+	g3, _ := w.published(f, staff, "gallery")
+	label := map[string]string{g1: "01", g2: "02", g3: "03", v2: "20"}
 
 	var made []groups.Group
 	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
@@ -136,8 +138,8 @@ func TestGroupMembers(t *testing.T) {
 	}, &made)
 	color, empty := string(made[0].ID), string(made[1].ID)
 	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/members", []groups.Membership{
-		{ContentID: cid(3)}, {ContentID: cid(1)}, {ContentID: cid(2), VersionID: cid(20)}, {ContentID: cid(2), State: groups.MembershipProposed},
-		{ContentID: cid(1), Role: "featured"},
+		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: groups.MembershipProposed},
+		{ContentID: g1, Role: "featured"},
 	}, nil)
 
 	page := func(id string, q url.Values) groups.MemberPage {
@@ -149,9 +151,9 @@ func TestGroupMembers(t *testing.T) {
 	key := func(ms []groups.Membership) string {
 		s := ""
 		for _, m := range ms {
-			s += m.ContentID[len(m.ContentID)-2:]
+			s += label[m.ContentID]
 			if m.VersionID != "" {
-				s += "@" + m.VersionID[len(m.VersionID)-2:]
+				s += "@" + label[m.VersionID]
 			}
 			if m.Role != "" {
 				s += ":" + m.Role
@@ -197,9 +199,11 @@ func TestGroupMembers(t *testing.T) {
 func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
-	_, editor := w.person(iam.Role{})
+	ed, editor := w.person(iam.Role{})
+	_, staff := w.person(w.staff)
 	f := serve(t, w.engine(nil))
-	ref := media.RefBody{Kind: "album", ID: cid(1)}
+	album, _ := w.published(f, staff, "album", ed.ID)
+	ref := media.RefBody{Kind: "album", ID: album}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +232,26 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 			t.Fatal(err)
 		}
 		return n
+	}
+	// Publishing exposes the album on the engine's River; the stand-in
+	// worker then finishes what is queued, so the regenerate's job is new.
+	q := func(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
+	deadline := time.Now().Add(time.Minute)
+	for {
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+q(w.schema+"_river")+` WHERE kind = 'contentkit_media_expose' AND finalized_at IS NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the album's exposure never ran")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE `+q(w.queue.Schema())+` SET state = 'completed', finalized_at = now() WHERE finalized_at IS NULL`); err != nil {
+		t.Fatal(err)
 	}
 	before := jobs()
 

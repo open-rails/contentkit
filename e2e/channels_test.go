@@ -22,7 +22,6 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -56,30 +55,6 @@ func channelBilling(w *world) *openrails.Client {
 	return merchant
 }
 
-// channelMedia gives the fixtures' registry the channel kind's media, as
-// the engine derives it (media.ForContent), for publish.
-func channelMedia(w *world, cfg contentkit.Config) {
-	w.t.Helper()
-	mc := cfg.Media.Config
-	mc.Namespace, mc.Hooks = w.tenant, media.Hooks{Resolver: w, CanUpload: w}
-	mc.Kinds = append(mc.Kinds, media.GroupKind("channel", channel))
-	var err error
-	if w.reg, err = media.NewRegistry(mc); err != nil {
-		w.t.Fatal(err)
-	}
-	if w.queue, err = workqueue.New(w.pool, w.reg, w.schema+"_media_worker"); err != nil {
-		w.t.Fatal(err)
-	}
-	journal, err := media.NewPGJournal(w.pool, w.schema, w.queue)
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	if w.jobs, err = media.NewJobs(media.JobsConfig{Store: w.env.Store, Registry: w.reg, Locker: media.PGLocker(w.pool), Journal: journal,
-		Processes: w.queue, Pool: w.pool}); err != nil {
-		w.t.Fatal(err)
-	}
-}
-
 // A person's channel over the real engine, AuthKit, OpenRails and media: the
 // creator owns it within the cap and AuthKit scopes it; an editor of the
 // scope uploads and selects its avatar and sells it; a stranger may do
@@ -98,13 +73,10 @@ func TestChannels(t *testing.T) {
 	if _, err := merchant.UpdateCustomer(ctx, billing.CustomerID(uuid.MustParse(viewer.ID)), billing.UpdateCustomerParams{}); err != nil {
 		t.Fatal(err)
 	}
-	var cfg contentkit.Config
 	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
 		c.Content.GroupKinds["channel"] = channel
 		d.Billing, d.Scopes = ckopenrails.Billing(merchant), ckauthkit.Scopes(w.ak)
-		cfg = *c
 	})
-	channelMedia(w, cfg)
 	f := serve(t, e)
 
 	var made []groups.Group

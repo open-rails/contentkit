@@ -35,7 +35,7 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	})
 	cfg := siteConfig(schema)
 	cfg.ClickHouse = ClickHouseConfig{Database: chDB, Addr: env.Addr, Username: env.User, Password: env.Password, Cluster: env.Cluster}
-	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Resolver: galleries{}}
+	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}}
 	for range 2 { // idempotent
 		e, err := New(ctx, cfg, deps)
 		if err != nil {

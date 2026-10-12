@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -57,21 +58,12 @@ func siteConfig() kinds.Config {
 	}
 }
 
-// existsResolver sees every content item that exists: the catalog's
-// resolver stands in until it lands.
-type existsResolver struct{ f *fixture }
+// staffOnly holds every permission for the actor "staff": the catalog's
+// writer in the seeds.
+type staffOnly struct{}
 
-func (r existsResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, ref := range refs {
-		var ok bool
-		if err := r.f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+r.f.table("content_items")+` WHERE tenant_id = $1 AND id = $2 AND kind = $3)`,
-			ref.TenantID, ref.ContentID, ref.ContentKind).Scan(&ok); err != nil {
-			return nil, err
-		}
-		out[ref.Key()] = access.Resolution{Ref: ref, Visible: ok, Accessible: ok}
-	}
-	return out, nil
+func (staffOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
+	return a.ID == "staff", nil
 }
 
 type fixture struct {
@@ -80,10 +72,15 @@ type fixture struct {
 	pool   *pgxpool.Pool
 	schema string
 	now    time.Time
+	clock  time.Time // the catalog's; the seeds publish in the past
 	groups *groups.Store
+	cat    *catalog.Store
 	svc    *Service
 	h      http.Handler
 	ids    map[string]string // group slug -> id
+	cids   map[int]string    // item n -> content id
+	vids   map[[2]int]string // item n, version i -> version id
+	codes  map[int]string    // item n -> content code
 }
 
 // newFixture serves discovery over a fresh schema; ch is the signal plane
@@ -92,22 +89,32 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool), now: time.Now().UTC().Truncate(time.Second), ids: map[string]string{}}
+	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool), now: time.Now().UTC().Truncate(time.Second), ids: map[string]string{},
+		cids: map[int]string{}, vids: map[[2]int]string{}, codes: map[int]string{}}
+	f.clock = f.now
 	cfg := siteConfig()
 	var err error
-	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg}); err != nil {
+	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg,
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return f.cat.ContentChanged(ctx, q, ids)
+		}}); err != nil {
 		t.Fatal(err)
 	}
 	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if f.cat, err = catalog.New(ctx, catalog.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Auth: testauth.Auth{Authz: staffOnly{}},
+		Gate: gate, Groups: f.groups, Now: func() time.Time { return f.clock }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.cat.Close)
 	h, err := hub.New(hub.Config{PG: pool, PGSchema: f.schema, Tenant: tenant, DefaultLanguage: "en", CH: ch, CHDatabase: chDB})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if f.svc, err = New(Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Gate: gate, Groups: f.groups, Hub: h,
-		Resolver: existsResolver{f}, Visibility: FacetVisibility(FacetVisibilityOptions{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Gate: gate})}); err != nil {
+		Resolver: f.cat.Resolver(), Visibility: f.cat}); err != nil {
 		t.Fatal(err)
 	}
 	if f.h, err = f.svc.Handler(testauth.Auth{Claims: map[string][]string{"fan": {"premium"}}}); err != nil {
@@ -118,7 +125,21 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 
 func (f *fixture) table(name string) string { return pgx.Identifier{f.schema, name}.Sanitize() }
 
-func vid(n, i int) string { return fmt.Sprintf("01920000-0000-7000-9000-%010d%02d", n, i) }
+// cid is seeded item n's content id; an unseeded n names no content.
+func (f *fixture) cid(n int) string {
+	if id, ok := f.cids[n]; ok {
+		return id
+	}
+	return cid(n)
+}
+
+// vid is seeded item n's version i.
+func (f *fixture) vid(n, i int) string {
+	if id, ok := f.vids[[2]int{n, i}]; ok {
+		return id
+	}
+	return fmt.Sprintf("01920000-0000-7000-9000-%010d%02d", n, i)
+}
 
 // group creates groups of kind by slug, with an English name.
 func (f *fixture) group(kind string, slugs ...string) {
@@ -136,16 +157,16 @@ func (f *fixture) group(kind string, slugs ...string) {
 	}
 }
 
-// ver is one version as the catalog writes it.
+// ver is one version of a seeded item.
 type ver struct {
 	langs  []string
 	traits []string
 	future bool    // not live yet
 	rule   *string // access override
-	pages  int
+	pages  int     // media's fact
 }
 
-// item is one content item as the catalog writes it, with its facets.
+// item is one content item to seed.
 type item struct {
 	n            int
 	kind         string
@@ -156,15 +177,25 @@ type item struct {
 	restrictions []string
 	attrs        map[string]any
 	deleted      bool
-	favorites    int
-	popularity   string
+	favorites    int    // the counts job's
+	popularity   string // discovery's popularity job's
 	versions     []ver
 	groups       []string // slugs, content-level memberships
 }
 
-// seed writes items through the contract tables, as the catalog lane will.
+// seed creates items through the catalog as staff, publishing each age ago.
+// Pages, favorites and popularity are written as the jobs that own them do.
 func (f *fixture) seed(items ...item) {
 	f.t.Helper()
+	staff := testauth.Actor(access.Actor{ID: "staff"}, staffOnly{})
+	defer func() { f.clock = f.now }()
+	rule := func(raw string) *access.Rule {
+		var r access.Rule
+		if err := json.Unmarshal([]byte(raw), &r); err != nil {
+			f.t.Fatal(err)
+		}
+		return &r
+	}
 	for _, it := range items {
 		if it.kind == "" {
 			it.kind = "gallery"
@@ -172,57 +203,51 @@ func (f *fixture) seed(items ...item) {
 		if it.rule == "" {
 			it.rule = `{"level":"public"}`
 		}
-		if it.listing == "" {
-			it.listing = "listed"
-		}
-		if it.popularity == "" {
-			it.popularity = "{}"
-		}
-		attrs, _ := json.Marshal(it.attrs)
-		if it.attrs == nil {
-			attrs = []byte("{}")
-		}
-		state := "published"
-		if it.deleted {
-			state = "deleted"
-		}
-		published := f.now.Add(-it.age)
-		id := cid(it.n)
-		f.exec(`INSERT INTO {s}.content_items (tenant_id, id, kind, state, published_at, listing, access, restrictions, attributes)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, tenant, id, it.kind, state, published, it.listing, it.rule, nonNil(it.restrictions), string(attrs))
+		in := catalog.ContentInput{Kind: it.kind, Text: map[string]catalog.Text{}, Listing: it.listing, Access: rule(it.rule),
+			Restrictions: it.restrictions, Attributes: it.attrs}
 		for lang, title := range it.titles {
-			f.exec(`INSERT INTO {s}.content_text (tenant_id, content_id, language, title, slug) VALUES ($1, $2, $3, $4, $5)`,
-				tenant, id, lang, title, strings.ToLower(strings.ReplaceAll(title, " ", "-")))
+			in.Text[lang] = catalog.Text{Title: title}
 		}
-		f.exec(`INSERT INTO {s}.content_codes (tenant_id, code, content_kind, content_id, slug) VALUES ($1, $2, $3, $4, $5)`,
-			tenant, fmt.Sprintf("G%08d", it.n), it.kind, id, strings.ToLower(strings.ReplaceAll(it.titles["en"], " ", "-")))
-		for i, v := range it.versions {
-			rule := it.rule
+		for _, v := range it.versions {
+			vi := catalog.VersionInput{Languages: v.langs, Traits: &v.traits}
 			if v.rule != nil {
-				rule = *v.rule
+				vi.Access = rule(*v.rule)
 			}
-			var r access.Rule
-			if err := json.Unmarshal([]byte(rule), &r); err != nil {
-				f.t.Fatal(err)
-			}
-			fc := r.Facet()
-			live := &published
 			if v.future {
-				t := f.now.Add(time.Hour)
-				live = &t
+				at := f.now.Add(time.Hour)
+				vi.PublishAt = &at
 			}
-			var pages *int
-			if v.pages > 0 {
-				pages = &v.pages
-			}
-			f.exec(`INSERT INTO {s}.content_versions (tenant_id, id, content_id, position, languages, traits, state, published_at, access, pages)
- VALUES ($1, $2, $3, $4, $5, $6, 'published', $7, $8, $9)`, tenant, vid(it.n, i), id, i, v.langs, nonNil(v.traits), published, v.rule, pages)
-			f.exec(`INSERT INTO {s}.content_facets (tenant_id, content_id, version_id, kind, live_from, deleted, listing, languages, access_level,
- access_tiers, access_group_id, access_free_after, restrictions, traits, position, published_at, attributes, favorites, popularity)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-				tenant, id, vid(it.n, i), it.kind, live, it.deleted, it.listing, v.langs, string(fc.Level), fc.Tiers, fc.GroupID, fc.FreeAfter,
-				nonNil(it.restrictions), nonNil(v.traits), i, published, string(attrs), it.favorites, it.popularity)
+			in.Versions = append(in.Versions, vi)
 		}
+		f.clock = f.now.Add(-it.age)
+		ids, err := f.cat.Create(f.ctx, staff, []catalog.ContentInput{in})
+		if err != nil {
+			f.t.Fatalf("seed %d: %v", it.n, err)
+		}
+		id := ids[0]
+		if err := f.cat.Publish(f.ctx, staff, []catalog.Publish{{ContentID: id}}); err != nil {
+			f.t.Fatal(err)
+		}
+		f.cids[it.n] = id
+		rows, err := f.pool.Query(f.ctx, `SELECT id FROM `+f.table("content_versions")+` WHERE tenant_id = $1 AND content_id = $2 ORDER BY position`, tenant, id)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		vs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		for i, v := range it.versions {
+			f.vids[[2]int{it.n, i}] = vs[i]
+			if v.pages > 0 {
+				f.exec(`UPDATE {s}.content_versions SET pages = $2 WHERE id = $1`, vs[i], v.pages)
+			}
+		}
+		var code string
+		if err := f.pool.QueryRow(f.ctx, `SELECT code FROM `+f.table("content_codes")+` WHERE tenant_id = $1 AND content_id = $2`, tenant, id).Scan(&code); err != nil {
+			f.t.Fatal(err)
+		}
+		f.codes[it.n] = code
 		var ms []groups.Membership
 		for _, slug := range it.groups {
 			ms = append(ms, groups.Membership{GroupID: groups.GroupID(f.ids[slug]), ContentID: id})
@@ -232,6 +257,15 @@ func (f *fixture) seed(items ...item) {
 				f.t.Fatal(err)
 			}
 		}
+		if it.deleted {
+			if err := f.cat.Delete(f.ctx, staff, []string{id}); err != nil {
+				f.t.Fatal(err)
+			}
+		}
+		if it.popularity == "" {
+			it.popularity = "{}"
+		}
+		f.exec(`UPDATE {s}.content_facets SET favorites = $2, popularity = $3 WHERE content_id = $1`, id, it.favorites, it.popularity)
 	}
 }
 

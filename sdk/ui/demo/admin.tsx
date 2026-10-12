@@ -1,4 +1,4 @@
-import { CommentModeration, MediaItemPanel, PollManager, PostManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, ContentManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -7,7 +7,7 @@ import type { RefBody } from "@openrails/contentkit-ui/client";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
-// UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
+// UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* ContentManager of blog posts
 // (with the package's rich-text editor), /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
@@ -27,9 +27,9 @@ style.textContent = `:root { ${css(light)} } .dark { ${css(darkVars)} } body { b
 document.head.append(style);
 document.documentElement.classList.toggle("dark", dark);
 
-const kinds = [{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }];
+const kinds = [{ value: "video", label: "Videos" }, { value: "blog", label: "Posts" }];
 const languages = [{ value: "en", label: "English" }, { value: "ja", label: "日本語" }];
-const postHref = (p: { code: string; url_slug: string }) => `#/blog/${p.code}/${p.url_slug}`;
+const contentHref = (c: { path: string }) => `#${c.path}`;
 const subtitleLanguages = [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }];
 const createItem = async (): Promise<RefBody> => {
   const res = await fetch("/__test/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: q.get("kind") ?? "file", owner: viewer }) });
@@ -78,7 +78,7 @@ function Alone() {
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
       ) : at.startsWith("/admin/posts") ? (
-        <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
+        <ContentManager {...common} kind="blog" basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} contentHref={contentHref} />
       ) : (
         <CommentModeration {...common} basePath="/admin/comments" contentKinds={kinds} itemHref={itemHref} />
       )}
@@ -120,7 +120,7 @@ function Hosted() {
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
           path="/admin/posts/*"
-          element={<PostManager client={client} basePath="/admin/posts" navigation={navigation} languages={languages} renderEditor={richTextEditor} postHref={postHref} pageSize={size} language={lang} />}
+          element={<ContentManager client={client} kind="blog" basePath="/admin/posts" navigation={navigation} languages={languages} renderEditor={richTextEditor} contentHref={contentHref} pageSize={size} language={lang} />}
         />
       </Routes>
     </Page>

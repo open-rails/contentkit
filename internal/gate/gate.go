@@ -155,6 +155,12 @@ func (hostVerified) Identity() auth.Identity {
 
 func (hostVerified) Can(context.Context, auth.Scope, string) (bool, error) { return true, nil }
 
+// Host is the engine's own actor, holding every permission: what its
+// in-process client acts as, and its own cascades.
+func Host() access.Actor {
+	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
@@ -227,7 +233,7 @@ func (f fault) Error() string { return string(f) }
 // credential, else the Verified's subject.
 func (g *Gate) actor(r *http.Request) (access.Actor, error) {
 	if host, _ := r.Context().Value(hostKey{}).(bool); host {
-		return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}, nil
+		return Host(), nil
 	}
 	v, err := g.authenticate(r)
 	switch {

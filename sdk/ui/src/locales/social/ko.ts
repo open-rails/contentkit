@@ -206,7 +206,7 @@ export const social: typeof en = {
     stale: "목록이 표시된 뒤 수정되었습니다. 다시 검토하세요.",
     loadMore: "더 보기",
     queueComments: "댓글",
-    queuePosts: "게시물",
+    queueContent: "게시물",
     noAccess: "댓글을 관리할 권한이 없습니다.",
     author: "작성자",
     authorPlaceholder: "사용자 ID로 필터",

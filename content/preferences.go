@@ -13,7 +13,7 @@ import (
 )
 
 // The preference boundary: an authenticated actor's current reaction
-// (-1/0/1) and favorite (1/0) per canonical reference, read straight from
+// (-1/0/1) and favorite (1/0) per reference, read straight from
 // content_reactions and content_favorites. Every value change stamps the row
 // with a revision from the schema's sequence; neutral and unfavorite keep a
 // zero row. SyncPreferences exports rows past a watermark, newest revision wins.
@@ -32,43 +32,24 @@ const maxPreferenceRevisionFloor = math.MaxInt64 / 2
 
 const preferencePageSize = 500
 
-// preferences resolves canonical references and exports rows. canon nil means
-// the host does not export preferences.
+// preferences exports rows.
 type preferences struct {
 	rt      *Runtime
 	s       *store
-	canon   ContentCanonicalizer
 	overlap time.Duration
 }
 
-func newPreferences(rt *Runtime, canon ContentCanonicalizer, overlap time.Duration) *preferences {
+func newPreferences(rt *Runtime, overlap time.Duration) *preferences {
 	if overlap <= 0 {
 		overlap = DefaultPreferenceSyncOverlap
 	}
-	return &preferences{rt: rt, s: rt.store, canon: canon, overlap: overlap}
+	return &preferences{rt: rt, s: rt.store, overlap: overlap}
 }
 
-// work resolves the canonical preference reference of a target; ok is false
-// when preferences are disabled or the host declines the target, which also
-// means the target keeps its own storage reference.
+// work is the reference a target's preference is stored and exported under:
+// the resolver's canonical one. Comment reactions are not preferences.
 func (p *preferences) work(ref contentref.ContentRef) (contentref.ContentRef, bool) {
-	if p.canon == nil || ref.ContentKind == KindComment {
-		return ref, false
-	}
-	w, ok := p.canon.Canonical(ref)
-	if !ok || w.ContentID == "" {
-		return ref, false
-	}
-	if w.TenantID == "" {
-		w.TenantID = p.s.tenant
-	}
-	if w.ContentKind == "" {
-		w.ContentKind = ref.ContentKind
-	}
-	if p.rt.checkRef(w) != nil {
-		return ref, false
-	}
-	return w, true
+	return ref, ref.ContentKind != KindComment
 }
 
 // storedRefSet maps caller references to the references their rows are stored
@@ -122,13 +103,9 @@ type PreferenceSyncReport struct {
 // before the latest one: a row is delivered as long as its transaction commits
 // within the overlap of allocating its revision (ResyncPreferences covers the
 // rest). A checkpoint is recorded only after its own scan was sent, so
-// overlapping syncs stay correct and only repeat sends. Export disabled (nil
-// Canonicalizer) sends nothing; otherwise send is required.
+// overlapping syncs stay correct and only repeat sends. send is required.
 func (rt *Runtime) SyncPreferences(ctx context.Context, send PreferenceSender) (PreferenceSyncReport, error) {
 	p := rt.preferences
-	if p.canon == nil {
-		return PreferenceSyncReport{}, nil
-	}
 	if send == nil {
 		return PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
 	}
@@ -164,11 +141,8 @@ func (rt *Runtime) SyncPreferences(ctx context.Context, send PreferenceSender) (
 
 // ResyncPreferences re-sends every exportable row (zeros included): the
 // periodic safety net for sink loss and slower-than-overlap commits.
-// A sender is required unless preference export is disabled.
+// A sender is required.
 func (rt *Runtime) ResyncPreferences(ctx context.Context, send PreferenceSender) (PreferenceSyncReport, error) {
-	if rt.preferences.canon == nil {
-		return PreferenceSyncReport{}, nil
-	}
 	if send == nil {
 		return PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
 	}
@@ -176,8 +150,7 @@ func (rt *Runtime) ResyncPreferences(ctx context.Context, send PreferenceSender)
 }
 
 // export pages rows with revision > from in revision order through send.
-// Anonymous rows, comment threads and targets the canonicalizer now declines
-// are skipped.
+// Anonymous rows and comment threads are skipped.
 func (p *preferences) export(ctx context.Context, q querier, from int64, send PreferenceSender) (PreferenceSyncReport, error) {
 	report := PreferenceSyncReport{From: from}
 	for after := from; ; {

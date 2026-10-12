@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
@@ -32,135 +33,6 @@ func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) 
 func (c *Client) GetConfig(ctx context.Context) (content.Config, error) {
 	var out content.Config
 	err := c.call(ctx, http.MethodGet, "/v1/config", nil, nil, &out)
-	return out, err
-}
-
-// GetPostsQuery is the query of GetPosts.
-type GetPostsQuery struct {
-	// only posts in this language
-	Language string
-	// likes (most liked), best (Wilson lower bound) or newest (the default)
-	Sort string
-	// page size: 20 by default, at most 100
-	Limit int
-	// items to skip
-	Offset int
-}
-
-func (q GetPostsQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Sort != "" {
-		v.Set("sort", q.Sort)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Offset != 0 {
-		v.Set("offset", fmt.Sprint(q.Offset))
-	}
-	return v
-}
-
-// GetPosts is GET /v1/posts (public). Published posts.
-func (c *Client) GetPosts(ctx context.Context, q GetPostsQuery) ([]content.Post, error) {
-	var out []content.Post
-	err := c.call(ctx, http.MethodGet, "/v1/posts", q.values(), nil, &out)
-	return out, err
-}
-
-// GetPostsAdminQuery is the query of GetPostsAdmin.
-type GetPostsAdminQuery struct {
-	// only posts in this language
-	Language string
-	// true: only drafts; false: only posts that are not drafts
-	Draft *bool
-	// true: only deleted posts, with deleted_at; otherwise only live ones
-	Deleted *bool
-	// only posts whose title, excerpt or body contains this text, ignoring case
-	Q string
-	// page size: 20 by default, at most 100
-	Limit int
-	// items to skip
-	Offset int
-}
-
-func (q GetPostsAdminQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Draft != nil {
-		v.Set("draft", fmt.Sprint(*q.Draft))
-	}
-	if q.Deleted != nil {
-		v.Set("deleted", fmt.Sprint(*q.Deleted))
-	}
-	if q.Q != "" {
-		v.Set("q", q.Q)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Offset != 0 {
-		v.Set("offset", fmt.Sprint(q.Offset))
-	}
-	return v
-}
-
-// GetPostsAdmin is GET /v1/posts/admin (staff). Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own.
-func (c *Client) GetPostsAdmin(ctx context.Context, q GetPostsAdminQuery) ([]content.Post, error) {
-	var out []content.Post
-	err := c.call(ctx, http.MethodGet, "/v1/posts/admin", q.values(), nil, &out)
-	return out, err
-}
-
-// GetPost is GET /v1/posts/{id} (public). A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders.
-func (c *Client) GetPost(ctx context.Context, id string) (content.Post, error) {
-	var out content.Post
-	err := c.call(ctx, http.MethodGet, expand("/v1/posts/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PostPosts is POST /v1/posts (staff). Creates a post; 202 when the moderator holds it for review.
-func (c *Client) PostPosts(ctx context.Context, body content.PostInput) (content.Post, error) {
-	var out content.Post
-	err := c.call(ctx, http.MethodPost, "/v1/posts", nil, body, &out)
-	return out, err
-}
-
-// PatchPost is PATCH /v1/posts/{id} (staff). Updates a post's given fields; 202 when the moderator holds the new text.
-func (c *Client) PatchPost(ctx context.Context, id string, body content.PostInput) (content.Post, error) {
-	var out content.Post
-	err := c.call(ctx, http.MethodPatch, expand("/v1/posts/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// DeletePost is DELETE /v1/posts/{id} (staff). Deletes a post.
-func (c *Client) DeletePost(ctx context.Context, id string) error {
-	return c.call(ctx, http.MethodDelete, expand("/v1/posts/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
-}
-
-// PostPostRestore is POST /v1/posts/{id}/restore (staff). Restores a deleted post as it was; 409 when another live post took its slug.
-func (c *Client) PostPostRestore(ctx context.Context, id string) (content.Post, error) {
-	var out content.Post
-	err := c.call(ctx, http.MethodPost, expand("/v1/posts/{id}/restore", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PutPostCover is PUT /v1/posts/{id}/cover (staff). Sets the cover to an inline image uploaded to the post's media folder; "" clears it.
-func (c *Client) PutPostCover(ctx context.Context, id string, body content.ImageInput) (content.PostCover, error) {
-	var out content.PostCover
-	err := c.call(ctx, http.MethodPut, expand("/v1/posts/{id}/cover", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostPostImages is POST /v1/posts/{id}/images (staff). The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now.
-func (c *Client) PostPostImages(ctx context.Context, id string, body content.ImageInput) (content.InlineImage, error) {
-	var out content.InlineImage
-	err := c.call(ctx, http.MethodPost, expand("/v1/posts/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
@@ -662,7 +534,7 @@ func (c *Client) GetCanComment(ctx context.Context, kind string, id string) (con
 
 // GetModerationHeldQuery is the query of GetModerationHeld.
 type GetModerationHeldQuery struct {
-	// comment or post
+	// comment or content
 	Kind string
 	// the previous page's next
 	Cursor string
@@ -684,17 +556,237 @@ func (q GetModerationHeldQuery) values() url.Values {
 	return v
 }
 
-// GetModerationHeld is GET /v1/moderation/held (staff). Held comments or posts awaiting review, oldest first.
+// GetModerationHeld is GET /v1/moderation/held (staff). Held comments or content items awaiting review, oldest first.
 func (c *Client) GetModerationHeld(ctx context.Context, q GetModerationHeldQuery) (content.HeldPage, error) {
 	var out content.HeldPage
 	err := c.call(ctx, http.MethodGet, "/v1/moderation/held", q.values(), nil, &out)
 	return out, err
 }
 
-// PostModerationResolve is POST /v1/moderation/{kind}/{id}/resolve (staff). Approves (publishes) or rejects a held comment or post, at the revision the queue listed.
+// PostModerationResolve is POST /v1/moderation/{kind}/{id}/resolve (staff). Approves (publishes) or rejects a held comment or content item, at the revision the queue listed.
 func (c *Client) PostModerationResolve(ctx context.Context, kind string, id string, body content.ResolveInput) (content.ReviewOutcome, error) {
 	var out content.ReviewOutcome
 	err := c.call(ctx, http.MethodPost, expand("/v1/moderation/{kind}/{id}/resolve", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// GetCatalogTotalsQuery is the query of GetCatalogTotals.
+type GetCatalogTotalsQuery struct {
+	// content kinds to total; every kind by default
+	Kinds []string
+	// languages to break the totals down by; every counted language by default
+	Languages []string
+}
+
+func (q GetCatalogTotalsQuery) values() url.Values {
+	v := url.Values{}
+	if len(q.Kinds) > 0 {
+		v.Set("kinds", strings.Join(q.Kinds, ","))
+	}
+	if len(q.Languages) > 0 {
+		v.Set("languages", strings.Join(q.Languages, ","))
+	}
+	return v
+}
+
+// GetCatalogTotals is GET /v1/catalog/totals (open). Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes.
+func (c *Client) GetCatalogTotals(ctx context.Context, q GetCatalogTotalsQuery) (catalog.Totals, error) {
+	var out catalog.Totals
+	err := c.call(ctx, http.MethodGet, "/v1/catalog/totals", q.values(), nil, &out)
+	return out, err
+}
+
+// GetContentQuery is the query of GetContent.
+type GetContentQuery struct {
+	// the language to show text in; the site's first language, then any, when it has none
+	Language string
+}
+
+func (q GetContentQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state.
+func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetContentVersionQuery is the query of GetContentVersion.
+type GetContentVersionQuery struct {
+	// the language to show text in; the site's first language, then any, when it has none
+	Language string
+}
+
+func (q GetContentVersionQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetContentVersion is GET /v1/contents/{id}/versions/{vid} (public). One version of a content item as the viewer sees it, with its segments and access decision.
+func (c *Client) GetContentVersion(ctx context.Context, id string, vid string, q GetContentVersionQuery) (catalog.Version, error) {
+	var out catalog.Version
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageContentsQuery is the query of GetManageContents.
+type GetManageContentsQuery struct {
+	// only this kind
+	Kind string
+	// draft, scheduled, published (live) or deleted; every state but deleted by default
+	State string
+	// only this owner group's, which the caller edits
+	OwnerGroup string
+	// only items whose title, description or body contains this text, ignoring case
+	Q string
+	// the language to show text in; the site's first language, then any, when it has none
+	Language string
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetManageContentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.State != "" {
+		v.Set("state", q.State)
+	}
+	if q.OwnerGroup != "" {
+		v.Set("owner_group", q.OwnerGroup)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetManageContents is GET /v1/manage/contents (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.
+func (c *Client) GetManageContents(ctx context.Context, q GetManageContentsQuery) ([]catalog.Content, error) {
+	var out []catalog.Content
+	err := c.call(ctx, http.MethodGet, "/v1/manage/contents", q.values(), nil, &out)
+	return out, err
+}
+
+// PostContents is POST /v1/contents (public). Creates a content item as a draft. root:content:write holders, or an owner group's editors in it.
+func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, "/v1/contents", nil, body, &out)
+	return out, err
+}
+
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// DeleteContent is DELETE /v1/contents/{id} (public). Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) DeleteContent(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
+}
+
+// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/restore", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PostContentUnpublish is POST /v1/contents/{id}/unpublish (public). Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PostContentUnpublish(ctx context.Context, id string) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/unpublish", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PutContentText(ctx context.Context, id string, language string, body catalog.Text) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, body, &out)
+	return out, err
+}
+
+// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) DeleteContentText(ctx context.Context, id string, language string) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, nil, &out)
+	return out, err
+}
+
+// PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog.CreatorsInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/creators", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PostContentImages is POST /v1/contents/{id}/images (public). The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PostContentImages(ctx context.Context, id string, body content.ImageInput) (catalog.InlineImage, error) {
+	var out catalog.InlineImage
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PostContentVersions(ctx context.Context, id string, body catalog.VersionInput) (catalog.Version, error) {
+	var out catalog.Version
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PutContentVersionsOrder is PUT /v1/contents/{id}/versions/order (public). Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body catalog.OrderInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/order", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
+	var out catalog.Version
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
+	return out, err
+}
+
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Deletes a version; a content item keeps at least one. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
+}
+
+// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors and root:content:write holders only.
+func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid string, body catalog.SegmentsInput) (catalog.Version, error) {
+	var out catalog.Version
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/segments", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
 	return out, err
 }
 

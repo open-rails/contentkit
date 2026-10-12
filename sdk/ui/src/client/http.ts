@@ -12,8 +12,10 @@ export type Mount = string | ((ref: RefBody) => string);
  * module's path). A mount is the module's full base URL.
  */
 export interface ContentKitMounts {
-  /** Posts, comments, reactions, favorites, polls, bans, moderation. Default `{baseUrl}/v1`. */
+  /** Comments, reactions, favorites, polls, bans, moderation. Default `{baseUrl}/v1`. */
   content?: string;
+  /** Content items and catalog totals. Default `{baseUrl}/v1`. */
+  contents?: string;
   /** Media reads and HLS playlists. Default `{baseUrl}/v1/media`. */
   media?: Mount;
   /** Uploads and commits. Default `{baseUrl}/v1/media/upload`. */
@@ -24,14 +26,14 @@ export interface ContentKitMounts {
   groups?: string;
   /** The site's content model. Default `{baseUrl}/v1`. */
   kinds?: string;
-  /** The public catalog. Default `{baseUrl}/v1/catalog`. */
-  catalog?: string;
   /** User inbox. Default `{baseUrl}/v1/notifications`. */
   notifications?: string;
   /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
   versions?: string;
   /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
   offers?: string;
+  /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
+  discovery?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;

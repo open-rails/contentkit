@@ -24,6 +24,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
@@ -52,20 +53,6 @@ func (staffAuthz) Can(_ context.Context, a access.Actor, _ string) (bool, error)
 	return a.ID == "staff" && !a.Anonymous, nil
 }
 
-// galleries is the host's resolver for the galleries it still owns: cid(1)
-// is visible to everyone.
-type galleries struct{}
-
-func (galleries) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, r := range refs {
-		if r.ContentKind == "gallery" && r.ContentID == cid(1) {
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true, Owner: "owner"}
-		}
-	}
-	return out, nil
-}
-
 // engineSchema names a disposable schema and drops it, its River and media
 // worker schemas and their ledger rows afterwards.
 func engineSchema(t *testing.T, pool *pgxpool.Pool) string {
@@ -88,7 +75,7 @@ func siteConfig(schema string) Config {
 		Content: kinds.Config{Languages: []string{"en"}, Restrictions: []string{"restricted"},
 			Kinds: map[string]kinds.Kind{
 				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}},
-				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+				"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
 			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}}},
 		Interactions: InteractionsConfig{Limits: LimitsConfig{Disabled: true}}}
@@ -135,15 +122,16 @@ func (s server) call(status int, actor access.Actor, method, target string, body
 }
 
 // One constructor migrates ContentKit's own schema (concurrently, twice), the
-// routes serve every module under /v1, Start runs the engine's jobs on its own
-// River, which index ContentKit's posts and tags, and the in-process client
-// publishes as the host.
+// routes serve every module under /v1, content is created and interacted
+// with through them, Start runs the engine's jobs on its own River, which
+// index content items and tags, and the in-process client publishes as the
+// host.
 func TestEngineIntegration(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
-	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Resolver: galleries{}}
+	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}}
 
 	engines := make(chan *Engine, 2)
 	errs := make(chan error, 2)
@@ -175,7 +163,7 @@ func TestEngineIntegration(t *testing.T) {
 		},
 		"no auth": func(_ *Config, d *Deps) { d.Auth = nil },
 		"media hooks": func(c *Config, d *Deps) {
-			c.Media = &MediaConfig{Config: media.Config{Hooks: media.Hooks{Resolver: galleries{}}}}
+			c.Media = &MediaConfig{Config: media.Config{Hooks: media.Hooks{PurgePublic: func(context.Context, []string) {}}}}
 			d.Store = nil
 		},
 		"bad schema": func(c *Config, _ *Deps) { c.Database.Schema = "Has-Dash" },
@@ -213,20 +201,36 @@ func TestEngineIntegration(t *testing.T) {
 	s := serve(t, routes)
 	staff, user, anon := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "u1", Kind: "user", IP: "10.0.0.1"}, access.Actor{Anonymous: true, IP: "10.0.0.2"}
 
-	// Interactions on the host's gallery and on ContentKit's own posts, under /v1.
-	s.call(http.StatusCreated, user, "POST", "/api/ck/v1/gallery/"+cid(1)+"/comments", map[string]string{"body": "first"}, nil)
-	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+cid(1)+"/like", nil, nil)
-	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+cid(1)+"/favorite", nil, nil)
-	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/gallery/"+cid(1)+"/favorite", nil, nil)
-	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/video/"+cid(1)+"/like", nil, nil)
-	g1 := contentref.New(tenant, "gallery", cid(1))
+	// Content is created through the catalog's routes; interactions on it
+	// sit beside them under /v1.
+	create := func(in catalog.ContentInput) string {
+		t.Helper()
+		var c catalog.Content
+		s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/contents", in, &c)
+		s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
+		return c.ID
+	}
+	gallery := create(catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Harbor"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}})
+	create(catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Autumn Festival Report", Body: "b"}}})
+	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "No"}}}, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents/"+gallery, nil, nil)
+	s.call(http.StatusCreated, user, "POST", "/api/ck/v1/gallery/"+gallery+"/comments", map[string]string{"body": "first"}, nil)
+	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+gallery+"/like", nil, nil)
+	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+gallery+"/favorite", nil, nil)
+	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/gallery/"+gallery+"/favorite", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/gallery/"+cid(1)+"/like", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/video/"+gallery+"/like", nil, nil)
+	g1 := contentref.New(tenant, "gallery", gallery)
 	counts, err := e.content.Counts(ctx, []contentref.ContentRef{g1})
 	if err != nil || counts[g1.Key()] != (content.Counts{Likes: 1, Favorites: 1, CommentCount: 1}) {
 		t.Fatalf("counts %+v %v", counts, err)
 	}
-	var post content.Post
-	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/posts", content.PostInput{Title: ptr("Autumn Festival Report"), Body: ptr("b"), Language: ptr("en"), IsDraft: ptr(false)}, &post)
-	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/posts", content.PostInput{Title: ptr("No")}, nil)
+	var totals catalog.Totals
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/catalog/totals?kinds=gallery,blog", nil, &totals)
+	if totals.Kinds["gallery"].Public != 1 || totals.Kinds["blog"].Public != 1 {
+		t.Fatalf("totals %+v", totals)
+	}
 	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Moonlit"}}}}, nil)
 	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
@@ -267,7 +271,7 @@ func TestEngineIntegration(t *testing.T) {
 	}
 	// The search job runs on start and indexes ContentKit's own documents.
 	deadline := time.Now().Add(90 * time.Second)
-	for _, c := range []struct{ q, kind string }{{"autumn festival", content.KindPost}, {"moonlit", "tag"}} {
+	for _, c := range []struct{ q, kind string }{{"autumn festival", "blog"}, {"moonlit", "tag"}} {
 		for {
 			res, err := e.hub.Search(ctx, c.q, hub.HubSearchOptions{SearchOptions: hub.SearchOptions{Language: "en", ContentKinds: []string{c.kind}}})
 			if err != nil {

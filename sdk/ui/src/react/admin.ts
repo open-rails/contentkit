@@ -112,14 +112,14 @@ function splitOnce(s: string, sep: string): [string, string?] {
 }
 
 /** A ContentKit staff area, each behind its own permission. */
-export type StaffArea = "comments" | "queue" | "bans" | "polls" | "posts";
+export type StaffArea = "comments" | "queue" | "bans" | "polls" | "contents";
 
 const PROBES: Record<StaffArea, (c: ContentKitClient, signal: AbortSignal) => Promise<unknown>> = {
   comments: (c, signal) => c.comments.adminList({ limit: 1 }, signal),
   queue: (c, signal) => c.moderation.held({ kind: "comment", limit: 1 }, signal),
   bans: (c, signal) => c.bans.list("global", { limit: 1 }, signal),
   polls: (c, signal) => c.polls.adminList({ limit: 1 }, signal),
-  posts: (c, signal) => c.posts.adminList({ limit: 1 }, signal),
+  contents: (c, signal) => c.contents.manage({ limit: 1 }, signal),
 };
 
 export interface StaffAccess<A extends StaffArea> {

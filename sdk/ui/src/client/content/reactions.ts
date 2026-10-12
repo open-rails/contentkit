@@ -3,7 +3,7 @@ import type { Http } from "../http.js";
 import { call } from "../route.js";
 import { reactionVerb, type Reaction } from "./types.js";
 
-/** Likes and dislikes of an item (a host kind, or "post"). */
+/** Likes and dislikes of an item. */
 export class ReactionsClient {
   constructor(private readonly http: Http) {}
 

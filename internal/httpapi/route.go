@@ -25,9 +25,12 @@ const Version = "/v1"
 type Module string
 
 const (
-	// Content is posts, comments, reactions, favorites, polls, comment bans
-	// and moderation.
+	// Content is comments, reactions, favorites, polls, comment bans and
+	// moderation.
 	Content Module = "content"
+	// Contents is the catalog: content items, their versions and the catalog
+	// totals.
+	Contents Module = "contents"
 	// Upload is the media upload API.
 	Upload Module = "upload"
 	// Media is the media read API and playlists.
@@ -36,8 +39,6 @@ const (
 	Codes Module = "codes"
 	// Groups is group listings, group pages and group writes.
 	Groups Module = "groups"
-	// PublicCatalog is the public catalog API.
-	PublicCatalog Module = "catalog"
 	// Notifications is the user inbox and the service's publish route.
 	Notifications Module = "notifications"
 	// Kinds is the site's public content model.
@@ -55,7 +56,7 @@ const (
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Versions, Offers, Discovery}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Groups, Notifications, Versions, Offers, Discovery}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
 // content, groups, versions, offers and kinds at its root and the others beneath their own
@@ -68,8 +69,6 @@ func (m Module) Prefix() string {
 		return Version + "/media"
 	case Codes:
 		return Version + "/codes"
-	case PublicCatalog:
-		return Version + "/catalog"
 	case Notifications:
 		return Version + "/notifications"
 	}
@@ -343,7 +342,9 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeUnavailable, CodeUpgrade}
 	case "module:media":
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
-	case "module:codes", "module:groups", "module:catalog", "module:notifications", "module:kinds":
+	case "module:contents":
+		return []string{CodeInternal, CodeUnavailable}
+	case "module:codes", "module:groups", "module:notifications", "module:kinds":
 		return []string{CodeInternal}
 	case "module:versions":
 		return []string{CodeInternal, CodeNotFound, CodeUnavailable}

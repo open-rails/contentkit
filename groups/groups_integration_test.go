@@ -522,18 +522,18 @@ func TestKeywordDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	refs := []contentref.ContentRef{contentref.New(tenant, "tag", string(g[0].ID)), contentref.New(tenant, "tag", string(g[1].ID))}
-	docs, err := f.s.BuildKeywordDocuments(f.ctx, tenant, "tag", "es", refs)
+	docs, err := f.s.BuildDocuments(f.ctx, "tag", "es", refs)
 	if err != nil || len(docs) != 1 || docs[0].Title != "Coloreado" || !slices.Equal(docs[0].Aliases, []string{"Colored", "Colour"}) {
 		t.Fatalf("documents %+v %v", docs, err)
 	}
-	if _, err := f.s.BuildKeywordDocuments(f.ctx, tenant, "gallery", "en", nil); !errors.Is(err, ErrInvalid) {
+	if _, err := f.s.BuildDocuments(f.ctx, "gallery", "en", nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("content kind: %v", err)
 	}
-	listed, next, done, err := f.s.ListContent(f.ctx, tenant, "artist", "en", "", 10)
+	listed, next, done, err := f.s.ListDocuments(f.ctx, "artist", "en", "", 10)
 	if err != nil || len(listed) != 0 || next != "" || !done {
 		t.Fatalf("deleted artist listed: %v %v", listed, err)
 	}
-	listed, _, done, err = f.s.ListContent(f.ctx, tenant, "tag", "en", "", 1)
+	listed, _, done, err = f.s.ListDocuments(f.ctx, "tag", "en", "", 1)
 	if err != nil || len(listed) != 1 || done {
 		t.Fatalf("tag page %v %v %v", listed, done, err)
 	}

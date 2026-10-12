@@ -231,7 +231,6 @@ CREATE TABLE content_groups (
     merged_into text,
     attributes jsonb DEFAULT '{}'::jsonb NOT NULL,
     cover jsonb,
-    avatar text,
     owner_user_id text,
     auth_scope text,
     access jsonb,

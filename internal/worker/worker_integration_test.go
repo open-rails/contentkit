@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,8 +31,30 @@ func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) 
 
 func gallery(id string) contentref.ContentRef { return contentref.New(tenant, "gallery", id) }
 
+type buildFunc func(ctx context.Context, tenant, kind, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
+
+type listFunc func(ctx context.Context, tenant, kind, lang, cursor string, limit int) ([]contentref.ContentRef, string, bool, error)
+
+// testSource documents galleries through its functions.
+type testSource struct {
+	build buildFunc
+	list  listFunc
+}
+
+func (*testSource) DocumentKinds() []string { return []string{"gallery"} }
+
+func (s *testSource) ListDocuments(ctx context.Context, kind, lang, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
+	return s.list(ctx, tenant, kind, lang, cursor, limit)
+}
+
+func (s *testSource) BuildDocuments(ctx context.Context, kind, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+	return s.build(ctx, tenant, kind, lang, refs)
+}
+
+func source(opts Options) *testSource { return opts.Sources[0].(*testSource) }
+
 // titles builds documents titled by the map for the requested refs.
-func titles(m map[string]string) BuildKeywordDocuments {
+func titles(m map[string]string) buildFunc {
 	return func(_ context.Context, _, kind, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 		var out []search.KeywordDocument
 		for _, ref := range refs {
@@ -45,11 +66,11 @@ func titles(m map[string]string) BuildKeywordDocuments {
 	}
 }
 
-func workerOptions(pool *pgxpool.Pool, schema string, build BuildKeywordDocuments) Options {
-	return Options{Pool: pool, Schema: schema, Tenant: tenant, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"}, BuildKeywordDocuments: build,
-		ListContent: func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
+func workerOptions(pool *pgxpool.Pool, schema string, build buildFunc) Options {
+	return Options{Pool: pool, Schema: schema, Tenant: tenant, SupportedLanguages: []string{"en"}, Sources: []Source{&testSource{build: build,
+		list: func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
 			return nil, "", true, nil
-		}}
+		}}}}
 }
 
 // markDirty is a host write with a fixed timestamp: the queue trigger, not
@@ -136,7 +157,7 @@ func TestIntegrationBackfillFailureKeepsCursor(t *testing.T) {
 	}
 	opts := workerOptions(pool, schema, titles(map[string]string{cid(1): "new", cid(2): "listed"}))
 	var cursors []string
-	opts.ListContent = func(_ context.Context, _, _, _, cursor string, _ int) ([]contentref.ContentRef, string, bool, error) {
+	source(opts).list = func(_ context.Context, _, _, _, cursor string, _ int) ([]contentref.ContentRef, string, bool, error) {
 		cursors = append(cursors, cursor)
 		if len(cursors) == 1 {
 			return []contentref.ContentRef{gallery(cid(2))}, "c1", false, nil
@@ -191,7 +212,7 @@ func TestIntegrationStaleWriterCannotOverwrite(t *testing.T) {
 		return titles(map[string]string{cid(1): "fresh"})(ctx, tenant, kind, lang, refs)
 	}
 	opts := workerOptions(pool, schema, build)
-	opts.ListContent = func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
+	source(opts).list = func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
 		return []contentref.ContentRef{gallery(cid(1))}, "1", true, nil
 	}
 	done := make(chan error, 1)
@@ -223,7 +244,7 @@ func TestIntegrationBackfillQueuesSameWriter(t *testing.T) {
 		calls.Add(1)
 		return titles(map[string]string{cid(1): "fresh"})(ctx, tenant, kind, lang, refs)
 	})
-	opts.ListContent = func(_ context.Context, gotTenant, kind, lang, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
+	source(opts).list = func(_ context.Context, gotTenant, kind, lang, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
 		if gotTenant != tenant || kind != "gallery" || lang != "en" {
 			return nil, "", false, fmt.Errorf("unexpected page %s/%s/%s", gotTenant, kind, lang)
 		}
@@ -274,122 +295,6 @@ func TestIntegrationDirtyRevisionNeverReusesGeneration(t *testing.T) {
 			t.Fatalf("generation reused: %d after %d", revision, previous)
 		}
 		previous = revision
-	}
-}
-
-// recordingSink captures deliveries and fails while failing is set.
-type recordingSink struct {
-	mu      sync.Mutex
-	failing bool
-	upserts []search.PublishedDocument
-	deletes []search.DocumentKey
-}
-
-func (s *recordingSink) Upsert(_ context.Context, doc search.PublishedDocument) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.failing {
-		return errors.New("sink down")
-	}
-	s.upserts = append(s.upserts, doc)
-	return nil
-}
-
-func (s *recordingSink) Delete(_ context.Context, key search.DocumentKey, _ int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.failing {
-		return errors.New("sink down")
-	}
-	s.deletes = append(s.deletes, key)
-	return nil
-}
-
-// The DocumentSink port: every published document is delivered with its
-// queue revision as Version; a failing sink never blocks the keyword index
-// and its row is re-delivered later with a higher Version; deletions reach it.
-func TestIntegrationDocumentSinkAtLeastOnce(t *testing.T) {
-	ctx, pool, schema := workerFixture(t)
-	sink := &recordingSink{}
-	docs := map[string]string{cid(1): "Blue Ocean"}
-	opts := workerOptions(pool, schema, titles(docs))
-	opts.Sink = sink
-	mark := func(deleted bool) {
-		t.Helper()
-		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}, Deleted: deleted}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	revision := func() int64 {
-		t.Helper()
-		var r int64
-		if err := pool.QueryRow(ctx, "SELECT revision FROM "+schema+".content_search_dirty WHERE tenant_id=$1", tenant).Scan(&r); err != nil {
-			t.Fatal(err)
-		}
-		return r
-	}
-	mark(false)
-	first := revision()
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.upserts) != 1 || sink.upserts[0].Version != first || sink.upserts[0].Title != "Blue Ocean" || !sink.upserts[0].Equal(gallery(cid(1))) || sink.upserts[0].Language != "en" {
-		t.Fatalf("delivery: %+v", sink.upserts)
-	}
-	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 0 {
-		t.Fatal("delivered row must be acknowledged")
-	}
-
-	// Sink outage: the document still commits, the row stays queued.
-	docs[cid(1)] = "Red Forest"
-	sink.failing = true
-	mark(false)
-	failed := revision()
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	if got := document(t, ctx, pool, schema); got != "Red Forest" {
-		t.Fatalf("keyword index must not wait for the sink: %q", got)
-	}
-	var reason string
-	if err := pool.QueryRow(ctx, "SELECT reason FROM "+schema+".content_search_dirty WHERE tenant_id=$1", tenant).Scan(&reason); err != nil || reason != "sink_retry" {
-		t.Fatalf("row must stay queued for the sink: reason=%q err=%v", reason, err)
-	}
-	retry := revision()
-	if retry <= failed {
-		t.Fatalf("retry must carry a new revision: %d after %d", retry, failed)
-	}
-	if len(sink.upserts) != 1 {
-		t.Fatalf("failed delivery recorded: %+v", sink.upserts)
-	}
-
-	// Recovery: re-delivered with the newer version, then acknowledged.
-	sink.failing = false
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.upserts) != 2 || sink.upserts[1].Version != retry || sink.upserts[1].Title != "Red Forest" {
-		t.Fatalf("re-delivery: %+v", sink.upserts)
-	}
-	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 0 {
-		t.Fatal("re-delivered row must be acknowledged")
-	}
-
-	// Deletion reaches the sink; a builder omitting the content deletes too.
-	mark(true)
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	delete(docs, cid(1))
-	mark(false)
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.deletes) != 2 || !sink.deletes[0].Equal(gallery(cid(1))) || sink.deletes[0].Language != "en" {
-		t.Fatalf("deletes: %+v", sink.deletes)
-	}
-	if n := count(t, ctx, pool, schema, "content_search_documents", "true"); n != 0 {
-		t.Fatal("deleted document remains")
 	}
 }
 

@@ -57,9 +57,6 @@ type DatabaseConfig struct {
 
 // InteractionsConfig configures the content module.
 type InteractionsConfig struct {
-	// HostKinds are kinds the host still owns, answered by Deps.Resolver:
-	// commentable, with plain media rather than versions. #120 removes them.
-	HostKinds []string `yaml:"host_kinds" json:"host_kinds"`
 	// Anonymous is what signed-out visitors may do; zero lets them only read.
 	Anonymous content.Anonymous `yaml:"anonymous" json:"anonymous"`
 	// CommentMaxLength is the longest comment in characters; 0 is the default.
@@ -78,7 +75,6 @@ type LimitsConfig struct {
 	Disabled        bool   `yaml:"disabled" json:"disabled"`
 	Comment         []Rate `yaml:"comment" json:"comment"`
 	CommentReaction []Rate `yaml:"comment_reaction" json:"comment_reaction"`
-	PostReaction    []Rate `yaml:"post_reaction" json:"post_reaction"`
 	Reaction        []Rate `yaml:"reaction" json:"reaction"`
 	Favorite        []Rate `yaml:"favorite" json:"favorite"`
 	PollVote        []Rate `yaml:"poll_vote" json:"poll_vote"`
@@ -199,16 +195,16 @@ type Deps struct {
 	// CDN purge.
 	PurgePublic func(ctx context.Context, urls []string)
 
-	// Moderator screens comment and post writes; nil publishes everything.
+	// Moderator screens comments and content text; nil publishes everything.
 	Moderator content.ContentModerator
 	// Classifier groups free-text poll answers; nil refuses free-text polls.
 	Classifier content.AnswerClassifier
 	// ProviderDataEraser erases what a retaining Moderator or Classifier
 	// keeps; required with one.
 	ProviderDataEraser content.ProviderDataEraser
-	// Processor sanitizes comments and post excerpts, PostBodyProcessor post
-	// bodies; nil strips tags.
-	Processor, PostBodyProcessor content.ContentProcessor
+	// Processor sanitizes comments, BodyProcessor content items' rich-text
+	// bodies (keeping "contentkit:" image references); nil strips tags.
+	Processor, BodyProcessor content.ContentProcessor
 	// Candidates sources similar and recommended content; nil is
 	// co-engagement over the signal plane.
 	Candidates discovery.Candidates
@@ -217,10 +213,4 @@ type Deps struct {
 	Clock func() time.Time
 	// Logger; nil is slog.Default().
 	Logger *slog.Logger
-
-	// Resolver and CanUpload answer for content the host still owns until
-	// ContentKit stores it (#120 content, #121 access); each lane deletes its
-	// hook. Nil Resolver resolves nothing but ContentKit's own posts and polls.
-	Resolver  access.ContentResolver
-	CanUpload media.UploadAuthorizer
 }

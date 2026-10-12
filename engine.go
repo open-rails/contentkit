@@ -34,8 +34,8 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
@@ -77,11 +77,10 @@ type Engine struct {
 	content  *content.Runtime
 	notices  *notification.Store
 	groups   *groups.Store
+	catalog  *catalog.Store
 	offers   *offers.Service
 	discover *discovery.Service
 	media    *engineMedia
-	resolver engineResolver
-	uploader engineUploader
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
 	probes   []Probe
@@ -96,7 +95,7 @@ type Engine struct {
 }
 
 type engineMedia struct {
-	folders  bool // the registry declares the post and poll kinds
+	polls    bool // the registry declares the poll kind
 	versions *versions.Service
 	reg      *media.Registry
 	store    media.Store
@@ -145,16 +144,24 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log}); err != nil {
 		return nil, err
 	}
-	e.resolver = engineResolver{e: e, host: deps.Resolver}
-	e.uploader = engineUploader{e: e, host: deps.CanUpload}
+	if err := e.newCatalog(ctx, deps, now); err != nil {
+		return nil, err
+	}
 	if cfg.Media != nil {
 		if e.media, err = e.newMedia(ctx, deps, now); err != nil {
+			return nil, err
+		}
+		if err := e.catalog.BindMedia(catalog.Media{Images: e.media.jobs.Manifests(), Reader: e.media.reader, Versions: e.media.versions}); err != nil {
 			return nil, err
 		}
 	}
 	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
+	if err := e.content.AddHeldSource(catalog.HeldKind, e.catalog); err != nil {
+		return nil, err
+	}
+	e.catalog.BindModeration(e.content)
 	e.notices = e.content.Notifications
 	if err := e.mount(deps); err != nil {
 		return nil, err
@@ -186,14 +193,9 @@ func (e *Engine) validate(deps Deps) error {
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
 	}
-	for _, kind := range append(slices.Collect(maps.Keys(cfg.Content.Kinds)), cfg.Interactions.HostKinds...) {
+	for kind := range cfg.Content.Kinds {
 		if slices.Contains(httpapi.Reserved(), kind) {
 			return fmt.Errorf("contentkit: content kind %q is a route group's path", kind)
-		}
-	}
-	for _, kind := range cfg.Interactions.HostKinds {
-		if _, ok := cfg.Content.Kinds[kind]; ok {
-			return fmt.Errorf("contentkit: %q is a content kind and a host kind", kind)
 		}
 	}
 	if deps.Postgres == nil {
@@ -281,13 +283,43 @@ func (e *Engine) openSignalPlane(ctx context.Context, deps Deps) error {
 	return signal.CheckSchema(ctx, e.ch, c.Database)
 }
 
+// newCatalog builds the stores media is built over: groups, offers (with
+// Deps.Billing) and the catalog, which refreshes facets on groups' changes
+// and renames offers' products after titles.
+func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
+	c := e.cfg.Content
+	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return e.catalog.ContentChanged(ctx, q, ids)
+		},
+		// A deleted channel's posts go the catalog's way: bought ones stay readable.
+		DeleteContents: func(ctx context.Context, ids []string) error { return e.catalog.Delete(ctx, gate.Host(), ids) }}
+	if e.cfg.Media != nil {
+		opts.Covers, opts.Folders = groupCovers{e}, groupFolders{e}
+	}
+	var err error
+	if deps.Billing != nil {
+		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,
+			Billing: deps.Billing, Gate: e.gate, Logger: e.log}); err != nil {
+			return err
+		}
+		opts.Sales = e.offers
+	}
+	if e.groups, err = groups.New(opts); err != nil {
+		return err
+	}
+	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Groups: e.groups,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log}
+	if e.offers != nil {
+		co.Offers = e.offers
+	}
+	e.catalog, err = catalog.New(ctx, co)
+	return err
+}
+
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
 	mc := e.cfg.Media
-	// Posts and polls keep their folders until posts become a kind (#120).
-	site := e.cfg.Content
-	site.Kinds = maps.Clone(site.Kinds)
-	delete(site.Kinds, content.KindPost)
-	reg, err := media.ForContent(mc.Config, site)
+	reg, err := media.ForContent(mc.Config, e.cfg.Content)
 	if err != nil {
 		return nil, err
 	}
@@ -296,9 +328,9 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	for _, k := range reg.Kinds {
 		declared[k.Name] = true
 	}
-	m.folders = declared[postFolder] && declared[pollFolder]
+	m.polls = declared[pollFolder]
 	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
-		Resolver: e.resolver, Gate: e.gate, Facets: noFacets{}, Others: others{engineResolver: e.resolver, engineUploader: e.uploader},
+		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: pollMedia{e},
 		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, Redis: deps.Redis},
 		Logger:    e.log, Now: now}); err != nil {
 		return nil, err
@@ -409,22 +441,15 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	l := in.Limits
 	o := content.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: e.resolver,
-		Processor: deps.Processor, PostBodyProcessor: deps.PostBodyProcessor,
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: e.catalog.Resolver(),
+		Processor: deps.Processor,
 		Moderator: deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
-			PostReaction: rates(l.PostReaction), Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
+			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
-		ContentKinds: append(slices.Sorted(maps.Keys(e.cfg.Content.Kinds)), in.HostKinds...),
+		ContentKinds: slices.Sorted(maps.Keys(e.cfg.Content.Kinds)),
 		Logger:       e.log,
-	}
-	if e.hub.SignalPlane() {
-		// Preferences are exported under the reference they were made on: content ids are ContentKit's own.
-		o.Canonicalizer = content.ContentCanonicalizerFunc(func(ref contentref.ContentRef) (contentref.ContentRef, bool) {
-			_, ok := e.cfg.Content.Kinds[ref.ContentKind]
-			return ref, ok || ref.ContentKind == content.KindPost || slices.Contains(e.cfg.Interactions.HostKinds, ref.ContentKind)
-		})
 	}
 	if e.media != nil {
 		o.Media = &content.Media{Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
@@ -448,43 +473,27 @@ func (e *Engine) mount(deps Deps) error {
 		}
 	}
 	c := e.cfg.Content
-	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log}
-	if e.media != nil {
-		opts.Covers, opts.Folders = e.media.versions.GroupCovers(), e.media.versions.GroupFolders()
-	}
-	if deps.Billing != nil {
-		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,
-			Billing: deps.Billing, Gate: e.gate, Logger: e.log}); err != nil {
-			return err
-		}
-		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
-			return err
-		}
-		opts.Sales = e.offers
-	}
-	if e.groups, err = groups.New(opts); err != nil {
-		return err
-	}
 	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {
 		return err
 	}
+	e.modules[httpapi.Contents] = e.catalog.Handler()
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
 		return err
 	}
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
 	}
+	if e.offers != nil {
+		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
+			return err
+		}
+	}
 	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
 	if err != nil {
 		return err
 	}
 	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
-		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-			if l.ContentKind == content.KindPost {
-				return e.content.PostVisibility(r.Context(), l.ContentID)
-			}
-			return contenturl.Visible, nil
-		}})
+		Visibility: e.catalog.Visibility})
 	if err != nil {
 		return err
 	}
@@ -493,13 +502,10 @@ func (e *Engine) mount(deps Deps) error {
 	return nil
 }
 
-// mountDiscovery builds the public read routes. Until the catalog (#120)
-// supplies its rule, they list under discovery.FacetVisibility.
+// mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
-	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.resolver, Gate: e.gate,
-		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock,
-		Visibility: discovery.FacetVisibility(discovery.FacetVisibilityOptions{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-			Kinds: e.cfg.Content, Gate: e.gate, Now: deps.Clock})}
+	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
+		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog}
 	if e.media != nil {
 		o.Covers = e.media.versions
 	}

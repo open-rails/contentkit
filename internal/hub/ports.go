@@ -27,10 +27,3 @@ type KeywordDocument = search.KeywordDocument
 
 // Eligibility is the per-document visibility join; see search.Eligibility.
 type Eligibility = search.Eligibility
-
-// PublishedDocument is one keyword document as delivered to a DocumentSink.
-type PublishedDocument = search.PublishedDocument
-
-// DocumentSink is the optional document port (see search.DocumentSink): the
-// worker delivers every published keyword document to it at least once.
-type DocumentSink = search.DocumentSink
