@@ -227,7 +227,9 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
 		return strings.TrimSuffix(plan.Path, ".png")
 	}
-	upload := func(kind, id string, seed uint8) string { return put(media.RefBody{Kind: kind, ID: id}, "photo.png", seed) }
+	upload := func(kind, id string, seed uint8) string {
+		return put(media.RefBody{Kind: kind, ID: id}, "photo.png", seed)
+	}
 	// exists reports a file a URL names in the bucket.
 	exists := func(u string) bool {
 		t.Helper()

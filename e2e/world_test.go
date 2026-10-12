@@ -29,8 +29,8 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/catalog"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
