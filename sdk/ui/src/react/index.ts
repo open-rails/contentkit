@@ -56,6 +56,21 @@ export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { isPublished, usePost, usePosts, type PostFilter, type UsePost } from "./posts.js";
+export {
+  memberId,
+  useContentGroups,
+  useGroup,
+  useGroupMembers,
+  useGroups,
+  useKinds,
+  type GroupFilter,
+  type GroupSort,
+  type Member,
+  type UseContentGroups,
+  type UseGroup,
+  type UseGroupMembers,
+  type UseKinds,
+} from "./groups.js";
 export { useContentScope, usePaged, type UseList, type UsePaged } from "./use-resource.js";
 export { ResourceStore, resourcesFor, type Page, type Resource } from "./resources.js";
 export {

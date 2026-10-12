@@ -45,7 +45,10 @@ export type SocialOperation =
   | "media.save"
   | "notifications.load"
   | "notifications.read"
-  | "notifications.dismiss";
+  | "notifications.dismiss"
+  | "group.load"
+  | "group.save"
+  | "membership.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -431,31 +431,223 @@
       ]
     },
     {
-      "name": "series",
-      "keep_originals": true,
+      "name": "artist",
       "uploads": [
         {
-          "path": "cover",
+          "path": "cover/{name}",
           "types": [
-            "image/png",
             "image/jpeg",
-            "image/webp"
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
           ],
-          "max_bytes": 26214400
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
         }
       ],
+      "keep_originals": true,
       "public": [
         {
           "name": "cover",
-          "from": "cover",
-          "to": "cover-{w}.webp",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
           "widths": [
             320,
-            640
+            640,
+            1280
           ],
           "image": {
-            "aspect": "16:9",
-            "quality": 85
+            "quality": 82
+          }
+        }
+      ]
+    },
+    {
+      "name": "character",
+      "uploads": [
+        {
+          "path": "cover/{name}",
+          "types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
+          ],
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
+        }
+      ],
+      "keep_originals": true,
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640,
+            1280
+          ],
+          "image": {
+            "quality": 82
+          }
+        }
+      ]
+    },
+    {
+      "name": "rail",
+      "uploads": [
+        {
+          "path": "cover/{name}",
+          "types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
+          ],
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
+        }
+      ],
+      "keep_originals": true,
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640,
+            1280
+          ],
+          "image": {
+            "quality": 82
+          }
+        }
+      ]
+    },
+    {
+      "name": "series",
+      "uploads": [
+        {
+          "path": "cover/{name}",
+          "types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
+          ],
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
+        }
+      ],
+      "keep_originals": true,
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640,
+            1280
+          ],
+          "image": {
+            "quality": 82
+          }
+        }
+      ]
+    },
+    {
+      "name": "tag",
+      "uploads": [
+        {
+          "path": "cover/{name}",
+          "types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
+          ],
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
+        }
+      ],
+      "keep_originals": true,
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640,
+            1280
+          ],
+          "image": {
+            "quality": 82
+          }
+        }
+      ]
+    },
+    {
+      "name": "voice_actor",
+      "uploads": [
+        {
+          "path": "cover/{name}",
+          "types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "image/tiff"
+          ],
+          "max_bytes": 20971520,
+          "max": 20,
+          "named": true
+        }
+      ],
+      "keep_originals": true,
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640,
+            1280
+          ],
+          "image": {
+            "quality": 82
           }
         }
       ]

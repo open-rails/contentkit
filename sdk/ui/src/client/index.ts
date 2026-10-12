@@ -22,6 +22,8 @@ export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
 export { GroupsClient, type GroupQuery, type MemberQuery } from "./groups.js";
+export type { AttributeSpec, ContentFilterSpec, GroupKindSpec, KindSpec, Kinds } from "./kinds.js";
+export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";

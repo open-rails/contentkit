@@ -28,7 +28,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
-	kindcfg "github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
@@ -60,6 +59,7 @@ type harness struct {
 	manifests  *media.Manifests
 	ring       token.Ring
 	urls       *contenturl.Store
+	groups     *groups.Store
 	rt         *contentkit.Runtime
 	members    *contentkit.Runtime // takes nothing anonymous
 	onUpload   *media.Uploads
@@ -184,14 +184,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	grouped := kindcfg.Kind{Presentation: "reader", Versions: kindcfg.VersionRules{Languages: "one"}, Groups: []string{"tag", "series", "character"}}
-	gallery, album := grouped, grouped
-	gallery.Route, album.Route = "g", "album"
-	grp, err := groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: kindcfg.Config{Languages: []string{"en", "ja"},
-		Kinds: map[string]kindcfg.Kind{"gallery": gallery, "album": album},
-		GroupKinds: map[string]kindcfg.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
-			"character": {Route: "characters", ScopedBy: "series"}}}})
-	if err != nil {
+	if h.groups, err = groups.New(groups.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: contentModel()}); err != nil {
 		return nil, err
 	}
 	newRuntime := func(anonymous content.Anonymous) (*contentkit.Runtime, error) {
@@ -212,7 +205,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 				Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
 			},
 			Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-			Codes: h.router, Groups: grp,
+			Codes: h.router, Groups: h.groups,
 		})
 	}
 	// The main mount takes signed-out comments, reactions and votes; the

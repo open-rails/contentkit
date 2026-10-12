@@ -43,6 +43,9 @@ func (h *harness) routes(static string) http.Handler {
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
+	mux.HandleFunc("GET /__test/kinds", h.kinds)
+	mux.HandleFunc("POST /__test/contents", h.createContent)
+	mux.HandleFunc("POST /__test/recount", h.recount)
 	mux.HandleFunc("GET /__test/outbox", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, h.outbox.Messages("", r.URL.Query().Get("to")))
 	})

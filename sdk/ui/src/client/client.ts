@@ -8,6 +8,7 @@ import { PostsClient } from "./content/posts.js";
 import { ReactionsClient } from "./content/reactions.js";
 import type { Config, RefBody } from "./generated/wire.js";
 import { GroupsClient } from "./groups.js";
+import { getKinds, type Kinds } from "./kinds.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
@@ -50,6 +51,8 @@ export interface ContentKitClient {
 
   /** What the content module allows: which interactions signed-out visitors may make. */
   config(signal?: AbortSignal): Promise<Config>;
+  /** The site's content model: languages, tiers, kinds, group kinds and content filters. */
+  kinds(signal?: AbortSignal): Promise<Kinds>;
   /** A module's base URL as configured (no trailing slash). */
   url(module: ContentKitModule, ref?: RefBody): string;
   /** Cache context only, not authentication. The React provider keeps this in sync. */
@@ -71,10 +74,11 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     polls: new PollsClient(h, media),
     bans: new BansClient(h),
     moderation: new ModerationClient(h),
-    groups: new GroupsClient(h),
+    groups: new GroupsClient(h, media),
     codes: new CodesClient(h),
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
+    kinds: (signal) => getKinds(h, signal),
     url: (module, ref) => h.mount(module, ref),
     setReadScope: (scope) => h.setReadScope(scope),
     subscribe: (listener) => h.subscribe(listener),

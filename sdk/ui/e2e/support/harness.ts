@@ -1,4 +1,5 @@
 import type { Item as NotificationItem } from "../../src/client/generated/wire.js";
+import type { Kinds } from "../../src/client/kinds.js";
 // The harness's test-control surface (/__test, e2e/server/control.go).
 
 export interface TestUser {
@@ -100,6 +101,21 @@ export class Harness {
   /** Registers an item with the host's resolver: owned by owner, locked to viewers when access is "none". */
   item(o: { kind: string; id?: string; owner?: string; access?: "full" | "none"; hidden?: boolean; title?: string }): Promise<Item> {
     return this.call("POST", "/items", o);
+  }
+
+  /** Published content with live, listed versions and their facets, as the catalog's routes will write it. */
+  content(o: { kind: string; versions: { languages: string[]; favorites?: number }[] }): Promise<{ id: string; versions: string[] }> {
+    return this.call("POST", "/contents", o);
+  }
+
+  /** Runs the groups' count and automatic cover job now. */
+  recount(): Promise<void> {
+    return this.call("POST", "/recount");
+  }
+
+  /** The site's content model, as GET /v1/kinds will serve it. */
+  kinds(): Promise<Kinds> {
+    return this.call("GET", "/kinds");
   }
 
   updateItem(ref: { kind: string; id: string }, o: { access?: "full" | "none"; hidden?: boolean }): Promise<Item> {

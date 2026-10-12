@@ -29,10 +29,11 @@ it("words video limits with their numbers, else the code's line", () => {
 it("every content string is in every bundle with the same placeholders", async () => {
   const { social } = await import("../locales/social/en.js");
   const { admin } = await import("../locales/admin/en.js");
+  const { groups } = await import("../locales/groups/en.js");
   const leaves = (tree: object, prefix = ""): [string, string][] =>
     Object.entries(tree).flatMap(([k, v]) => (typeof v === "string" ? [[prefix + k, v] as [string, string]] : leaves(v as object, `${prefix}${k}.`)));
   const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
-  const english = leaves({ ...social, ...admin });
+  const english = leaves({ ...social, ...admin, ...groups });
   for (const [lang, bundle] of Object.entries(bundles)) {
     const own = new Map(leaves(bundle as object));
     for (const [key, text] of english) {
