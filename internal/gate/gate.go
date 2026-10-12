@@ -75,6 +75,31 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 	return actor.Can(ctx, root, perm)
 }
 
+// GroupEditor reports whether actor edits a user-owned group, by its owner
+// and AuthKit scope (groups' owner_user_id and auth_scope): its owner, or a
+// holder of any of perms in the scope, under the authority of a's root
+// scope. Staff are the caller's to admit. An error never grants.
+func GroupEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
+	switch {
+	case actor.Anonymous:
+		return false, nil
+	case owner != "" && actor.Person() && owner == actor.ID:
+		return true, nil
+	case scope == "":
+		return false, nil
+	}
+	root, err := RootScope(ctx, a)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range perms {
+		if ok, err := actor.Can(ctx, auth.Scope{Authority: root.Authority, ID: scope}, p); err != nil || ok {
+			return ok, err
+		}
+	}
+	return false, nil
+}
+
 // RootScope is where a's root permissions are held, asked per check. An
 // Authenticator without auth.Root, an error or a zero scope is unresolved: an
 // error matching auth.ErrUnavailable, which never grants.
@@ -130,6 +155,12 @@ func (hostVerified) Identity() auth.Identity {
 
 func (hostVerified) Can(context.Context, auth.Scope, string) (bool, error) { return true, nil }
 
+// Host is the engine's own actor, holding every permission: what its
+// in-process client acts as, and its own cascades.
+func Host() access.Actor {
+	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
@@ -153,7 +184,7 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		if (s.Auth == httpapi.User || s.Auth == httpapi.Staff) && a.Anonymous {
+		if (s.Auth == httpapi.User || s.Auth == httpapi.Staff || s.Auth == httpapi.Editor) && a.Anonymous {
 			g.refuse(w, r, s, auth.ErrUnauthenticated)
 			return
 		}
@@ -202,7 +233,7 @@ func (f fault) Error() string { return string(f) }
 // credential, else the Verified's subject.
 func (g *Gate) actor(r *http.Request) (access.Actor, error) {
 	if host, _ := r.Context().Value(hostKey{}).(bool); host {
-		return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}, nil
+		return Host(), nil
 	}
 	v, err := g.authenticate(r)
 	switch {

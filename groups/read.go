@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // Sort orders a group listing; every order is made total by id.
@@ -53,19 +54,24 @@ type ListOptions struct {
 
 // GroupCard is a listed group: what a directory page or a chip needs.
 type GroupCard struct {
-	ID           GroupID        `json:"id"`
-	Kind         string         `json:"kind"`
-	Slug         string         `json:"slug"`
-	ScopeID      GroupID        `json:"scope_id,omitempty"`
-	ParentID     GroupID        `json:"parent_id,omitempty"`
-	Name         string         `json:"name"`
-	NameLanguage string         `json:"name_language,omitempty"`
-	Code         string         `json:"code,omitempty"`
-	Path         string         `json:"path,omitempty"`
-	Cover        *Cover         `json:"cover,omitempty"`
-	Count        int            `json:"count"`
-	Attributes   map[string]any `json:"attributes"`
-	CreatedAt    time.Time      `json:"created_at"`
+	ID           GroupID `json:"id"`
+	Kind         string  `json:"kind"`
+	Slug         string  `json:"slug"`
+	ScopeID      GroupID `json:"scope_id,omitempty"`
+	ParentID     GroupID `json:"parent_id,omitempty"`
+	Name         string  `json:"name"`
+	NameLanguage string  `json:"name_language,omitempty"`
+	Code         string  `json:"code,omitempty"`
+	Path         string  `json:"path,omitempty"`
+	Cover        *Cover  `json:"cover,omitempty"`
+	// Avatar is a user-owned group's avatar.
+	Avatar     *Avatar        `json:"avatar,omitempty"`
+	Count      int            `json:"count"`
+	Attributes map[string]any `json:"attributes"`
+	// Access is a sellable group's sale: its key, active offer and the
+	// viewer's standing.
+	Access    *offers.GroupAccess `json:"access,omitempty"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 // GroupPage is one page of a listing.
@@ -89,6 +95,9 @@ type GroupDetail struct {
 	Children     []GroupCard `json:"children"`
 	Edges        []Edge      `json:"edges"`
 	Counts       []Count     `json:"counts"`
+	// Access is a sellable group's sale: its key, active offer and the
+	// viewer's standing.
+	Access *offers.GroupAccess `json:"access,omitempty"`
 }
 
 type listCursor struct {
@@ -189,7 +198,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	c.args["limit"] = c.limit + 1
 	c.sql = fmt.Sprintf(`SELECT g.id, g.kind, g.slug, g.scope_id, coalesce(g.parent_id, ''), coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s
 FROM %[1]s g
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
@@ -215,13 +224,16 @@ func (s *Store) cards(ctx context.Context, q Querier, c cardQuery) (GroupPage, e
 	var names []string
 	for rows.Next() {
 		var g GroupCard
-		var code, slug, name string
-		if err := rows.Scan(&g.ID, &g.Kind, &g.Slug, &g.ScopeID, &g.ParentID, &g.Name, &g.NameLanguage, &code, &slug, &g.Cover, &g.Count,
+		var code, slug, avatar, name string
+		if err := rows.Scan(&g.ID, &g.Kind, &g.Slug, &g.ScopeID, &g.ParentID, &g.Name, &g.NameLanguage, &code, &slug, &g.Cover, &avatar, &g.Count,
 			&g.Attributes, &g.CreatedAt, &name); err != nil {
 			return page, err
 		}
 		if g.Attributes == nil {
 			g.Attributes = map[string]any{}
+		}
+		if avatar != "" {
+			g.Avatar = &Avatar{Image: avatar}
 		}
 		g.Code, g.Path = code, s.path(g.Kind, code, slug, c.pathLang)
 		page.Groups, names = append(page.Groups, g), append(names, name)
@@ -256,8 +268,9 @@ func (s *Store) path(kind, code, slug, language string) string {
 	return contenturl.Path(language, route, contenturl.Code(code), slug)
 }
 
-// List pages active groups with their display name, code, path, cover and
-// count.
+// List pages active groups with their display name, code, path, cover,
+// avatar, count and, for a sellable kind, its sale to the store's viewer
+// (As).
 func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 	c, err := s.compile(opts, nil)
 	if err != nil {
@@ -271,11 +284,11 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 	if err != nil {
 		return page, err
 	}
-	slots := make([]coverSlot, len(page.Groups))
+	shows := make([]shown, len(page.Groups))
 	for i := range page.Groups {
-		slots[i] = coverSlot{page.Groups[i].Kind, page.Groups[i].ID, page.Groups[i].Cover}
+		shows[i] = cardShown(&page.Groups[i])
 	}
-	return page, s.fillCovers(ctx, slots)
+	return page, s.fill(ctx, shows)
 }
 
 // CardOptions resolve Cards.
@@ -324,32 +337,19 @@ type coverSlot struct {
 	cover *Cover
 }
 
-// fillCovers resolves every slot's renditions in one call.
+// fillCovers resolves every slot's cover renditions in one call.
 func (s *Store) fillCovers(ctx context.Context, slots []coverSlot) error {
-	var asked []CoverOf
-	var at []*Cover
-	for _, sl := range slots {
-		if s.covers != nil && sl.cover != nil {
-			asked, at = append(asked, CoverOf{Kind: sl.kind, ID: sl.id, Cover: *sl.cover}), append(at, sl.cover)
-		}
+	shows := make([]shown, len(slots))
+	for i, sl := range slots {
+		shows[i] = shown{kind: sl.kind, id: sl.id, cover: sl.cover}
 	}
-	if len(asked) == 0 {
-		return nil
-	}
-	got, err := s.covers.Covers(ctx, asked)
-	if err != nil {
-		return err
-	}
-	for i, c := range at {
-		c.Renditions = got[i]
-	}
-	return nil
+	return s.fill(ctx, shows)
 }
 
 const maxMergeHops = 8
 
 // Detail returns an active group with its names, text, parent, scope,
-// children, edges and counts, resolved for language as List does. A merged
+// children, edges, counts and sale, resolved for language as List does. A merged
 // group answers with its survivor; a deleted one is ErrNotFound.
 func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupDetail, error) {
 	var d GroupDetail
@@ -436,13 +436,13 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 	if err != nil {
 		return d, err
 	}
-	slots := []coverSlot{{d.Kind, d.ID, d.Cover}}
+	shows := []shown{{kind: d.Kind, id: d.ID, cover: d.Cover, avatar: &d.Avatar, access: &d.Access}}
 	for _, g := range append([]*GroupCard{d.Parent, d.Scope}, pointers(d.Children)...) {
 		if g != nil {
-			slots = append(slots, coverSlot{g.Kind, g.ID, g.Cover})
+			shows = append(shows, cardShown(g))
 		}
 	}
-	return d, s.fillCovers(ctx, slots)
+	return d, s.fill(ctx, shows)
 }
 
 func pointers(cards []GroupCard) []*GroupCard {

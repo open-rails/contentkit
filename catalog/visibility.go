@@ -79,7 +79,8 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	v.exclude = append([]string{}, v.site.ExcludeRestrictions...)
 	rights, err := s.staffRights(ctx, o.Actor)
 	if err != nil {
-		return nil, err
+		// A read shows what the rule shows anyone; staff extras wait.
+		s.log.WarnContext(ctx, "catalog: staff check failed; reading as a non-staff viewer", "err", err)
 	}
 	v.staff = rights.view || rights.write
 	f, err := s.accessG.Filter(ctx, o.Actor)
@@ -134,12 +135,8 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	}
 	slices.Sort(v.hidden)
 	v.editorGroups = []string{}
-	if len(o.EditorGroups) > 0 {
-		editors, err := s.groupEditor(ctx, s.pool, o.Actor, o.EditorGroups)
-		if err != nil {
-			return nil, err
-		}
-		for g, ok := range editors {
+	if len(o.EditorGroups) > 0 && !v.staff {
+		for g, ok := range s.readEditors(ctx, o.Actor, o.EditorGroups) {
 			if ok {
 				v.editorGroups = append(v.editorGroups, g)
 			}
@@ -175,6 +172,10 @@ func (s *Store) groupIDs(ctx context.Context, refs []kinds.GroupRef) (map[kinds.
 	}
 	return out, rows.Err()
 }
+
+// editable reports an owner group the request already knows the viewer
+// edits (ViewerOptions.EditorGroups).
+func (v *Viewer) editable(group string) bool { return slices.Contains(v.editorGroups, group) }
 
 // Staff reports a viewer holding root:content:view-restricted or
 // root:content:write: they see everything.
@@ -234,12 +235,14 @@ type facetRow struct {
 	liveFrom                   *time.Time
 	// deleted is the version's own deletion; contentDeleted its content's.
 	deleted, contentDeleted bool
-	listing                 string
-	languages               []string
-	rule                    access.Rule
-	restrictions, groupIDs  []string
-	ownerGroup              string
-	position                int
+	// held: the content's latest edit awaits moderation.
+	held                   bool
+	listing                string
+	languages              []string
+	rule                   access.Rule
+	restrictions, groupIDs []string
+	ownerGroup             string
+	position               int
 }
 
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
@@ -281,8 +284,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted', f.listing, f.languages,
- c.access, ver.access, f.restrictions, f.group_ids, coalesce(f.owner_group_id, ''), f.position,
+	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted', c.moderation <> 'approved',
+ f.listing, f.languages, c.access, ver.access, f.restrictions, f.group_ids, coalesce(f.owner_group_id, ''), f.position,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
@@ -292,12 +295,11 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 	}
 	byID := map[string][]facetRow{}
 	creator := map[string]bool{}
-	var groups []string
 	for rows.Next() {
 		var r facetRow
 		var isCreator bool
 		var crule, vrule []byte
-		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.listing, &r.languages,
+		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.held, &r.listing, &r.languages,
 			&crule, &vrule, &r.restrictions, &r.groupIDs, &r.ownerGroup, &r.position, &isCreator); err != nil {
 			rows.Close()
 			return nil, err
@@ -308,17 +310,30 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 		}
 		byID[r.contentID] = append(byID[r.contentID], r)
 		creator[r.contentID] = creator[r.contentID] || isCreator
-		if r.ownerGroup != "" && !slices.Contains(groups, r.ownerGroup) {
-			groups = append(groups, r.ownerGroup)
-		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	editors, err := s.groupEditor(ctx, s.pool, v.actor, groups)
-	if err != nil {
-		return nil, err
+	// Owner-group editorship is asked only of items the rule does not show
+	// whole (drafts, scheduled, deleted, held, out of the site's scope), once
+	// per owner group: a published page asks AuthKit nothing.
+	var groups []string
+	for id, rs := range byID {
+		g := rs[0].ownerGroup
+		if g == "" || v.staff || creator[id] || slices.Contains(groups, g) || v.editable(g) {
+			continue
+		}
+		if slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+			groups = append(groups, g)
+		}
+	}
+	editors := map[string]bool{}
+	if len(groups) > 0 && !v.actor.Anonymous {
+		editors = s.readEditors(ctx, v.actor, groups)
+	}
+	for _, g := range v.editorGroups {
+		editors[g] = true
 	}
 	// Live versions are decided by their rule; deleted ones that were live
 	// open only to holders of their own content or version key.

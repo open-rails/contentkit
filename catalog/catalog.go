@@ -35,10 +35,6 @@ import (
 // /moderation/held?kind=content).
 const HeldKind = "content"
 
-// EditorPermission is what an owner group's editors hold in the group's AuthKit
-// scope (content_groups.auth_scope): they edit, publish and see its content.
-const EditorPermission = "content:write"
-
 // DefaultDeletedRetention is how long deleted, never-sold content keeps its
 // media and can be restored before PurgeDeleted erases it.
 const DefaultDeletedRetention = 30 * 24 * time.Hour

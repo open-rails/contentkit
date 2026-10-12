@@ -12,17 +12,21 @@ import (
 )
 
 const groupColumns = `g.id, g.kind, g.slug, g.scope_id, coalesce(g.parent_id, ''), g.state, coalesce(g.merged_into, ''), g.attributes, g.cover,
- coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, ''), g.created_at, g.updated_at, g.revision`
+ coalesce(g.avatar, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, ''), g.created_at, g.updated_at, g.revision`
 
 func scanGroup(row pgx.Row) (Group, error) {
 	var g Group
+	var avatar string
 	err := row.Scan(&g.ID, &g.Kind, &g.Slug, &g.ScopeID, &g.ParentID, &g.State, &g.MergedInto, &g.Attributes, &g.Cover,
-		&g.OwnerUserID, &g.AuthScope, &g.CreatedAt, &g.UpdatedAt, &g.Revision)
+		&avatar, &g.OwnerUserID, &g.AuthScope, &g.CreatedAt, &g.UpdatedAt, &g.Revision)
 	if err == pgx.ErrNoRows {
 		return g, ErrNotFound
 	}
 	if g.Attributes == nil {
 		g.Attributes = map[string]any{}
+	}
+	if avatar != "" {
+		g.Avatar = &Avatar{Image: avatar}
 	}
 	return g, err
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -174,6 +175,52 @@ func (g *Gate) claimed(actor Actor) map[string]bool {
 // invalid id or rule is denied with nothing offered and logged.
 func (g *Gate) Decide(ctx context.Context, actor Actor, items []Item) ([]Decision, error) {
 	return g.decide(ctx, actor, nil, g.plan(ctx, items))
+}
+
+// Holds reports, per key in order, whether actor holds it: from the
+// request's memoized Filter and keys where they suffice, the rest in one
+// billing read. An anonymous actor holds nothing and costs no read. A failed
+// read answers false for what it would have decided and returns an error
+// wrapping ErrUnavailable.
+func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, error) {
+	out := make([]bool, len(keys))
+	if anonymous(actor) {
+		return out, nil
+	}
+	kn := &knowledge{claimed: g.claimed(actor), memo: memoFor(ctx, g, actor.ID)}
+	kn.filter = kn.memo.loadFilter()
+	need := map[string]bool{}
+	for i, k := range keys {
+		held, known := kn.lookup(k)
+		out[i] = held
+		if !known {
+			need[k.String()] = true
+		}
+	}
+	if len(need) == 0 {
+		return out, nil
+	}
+	ask := slices.Sorted(maps.Keys(need))
+	var ans Answer
+	var err error
+	if g.billing != nil {
+		ans, err = g.billing.Held(ctx, actor.ID, Query{Keys: ask})
+	}
+	if err != nil {
+		g.log.ErrorContext(ctx, "access: entitlements read failed; failing closed", "subject", actor.ID, "err", err)
+		return out, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	read := make(map[string]bool, len(ask))
+	for _, k := range ask {
+		read[k] = ans.Keys[k]
+	}
+	kn.memo.storeKeys(read)
+	for i, k := range keys {
+		if h, ok := read[k.String()]; ok {
+			out[i] = h
+		}
+	}
+	return out, nil
 }
 
 // Settle completes f's verdicts for a hide-mode page: items f decides keep

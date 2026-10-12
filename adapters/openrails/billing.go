@@ -26,6 +26,9 @@ type Client interface {
 	CreateProductAccess(context.Context, billing.CreateProductAccessBatchParams, ...openrails.RequestOption) ([]billing.ProductAccessGrant, error)
 	ListProductAccess(context.Context, billing.ProductAccessListParams, ...openrails.RequestOption) (*billing.ListPage[billing.ProductAccessGrant], error)
 	RevokeProductAccess(context.Context, billing.ProductAccessID, billing.RevokeProductAccessParams, ...openrails.RequestOption) error
+	ListPrices(context.Context, billing.PriceListParams, ...openrails.RequestOption) (*billing.ListPage[billing.Price], error)
+	ListSubscriptions(context.Context, billing.SubscriptionListParams, ...openrails.RequestOption) (*billing.ListPage[billing.Subscription], error)
+	CancelSubscription(context.Context, billing.SubscriptionID, billing.CancelSubscriptionParams, ...openrails.RequestOption) (*billing.Subscription, error)
 }
 
 var _ Client = (*openrails.Client)(nil)
@@ -212,6 +215,58 @@ func (a adapter) Revoke(ctx context.Context, grants []access.Grant) error {
 		}
 	}
 	return nil
+}
+
+// StopRenewals cancels, at the end of its paid period, every live
+// subscription to a recurring price of the products, archived prices
+// included.
+func (a adapter) StopRenewals(ctx context.Context, productIDs []string) error {
+	for _, s := range productIDs {
+		product, err := billing.ParseProductID(s)
+		if err != nil {
+			return err
+		}
+		recurring := true
+		prices := billing.PriceListParams{ProductID: product, Recurring: &recurring, PageRequest: billing.PageRequest{Limit: billing.MaxPageLimit}}
+		for {
+			res, err := a.c.ListPrices(ctx, prices)
+			if err != nil {
+				return err
+			}
+			for _, p := range res.Items {
+				if err := a.stopPrice(ctx, p.ID); err != nil {
+					return err
+				}
+			}
+			if res.Next == "" {
+				break
+			}
+			prices.Cursor = res.Next
+		}
+	}
+	return nil
+}
+
+func (a adapter) stopPrice(ctx context.Context, price billing.PriceID) error {
+	page := billing.SubscriptionListParams{PriceID: price, PageRequest: billing.PageRequest{Limit: billing.MaxPageLimit}}
+	for {
+		res, err := a.c.ListSubscriptions(ctx, page)
+		if err != nil {
+			return err
+		}
+		for _, sub := range res.Items {
+			if sub.Status == billing.SubscriptionCanceled || sub.CanceledAt != nil || sub.EndedAt != nil {
+				continue
+			}
+			if _, err := a.c.CancelSubscription(ctx, sub.ID, billing.CancelSubscriptionParams{Reason: "the offer no longer renews"}); err != nil {
+				return fmt.Errorf("stop subscription %s: %w", sub.ID, err)
+			}
+		}
+		if res.Next == "" {
+			return nil
+		}
+		page.Cursor = res.Next
+	}
 }
 
 func ids(g access.Grant) (billing.CustomerID, billing.ProductID, error) {
