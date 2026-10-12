@@ -139,6 +139,7 @@ CREATE TABLE content_facets (
     access_level text NOT NULL,
     access_tiers text[] DEFAULT '{}'::text[] NOT NULL,
     access_group_id text,
+    access_free_after timestamp with time zone,
     restrictions text[] DEFAULT '{}'::text[] NOT NULL,
     group_ids text[] DEFAULT '{}'::text[] NOT NULL,
     traits text[] DEFAULT '{}'::text[] NOT NULL,
