@@ -10,13 +10,9 @@ The PostgreSQL baseline installs taxonomy together with interactions and
 keyword search in the host-selected schema. There is no separate taxonomy
 migration or ledger identity.
 
-Catalog construction is intentionally optional and host-configured: create
-`taxonomy.Store` with the same pool, keyword schema and tenant, plus your
-registered kinds, languages and count-eligibility rule. Wrap the runtime worker
-with the store builder/lister, and pass the store as
-`RuntimeConfig.Taxonomy` (served at `/taxonomy` for `root:taxonomy:write`) or
-mount `store.Handler(auth)` yourself.
-`NewRuntime` does not infer these application-specific catalog choices.
+The engine builds the catalog from `Config.Content`'s group kinds and
+languages, indexes its nodes in its search job and serves it as the taxonomy
+route group (`/v1/taxonomy`, for `root:taxonomy:write`).
 
 ## Tables (31 catalog columns + 6 derived)
 

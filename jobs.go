@@ -55,6 +55,7 @@ const (
 	coEngagementEvery   = 24 * time.Hour
 	repairEvery         = time.Hour
 	erasureEvery        = 24 * time.Hour
+	reclassifyEvery     = 10 * time.Minute
 )
 
 func (j *jobs) contribution() riverhelpers.Contribution {
@@ -75,6 +76,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &coEngagementWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -87,6 +89,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: onStart}))
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{}, true)
+		if e.classifier {
+			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
+		}
 		if e.hub.SignalPlane() {
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{}, true)
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true}, false)
@@ -241,6 +246,33 @@ func (w *erasureWorker) Work(ctx context.Context, _ *river.Job[erasureArgs]) err
 		return fmt.Errorf("contentkit: erasure incomplete: %v", report.Remaining)
 	}
 	return nil
+}
+
+type reclassifyArgs struct{}
+
+func (reclassifyArgs) Kind() string { return "contentkit_reclassify" }
+
+// reclassifyWorker retries free-text poll answers the classifier failed,
+// sweeping every pending answer once per run.
+type reclassifyWorker struct {
+	river.WorkerDefaults[reclassifyArgs]
+	e *Engine
+}
+
+func (w *reclassifyWorker) Timeout(*river.Job[reclassifyArgs]) time.Duration { return 30 * time.Minute }
+
+func (w *reclassifyWorker) Work(ctx context.Context, _ *river.Job[reclassifyArgs]) error {
+	var errs []error
+	for after := ""; ; {
+		page, err := w.e.content.ReclassifyPending(ctx, after, 100)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if page.Next == "" || page.Next == after || ctx.Err() != nil {
+			return errors.Join(errs...)
+		}
+		after = page.Next
+	}
 }
 
 func ignoreDisabled(err error) error {

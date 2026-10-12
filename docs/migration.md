@@ -26,37 +26,16 @@ those retired ledgers. Restore old installations with the matching library
 version and use a host-owned, verified data import when moving their data into
 fresh stores.
 
-## One PostgreSQL schema
+## ContentKit's own schema
 
-The host selects one required `Schema` for all ContentKit PostgreSQL tables.
-It can be the application's existing schema; no dedicated library schema is
-required. Names contain letters, numbers or underscores and are quoted, so
-mixed-case names are preserved. Different applications can select different
-schemas in the same database.
+`contentkit.New` applies the PostgreSQL chain to `Config.Database.Schema`
+(default `contentkit`), River's migrations to `Database.RiverSchema` and the
+media worker's queue, and, with `Config.ClickHouse.Addr`, the ClickHouse
+baseline to `ClickHouse.Database`. The schema is ContentKit's alone: it may
+share the host's database, never the host's schema. Create the ClickHouse
+database with `signal.CreateDatabase` first.
 
-```go
-err := contentkit.Migrate(ctx, contentkit.MigrateConfig{
-    DB: ddlDB,
-    Schema: "my_app",
-    ClickHouse: &chmigrate.Config{
-        ClientAddr: "localhost:9000", Database: "content_signals",
-        Username: user, Password: password, Cluster: cluster,
-    },
-})
-```
-
-Create the ClickHouse database with `signal.CreateDatabase` first, or leave
-`ClickHouse` nil for PostgreSQL only. `migrations.ApplyPostgres(ctx, ddlDB,
-"my_app")` is the PostgreSQL-only initializer. Taxonomy tables are always
-installed; construction of a taxonomy store and its host-specific policies
-remains optional.
-
-Set `EmbeddedConfig.PGSchema`, `content.Options.Schema`, and the standalone
-search, taxonomy and worker schema options to this same schema. `NewRuntime`
-fills an omitted content schema from `PGSchema` and rejects a mismatch. Post
-writes with a language queue their keyword documents in that schema.
-
-The initializer is idempotent through MigrateKit's ledger. PostgreSQL uses
+New is idempotent through MigrateKit's ledger, and replicas booting together take turns on its lock. PostgreSQL uses
 app identity `contentkit`; ClickHouse defaults to `contentkit_signal`. The
 ClickHouse ledger also binds the explicit `Database`, so two databases may
 share the same app identity and PostgreSQL tracker. Each PostgreSQL tracker

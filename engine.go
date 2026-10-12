@@ -64,6 +64,7 @@ type Engine struct {
 	log         *slog.Logger
 	auth        auth.Authenticator
 	billing     access.Entitlements
+	classifier  bool // free-text answers to reclassify
 
 	hub      *hub.Hub
 	ch       signal.Conn
@@ -107,7 +108,7 @@ type engineMedia struct {
 // It starts no jobs: Start does, and jobs queued before it wait. ctx bounds
 // the wait for the databases.
 func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, billing: deps.Billing, log: deps.Logger}
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, billing: deps.Billing, log: deps.Logger, classifier: deps.Classifier != nil}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -538,14 +539,15 @@ func (e *Engine) Ready(ctx context.Context) error {
 // Probe checks one optional dependency.
 type Probe struct {
 	// Name is stable for dashboards: contentkit_clickhouse,
-	// contentkit_media_store, contentkit_redis.
+	// contentkit_media_store, contentkit_redis, contentkit_moderator.
 	Name string
 	// Check returns nil while the dependency is usable; it honors ctx.
 	Check func(context.Context) error
 }
 
 // Probes lists the optional dependencies the engine degrades without, for the
-// host's dependency supervisor: the signal plane, the media bucket and Redis.
+// host's dependency supervisor: the signal plane, the media bucket, Redis and
+// the moderator (failing while its breaker holds writes for review).
 func (e *Engine) Probes() []Probe { return slices.Clone(e.probes) }
 
 func (e *Engine) newProbes(deps Deps) []Probe {
@@ -564,6 +566,9 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 	if deps.Redis != nil {
 		r := deps.Redis
 		out = append(out, Probe{Name: "contentkit_redis", Check: func(ctx context.Context) error { return r.Ping(ctx).Err() }})
+	}
+	if deps.Moderator != nil {
+		out = append(out, Probe{Name: "contentkit_moderator", Check: e.content.CheckModerator})
 	}
 	return out
 }
