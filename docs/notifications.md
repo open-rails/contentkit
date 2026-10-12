@@ -180,9 +180,9 @@ deps.OnEvent = func(ctx context.Context, event iam.Event) error {
 
 Compose this into existing callback work, explicitly ignore unselected/future
 kinds and return persistence errors for retry. Do not copy the entire audit event
-or manufacture random event IDs on each retry. This example uses the concrete
-callback contract available in the repository's AuthKit v1.21 cohort; migrating
-ContentKit's authentication interfaces to AuthKit v1.24 is separate work.
+or manufacture random event IDs on each retry. This example uses AuthKit
+v1.24's durable `Deps.OnEvent` contract, alongside the native authentication and
+user-info contracts used by ContentKit. Notification policy remains opt-in.
 
 `Runtime.EraseSubjects` (and standalone `content.Runtime.EraseSubjects`) removes
 and permanently fences the user inbox before other content cleanup. Delayed
