@@ -23,10 +23,13 @@ type readyHook struct {
 	host      *media.HostQueue
 }
 
-func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) error {
+func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
 	if err != nil || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
+	// Output can become visible before this final manifest read. An outage
+	// here must not spend a retry after the worker already handled its work.
+	defer func() { result = media.SnoozeUnavailable(ctx, h.manifests.Store(), job, result) }()
 	var args struct {
 		Ref contentref.ContentRef `json:"ref"`
 	}
