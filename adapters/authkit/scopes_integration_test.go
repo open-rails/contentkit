@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/open-rails/authkit"
@@ -57,7 +58,8 @@ func newWorld(t *testing.T) *world {
 	w.staff = rbac.Root.Role("staff", grants...)
 	channel := rbac.Persona("channel")
 	perms := channel.Declare(access.GroupPermissions("channel")...)
-	w.editor = channel.Role("editor", perms[0])
+	settings := perms[slices.Index(access.GroupPermissions("channel"), access.GroupSettingsManage("channel"))]
+	w.editor = channel.Role("editor", settings)
 	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
 
 	ctx := t.Context()
