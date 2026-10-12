@@ -46,7 +46,7 @@ describe("content hooks against the real ContentKit", () => {
       token: () => user?.access_token,
       headers: () => ({ "X-Forwarded-For": ip }),
       fetch: (input, init) => {
-        requests.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname.replace(cfg.api, "")}`);
+        requests.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname.replace(`${cfg.api}/v1`, "")}`);
         return fetch(input, init);
       },
       media: { transport: fetchTransport, retryDelay: () => 100 },

@@ -225,8 +225,7 @@ func (r *Router) Tenant() string { return r.store.Tenant() }
 // for clients that hold only a code. Any Crockford spelling resolves; the
 // response carries the canonical code. Unknown and hidden codes are 404
 // not_found, Gone content 410 gone, malformed codes 400 invalid_request.
-// contentkit.Runtime.Handler serves it at /codes; mounted alone it goes under
-// a prefix with http.StripPrefix.
+// The engine serves it as the codes route group (/v1/codes).
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, nil, r, codeRoutes)

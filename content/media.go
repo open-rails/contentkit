@@ -21,8 +21,8 @@ import (
 type Media struct {
 	Images  MediaImages  // *media.Manifests
 	Folders MediaFolders // *media.Jobs
-	// Reader reads items as the media read API does; contentkit.NewRuntime
-	// fills it from its Reader.
+	// Reader reads items as the media read API does; the engine fills it
+	// from its Reader.
 	Reader   MediaReader
 	PollKind string // media kind of poll folders; default "poll"
 }

@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
+	ckhub "github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -255,7 +255,7 @@ const (
 // the work view and the selected version's view with one event id. Delivery
 // rounds keep each session's checkpoints in their listed order, so a batch
 // never carries two checkpoints of one session.
-func (fx popularityFixture) record(t *testing.T, hub contentkit.Hub) {
+func (fx popularityFixture) record(t *testing.T, hub *ckhub.Hub) {
 	t.Helper()
 	for round := 0; ; round++ {
 		var batch []signal.Signal
@@ -291,7 +291,7 @@ func (fx popularityFixture) record(t *testing.T, hub contentkit.Hub) {
 	recordBatched(t, hub, prefs)
 }
 
-func recordBatched(t *testing.T, hub contentkit.Hub, signals []signal.Signal) {
+func recordBatched(t *testing.T, hub *ckhub.Hub, signals []signal.Signal) {
 	t.Helper()
 	for start := 0; start < len(signals); start += signal.MaxSignalsPerBatch {
 		if err := hub.RecordSignals(context.Background(), signals[start:min(start+signal.MaxSignalsPerBatch, len(signals))]); err != nil {
@@ -376,9 +376,9 @@ func lazyPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal.Scorer) *contentkit.EmbeddedHub {
+func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal.Scorer) *ckhub.Hub {
 	t.Helper()
-	hub, err := contentkit.NewEmbedded(contentkit.EmbeddedConfig{
+	hub, err := ckhub.New(ckhub.Config{
 		PG: lazyPool(t), PGSchema: "hub", CH: ch, CHDatabase: database, Tenant: tenant,
 		Scorers: map[string]signal.Scorer{fxKind: scorer},
 	})
@@ -389,7 +389,7 @@ func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal
 }
 
 // metricsByID reads work-level metrics keyed by content id.
-func metricsByID(t *testing.T, hub contentkit.Hub, ids []string, w signal.Window) map[string]signal.ContentMetrics {
+func metricsByID(t *testing.T, hub *ckhub.Hub, ids []string, w signal.Window) map[string]signal.ContentMetrics {
 	t.Helper()
 	refs := make([]signal.ContentRef, 0, len(ids))
 	for _, id := range ids {

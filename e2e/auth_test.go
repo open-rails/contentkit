@@ -26,11 +26,12 @@ func TestGatesWithAuthKit(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	staffUser, staff := w.person(w.staff)
-	o, owner := w.person(iam.Role{})
+	_, owner := w.person(iam.Role{})
 	_, user := w.person(iam.Role{})
-	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
-	item := "/gallery/" + cid(1)
+	f := serve(t, w.engine(nil))
+	g, _ := w.published(f, staff, "gallery")
+	album, _ := w.published(f, staff, "album")
+	item := "/gallery/" + g
 	comment := content.CommentInput{Body: "hello"}
 
 	signedOut, gone := w.person(iam.Role{})
@@ -78,11 +79,11 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"staff route, staff", staff, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, an application holding it", app, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
-		{"groups, without the permission", user, "POST", "/v1/groups", []any{}, 403, ""},
-		{"groups, an application holding it", app, "POST", "/v1/groups", []any{}, 201, ""},
+		{"groups, without the permission", user, "POST", "/groups", []any{}, 403, ""},
+		{"groups, an application holding it", app, "POST", "/groups", []any{}, 201, ""},
 		{"upload, an application", app, "POST", "/media/upload/abort", map[string]string{"ticket": "x"}, 403, ""},
-		{"media read, a forged credential", owner + "x", "GET", "/media/gallery/" + cid(1), nil, 401, `Bearer error="invalid_token"`},
-		{"media read, anonymous", "", "GET", "/media/gallery/" + cid(1), nil, 200, ""},
+		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + album, nil, 401, `Bearer error="invalid_token"`},
+		{"media read, anonymous", "", "GET", "/media/album/" + album, nil, 200, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := f.call(tc.bearer, tc.method, tc.target, tc.body)
@@ -108,16 +109,16 @@ func TestGatesWithAuthKit(t *testing.T) {
 	authtest.RevokeRole(t, w.ak, iam.RootGroup(), iam.UserSubject(staffUser.ID), w.staff)
 	f.want(http.StatusForbidden, staff, "GET", "/comments/admin", nil, nil)
 
-	// An auth whose roles lack ContentKit's permissions fails the runtime,
+	// An auth whose roles lack ContentKit's permissions fails the engine,
 	// not every request; so does one naming no root scope.
 	newRuntime := func(a auth.Authenticator) error {
-		_, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-			EmbeddedConfig: contentkit.EmbeddedConfig{PG: w.pool, PGSchema: w.schema, Tenant: tenant},
-			Auth:           a, Content: content.Options{Resolver: w}})
+		deps := w.deps()
+		deps.Auth = a
+		_, err := contentkit.New(ctx, w.config(), deps)
 		return err
 	}
 	bare, _ := authtest.New(t)
-	if err := newRuntime(bare.Authenticator()); err == nil || !strings.Contains(err.Error(), string(access.PollsWrite)) {
+	if err := newRuntime(bare.Authenticator()); err == nil || !strings.Contains(err.Error(), string(access.ContentWrite)) {
 		t.Fatalf("roles without ContentKit's permissions: %v", err)
 	}
 	if err := newRuntime(unrooted{w.ak.Authenticator()}); err == nil || !strings.Contains(err.Error(), "root scope") {

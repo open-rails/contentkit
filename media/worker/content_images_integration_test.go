@@ -20,7 +20,6 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
@@ -152,18 +151,22 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err := cat.BindMedia(catalog.Media{Images: jobs.Manifests(), Reader: reader, Versions: svc}); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-		EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
-		Auth:           auth,
-		Content: content.Options{Resolver: cat.Resolver(), ContentKinds: []string{"blog"}, Limits: content.Limits{Disabled: true},
-			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
-		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-	})
+	rt, err := content.New(ctx, content.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth,
+		Resolver: cat.Resolver(), ContentKinds: []string{"blog", "gallery"}, Limits: content.Limits{Disabled: true},
+		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs, Reader: reader}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat.BindModeration(rt.Content)
-	polls.content = rt.Content
+	if err := rt.AddHeldSource(catalog.HeldKind, cat); err != nil {
+		t.Fatal(err)
+	}
+	cat.BindModeration(rt)
+	polls.content = rt
+	mux := http.NewServeMux()
+	mux.Handle("/", rt.Handler())
+	mux.Handle("/v1/", http.StripPrefix("/v1", cat.Handler()))
+	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Auth: auth})))
+	mux.Handle("/media/", http.StripPrefix("/media", reader.Handler(media.HandlerOptions{Auth: auth, Limit: media.RateLimit{Disabled: true}})))
 	w, err := worker.New(ctx, worker.Config{Pool: pool, Schema: workers, ContentSchema: schema, Store: env.Store, Kinds: reg,
 		HostSchema: hostRiver, TempDir: t.TempDir(), Threads: 2})
 	if err != nil {
@@ -179,9 +182,6 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		}
 	})
 
-	mux := http.NewServeMux()
-	mux.Handle("/v1/", http.StripPrefix("/v1", cat.Handler()))
-	mux.Handle("/", rt.Handler())
 	h := mux
 	staff, reader1, anon := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "reader", Kind: "user"}, access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	call := func(actor access.Actor, method, target string, body, out any) int {

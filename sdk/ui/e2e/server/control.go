@@ -16,10 +16,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/helpers/notify"
 
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/contenturl"
+	contentkit "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
 )
+
+// mount serves an engine's route groups under prefix.
+func mount(e *contentkit.Engine, prefix string, groups contentkit.RouteGroups) http.Handler {
+	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: groups})
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	for _, r := range routes {
+		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
+	}
+	return mux
+}
 
 // routes is the app origin: AuthKit, ContentKit at apiPrefix, the bucket's
 // presigned uploads, the test-control surface and the built demo apps.
@@ -28,10 +42,9 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(apiPrefix, h.rt.Handler()))))
-	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(membersPrefix, h.members.Handler()))))
-	upload := media.UploadHandler(h.onUpload, media.UploadHandlerOptions{Auth: h.auth.Authenticator()})
-	mux.Handle(onUploadPrefix+"/media/upload/", h.faults.api(behindProxy(http.StripPrefix(onUploadPrefix+"/media/upload", upload))))
+	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(mount(h.ck, apiPrefix, h.ck.RouteGroups()))))
+	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(mount(h.members, membersPrefix, h.members.RouteGroups()))))
+	mux.Handle(onUploadPrefix+"/", h.faults.api(behindProxy(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)
 	mux.Handle("/"+h.bucket, bucket)
@@ -121,8 +134,9 @@ func (h *harness) createUser(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusCreated, u)
 }
 
-// createItem: {kind, id?, owner?, access?, hidden?, title?} → the item, with
-// a content code when title is given.
+// createItem: {kind, owner?, access?, hidden?, title?} → the item, a
+// content item of kind made through the catalog by the host: owner its
+// creator, access "none" pay-per-view, published unless hidden.
 func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		item
@@ -133,34 +147,52 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it := in.item
-	if it.ID == "" {
-		it.ID = contentref.NewID()
-	}
 	if it.Access == "" {
 		it.Access = "full"
 	}
-	if it.Access != "full" && it.Access != "none" {
-		fail(w, http.StatusBadRequest, fmt.Errorf("access %q: full or none", it.Access))
+	if it.ID != "" || (it.Access != "full" && it.Access != "none") {
+		fail(w, http.StatusBadRequest, fmt.Errorf("the catalog names items; access %q: full or none", it.Access))
 		return
+	}
+	title := in.Title
+	if title == "" {
+		title = it.Kind + " " + uuid.NewString()[:8]
+	}
+	input := catalog.ContentInput{Kind: it.Kind, Text: map[string]catalog.Text{"en": {Title: title}}, Access: itemRule(it.Access)}
+	if it.Kind != blogKind {
+		input.Versions = []catalog.VersionInput{{Languages: []string{"en"}}}
+	}
+	if it.Owner != "" {
+		input.Creators = &[]catalog.Creator{{UserID: it.Owner}}
+	}
+	ck := h.ck.Client()
+	c, err := ck.CreateContent(r.Context(), input)
+	if err == nil && !it.Hidden {
+		c, err = ck.PublishContent(r.Context(), c.ID, catalog.PublishInput{})
+	}
+	if err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	it.ID = c.ID
+	if in.Title != "" {
+		it.Code, it.Path = c.Code, c.Path
 	}
 	ref, err := h.ref(it.Kind, it.ID)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	if in.Title != "" {
-		links, err := h.urls.Put(r.Context(), contenturl.Entry{ContentRef: contentref.New(tenant, it.Kind, it.ID), Title: in.Title})
-		if err != nil {
-			fail(w, http.StatusBadRequest, err)
-			return
-		}
-		it.Code = string(links[0].Code)
-		if p, ok := h.router.Path(links[0], ""); ok {
-			it.Path = p
-		}
-	}
 	h.items.put(ref.Key(), it)
 	reply(w, http.StatusCreated, it)
+}
+
+// itemRule is an item's access as a catalog rule.
+func itemRule(open string) *access.Rule {
+	if open == "none" {
+		return &access.Rule{Level: access.PPV}
+	}
+	return &access.Rule{Level: access.Public}
 }
 
 // updateItem: {access?, hidden?} changes what viewers may do.
@@ -183,10 +215,24 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
+	ck := h.ck.Client()
 	if in.Access != nil {
+		if _, err := ck.UpdateContent(r.Context(), it.ID, catalog.ContentPatch{Access: itemRule(*in.Access)}); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
 		it.Access = *in.Access
 	}
-	if in.Hidden != nil {
+	if in.Hidden != nil && *in.Hidden != it.Hidden {
+		if *in.Hidden {
+			_, err = ck.UnpublishContent(r.Context(), it.ID)
+		} else {
+			_, err = ck.PublishContent(r.Context(), it.ID, catalog.PublishInput{})
+		}
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
 		it.Hidden = *in.Hidden
 	}
 	h.items.put(ref.Key(), it)
@@ -276,10 +322,13 @@ func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 	if in.Origin.System == "" {
 		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
 	}
-	item, err := h.rt.Notifications.Publish(r.Context(), in)
+	items, err := h.ck.Client().PublishNotifications(r.Context(), []notify.Input{in})
+	if err == nil && len(items) == 0 {
+		err = errors.New("the recipient was erased")
+	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	reply(w, http.StatusCreated, item)
+	reply(w, http.StatusCreated, items[0])
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/worker"
+	"github.com/open-rails/contentkit/internal/worker"
 )
 
 // Content items are their own search documents: the worker builds one per

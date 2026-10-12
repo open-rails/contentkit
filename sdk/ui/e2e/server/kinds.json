@@ -15,10 +15,20 @@
             "image/png",
             "image/jpeg"
           ],
-          "max_bytes": 10485760
+          "max_bytes": 10485760,
+          "content": true
         },
         {
           "path": "cover",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
           "types": [
             "image/png",
             "image/jpeg"
@@ -51,7 +61,8 @@
           },
           "default": "cover.png"
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "note",
@@ -62,7 +73,8 @@
             "image/png"
           ],
           "max_bytes": 1048576,
-          "max": 2
+          "max": 2,
+          "content": true
         },
         {
           "path": "inline/{name}",
@@ -72,7 +84,16 @@
           ],
           "max_bytes": 1048576,
           "named": true,
-          "max": 100
+          "max": 100,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "public": [
@@ -84,7 +105,8 @@
             "width": 1600
           }
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "video",
@@ -95,7 +117,8 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824
+          "max_bytes": 1073741824,
+          "content": true
         },
         {
           "path": "poster",
@@ -104,7 +127,8 @@
             "image/jpeg"
           ],
           "max_bytes": 10485760,
-          "frames": "source"
+          "frames": "source",
+          "content": true
         },
         {
           "path": "subs/{name}",
@@ -112,7 +136,16 @@
             "text/vtt",
             "application/x-subrip"
           ],
-          "max_bytes": 1048576
+          "max_bytes": 1048576,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -141,7 +174,8 @@
             "aspect": "16:9"
           }
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "album",
@@ -155,7 +189,8 @@
             "image/webp"
           ],
           "max_bytes": 26214400,
-          "max": 6
+          "max": 6,
+          "content": true
         },
         {
           "path": "videos/{name}",
@@ -163,7 +198,16 @@
             "video/mp4"
           ],
           "max_bytes": 1073741824,
-          "max": 2
+          "max": 2,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -201,7 +245,8 @@
             "blur": 24
           }
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "abr",
@@ -212,7 +257,16 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824
+          "max_bytes": 1073741824,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -230,7 +284,8 @@
             ]
           }
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "channel",
@@ -243,7 +298,8 @@
             "image/jpeg",
             "image/webp"
           ],
-          "max_bytes": 26214400
+          "max_bytes": 26214400,
+          "content": true
         },
         {
           "path": "cover",
@@ -252,7 +308,16 @@
             "image/jpeg",
             "image/webp"
           ],
-          "max_bytes": 26214400
+          "max_bytes": 26214400,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "public": [
@@ -283,7 +348,8 @@
             "quality": 85
           }
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "file",
@@ -294,9 +360,19 @@
             "application/octet-stream",
             "video/mp4"
           ],
-          "max_bytes": 1073741824
+          "max_bytes": 1073741824,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "user",
@@ -402,7 +478,8 @@
           "types": [
             "video/mp4"
           ],
-          "max_bytes": 1073741824
+          "max_bytes": 1073741824,
+          "content": true
         },
         {
           "path": "subs/{name}",
@@ -410,7 +487,16 @@
             "text/vtt",
             "application/x-subrip"
           ],
-          "max_bytes": 1048576
+          "max_bytes": 1048576,
+          "content": true
+        },
+        {
+          "path": "versions/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -439,7 +525,8 @@
           },
           "download": "clip.mp4"
         }
-      ]
+      ],
+      "versions": true
     },
     {
       "name": "series",

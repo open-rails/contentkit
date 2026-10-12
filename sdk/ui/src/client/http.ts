@@ -8,22 +8,25 @@ export type Mount = string | ((ref: RefBody) => string);
 
 /**
  * Where each module lives when the host does not serve them all under
- * baseUrl's fixed sub-paths.
+ * baseUrl's fixed sub-paths (CONTENTKIT_MODULES: the API version, then the
+ * module's path). A mount is the module's full base URL.
  */
 export interface ContentKitMounts {
-  /** Comments, reactions, favorites, polls, bans, moderation. Default baseUrl. */
+  /** Comments, reactions, favorites, polls, bans, moderation. Default `{baseUrl}/v1`. */
   content?: string;
   /** Content items and catalog totals. Default `{baseUrl}/v1`. */
   contents?: string;
-  /** Media reads and HLS playlists. Default `{baseUrl}/media`. */
+  /** Media reads and HLS playlists. Default `{baseUrl}/v1/media`. */
   media?: Mount;
-  /** Uploads and commits. Default `{baseUrl}/media/upload`. */
+  /** Uploads and commits. Default `{baseUrl}/v1/media/upload`. */
   upload?: Mount;
-  /** Content-code lookup. Default `{baseUrl}/codes`. */
+  /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
   /** Groups. Default `{baseUrl}/v1`. */
   groups?: string;
-  /** User inbox. Default `{baseUrl}/notifications`. */
+  /** The site's content model. Default `{baseUrl}/v1`. */
+  kinds?: string;
+  /** User inbox. Default `{baseUrl}/v1/notifications`. */
   notifications?: string;
   /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
   versions?: string;
@@ -46,7 +49,7 @@ export type ContentKitChange =
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;
 
 export interface HttpOptions {
-  /** Where the host mounts ContentKit, e.g. "/api/v1/contentkit". */
+  /** Where the host mounts ContentKit's routes (contentkit.Routes.Prefix), e.g. "/api/contentkit". */
   baseUrl: string;
   mounts?: ContentKitMounts;
   /** Transport for API calls; pass an authenticating fetch (auth-ui's authFetch). */

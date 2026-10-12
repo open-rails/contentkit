@@ -31,7 +31,7 @@ import { ContentKitUiProvider } from "@openrails/contentkit-ui";
 import { createContentURLs } from "@openrails/contentkit-ui/urls";
 
 const contentkit = createContentKitClient({
-  baseUrl: "/api/v1/contentkit",            // where the host mounts ContentKit
+  baseUrl: "/api/contentkit",               // the host's contentkit.Routes.Prefix
   mounts: { upload: "/api/v1/user-uploads" }, // optional: modules mounted elsewhere (a string, or (ref) => string)
   fetch: auth.authFetch,                    // an authenticating transport
   token: () => auth.getAccessToken(),       // HLS playlists on the API origin (hls.js uses XHR)
@@ -72,8 +72,9 @@ The framework-free client exposes `setReadScope(key)` and passes that key as
 the second `subscribe` / `onChange` argument, or `null` when the scope changed during the
 operation. This does not change the operation's result or its authentication.
 
-- **Mounts.** Without `mounts`, modules live under `baseUrl`: content at the
-  root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/v1` (groups).
+- **Mounts.** Without `mounts`, modules live under `{baseUrl}/v1`: content,
+  groups and the content model at its root, `/media` (reads, HLS),
+  `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
   `xhrSetup` for players (`<MediaGallery xhrSetup={contentkit.media.xhrSetup} />`).
@@ -554,7 +555,7 @@ pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
 ```
 
 The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
-`contentkit.Runtime` (content, groups, codes, media upload and read) with
+ContentKit's engine (content, groups, codes, media upload and read) with
 AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
 media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
 the stack up under its own project name and takes it down; the server exits

@@ -30,11 +30,13 @@ const (
 	// OffersWrite: put and withdraw offers on any content, version or group;
 	// creators and group owners need it for nobody else's.
 	OffersWrite Permission = "root:offers:write"
+	// NotificationsPublish: publish notices to users' inboxes (a host service).
+	NotificationsPublish Permission = "root:notifications:publish"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish}
 }
 
 func (p Permission) String() string { return string(p) }

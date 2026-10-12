@@ -124,7 +124,7 @@ func (m *model) routesTS() []byte {
 	b.WriteString(`
 export type ContentKitModule = ` + union(moduleNames()) + `;
 
-// Each module's sub-path under the one mount (contentkit.Runtime.Handler).
+// Each module's sub-path under the host's prefix (contentkit.Routes.Prefix), the API version first.
 export const CONTENTKIT_MODULES: Readonly<Record<ContentKitModule, string>> = {
 `)
 	for _, mod := range httpapi.Modules {
@@ -135,7 +135,7 @@ export const CONTENTKIT_MODULES: Readonly<Record<ContentKitModule, string>> = {
 export type ContentKitRoute = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   module: ContentKitModule;
-  // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the one mount.
+  // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the host's prefix.
   path: string;
   // open: never authenticates; public: the actor is optional; user: a signed-in person;
   // staff: a person or an application holding the host permission.

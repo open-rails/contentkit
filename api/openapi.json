@@ -3,10 +3,42 @@
   "info": {
     "title": "ContentKit",
     "version": "v0",
-    "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
+    "description": "ContentKit's HTTP API, under the prefix the host mounts contentkit.Engine.Routes at (contentkit.Routes.Prefix). Each module sits at its own sub-path (x-contentkit-modules) and is one route group. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
   },
   "paths": {
-    "/config": {
+    "/v1/kinds": {
+      "get": {
+        "tags": [
+          "kinds"
+        ],
+        "summary": "The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentModel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "kinds",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:kinds"
+        ]
+      }
+    },
+    "/v1/config": {
       "get": {
         "tags": [
           "config"
@@ -38,7 +70,7 @@
         ]
       }
     },
-    "/{kind}/{id}/comments": {
+    "/v1/{kind}/{id}/comments": {
       "get": {
         "tags": [
           "comments"
@@ -203,7 +235,7 @@
         ]
       }
     },
-    "/comments/latest": {
+    "/v1/comments/latest": {
       "get": {
         "tags": [
           "comments"
@@ -261,7 +293,7 @@
         ]
       }
     },
-    "/comments/admin": {
+    "/v1/comments/admin": {
       "get": {
         "tags": [
           "comments"
@@ -335,7 +367,7 @@
         ]
       }
     },
-    "/comments/{cid}/restore": {
+    "/v1/comments/{cid}/restore": {
       "post": {
         "tags": [
           "comments"
@@ -384,7 +416,7 @@
         ]
       }
     },
-    "/comments/{cid}/replies": {
+    "/v1/comments/{cid}/replies": {
       "get": {
         "tags": [
           "comments"
@@ -452,7 +484,7 @@
         ]
       }
     },
-    "/comments/{cid}": {
+    "/v1/comments/{cid}": {
       "patch": {
         "tags": [
           "comments"
@@ -567,7 +599,7 @@
         ]
       }
     },
-    "/comments/{cid}/like": {
+    "/v1/comments/{cid}/like": {
       "post": {
         "tags": [
           "comments"
@@ -620,7 +652,7 @@
         ]
       }
     },
-    "/comments/{cid}/dislike": {
+    "/v1/comments/{cid}/dislike": {
       "post": {
         "tags": [
           "comments"
@@ -673,7 +705,7 @@
         ]
       }
     },
-    "/comments/{cid}/reaction": {
+    "/v1/comments/{cid}/reaction": {
       "delete": {
         "tags": [
           "comments"
@@ -726,7 +758,7 @@
         ]
       }
     },
-    "/{kind}/{id}/like": {
+    "/v1/{kind}/{id}/like": {
       "post": {
         "tags": [
           "reactions"
@@ -787,7 +819,7 @@
         ]
       }
     },
-    "/{kind}/{id}/dislike": {
+    "/v1/{kind}/{id}/dislike": {
       "post": {
         "tags": [
           "reactions"
@@ -848,7 +880,7 @@
         ]
       }
     },
-    "/{kind}/{id}/reaction": {
+    "/v1/{kind}/{id}/reaction": {
       "delete": {
         "tags": [
           "reactions"
@@ -964,7 +996,7 @@
         ]
       }
     },
-    "/favorites": {
+    "/v1/favorites": {
       "get": {
         "tags": [
           "favorites"
@@ -1021,7 +1053,7 @@
         ]
       }
     },
-    "/{kind}/{id}/favorite": {
+    "/v1/{kind}/{id}/favorite": {
       "post": {
         "tags": [
           "favorites"
@@ -1191,7 +1223,7 @@
         ]
       }
     },
-    "/polls": {
+    "/v1/polls": {
       "get": {
         "tags": [
           "polls"
@@ -1320,7 +1352,7 @@
         ]
       }
     },
-    "/polls/admin": {
+    "/v1/polls/admin": {
       "get": {
         "tags": [
           "polls"
@@ -1418,7 +1450,7 @@
         ]
       }
     },
-    "/polls/{id}": {
+    "/v1/polls/{id}": {
       "get": {
         "tags": [
           "polls"
@@ -1564,7 +1596,7 @@
         ]
       }
     },
-    "/polls/{id}/vote": {
+    "/v1/polls/{id}/vote": {
       "post": {
         "tags": [
           "polls"
@@ -1626,7 +1658,7 @@
         ]
       }
     },
-    "/polls/{id}/answer": {
+    "/v1/polls/{id}/answer": {
       "post": {
         "tags": [
           "polls"
@@ -1686,7 +1718,7 @@
         ]
       }
     },
-    "/polls/{id}/image": {
+    "/v1/polls/{id}/image": {
       "put": {
         "tags": [
           "polls"
@@ -1746,7 +1778,7 @@
         ]
       }
     },
-    "/polls/{id}/options": {
+    "/v1/polls/{id}/options": {
       "post": {
         "tags": [
           "polls"
@@ -1805,7 +1837,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}": {
+    "/v1/polls/{id}/options/{oid}": {
       "patch": {
         "tags": [
           "polls"
@@ -1922,7 +1954,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}/image": {
+    "/v1/polls/{id}/options/{oid}/image": {
       "put": {
         "tags": [
           "polls"
@@ -1990,7 +2022,7 @@
         ]
       }
     },
-    "/comment-bans": {
+    "/v1/comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2047,7 +2079,7 @@
         ]
       }
     },
-    "/comment-bans/{user}": {
+    "/v1/comment-bans/{user}": {
       "put": {
         "tags": [
           "bans"
@@ -2140,7 +2172,7 @@
         ]
       }
     },
-    "/global-comment-bans": {
+    "/v1/global-comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2200,7 +2232,7 @@
         ]
       }
     },
-    "/global-comment-bans/{user}": {
+    "/v1/global-comment-bans/{user}": {
       "get": {
         "tags": [
           "bans"
@@ -2347,7 +2379,7 @@
         ]
       }
     },
-    "/{kind}/{id}/can-comment": {
+    "/v1/{kind}/{id}/can-comment": {
       "get": {
         "tags": [
           "bans"
@@ -2404,7 +2436,7 @@
         ]
       }
     },
-    "/moderation/held": {
+    "/v1/moderation/held": {
       "get": {
         "tags": [
           "moderation"
@@ -2467,7 +2499,7 @@
         ]
       }
     },
-    "/moderation/{kind}/{id}/resolve": {
+    "/v1/moderation/{kind}/{id}/resolve": {
       "post": {
         "tags": [
           "moderation"
@@ -3703,7 +3735,7 @@
         ]
       }
     },
-    "/media/upload/presign": {
+    "/v1/media/upload/presign": {
       "post": {
         "tags": [
           "uploads"
@@ -3758,7 +3790,7 @@
         ]
       }
     },
-    "/media/upload/parts": {
+    "/v1/media/upload/parts": {
       "post": {
         "tags": [
           "uploads"
@@ -3807,7 +3839,7 @@
         ]
       }
     },
-    "/media/upload/parts/list": {
+    "/v1/media/upload/parts/list": {
       "post": {
         "tags": [
           "uploads"
@@ -3856,7 +3888,7 @@
         ]
       }
     },
-    "/media/upload/complete": {
+    "/v1/media/upload/complete": {
       "post": {
         "tags": [
           "uploads"
@@ -3907,7 +3939,7 @@
         ]
       }
     },
-    "/media/upload/abort": {
+    "/v1/media/upload/abort": {
       "post": {
         "tags": [
           "uploads"
@@ -3949,7 +3981,7 @@
         ]
       }
     },
-    "/media/upload/commit": {
+    "/v1/media/upload/commit": {
       "post": {
         "tags": [
           "uploads"
@@ -4006,7 +4038,7 @@
         ]
       }
     },
-    "/media/upload/frame": {
+    "/v1/media/upload/frame": {
       "get": {
         "tags": [
           "uploads"
@@ -4095,7 +4127,7 @@
         ]
       }
     },
-    "/media/presets": {
+    "/v1/media/presets": {
       "get": {
         "tags": [
           "media"
@@ -4130,7 +4162,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}": {
+    "/v1/media/{kind}/{id}": {
       "get": {
         "tags": [
           "media"
@@ -4227,7 +4259,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}/hls/{path}": {
+    "/v1/media/{kind}/{id}/hls/{path}": {
       "get": {
         "tags": [
           "media"
@@ -4323,7 +4355,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}/versions/{version}": {
+    "/v1/media/{kind}/{id}/versions/{version}": {
       "get": {
         "tags": [
           "media"
@@ -4428,7 +4460,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}/versions/{version}/hls/{path}": {
+    "/v1/media/{kind}/{id}/versions/{version}/hls/{path}": {
       "get": {
         "tags": [
           "media"
@@ -4532,7 +4564,7 @@
         ]
       }
     },
-    "/codes/{code}": {
+    "/v1/codes/{code}": {
       "get": {
         "tags": [
           "codes"
@@ -5658,7 +5690,7 @@
         ]
       }
     },
-    "/notifications/inbox": {
+    "/v1/notifications/inbox": {
       "get": {
         "tags": [
           "notifications"
@@ -5728,7 +5760,7 @@
         ]
       }
     },
-    "/notifications/{id}/read": {
+    "/v1/notifications/{id}/read": {
       "put": {
         "tags": [
           "notifications"
@@ -5822,7 +5854,7 @@
         ]
       }
     },
-    "/notifications/{id}/dismiss": {
+    "/v1/notifications/{id}/dismiss": {
       "put": {
         "tags": [
           "notifications"
@@ -5909,6 +5941,53 @@
         "x-contentkit-errors": [
           "not_found"
         ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/notifications/publish": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Publication"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Published"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:notifications:publish",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:notifications",
           "auth",
@@ -6876,6 +6955,29 @@
           "count"
         ]
       },
+      "Attribute": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filterable": {
+            "type": "boolean"
+          },
+          "sortable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "BackgroundCue": {
         "type": "object",
         "properties": {
@@ -7359,6 +7461,27 @@
           "updated_at"
         ]
       },
+      "ContentFilter": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/GroupRef"
+          },
+          "default_visible": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "default_visible"
+        ]
+      },
       "ContentGroups": {
         "type": "object",
         "properties": {
@@ -7444,6 +7567,48 @@
           "content_id",
           "memberships",
           "groups"
+        ]
+      },
+      "ContentModel": {
+        "type": "object",
+        "properties": {
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Kind"
+            }
+          },
+          "group_kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GroupKind"
+            }
+          },
+          "content_filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentFilter"
+            }
+          }
+        },
+        "required": [
+          "languages",
+          "tiers",
+          "kinds",
+          "group_kinds",
+          "content_filters"
         ]
       },
       "ContentPatch": {
@@ -8355,6 +8520,50 @@
           "member"
         ]
       },
+      "GroupKind": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string"
+          },
+          "ordered": {
+            "type": "boolean"
+          },
+          "parent": {
+            "type": "string"
+          },
+          "scoped_by": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "sellable": {
+            "type": "boolean"
+          },
+          "auth_scope": {
+            "type": "boolean"
+          },
+          "windows": {
+            "type": "boolean"
+          },
+          "version_level": {
+            "type": "boolean"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          }
+        }
+      },
       "GroupPage": {
         "type": "object",
         "properties": {
@@ -8370,6 +8579,21 @@
         },
         "required": [
           "groups"
+        ]
+      },
+      "GroupRef": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "slug"
         ]
       },
       "GroupSummary": {
@@ -8592,6 +8816,34 @@
           "url"
         ]
       },
+      "Input": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "$ref": "#/components/schemas/Recipient"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "data": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "action_requested": {
+            "type": "boolean"
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
+      },
       "Item": {
         "type": "object",
         "properties": {
@@ -8674,6 +8926,43 @@
           "resolved_at",
           "updated_at",
           "revision"
+        ]
+      },
+      "Kind": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string"
+          },
+          "presentation": {
+            "type": "string"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/VersionRules"
+          },
+          "segments": {
+            "type": "boolean"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          },
+          "sort": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "route",
+          "presentation",
+          "versions"
         ]
       },
       "LanguageTotal": {
@@ -9728,6 +10017,17 @@
           "username"
         ]
       },
+      "Publication": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Input"
+            }
+          }
+        }
+      },
       "PublishInput": {
         "type": "object",
         "properties": {
@@ -9736,6 +10036,20 @@
             "format": "date-time"
           }
         }
+      },
+      "Published": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "ReactionCounts": {
         "type": "object",
@@ -10450,6 +10764,26 @@
           }
         }
       },
+      "VersionRules": {
+        "type": "object",
+        "properties": {
+          "languages": {
+            "type": "string"
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "languages"
+        ]
+      },
       "VersionText": {
         "type": "object",
         "properties": {
@@ -10629,17 +10963,21 @@
     }
   },
   "x-contentkit-modules": {
-    "content": "",
+    "kinds": "/v1",
+    "content": "/v1",
     "contents": "/v1",
-    "upload": "/media/upload",
-    "media": "/media",
-    "codes": "/codes",
+    "upload": "/v1/media/upload",
+    "media": "/v1/media",
+    "codes": "/v1/codes",
     "groups": "/v1",
-    "notifications": "/notifications",
+    "notifications": "/v1/notifications",
     "versions": "/v1",
     "offers": "/v1"
   },
   "x-contentkit-error-sets": {
+    "module:kinds": [
+      "internal_error"
+    ],
     "module:content": [
       "internal_error",
       "tenant_mismatch"

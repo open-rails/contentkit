@@ -9,7 +9,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 )
 
-// The host's content policies, deterministic for tests: a comment or blog text
+// The host's content policies, deterministic for tests: a comment or text
 // containing "[hold]" is held for review, "[reject]" is refused; free-text
 // poll answers group by their first word.
 type moderator struct{}
@@ -35,12 +35,8 @@ func (classifier) Classify(_ context.Context, a content.Answer) (content.GroupAs
 
 func (classifier) StatelessPolicy() {}
 
-// Blog items are catalog content (their media the versions module's); poll
-// images live in content's poll folder.
-const (
-	blogKind   = "blog"
-	pollFolder = "poll"
-)
+// blogKind is the content kind of blog posts.
+const blogKind = "blog"
 
 // postHTML is the host's rich-text body sanitizer: user-generated HTML, images by
 // image reference (contentkit:i-{uuid}) as well as http(s) URLs.

@@ -360,7 +360,7 @@ describe("content modules against the real ContentKit", () => {
   });
 
   it("mounts: a content module mounted elsewhere is reached there", async () => {
-    const mount = `${h.origin}${cfg.api}`;
+    const mount = `${h.origin}${cfg.api}/v1`;
     const c = createContentKitClient({ baseUrl: "http://127.0.0.1:9/nowhere", mounts: { content: mount }, token: () => acc.get("alice").access_token });
     expect(c.url("content")).toBe(mount);
     expect(await c.reactions.get(await item())).toEqual({ likes: 0, dislikes: 0, mine: 0 });

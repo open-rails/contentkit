@@ -79,7 +79,7 @@ it("MediaGallery item reads through the client and builds HLS bases on its media
   expect(await screen.findByText("1 / 2", undefined, wait)).toBeInTheDocument();
   expect(reads.at(-1)!.searchParams.get("prefix")).toBe("large/");
   expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", expect.stringContaining(`${cfg.media}/v1/${cfg.namespace}/album/${post.id}/private/`));
-  expect(c.media.hlsBase(post, "hls/")).toBe(`${h.origin}${cfg.api}/media/album/${post.id}/hls/hls/`);
+  expect(c.media.hlsBase(post, "hls/")).toBe(`${h.origin}${cfg.api}/v1/media/album/${post.id}/hls/hls/`);
 });
 
 it("VideoPosterPicker takes frames from another video and uploads the chosen one as the cover image", async () => {

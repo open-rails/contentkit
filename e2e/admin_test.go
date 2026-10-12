@@ -23,10 +23,9 @@ import (
 func TestGlobalCommentBanOfUser(t *testing.T) {
 	w := newWorld(t)
 	staffUser, staff := w.person(w.staff)
-	o, owner := w.person(iam.Role{})
+	_, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	target := "/global-comment-bans/" + u.ID
 
 	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
@@ -64,9 +63,9 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	_, staff := w.person(w.staff)
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
-	item := "/gallery/" + cid(1)
+	f := serve(t, w.engine(nil))
+	g, _ := w.published(f, staff, "gallery", o.ID)
+	item := "/gallery/" + g
 
 	var first, reply, gone content.Comment
 	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "one"}, &first)
@@ -93,7 +92,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 		t.Fatalf("by author: %s", ids(all))
 	}
 	for _, c := range all {
-		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != cid(1) {
+		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != g {
 			t.Fatalf("comment %s by %s (%+v) on %s/%s", c.ID, c.UserID, c.Author, c.ContentKind, c.ContentID)
 		}
 	}
@@ -126,32 +125,35 @@ func TestGroupMembers(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
-	w.galleries(1, 2, 3)
+	f := serve(t, w.engine(nil))
+	g1, _ := w.published(f, staff, "gallery")
+	g2, v2 := w.published(f, staff, "gallery")
+	g3, _ := w.published(f, staff, "gallery")
+	label := map[string]string{g1: "01", g2: "02", g3: "03", v2: "20"}
 
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/v1/groups", []groups.GroupInput{
+	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
 		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
 		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
 	}, &made)
 	color, empty := string(made[0].ID), string(made[1].ID)
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+color+"/members", []groups.Membership{
-		{ContentID: cid(3)}, {ContentID: cid(1)}, {ContentID: cid(2), VersionID: cid(20)}, {ContentID: cid(2), State: groups.MembershipProposed},
-		{ContentID: cid(1), Role: "featured"},
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/members", []groups.Membership{
+		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: groups.MembershipProposed},
+		{ContentID: g1, Role: "featured"},
 	}, nil)
 
 	page := func(id string, q url.Values) groups.MemberPage {
 		t.Helper()
 		var p groups.MemberPage
-		f.want(http.StatusOK, staff, "GET", "/v1/groups/"+id+"/members?"+q.Encode(), nil, &p)
+		f.want(http.StatusOK, staff, "GET", "/groups/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
 	key := func(ms []groups.Membership) string {
 		s := ""
 		for _, m := range ms {
-			s += m.ContentID[len(m.ContentID)-2:]
+			s += label[m.ContentID]
 			if m.VersionID != "" {
-				s += "@" + m.VersionID[len(m.VersionID)-2:]
+				s += "@" + label[m.VersionID]
 			}
 			if m.Role != "" {
 				s += ":" + m.Role
@@ -185,10 +187,10 @@ func TestGroupMembers(t *testing.T) {
 	if p := page(empty, nil); len(p.Members) != 0 || p.NextCursor != "" {
 		t.Fatalf("empty group: %+v", p)
 	}
-	f.want(http.StatusNotFound, staff, "GET", "/v1/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/not-an-id/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/"+color+"/members?cursor=%21", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/v1/groups/"+color+"/members", nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/not-an-id/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/"+color+"/members?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/groups/"+color+"/members", nil, nil)
 }
 
 // An item's editor (a writer, not exempt) regenerates its media: an upload
@@ -197,9 +199,11 @@ func TestGroupMembers(t *testing.T) {
 func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
-	_, editor := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	ed, editor := w.person(iam.Role{})
+	_, staff := w.person(w.staff)
+	f := serve(t, w.engine(nil))
+	album, _ := w.published(f, staff, "album", ed.ID)
+	ref := media.RefBody{Kind: "album", ID: album}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +232,26 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 			t.Fatal(err)
 		}
 		return n
+	}
+	// Publishing exposes the album on the engine's River; the stand-in
+	// worker then finishes what is queued, so the regenerate's job is new.
+	q := func(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
+	deadline := time.Now().Add(time.Minute)
+	for {
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+q(w.schema+"_river")+` WHERE kind = 'contentkit_media_expose' AND finalized_at IS NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the album's exposure never ran")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE `+q(w.queue.Schema())+` SET state = 'completed', finalized_at = now() WHERE finalized_at IS NULL`); err != nil {
+		t.Fatal(err)
 	}
 	before := jobs()
 
@@ -260,7 +284,7 @@ func TestAdminPollsByStateAndSearch(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	create := func(question string, liveAt *time.Time) content.Poll {
 		var p content.Poll
 		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,

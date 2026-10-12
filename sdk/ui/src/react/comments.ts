@@ -132,7 +132,7 @@ export interface UseModerationQueue extends UseList<HeldItem> {
   resolve: (item: HeldItem, decision: Decision, reason?: string) => Promise<void>;
 }
 
-/** Staff: held comments or posts awaiting review, oldest first (ModerationReview). */
+/** Staff: held comments or content awaiting review, oldest first (ModerationReview). */
 export function useModerationQueue(o: { kind?: HeldKind; pageSize?: number; client?: ContentKitClient } = {}): UseModerationQueue {
   const { client, store, scope } = useContentScope(o.client);
   const kind = o.kind ?? "comment";

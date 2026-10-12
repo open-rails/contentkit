@@ -6,14 +6,15 @@ const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
 const read = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
 
 it("serves every module under baseUrl unless a mount moves it", () => {
-  const one = createContentKitClient({ baseUrl: "/api/v1/contentkit/" });
-  expect(["content", "media", "upload", "codes", "groups", "contents"].map((m) => one.url(m as never))).toEqual([
-    "/api/v1/contentkit",
-    "/api/v1/contentkit/media",
-    "/api/v1/contentkit/media/upload",
-    "/api/v1/contentkit/codes",
-    "/api/v1/contentkit/v1",
-    "/api/v1/contentkit/v1",
+  const one = createContentKitClient({ baseUrl: "/api/contentkit/" });
+  expect(["content", "media", "upload", "codes", "groups", "kinds", "contents"].map((m) => one.url(m as never))).toEqual([
+    "/api/contentkit/v1",
+    "/api/contentkit/v1/media",
+    "/api/contentkit/v1/media/upload",
+    "/api/contentkit/v1/codes",
+    "/api/contentkit/v1",
+    "/api/contentkit/v1",
+    "/api/contentkit/v1",
   ]);
   const split = createContentKitClient({
     baseUrl: "/api/v1/social",
@@ -42,7 +43,7 @@ it("sends the token and language, and reports commits to subscribers", async () 
   await client.media.commit(ref, [{ op: "remove", path: "b.png" }]);
   off();
   await client.media.commit(ref, [{ op: "remove", path: "c.png" }]);
-  expect(seen.map((s) => s.url)).toEqual([`http://api.test/ck/media/video/${ref.id}?editor=1`, "http://api.test/ck/media/upload/commit", "http://api.test/ck/media/upload/commit"]);
+  expect(seen.map((s) => s.url)).toEqual([`http://api.test/ck/v1/media/video/${ref.id}?editor=1`, "http://api.test/ck/v1/media/upload/commit", "http://api.test/ck/v1/media/upload/commit"]);
   expect([seen[0]!.headers.get("Authorization"), seen[0]!.headers.get("Accept-Language")]).toEqual(["Bearer tok", "ja"]);
   expect(changes).toEqual([{ type: "media.committed", ref, files: [{ path: "a.png", type: "image/png", upload: true }] }]);
 });
@@ -80,9 +81,9 @@ it("reads the authenticated inbox and returns canonical local receipts", async (
   expect((await client.notifications.setRead("item/1")).revision).toBe(2);
   await client.notifications.setRead("item/1", false);
   expect(calls).toEqual([
-    { url: "http://api.test/ck/notifications/inbox?limit=10&cursor=opaque&unread=true", method: "GET" },
-    { url: "http://api.test/ck/notifications/item%2F1/read", method: "PUT" },
-    { url: "http://api.test/ck/notifications/item%2F1/read", method: "DELETE" },
+    { url: "http://api.test/ck/v1/notifications/inbox?limit=10&cursor=opaque&unread=true", method: "GET" },
+    { url: "http://api.test/ck/v1/notifications/item%2F1/read", method: "PUT" },
+    { url: "http://api.test/ck/v1/notifications/item%2F1/read", method: "DELETE" },
   ]);
   expect(changes).toEqual([
     { type: "notifications.updated", item: { id: "item/1", read_at: "2026-10-11T12:00:00Z", revision: 2 } },

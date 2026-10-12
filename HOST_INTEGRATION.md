@@ -1,31 +1,26 @@
 # ContentKit Host Integration Guide
 
-ContentKit is a library. Hosts own HTTP routes, auth, visibility, hydration
-and response shaping. Every call is scoped to one tenant; references of
-another tenant are rejected.
+ContentKit runs in the host's process as an engine (or standalone, `server/`)
+for one tenant. The host configures it, mounts its routes and passes
+providers; it never reads or writes ContentKit's storage.
 
 ## Contract
 
-One migrate call, one constructor, one HTTP mount per tenant. The mount
-serves every configured module at its sub-path: content at the root,
-`/media/upload/…`, `/media/…`, `/codes/{code}` and `/v1/…` (groups and catalog)
-([docs/api/routes.md](docs/api/routes.md)):
+One `New`, one `Start`, the routes mounted under one prefix, each route group
+at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)):
 
 ```go
-_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
-rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
-	Auth:           ak.Authenticator(), // who a request is (authkit/auth)
-	UserInfo:       ak.UserInfo(),      // authors' names (authkit/userinfo)
-	Content: content.Options{Schema: "doujins", Resolver: catalogStore.Resolver(),
-		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, ContentKinds: []string{"gallery", "blog", "tag"},
-		Limits: content.Limits{Redis: rdb}},
-	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
-	Codes:    router, // /codes/{code}
-	Groups:   groupStore, // /v1/groups…, writes for root:groups:write
-	Contents: catalogStore, // /v1/contents…, /v1/catalog/totals
+ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
+	Postgres: pool, ClickHouse: ch, Redis: rdb,
+	Auth:  ak.Authenticator(), // who a request is (authkit/auth)
+	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
+	Store: bucket, Moderator: moderator, BodyProcessor: sanitizer,
 })
-mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
+_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // fleet built with ck.RiverJobs()
+routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
+for _, r := range routes {
+	mux.Handle(r.Path, r.Handler)
+}
 ```
 
 ## Auth
@@ -36,12 +31,12 @@ module (`github.com/open-rails/authkit/auth` and
 `github.com/open-rails/authkit/userinfo`), or passes AuthKit's implementations.
 ContentKit links neither AuthKit's server nor its database runtime:
 
-- `RuntimeConfig.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
+- `Deps.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
   request is. Each route's gate asks it at most once per request and builds
   the `access.Actor` from the `Verified`'s `Identity`: `ID` is the subject,
   `Kind` a person (`auth.SubjectUser`) or an application, `Invoker` who acts
   on the subject's behalf when someone does, `Verified` the credential.
-- `RuntimeConfig.UserInfo` (`userinfo.Lookup`, `ak.UserInfo()`): authors'
+- `Deps.Users` (`userinfo.Lookup`, `ak.UserInfo()`): authors'
   names and usernames (Authors below).
 
 ContentKit names its staff permissions, always the full
@@ -76,7 +71,7 @@ Staff hold them in the Authenticator's root scope, which it names (AuthKit's
 grant). There is no scope or permission
 setting: a staff member's permissions are root-wide, and per-item rights are
 the resolver's (`Owner`, `Editor`). The gate asks the `Verified`'s
-`Can(root, perm)`, live. `NewRuntime` refuses an Authenticator that names no
+`Can(root, perm)`, live. `New` refuses an Authenticator that names no
 root scope, or whose roles lack one of the permissions
 (`auth.PermissionCatalog`).
 
@@ -106,16 +101,9 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 `media.UploadHandlerOptions.Auth`, `groups.Store.Handler(auth)`;
 `contenturl.Router.Handler` needs none.
 
-Hosts use:
-
-- `rt.Search(ctx, query, contentkit.HubSearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated}`
-- `rt.Client().SearchWithTrace(...)` for offline evaluation/debugging
-- `rt.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
-- `worker.SyncOnce(ctx, rt.WorkerOptions(hostOptions))` on a schedule, `search.MarkDirty` in content transactions
-- the `Hub` methods for the signal and discovery planes
-- `rt.Content` (package `content`) for interactions: `Counts`, `MyReactions`, `IsFavorited`, `ListFavorites`, `LatestComments`, `ReactionsByActor`
-
-Do not call `search` package SQL helpers from request paths.
+Hosts use the routes and `ck.Client()` (the same surface in process).
+Search, typeahead, signals and discovery run inside the engine; their routes
+land with #122.
 
 ## Content ids
 
@@ -182,10 +170,10 @@ code, resolution and canonicalization.
   never changed or reused. `ParseCode` accepts any case, `O`→`0`, `I`/`L`→`1`
   and hyphens. A request with another spelling of the code is redirected to the
   canonical one.
-- **Registration.** Groups and catalog content register themselves (group
+- **Registration.** Groups and content items register themselves (group
   slugs come from canonical names, one per language; content slugs from each
-  language's slug or title). Other host content calls `Put` in the transaction
-  that creates it, and again when a title changes. `Put` is idempotent, so the host backfills existing rows
+  language's slug or title). Other references call `Put` in the transaction
+  that creates them, and again when a title changes. `Put` is idempotent, so the host backfills existing rows
   by calling it over them.
 
 ```go
@@ -202,9 +190,9 @@ _ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redi
   path, with the query kept. The canonical path carries the language prefix and
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
-  leaking the slug. `Gone` answers 410. For content kinds, use
-  `catalog.Store.Visibility`. For groups, map the group state: a deleted
-  group is `Gone`, and merged groups already resolve to their survivor.
+  leaking the slug. `Gone` answers 410. The engine's codes route group answers
+  content items' visibility itself (`catalog.Store.Visibility`). For groups, map the group state: a deleted group
+  is `Gone`, and merged groups already resolve to their survivor.
   `kinds.Config.Routes()` maps every content and group kind to its route.
   A canonical request reaches the page
   with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
@@ -213,10 +201,10 @@ _ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redi
 ```go
 router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
 	Routes: cfg.Routes(), Languages: []string{"en", "es"}, BaseURL: "https://hentai0.com",
-	Visibility: catalogStore.Visibility, // drafts and deletions; other kinds are Visible
+	Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) { /* drafts, removals */ },
 })
 mux.Handle("/", router.Middleware(spa))
-// RuntimeConfig.Codes: router, so rt.Handler() serves GET /codes/{code}[?lang=]
+// the engine's codes route group serves GET /v1/codes/{code}[?lang=], routed by Config.Content's kinds
 ```
 
 - **Legacy aliases.** An import records the identifiers of the old site in the
@@ -242,9 +230,9 @@ mux.Handle("/", router.Middleware(spa))
 
 ## Interactions (`content`)
 
-The content module owns comments, reactions, favorites and polls in the
-host schema's `content_*` interaction tables. Every row is keyed by the `ContentRef` of
-the host-owned work: `(tenant_id, content_kind, content_id,
+The content module owns comments, reactions, favorites and polls in
+ContentKit's `content_*` interaction tables. Every row is keyed by the
+`ContentRef` of the catalog's content: `(tenant_id, content_kind, content_id,
 content_version_id)`; comment threading is `reply_to_id`. Routes are
 `/{kind}/{id}/comments|like|dislike|reaction|favorite`,
 `/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=&author=`,
@@ -257,10 +245,10 @@ Ports (in `content` unless qualified):
 
 | Port | Required | Contract |
 |---|---|---|
-| `Auth` | yes | `auth.Authenticator` (Auth above); `NewRuntime` fills it from `RuntimeConfig.Auth` |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
-| `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); `NewRuntime` fills it from `RuntimeConfig.UserInfo` |
-| `Media` | no | poll images in ContentKit media (see below); absent = image routes answer 501 |
+| `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
+| `access.ContentResolver` | yes (the engine passes the catalog's) | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
+| `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
+| `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment or catalog text publishes; absent = publish (see Moderation) |
 | `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
@@ -275,34 +263,27 @@ deleted account) has no author; a directory or media failure is logged and
 leaves bare ids, never failing the response. The avatar needs
 `content.Options.Media`; without `UserInfo` authors are bare ids.
 
-**Poll images** live in media folders `{tenant}/poll/{poll_id}/`
-(`Media.PollKind`), **content images** (covers, inline body images) in
-`{tenant}/{kind}/{content_id}/`. Register each kind with a `Named` upload
-path and its public preset (`To: "{name}.webp"`); route poll uploads to
-`rt.Content.CanUpload` and `rt.Content.MediaResolver()`, content uploads to
-`catalogStore.CanUpload` and `catalogStore.Resolver()`. The editor uploads
-with the SDK's `upload(file, {ref: {kind, id}, path})` (the server names it
-`i-{uuid}`), then hands the name to ContentKit.
+**Content and poll images.** A content item's cover and body images are its
+content-level media item's (`{tenant}/{kind}/{id}/`, uploads marked
+`Content`); poll images live in `{tenant}/poll/{poll_id}/`. Each is a
+`Named` upload (the server names it `i-{uuid}`) with a public preset. The
+catalog and the content module answer their uploads and reads.
 
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body
-stores a reference, `contentkit:i-{uuid}` (the SDK's `imageRef`), which the
-host's sanitizer (`catalog.Options.Body`) must keep. Reads resolve names and
-references to current public files in one lookup per response; one without a
-public file (unpublished, still rendering) stays as it is.
+stores a reference, `contentkit:i-{uuid}` (the SDK's `imageRef`), which
+`Deps.BodyProcessor` must keep. Reads resolve them to current public files in
+one lookup per response; one without a public file stays as it is.
 
 | Route | Body | Result |
 |---|---|---|
 | `POST /v1/contents/{id}/images` | `{"image": "i-…"}` | `{"ref", "url"}`: the reference for the body; a URL that shows it now (null until rendered) |
 | `PATCH /v1/contents/{id}` | `{"cover": "i-…"}` (`""` clears) | the content, `cover.url` null until it has a public file |
-| `PUT /polls/{id}/image` | same | `{"image_url"}` (same) |
-| `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` (same) |
+| `PUT /v1/polls/{id}/image` | same | `{"image_url"}` (same) |
+| `PUT /v1/polls/{id}/options/{oid}/image` | same | `{"image_url"}` (same) |
 
 Public files exist only while the item is live; its editors see an
-unpublished item's images through an editor read (`GET /media/{kind}/{id}?editor`);
-the SDK's `useContent` does this and turns the URLs it shows back into
-references when it saves. Catalog writes queue `ExposeTx` in their
-transaction.
+unpublished item's images through an editor read (the SDK's `useContent`).
 
 There is no `Recorder` and no `Moderation` port: reactions and favorites feed
 the signal plane through ContentKit's own preference outbox, and the
@@ -316,10 +297,11 @@ after initializing fresh stores ([docs/migration.md](docs/migration.md)).
 ## Moderation (comments and content)
 
 Every comment create/edit and every text write of live or publishing content
-is screened through `Options.Moderator` after sanitizing; the moderator sees
-the tenant, the opaque actor, the content reference, the kind, the item id on
-an edit, and the text (title, description and body for content). A held edit
-of a live item keeps serving its last approved text. The verdict sets the item's
+is screened
+through `Options.Moderator` after sanitizing; the moderator sees the tenant,
+the opaque actor, the content reference, the kind, the item id on an edit,
+and the text (title, description and body for content; a held edit of a
+live item keeps serving its approved text). The verdict sets the item's
 `moderation` state:
 
 - `approve` publishes (`201`/`200`).
@@ -335,15 +317,14 @@ of a live item keeps serving its last approved text. The verdict sets the item's
   ever published unscreened and no submission is lost.
 - No moderator: everything publishes.
 
-Review queue: `rt.Content.ListHeld(ctx, kind, cursor, limit)` pages held
-comments or content oldest-first (`HeldItem` carries the body, the content
+Review queue: `GET /v1/moderation/held?kind=comment|content&cursor=&limit=` pages
+held comments or content oldest-first (each carries the body, the content
 reference, the reason, model, prompt version, confidence, any moderator error
-and `revision`); `rt.Content.Resolve(ctx, kind, id, ReviewDecision{Revision,
-Decision, Reviewer, Reason})` writes the final state: `approve` publishes (counts and the keyword
-index follow), `reject` keeps the item author-visible as `rejected` with the
-reason. Over HTTP: `GET /moderation/held?kind=comment|content&cursor=&limit=` and
-`POST /moderation/{kind}/{id}/resolve {"revision","decision","reason"}` (the
-actor id is the reviewer), both gated by `root:moderation:review`.
+and `revision`); `POST /v1/moderation/{kind}/{id}/resolve
+{"revision","decision","reason"}` (the actor id is the reviewer) writes the
+final state: `approve` publishes (counts and the keyword index follow),
+`reject` keeps the item author-visible as `rejected` with the reason. Both
+need `root:moderation:review`.
 `GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
@@ -369,9 +350,7 @@ Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
 the write. After 3 consecutive failures the moderator is skipped (writes held
 at once) for `Options.ModeratorCooldown` (30s); then one trial call reaches
 it while other writes are still held, and its result closes or reopens the
-breaker. Register
-`Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
-tripped moderator shows on statusz and `app_dependency_up`.
+breaker. The engine's `contentkit_moderator` probe fails while it is tripped.
 
 ## Anonymous participation
 
@@ -457,10 +436,8 @@ before) or `free_text`: one answer per signed-in actor in
 Creating a free-text poll without `Options.Classifier` is refused (`501`,
 `content.ErrNoClassifier`). Each stored or edited answer is classified right
 after commit; a classifier failure keeps the answer with `classified: false`
-and the host retries with `rt.Content.ReclassifyPending(ctx, after, limit)` on a
-schedule (returns `ClassificationPage{Classified, Next}` and the first error).
-Continue `Next` even after provider failure, and restart from empty when the
-sweep ends. This is a per-sweep cursor, never a durable high-water mark. The classifier
+and the engine's reclassify job retries every pending answer every 10
+minutes, each sweep from the start. The classifier
 returns a group id and label for an immutable `(tenant, answer_id, revision)`.
 ContentKit CAS-persists that assignment only while the revision is current.
 Membership, labels and counts are read from these durable assignments:
@@ -473,11 +450,10 @@ old assignment until the new revision is classified; late old results cannot win
 
 ## Interaction erasure
 
-`rt.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
+`ck.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data and data retained by
-moderator/classifier providers. Standalone content consumers call
-`rt.Content.EraseSubjects`; `rt.EmbeddedHub.EraseSubjects` is analytics-only. A
+moderator/classifier providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -492,8 +468,7 @@ Content erasure commits atomically:
   answers, with exact counter decrements, and of comment bans of them or in
   their owner scope (global bans they set stay, without their id);
 - redaction of the subject's unpublished payloads (held/rejected comments)
-  and their
-  moderation metadata. An item with a previously approved payload keeps it
+  and their moderation metadata. An item with a previously approved payload keeps it
   without republishing; a never-published item becomes a tombstone, keeping its
   row and replies.
 
@@ -537,12 +512,10 @@ favorites of fenced subjects never export.
 
 ContentKit builds its documents: one per content item and language from the
 catalog (title, aliases, its groups' names as keywords; a held edit indexes
-the approved text) and one per group and language from the groups store.
-Writes mark them dirty in their own transaction; schedule
-`worker.SyncOnce(ctx, worker.Options{…, Sources: []worker.Source{catalogStore, groupStore}})`.
-`SearchOptions.Viewer` (a `catalog.Viewer`) applies the one visibility rule
-inside every retrieval route, before any limit. Each hit is the item
-(`ContentID`), the matched `Language` and its best `Score`.
+the approved text) and one per group and language. Writes mark them dirty in
+their own transaction. Searches apply the catalog's visibility rule
+(`catalog.Viewer`) inside every retrieval route, before any limit; each hit
+is the item (`ContentID`), the matched `Language` and its best `Score`.
 
 ## Pages and candidate depth
 
@@ -559,12 +532,13 @@ inside every retrieval route, before any limit. Each hit is the item
   in both is returned once, represented by its requested-language document;
   ties never prefer English.
 
-## Worker
+## Search job
 
-`worker.SyncOnce` holds no connection or transaction across source calls, so
-a one-connection pool suffices. Each write is a short transaction fenced by
-the dirty revision: overlapping ticks only repeat work, and a stale build
-never overwrites a newer one.
+The engine's search job (every 30 s, and at start) drains the dirty queue and
+runs a bounded backfill. It holds no connection or transaction across
+builders; each write is a short transaction fenced by the dirty revision, so
+overlapping runs only repeat work and a stale build never overwrites a newer
+one.
 
 ## Media
 
@@ -724,8 +698,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 
 ### Uploads and commit ops
 
-`rt.Handler()` serves the upload API at `/media/upload` (`RuntimeConfig.Uploads`);
-mounted alone it is `media.UploadHandler(uploads, opts)`, behind the host's auth:
+The upload route group serves the upload API at `/v1/media/upload`:
 
 | Route | Does |
 | --- | --- |
@@ -763,8 +736,8 @@ out until `attach`.
 
 ### Reads and playback
 
-`rt.Handler()` serves the read API at `/media` (`RuntimeConfig.Reader`,
-`ReadLimit`); mounted alone it is `reader.Handler(media.HandlerOptions{Auth, Limit})`:
+The media route group serves the read API at `/v1/media`
+(`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
   `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
@@ -814,7 +787,7 @@ indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
 - `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
   one read: an item's images, one preset's, or one upload's by its `{name}`
   (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
-  when rendering; content bodies store references (Interactions).
+  when rendering; post bodies store references (Interactions).
 - `PublicImages(ctx, ref)` is one item's images; `Registry.DefaultImage`
   is a preset's default.
 
@@ -1121,9 +1094,11 @@ content's memberships in the kinds it names. Membership writes, group
 deletes, parent moves and merges keep `content_facets.group_ids` current (a
 version's effective groups, ancestors included: `EffectiveGroups`).
 `Options.ContentChanged` runs in the same transaction for whatever else
-derives from them. Engine jobs: `Recount` (counts per group, content kind and
+derives from them. Engine jobs: `Recount` (every 15 minutes: (counts per group, content kind and
 language from the facets, and automatic covers) and `RefreshWindows`
-(featured-rail windows). The store is a `worker.Source` for group documents.
+(every minute: featured-rail windows). The engine's search job builds group
+documents. The group route group serves `/v1/groups…` and
+`/v1/contents/{id}/groups`; writes need `root:groups:write`.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1138,22 +1113,22 @@ reactions and comment threads never do.
   the resolver's canonical reference (`Resolution.Ref`); comment reactions
   never export. `MyReactions`/`IsFavorited` read under it; `Counts` reads
   exactly the reference given.
-- **Sync**: schedule `rt.SyncPreferences(ctx)` from the host worker (e.g.
-  every few seconds). It sends rows past the tenant's watermark in revision
+- **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
   order as one `signal` event per subject × reference × axis (`Type` = axis,
-  `EventID` = `contentkit.PreferenceEventID`, `Revision`, `OccurredAt` =
+  `EventID` = `"current"`, `Revision`, `OccurredAt` =
   row `updated_at`, `Value`), then records a checkpoint; the newest revision
   wins, so re-sends are harmless. Each scan restarts from the newest
   checkpoint older than `Options.PreferenceSyncOverlap` (default 5m) before
   the previous sync: a write is delivered if its transaction commits within
   the overlap of allocating its revision. A failed sync advances nothing.
-- **Repair**: schedule `rt.ResyncPreferences(ctx)` (e.g. daily) and run it
-  after sink loss: a full re-send, zeros included.
-- **Erasure**: `rt.EraseSubjects` deletes the subject's rows behind the source
+- **Repair**: the engine re-sends every preference daily (zeros included),
+  which repairs a sink loss.
+- **Erasure**: `ck.EraseSubjects` deletes the subject's rows behind the source
   fence and fences the signal plane, which drops any late send.
-- **Restore**: after restoring PostgreSQL against a retained signal plane, run
-  `rt.Content.SeedPreferenceRevisionFloor(maxSinkRevision)` before writers
-  resume (only ever advances; fails closed outside `[0, MaxInt64/2]`).
+- **Restore**: after restoring PostgreSQL against a retained signal plane, the
+  preference revision floor must be seeded to the sink's newest revision
+  before writers resume (`content.Runtime.SeedPreferenceRevisionFloor`, only
+  ever advancing; an operator step until the import API exposes it).
 
 ## Attribution export (paged evaluation data)
 
@@ -1182,9 +1157,9 @@ true only when:
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable; schedule
-`hub.EnforceErasures` and run it after every restore, after re-erasing the
-subjects deleted since the backup. A shared account exists in every tenant:
+after the fence or came back with a restore) is unreadable; the engine's
+erasure job removes it daily. After a restore, re-erase the subjects deleted
+since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
 ## Discovery candidates
@@ -1201,7 +1176,7 @@ type Candidates interface { // package discovery
 Candidates are ranked best-first; oversample past `q.Limit`. The hub then
 applies the same policy to every source: tenant and `ContentKinds`, never the
 anchor, seen works (per options), always disliked works, dedupe, limit, and the
-`Recommend` popularity fill. `EmbeddedConfig.Candidates` nil =
+`Recommend` popularity fill. `Deps.Candidates` nil =
 `discovery.Engagement` (co-engagement seeded from the subject's top works).
 To switch sources, set that one field; wrap it in `Fallback` so errors and thin
 results fall back to engagement:
@@ -1245,13 +1220,13 @@ priors, the judged fixture and the host adoption steps.
 
 ## Migration checklist
 
-- Create and reuse one `contentkit.Runtime` per tenant.
-- Wire the catalog: `catalog.New`, `RuntimeConfig.Contents`, `cat.RiverJobs()`, `groups.Options.ContentChanged`, and the worker's `Sources`.
+- Create and reuse one `contentkit.Engine` per tenant.
+- Create content through `/v1/contents` (or `Engine.Client`); ContentKit owns it, its facets, documents and visibility.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
-- Apply the baselines with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
+- `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
-- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content and `poll` kinds with a `Named` upload path and its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
+- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' content-level `Named` uploads and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
