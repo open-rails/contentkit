@@ -172,7 +172,7 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		if err != nil {
 			return nil, fmt.Errorf("server: OpenRails: %w", err)
 		}
-		engineDeps.Billing = ckopenrails.Entitlements(billing)
+		engineDeps.Billing = ckopenrails.Billing(billing)
 	}
 	if cfg.Engine.Media != nil {
 		b := cfg.S3

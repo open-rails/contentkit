@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/helpers/notify"
 
+	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
@@ -25,6 +26,7 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/notification"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // One mount serves every module at its sub-path, and every route answers
@@ -37,7 +39,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
 	anon := ""
-	f := serve(t, w.engine(nil))
+	bill := w.billing()
+	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Billing = bill }))
 	item := "/gallery/" + cid(1)
 
 	// What signed-out visitors may do: nothing here (the default).
@@ -229,6 +232,24 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
 	f.want(http.StatusOK, staff, "POST", "/groups/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
+
+	// Offers on content, a version and a sellable group, over a real OpenRails merchant.
+	var offer offers.Offer
+	f.want(http.StatusForbidden, user, "PUT", "/contents/"+cid(1)+"/offer", map[string]any{"amount": "4.99"}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/offer", map[string]any{"amount": "4.99"}, &offer)
+	if offer.Terms.Amount != 4_990_000 {
+		t.Fatalf("offer %+v", offer)
+	}
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/versions/"+cid(10)+"/offer", map[string]any{"amount": "1.50"}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/contents/"+cid(1)+"/versions/"+cid(10)+"/offer", nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/offer", map[string]any{"amount": "9.99"}, nil)
+	f.want(http.StatusConflict, user, "POST", "/groups/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, user, "DELETE", "/groups/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/offer", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/me/library", nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/offers?state=active", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/offers", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/contents/"+cid(1)+"/offer", nil, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
 	mediaScenario(t, f, user, anon)

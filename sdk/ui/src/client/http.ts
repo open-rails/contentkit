@@ -28,6 +28,8 @@ export interface ContentKitMounts {
   catalog?: string;
   /** User inbox. Default `{baseUrl}/v1/notifications`. */
   notifications?: string;
+  /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
+  offers?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;

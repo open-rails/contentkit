@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -35,6 +36,8 @@ type Config struct {
 	// ClickHouse is the signal plane: signals, preferences, popularity and
 	// discovery. Without it they are off.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
+	// Offers prices what creators and staff put on sale (needs Deps.Billing).
+	Offers offers.Config `yaml:"offers" json:"offers"`
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
 }
@@ -172,9 +175,10 @@ type Deps struct {
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
 	// authors' names. Nil shows authors by id.
 	Users userinfo.Lookup
-	// Billing answers which access keys a subject holds (adapters/openrails
-	// over an embedded engine or the remote client).
-	Billing access.Entitlements
+	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
+	// over an embedded engine or the remote client): held keys, offers' products
+	// and prices, free grants. Nil holds no keys and sells nothing.
+	Billing access.Billing
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store

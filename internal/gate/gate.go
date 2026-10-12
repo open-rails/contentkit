@@ -319,9 +319,18 @@ var (
 	_ auth.PermissionChecker   = (*memo)(nil)
 	_ auth.RecentSignInChecker = (*memo)(nil)
 	_ auth.Bound               = (*memo)(nil)
+	_ access.Entitled          = (*memo)(nil)
 )
 
 func (m *memo) Identity() auth.Identity { return m.v.Identity() }
+
+// Entitlements forwards the token's entitlement claims (access.Entitled).
+func (m *memo) Entitlements() []string {
+	if e, ok := m.v.(access.Entitled); ok {
+		return e.Entitlements()
+	}
+	return nil
+}
 
 func (m *memo) Can(ctx context.Context, scope auth.Scope, permission string) (ok bool, err error) {
 	key := canKey{scope, permission}

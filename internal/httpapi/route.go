@@ -42,13 +42,16 @@ const (
 	Notifications Module = "notifications"
 	// Kinds is the site's public content model.
 	Kinds Module = "kinds"
+	// Offers is offers on content, versions and groups, free group joins and
+	// the viewer's library.
+	Offers Module = "offers"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications}
+var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications, Offers}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
-// content, groups and kinds at its root and the others beneath their own
+// content, groups, offers and kinds at its root and the others beneath their own
 // first segment. Modules sharing a prefix share one router.
 func (m Module) Prefix() string {
 	switch m {
@@ -69,7 +72,7 @@ func (m Module) Prefix() string {
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
-	return []string{"media", "codes", "groups", "contents", "kinds", "catalog", "notifications"}
+	return []string{"media", "codes", "groups", "contents", "kinds", "offers", "me", "catalog", "notifications"}
 }
 
 // Tier is what a route requires of its caller before its handler acts. The
@@ -329,6 +332,8 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
 	case "module:codes", "module:groups", "module:catalog", "module:notifications", "module:kinds":
 		return []string{CodeInternal}
+	case "module:offers":
+		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil
 }

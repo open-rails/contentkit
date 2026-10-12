@@ -1,8 +1,8 @@
-// Package access is the gating vocabulary shared by content interactions and
-// media: the Actor, the ContentResolver port and its Resolution; and the
-// paywall model over billing entitlements: the key grammar (content:,
-// members:, tiers), item rules, the Gate, its listing Filter with a SQL
-// predicate, and the per-request memo. Billing is the Entitlements port.
+// Package access is ContentKit's access model: the Actor; the key grammar
+// (<tenant>:content:<id>, <tenant>:content:<id>/<version>, <tenant>:group:<id>
+// and configured tiers); rules stored on content, versions and groups; the
+// Gate deciding versions from one billing read per request, its listing
+// Filter and SQL over content_facets; and the Billing dependency.
 package access
 
 import (
@@ -50,6 +50,22 @@ func (a Actor) Can(ctx context.Context, scope auth.Scope, permission string) (bo
 		return false, nil
 	}
 	return pc.Can(ctx, scope, permission)
+}
+
+// Entitled is an optional capability of an actor's auth.Verified: the
+// entitlement claims its verified token carries. The Gate answers a tier in
+// kinds.Config.TokenClaims from them without a billing read, so a refund
+// keeps such a tier until the token expires.
+type Entitled interface {
+	Entitlements() []string
+}
+
+// claims is the actor's token entitlement claims.
+func (a Actor) claims() []string {
+	if e, ok := a.Verified.(Entitled); ok && !a.Anonymous {
+		return e.Entitlements()
+	}
+	return nil
 }
 
 // Resolution is the host's verdict about a content reference for one actor.

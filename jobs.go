@@ -122,10 +122,14 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	if e.media == nil {
-		return own
+	parts := []riverhelpers.Contribution{own}
+	if e.media != nil {
+		parts = append(parts, e.media.jobs.RiverJobs())
 	}
-	return riverhelpers.Group(own, e.media.jobs.RiverJobs())
+	if e.offers != nil {
+		parts = append(parts, e.offers.RiverJobs())
+	}
+	return riverhelpers.Group(parts...)
 }
 
 type searchSyncArgs struct{}

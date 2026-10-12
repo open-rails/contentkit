@@ -48,6 +48,7 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
+	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -64,7 +65,7 @@ type Engine struct {
 	pool        *pgxpool.Pool
 	log         *slog.Logger
 	auth        auth.Authenticator
-	billing     access.Entitlements
+	gate        *access.Gate
 	classifier  bool // free-text answers to reclassify
 
 	hub      *hub.Hub
@@ -73,6 +74,7 @@ type Engine struct {
 	content  *content.Runtime
 	notices  *notification.Store
 	groups   *groups.Store
+	offers   *offers.Service
 	media    *engineMedia
 	resolver access.ContentResolver
 	uploader media.UploadAuthorizer
@@ -109,7 +111,7 @@ type engineMedia struct {
 // It starts no jobs: Start does, and jobs queued before it wait. ctx bounds
 // the wait for the databases.
 func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, billing: deps.Billing, log: deps.Logger, classifier: deps.Classifier != nil}
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -135,6 +137,9 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		CH: e.ch, CHDatabase: cfg.ClickHouse.Database, Candidates: deps.Candidates}); err != nil {
 		return nil, err
 	}
+	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log}); err != nil {
+		return nil, err
+	}
 	e.resolver = engineResolver{e: e, host: deps.Resolver}
 	e.uploader = engineUploader{e: e, host: deps.CanUpload}
 	if cfg.Media != nil {
@@ -146,7 +151,7 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		return nil, err
 	}
 	e.notices = e.content.Notifications
-	if err := e.mount(); err != nil {
+	if err := e.mount(deps); err != nil {
 		return nil, err
 	}
 	e.jobs = &jobs{e: e}
@@ -373,7 +378,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 }
 
 // mount builds each configured module's handler and the in-process mux.
-func (e *Engine) mount() error {
+func (e *Engine) mount(deps Deps) error {
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
 	nh, err := e.notices.Handler(e.auth)
 	if err != nil {
@@ -393,6 +398,15 @@ func (e *Engine) mount() error {
 	}
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
 		return err
+	}
+	if deps.Billing != nil {
+		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,
+			Billing: deps.Billing, Gate: e.gate, Logger: e.log}); err != nil {
+			return err
+		}
+		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
+			return err
+		}
 	}
 	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
 	if err != nil {

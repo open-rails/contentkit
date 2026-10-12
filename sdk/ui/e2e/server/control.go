@@ -42,8 +42,8 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(mount(h.ck, apiPrefix, contentkit.AllRoutes))))
-	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(mount(h.members, membersPrefix, contentkit.AllRoutes))))
+	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(mount(h.ck, apiPrefix, h.ck.RouteGroups()))))
+	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(mount(h.members, membersPrefix, h.members.RouteGroups()))))
 	mux.Handle(onUploadPrefix+"/", h.faults.api(behindProxy(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)

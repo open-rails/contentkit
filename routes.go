@@ -47,9 +47,13 @@ const (
 	// NotificationRoutes: the user inbox and the host's publish route
 	// (/v1/notifications).
 	NotificationRoutes
+	// OfferRoutes: offers on content, versions and groups, free group joins
+	// and the viewer's library (/v1/.../offer, /v1/groups/{id}/join,
+	// /v1/me/library, /v1/offers).
+	OfferRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | OfferRoutes
 )
 
 var groupModules = []struct {
@@ -63,10 +67,11 @@ var groupModules = []struct {
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
 	{GroupRoutes, []httpapi.Module{httpapi.Groups}, "groups"},
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
+	{OfferRoutes, []httpapi.Module{httpapi.Offers}, "offers"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "groups", "notifications" or "all"), as a server's configuration
+// "codes", "groups", "notifications", "offers" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups
@@ -108,13 +113,15 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 		}
 		for _, m := range g.modules {
 			if e.modules[m] == nil {
-				return nil, fmt.Errorf("contentkit: route group %s needs Config.Media", g.name)
+				return nil, fmt.Errorf("contentkit: route group %s needs %s", g.name, needs[g.group])
 			}
 			modules[m] = e.modules[m]
 		}
 	}
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
+
+var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media", OfferRoutes: "Deps.Billing"}
 
 // RouteGroups is every route group the engine can serve: those whose modules
 // its Config provides.

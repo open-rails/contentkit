@@ -136,13 +136,13 @@ jobs:
         go vet ./...
         go test ./... -count=1 -race
   openrails-adapter:
-    # adapters/openrails is its own module: the access port over a real embedded OpenRails.
+    # adapters/openrails is its own module: access.Billing and offers over a real embedded OpenRails.
     if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18
+        image: groonga/pgroonga:4.0.8-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit

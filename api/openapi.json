@@ -5161,6 +5161,569 @@
           "request"
         ]
       }
+    },
+    "/v1/contents/{id}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{vid}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For owners of the group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For owners of the group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/join": {
+      "post": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Joins a group free to join: grants the viewer its key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupJoin"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Leaves a group joined free; a bought membership stays.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupJoin"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/library": {
+      "get": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "The content the viewer bought, newest first, deleted content included.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of the titles",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/offers": {
+      "get": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Offers, newest first, with their OpenRails sync state.",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "active or withdrawn",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unsynced",
+            "in": "query",
+            "description": "only offers OpenRails does not match yet",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:offers:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -6457,6 +7020,25 @@
           }
         }
       },
+      "GroupJoin": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "key",
+          "member"
+        ]
+      },
       "GroupKind": {
         "type": "object",
         "properties": {
@@ -6842,6 +7424,64 @@
           "versions"
         ]
       },
+      "LibraryItem": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "whole": {
+            "type": "boolean"
+          },
+          "version_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "content_id",
+          "kind",
+          "title",
+          "deleted",
+          "whole",
+          "version_ids"
+        ]
+      },
+      "LibraryPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryItem"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "complete"
+        ]
+      },
       "MemberPage": {
         "type": "object",
         "properties": {
@@ -6988,6 +7628,76 @@
           "language",
           "kind",
           "name"
+        ]
+      },
+      "Offer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target"
+          },
+          "key": {
+            "type": "string"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "withdrawn"
+            ]
+          },
+          "synced": {
+            "type": "boolean"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "price_id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "target",
+          "key",
+          "terms",
+          "state",
+          "synced",
+          "revision",
+          "updated_at"
+        ]
+      },
+      "OfferPage": {
+        "type": "object",
+        "properties": {
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Offer"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "offers"
         ]
       },
       "Op": {
@@ -8022,6 +8732,50 @@
           "decision"
         ]
       },
+      "Target": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "content",
+              "group",
+              "version"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ]
+      },
+      "Terms": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "access_hours": {
+            "type": "integer"
+          },
+          "renew_hours": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ]
+      },
       "Text": {
         "type": "object",
         "properties": {
@@ -8265,7 +9019,8 @@
     "codes": "/v1/codes",
     "groups": "/v1",
     "catalog": "/v1/catalog",
-    "notifications": "/v1/notifications"
+    "notifications": "/v1/notifications",
+    "offers": "/v1"
   },
   "x-contentkit-error-sets": {
     "module:kinds": [
@@ -8303,6 +9058,10 @@
     ],
     "module:notifications": [
       "internal_error"
+    ],
+    "module:offers": [
+      "internal_error",
+      "unavailable"
     ]
   },
   "x-contentkit-error-codes": {

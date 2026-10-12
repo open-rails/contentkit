@@ -10,7 +10,7 @@ require (
 	github.com/open-rails/contentkit v0.78.0
 	github.com/open-rails/contentkit/adapters/openrails v0.2.0
 	github.com/open-rails/helpers v1.12.0
-	github.com/open-rails/openrails v0.240.0
+	github.com/open-rails/openrails v0.248.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.47.0
 )
@@ -91,7 +91,7 @@ require (
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
-	github.com/open-rails/migratekit v1.11.0 // indirect
+	github.com/open-rails/migratekit v1.11.1 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect

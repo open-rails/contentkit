@@ -25,8 +25,11 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 
+	"github.com/open-rails/openrails"
+
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
+	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -126,7 +129,7 @@ func (w *world) config() contentkit.Config {
 				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag", "series"}},
 				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
-			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true}}},
+			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
@@ -139,6 +142,31 @@ func (w *world) config() contentkit.Config {
 func (w *world) deps() contentkit.Deps {
 	return contentkit.Deps{Postgres: w.pool, Auth: w.ak.Authenticator(), Users: w.ak.UserInfo(), Store: w.env.Store,
 		Resolver: w, CanUpload: w}
+}
+
+// billing is the site's merchant on a real OpenRails engine embedded over
+// the same database.
+func (w *world) billing() access.Billing {
+	w.t.Helper()
+	ctx := w.t.Context()
+	schema := "ckor_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	w.t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = w.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+	})
+	engine, err := openrails.New(ctx, openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema},
+		TestMode: openrails.Sandbox, ProviderWriteMode: openrails.ProviderWritesReadOnly,
+		Merchants: map[string]openrails.MerchantDeclaration{w.tenant: {DisplayName: "E2E"}}}, openrails.Deps{Postgres: w.pool})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	w.t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	merchant, err := engine.MerchantBySlug(w.tenant)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return ckopenrails.Billing(merchant)
 }
 
 // galleries writes gallery contents cid(n), each with the version
@@ -260,7 +288,7 @@ func serve(t *testing.T, e *contentkit.Engine) *server {
 		t.Fatal(err)
 	}
 	s := &server{t: t, checker: checker}
-	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: contentkit.AllRoutes})
+	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: e.RouteGroups()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,299 +3,62 @@ package access
 import (
 	"fmt"
 	"regexp"
-	"slices"
-	"strings"
 )
 
-// Columns names a listing's access columns. Every string is trusted host SQL;
-// never build one from user input.
-type Columns struct {
-	ID     string           // the item's uuid column: "p.id"
-	Kind   string           // the item kind, a declared OwnedKinds entry: "post"
-	Level  string           // an expression yielding the host's level value: "p.access_policy"
-	Levels map[string]Level // host value -> Level; rows of an unmapped value are never admitted
-	// Tier is an expression yielding a TierLevel row's tier name; TierName
-	// instead names the one declared tier every TierLevel value means.
-	Tier     string
-	TierName string
-	// Scope is the membership scope's uuid column ("p.channel_id") and
-	// ScopeKind its declared MemberKinds entry ("channel"); required when a
-	// value maps to MembersLevel.
-	Scope     string
-	ScopeKind string
-	ArgPrefix string // named-arg prefix; default "ck_"
-}
+// Mode is a listing's access mode.
+type Mode string
 
-// Branch classes.
 const (
-	ClassPublic     = "public"     // public rows
-	ClassTier       = "tier"       // rows of a held tier
-	ClassMembers    = "members"    // rows of a scope the viewer is a member of
-	ClassOwned      = "owned"      // rows the viewer owns
-	ClassCandidates = "candidates" // rows an incomplete keyspace may unlock: Gate.Settle decides them
+	// Hide lists only what the viewer opens (a purchased library).
+	Hide Mode = "hide"
+	// Lock lists everything; Decide marks what stays locked.
+	Lock Mode = "lock"
 )
 
-// Branch is one access class's predicate.
-type Branch struct{ Class, SQL string }
+var aliasRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
-var (
-	argPrefixRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,30}$`)
-	simpleExpr  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
-)
-
-type sqlPlan struct {
-	level, tier, scope, id, arg                    string
-	public, tierLevels, membersLevels, paid, tiers []string
-	members, owned                                 []string
-	tierHeld, membersComplete, ownedComplete       bool
-}
-
-// SQL returns one boolean predicate over c admitting the rows the viewer may
-// see, plus, while a keyspace is truncated, that keyspace's candidates
-// (Gate.Settle decides them). An Unknown filter admits public rows only. The
-// text depends only on c, so one prepared statement serves every viewer; args
-// are pgx named args (pgx.NamedArgs), the form search.Eligibility takes:
-//
-//	(p.access_policy = ANY(@ck_open::text[])
-//	 OR (p.access_policy = ANY(@ck_members_levels::text[]) AND (p.channel_id = ANY(@ck_members::uuid[]) OR NOT @ck_members_complete::boolean))
-//	 OR (p.id = ANY(@ck_owned::uuid[]) AND p.access_policy = ANY(@ck_levels::text[]))
-//	 OR (p.access_policy = ANY(@ck_paid_levels::text[]) AND NOT @ck_owned_complete::boolean))
-func (f *Filter) SQL(c Columns) (string, map[string]any, error) {
-	p, err := f.plan(c)
-	if err != nil {
-		return "", nil, err
+// SQL returns a boolean predicate over the content_facets row aliased alias,
+// with its pgx named args (all prefixed access_). Hide admits the rows the
+// viewer opens: free, a held tier the rule names, a held key of the rule's
+// group or of a group holding the row (group_ids), a held content or version
+// key; plus, while a keyspace is truncated, its candidates, which
+// Gate.Settle decides. An Unknown filter admits no candidates. Lock admits
+// every row. The text depends only on alias and mode, so one prepared
+// statement serves every viewer. A members-only listing (listing = members)
+// combines it: listing = 'listed' OR (listing = 'members' AND <SQL(Hide)>).
+func (f *Filter) SQL(alias string, mode Mode) (string, map[string]any, error) {
+	if !aliasRe.MatchString(alias) {
+		return "", nil, fmt.Errorf("access: SQL alias %q must match %s", alias, aliasRe)
 	}
-	parts := []string{p.level + " = ANY(@" + p.arg + "open::text[])"}
-	if p.tier != "" {
-		parts = append(parts, p.tierSQL())
+	switch mode {
+	case Lock:
+		return "true", map[string]any{}, nil
+	case Hide:
+	default:
+		return "", nil, fmt.Errorf("access: unknown listing mode %q", mode)
 	}
-	if len(p.membersLevels) > 0 {
-		parts = append(parts, fmt.Sprintf("(%s = ANY(@%smembers_levels::text[]) AND (%s = ANY(@%smembers::uuid[]) OR NOT @%smembers_complete::boolean))",
-			p.level, p.arg, p.scope, p.arg, p.arg))
-	}
-	parts = append(parts, p.ownedSQL(),
-		fmt.Sprintf("(%s = ANY(@%spaid_levels::text[]) AND NOT @%sowned_complete::boolean)", p.level, p.arg, p.arg))
-	return "(" + strings.Join(parts, "\n OR ") + ")", p.args(), nil
-}
-
-// Branches splits SQL by access class for a UNION listing: run each branch
-// with the keyset and LIMIT on its own index, then merge (the recipe in
-// HOST_INTEGRATION "Listing with access"). Branches that can match nothing for
-// this viewer are left out; none means an empty page. All share one args map.
-func (f *Filter) Branches(c Columns) ([]Branch, map[string]any, error) {
-	p, err := f.plan(c)
-	if err != nil {
-		return nil, nil, err
-	}
-	var out []Branch
-	if len(p.public) > 0 {
-		out = append(out, Branch{ClassPublic, p.level + " = ANY(@" + p.arg + "public_levels::text[])"})
-	}
-	switch {
-	case p.tier != "" && len(p.tiers) > 0:
-		out = append(out, Branch{ClassTier, p.tierSQL()})
-	case p.tier == "" && p.tierHeld:
-		out = append(out, Branch{ClassTier, p.level + " = ANY(@" + p.arg + "tier_levels::text[])"})
-	}
-	if len(p.members) > 0 {
-		out = append(out, Branch{ClassMembers, fmt.Sprintf("(%s = ANY(@%smembers_levels::text[]) AND %s = ANY(@%smembers::uuid[]))",
-			p.level, p.arg, p.scope, p.arg)})
-	}
-	if len(p.owned) > 0 {
-		out = append(out, Branch{ClassOwned, p.ownedSQL()})
-	}
-	var cand []string
-	if len(p.membersLevels) > 0 && !p.membersComplete {
-		cand = append(cand, p.level+" = ANY(@"+p.arg+"members_levels::text[])")
-	}
-	if !p.ownedComplete {
-		cand = append(cand, p.level+" = ANY(@"+p.arg+"paid_levels::text[])")
-	}
-	if len(cand) > 0 {
-		out = append(out, Branch{ClassCandidates, "(" + strings.Join(cand, " OR ") + ")"})
-	}
-	return out, p.args(), nil
-}
-
-// Anyone is the audience of every public row: an anonymous visitor.
-const Anyone = ""
-
-// Audiences returns a text[] expression over c naming who opens a row without
-// owning it: Anyone and every one of tiers for a public row, the row's tier for
-// a TierLevel row of one of tiers, nobody otherwise (members, PPV, unmapped).
-// Aggregates count it per audience (catalog totals); ID, Kind and Scope are
-// unused. Args are pgx named args under c's prefix.
-func (c Columns) Audiences(tiers []string) (string, map[string]any, error) {
-	p := c.ArgPrefix
-	if p == "" {
-		p = "ck_"
-	}
-	switch {
-	case !argPrefixRe.MatchString(p):
-		return "", nil, fmt.Errorf("access: Columns.ArgPrefix %q must match %s", p, argPrefixRe)
-	case c.Level == "" || len(c.Levels) == 0:
-		return "", nil, fmt.Errorf("access: Columns needs Level and Levels")
-	case c.Tier != "" && c.TierName != "":
-		return "", nil, fmt.Errorf("access: Columns sets both Tier and TierName")
-	}
-	seen := map[string]bool{}
-	for _, t := range tiers {
-		if !validTier(t) || seen[t] {
-			return "", nil, fmt.Errorf("access: tier %q is invalid or repeated", t)
-		}
-		seen[t] = true
-	}
-	if c.TierName != "" && !seen[c.TierName] {
-		return "", nil, fmt.Errorf("access: Columns.TierName %q is not among the tiers", c.TierName)
-	}
-	public, tierLevels := []string{}, []string{}
-	values := make([]string, 0, len(c.Levels))
-	for v := range c.Levels {
-		values = append(values, v)
-	}
-	slices.Sort(values)
-	for _, v := range values {
-		switch c.Levels[v] {
-		case Public:
-			public = append(public, v)
-		case TierLevel:
-			tierLevels = append(tierLevels, v)
-		case MembersLevel, PPV, MembersPPV:
-		default:
-			return "", nil, fmt.Errorf("access: Columns.Levels[%q] = %q is not a Level", v, c.Levels[v])
+	tiers := []string{}
+	for _, t := range f.g.tiers {
+		if f.tiers[t] {
+			tiers = append(tiers, t)
 		}
 	}
-	if len(tierLevels) > 0 && c.Tier == "" && c.TierName == "" {
-		return "", nil, fmt.Errorf("access: Columns maps a value to TierLevel but sets neither Tier nor TierName")
+	versions := sortedKeys(f.versions)
+	args := map[string]any{
+		"access_tiers":             tiers,
+		"access_groups":            f.Groups(),
+		"access_contents":          f.Contents(),
+		"access_versions":          versions,
+		"access_contents_complete": f.anonymous || f.contentsComplete,
+		"access_groups_complete":   f.anonymous || f.groupsComplete,
 	}
-	args := map[string]any{p + "public_levels": public, p + "tier_levels": tierLevels,
-		p + "audiences": append([]string{Anyone}, tiers...), p + "tiers": append([]string{}, tiers...)}
-	tier := "NULL::text"
-	switch {
-	case c.Tier != "":
-		tier = expr(c.Tier)
-	case c.TierName != "":
-		tier, args[p+"tier_name"] = "@"+p+"tier_name::text", c.TierName
-	}
-	level := expr(c.Level)
-	return fmt.Sprintf(`(CASE WHEN %[1]s = ANY(@%[2]spublic_levels::text[]) THEN @%[2]saudiences::text[]
- WHEN %[1]s = ANY(@%[2]stier_levels::text[]) AND %[3]s = ANY(@%[2]stiers::text[]) THEN ARRAY[%[3]s]::text[]
- ELSE '{}'::text[] END)`, level, p, tier), args, nil
-}
-
-func (p *sqlPlan) tierSQL() string {
-	return fmt.Sprintf("(%s = ANY(@%stier_levels::text[]) AND %s = ANY(@%stiers::text[]))", p.level, p.arg, p.tier, p.arg)
-}
-
-func (p *sqlPlan) ownedSQL() string {
-	return fmt.Sprintf("(%s = ANY(@%sowned::uuid[]) AND %s = ANY(@%slevels::text[]))", p.id, p.arg, p.level, p.arg)
-}
-
-func (p *sqlPlan) args() map[string]any {
-	open := slices.Clone(p.public)
-	if p.tierHeld {
-		open = append(open, p.tierLevels...)
-	}
-	a := map[string]any{
-		p.arg + "open":           open,
-		p.arg + "public_levels":  p.public,
-		p.arg + "tier_levels":    p.tierLevels,
-		p.arg + "owned":          p.owned,
-		p.arg + "paid_levels":    p.paid,
-		p.arg + "levels":         append(slices.Clone(p.public), p.paid...),
-		p.arg + "owned_complete": p.ownedComplete,
-	}
-	if p.tier != "" {
-		a[p.arg+"tiers"] = p.tiers
-	}
-	if len(p.membersLevels) > 0 {
-		a[p.arg+"members_levels"] = p.membersLevels
-		a[p.arg+"members"] = p.members
-		a[p.arg+"members_complete"] = p.membersComplete
-	}
-	return a
-}
-
-func (f *Filter) plan(c Columns) (*sqlPlan, error) {
-	g := f.g
-	p := &sqlPlan{arg: c.ArgPrefix, level: expr(c.Level), tier: expr(c.Tier), scope: expr(c.Scope), id: expr(c.ID),
-		public: []string{}, tierLevels: []string{}, membersLevels: []string{}, paid: []string{}, tiers: []string{}}
-	if p.arg == "" {
-		p.arg = "ck_"
-	}
-	switch {
-	case !argPrefixRe.MatchString(p.arg):
-		return nil, fmt.Errorf("access: Columns.ArgPrefix %q must match %s", p.arg, argPrefixRe)
-	case c.ID == "" || c.Level == "" || len(c.Levels) == 0:
-		return nil, fmt.Errorf("access: Columns needs ID, Level and Levels")
-	case !g.owned[c.Kind]:
-		return nil, fmt.Errorf("access: Columns.Kind %q is not in GateConfig.OwnedKinds", c.Kind)
-	case c.Tier != "" && c.TierName != "":
-		return nil, fmt.Errorf("access: Columns sets both Tier and TierName")
-	}
-	values := make([]string, 0, len(c.Levels))
-	for v := range c.Levels {
-		values = append(values, v)
-	}
-	slices.Sort(values)
-	for _, v := range values {
-		switch c.Levels[v] {
-		case Public:
-			p.public = append(p.public, v)
-			continue
-		case TierLevel:
-			p.tierLevels = append(p.tierLevels, v)
-		case MembersLevel:
-			p.membersLevels = append(p.membersLevels, v)
-		case PPV, MembersPPV:
-		default:
-			return nil, fmt.Errorf("access: Columns.Levels[%q] = %q is not a Level", v, c.Levels[v])
-		}
-		p.paid = append(p.paid, v)
-	}
-	if len(p.tierLevels) > 0 {
-		switch {
-		case c.Tier == "" && c.TierName == "":
-			return nil, fmt.Errorf("access: Columns maps a value to TierLevel but sets neither Tier nor TierName")
-		case c.TierName != "" && !g.tierSet[c.TierName]:
-			return nil, fmt.Errorf("access: Columns.TierName %q is not in GateConfig.Tiers", c.TierName)
-		}
-	}
-	if len(p.membersLevels) > 0 && (c.Scope == "" || !g.members[c.ScopeKind]) {
-		return nil, fmt.Errorf("access: Columns maps a value to MembersLevel; it needs Scope and a ScopeKind in GateConfig.MemberKinds (got %q)", c.ScopeKind)
-	}
-	if c.TierName != "" {
-		p.tierHeld = f.Tier(c.TierName)
-	}
-	if c.Tier != "" {
-		for _, t := range g.tiers {
-			if f.Tier(t) {
-				p.tiers = append(p.tiers, t)
-			}
-		}
-	}
-	// An unknown filter admits no candidates: it fails closed.
-	p.ownedComplete = f.unknown || f.keyspaceComplete(OwnPrefix(g.tenant, c.Kind))
-	p.owned = f.Owned(c.Kind)
-	if len(p.membersLevels) > 0 {
-		p.membersComplete = f.unknown || f.keyspaceComplete(MembersPrefix(g.tenant, c.ScopeKind))
-		p.members = f.Members(c.ScopeKind)
-	}
-	return p, nil
-}
-
-func (f *Filter) keyspaceComplete(prefix string) bool {
-	if f.anonymous {
-		return true
-	}
-	_, read := f.held[prefix]
-	return read && f.complete[prefix]
-}
-
-// expr parenthesizes a host expression unless it is a plain column name.
-func expr(s string) string {
-	if s == "" || simpleExpr.MatchString(s) {
-		return s
-	}
-	return "(" + s + ")"
+	return fmt.Sprintf(`(%[1]s.access_level = 'public'
+ OR %[1]s.access_free_after <= now()
+ OR (%[1]s.access_level = 'tier' AND %[1]s.access_tiers && @access_tiers::text[])
+ OR (%[1]s.access_level = 'group' AND %[1]s.access_group_id = ANY(@access_groups::text[]))
+ OR %[1]s.group_ids && @access_groups::text[]
+ OR %[1]s.content_id = ANY(@access_contents::text[])
+ OR %[1]s.version_id = ANY(@access_versions::text[])
+ OR NOT @access_contents_complete::boolean
+ OR (NOT @access_groups_complete::boolean AND (%[1]s.access_level = 'group' OR cardinality(%[1]s.group_ids) > 0)))`, alias), args, nil
 }
