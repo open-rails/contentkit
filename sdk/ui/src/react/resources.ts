@@ -195,7 +195,7 @@ export class ResourceStore {
     // Cards in lists (pages) and rails (arrays) show a content's counts and the viewer's state.
     const cards = (id: string, fn: (card: Card) => Card) =>
       patch<Page<Card> | Card[]>(
-        (t) => t.type === "contents" || t.type === "history",
+        (t) => t.type === "cards" || t.type === "history",
         (data) => {
           const each = (list: Card[]) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list);
           if (Array.isArray(data)) return each(data);
@@ -252,14 +252,14 @@ export class ResourceStore {
       case "content.saved":
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
-        this.invalidate((t) => t.type === "contents");
+        this.invalidate((t) => t.type === "contents" || t.type === "cards" || (t.type === "content-detail" && t.id === c.content.id));
         break;
       case "content.changed":
-        this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards");
         break;
       case "content.deleted":
-        items<Content>(["contents"], (x) => (x.id === c.id ? null : x));
-        this.invalidate((t) => (t.type === "content" && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
+        items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -284,10 +284,13 @@ export class ResourceStore {
         this.invalidate((t) => t.type.startsWith("group"));
         break;
       case "contentFilters.changed":
-        this.invalidate((t) => t.type === "contents" || t.type === "history" || t.type === "release-dates");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates");
+        break;
+      case "access.changed":
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan");
         break;
       case "history.changed":
-        this.invalidate((t) => t.type === "history" || t.type === "contents");
+        this.invalidate((t) => t.type === "history" || t.type === "cards");
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));

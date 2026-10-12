@@ -50,7 +50,8 @@ export type SocialOperation =
   | "group.save"
   | "membership.save"
   | "history.forget"
-  | "filters.save";
+  | "filters.save"
+  | "offer.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -19,7 +19,7 @@ function useDisplay<T extends { display_language?: string }>(q: T | null): T | n
 export function useContents(q: ContentQuery | null, o: { client?: ContentKitClient } = {}): UseList<Card> {
   const { client, store, scope } = useContentScope(o.client);
   const query = useDisplay(q);
-  return useList(store, query ? keyOf("contents", scope, "list", query) : null, { type: "contents" }, async (cursor, signal) =>
+  return useList(store, query ? keyOf("cards", scope, "list", query) : null, { type: "cards" }, async (cursor, signal) =>
     page(await client.discovery.list({ ...query, cursor: cursor as string | undefined }, signal)),
   );
 }
@@ -28,7 +28,7 @@ export function useContents(q: ContentQuery | null, o: { client?: ContentKitClie
 export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseList<Card> {
   const { client, store, scope } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
-  return useList(store, query ? keyOf("contents", scope, "search", query) : null, { type: "contents" }, async (cursor, signal) =>
+  return useList(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) =>
     page(await client.discovery.search({ ...query!, cursor: cursor as string | undefined }, signal)),
   );
 }
@@ -44,7 +44,7 @@ export interface UseRail {
 
 function useRail(key: string | null, fetch: (signal: AbortSignal) => Promise<ContentPage>, o: { client?: ContentKitClient }): UseRail {
   const { store } = useContentScope(o.client);
-  const r = useResource<Card[]>(store, key, { type: "contents" }, async (signal) => (await fetch(signal)).contents);
+  const r = useResource<Card[]>(store, key, { type: "cards" }, async (signal) => (await fetch(signal)).contents);
   const unavailable = r.error?.code === "not_configured";
   return { items: r.data ?? [], loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
@@ -53,14 +53,14 @@ function useRail(key: string | null, fetch: (signal: AbortSignal) => Promise<Con
 export function useSimilar(id: string | null | undefined, q: RailQuery = {}, o: { client?: ContentKitClient } = {}): UseRail {
   const { client, scope } = useContentScope(o.client);
   const query = useDisplay(q)!;
-  return useRail(id ? keyOf("contents", scope, "similar", id, query) : null, (s) => client.discovery.similar(id!, query, s), o);
+  return useRail(id ? keyOf("cards", scope, "similar", id, query) : null, (s) => client.discovery.similar(id!, query, s), o);
 }
 
 /** Contents for the signed-in reader; nothing signed out, or when q is null. */
 export function useRecommendations(q: RailQuery | null = {}, o: { client?: ContentKitClient } = {}): UseRail {
   const { client, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q);
-  return useRail(viewer === null || !query ? null : keyOf("contents", scope, "recommended", query), (s) => client.discovery.recommendations(query!, s), o);
+  return useRail(viewer === null || !query ? null : keyOf("cards", scope, "recommended", query), (s) => client.discovery.recommendations(query!, s), o);
 }
 
 /** A release date bucket, keyed by its date. */

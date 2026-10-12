@@ -47,4 +47,6 @@ export type ContentChange =
   | { type: "groups.changed" }
   /** The reader's content filters changed: every list reads again. */
   | { type: "contentFilters.changed" }
-  | { type: "history.changed" };
+  | { type: "history.changed" }
+  /** The reader's keys changed (a join, a purchase the host reports): reads of access re-run. */
+  | { type: "access.changed" };

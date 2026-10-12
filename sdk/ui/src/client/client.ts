@@ -10,6 +10,7 @@ import { ReactionsClient } from "./content/reactions.js";
 import type { Config, ContentModel, RefBody } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
 import { GroupsClient } from "./groups.js";
+import { OffersClient } from "./offers.js";
 import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
@@ -52,6 +53,8 @@ export interface ContentKitClient {
   readonly discovery: DiscoveryClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
   readonly versions: VersionsClient;
+  /** Offers on contents, versions and groups; group joins; the reader's library. */
+  readonly offers: OffersClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
   /** The signed-in person's native and imported notifications. */
@@ -86,6 +89,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     groups: new GroupsClient(h, media),
     discovery: new DiscoveryClient(h),
     versions: new VersionsClient(h),
+    offers: new OffersClient(h),
     codes: new CodesClient(h),
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),

@@ -3,12 +3,14 @@ import { admin } from "./admin/zh.js";
 import { social } from "./social/zh.js";
 import { groups } from "./groups/zh.js";
 import { discovery } from "./discovery/zh.js";
+import { content } from "./content/zh.js";
 
 export const zh: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
   ...groups,
   ...discovery,
+  ...content,
   common: {
     cancel: "取消",
     close: "关闭",

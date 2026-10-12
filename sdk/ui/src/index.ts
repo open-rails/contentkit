@@ -45,7 +45,7 @@ export * from "./components/groups/index.js";
 export * from "./components/content/index.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
-export { ContentManager, contentStatus, useContentManagerAccess, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
+export { ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
 export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./components/admin/group-manager.js";
 export { MediaItemPanel, type MediaItemPanelProps } from "./components/admin/media-item-panel.js";
 export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";

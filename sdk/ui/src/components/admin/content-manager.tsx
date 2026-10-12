@@ -18,12 +18,14 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
+import { ContentSections } from "../content/editors.js";
+import type { Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
 
 /** What ContentManager hands its body editor. */
-export interface ContentEditorProps {
+export interface BodyEditorProps {
   /** The body as HTML, its images at URLs that show them now. */
   value: string;
   onChange: (html: string) => void;
@@ -35,7 +37,7 @@ export interface ContentEditorProps {
 }
 
 export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
-  /** The content kind managed, a kind with one hidden version (a blog post). */
+  /** The content kind managed. */
   kind: string;
   /** Languages to write in: codes, or codes with labels; the first is a new item's. */
   languages?: readonly Choice[];
@@ -43,9 +45,11 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
    * The body editor: `richTextEditor` from `@openrails/contentkit-ui/editor`,
    * or the host's own. Without it, the body is a plain HTML field.
    */
-  renderEditor?: (props: ContentEditorProps) => ReactNode;
+  renderEditor?: (props: BodyEditorProps) => ReactNode;
   /** A link to a live item's page. */
   contentHref?: (content: Content) => string | undefined;
+  /** Display names of kinds, traits, tiers, attributes and values by identifier. */
+  labels?: Labels;
   pageSize?: number;
 }
 
@@ -70,11 +74,14 @@ const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destru
 const states = ["draft", "scheduled", "published"] as const;
 
 /**
- * Content items of one kind: every one the caller manages, by state and
- * text, deleted ones on their own to restore; create and edit title, slug,
- * description, schedule, cover and body with inline images per language,
- * publish or keep a draft, and delete. The list is at basePath, a new item at
- * basePath/new and each item at basePath/{id}, filters in the query.
+ * Content items of one kind for their creators and staff: every one the
+ * caller manages, by state and text, deleted ones on their own to restore;
+ * create and edit title, slug, description, schedule, cover and body with
+ * inline images per language, publish or keep a draft, and delete; then its
+ * listing and attributes, access rule and price, versions (order, languages,
+ * traits, schedule, access override, price, segments, media) and groups. The
+ * list is at basePath, a new item at basePath/new and each item at
+ * basePath/{id}, filters in the query.
  */
 export function ContentManager({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: ContentManagerProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
@@ -249,7 +256,7 @@ interface Form {
 
 const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
 
-function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, contentHref, onError }: Inner & { id: string | null; loc: AdminLocation }) {
+function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, contentHref, labels, onError }: Inner & { id: string | null; loc: AdminLocation }) {
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -333,7 +340,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
   };
   const s = item ? contentStatus(item) : "draft";
   const href = item && s === "published" ? contentHref?.(item) : undefined;
-  const editor: ContentEditorProps = {
+  const editor: BodyEditorProps = {
     value: shown,
     onChange: (html) => set({ body: ed.storedBody(html) }),
     uploadImage: item ? (file) => ed.uploadImage(file) : undefined,
@@ -342,6 +349,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     "aria-label": t("contentManager.body"),
   };
   return (
+    <>
     <form
       className="grid gap-4"
       data-ckui="content-form"
@@ -443,6 +451,8 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
       </div>
       {dialog}
     </form>
+    {item && <ContentSections content={item} client={client} onError={onError} labels={labels} />}
+    </>
   );
 }
 

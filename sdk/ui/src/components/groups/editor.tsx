@@ -296,8 +296,8 @@ export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language,
   );
 }
 
-/** The kind's declared attributes as form fields. */
-function AttributeFields({ declared, form, onChange, labels }: { declared: Readonly<Record<string, Attribute>>; form: Record<string, string | boolean>; onChange: (name: string, v: string | boolean) => void; labels?: Labels }) {
+/** A kind's declared attributes as form fields. */
+export function AttributeFields({ declared, form, onChange, labels }: { declared: Readonly<Record<string, Attribute>>; form: Record<string, string | boolean>; onChange: (name: string, v: string | boolean) => void; labels?: Labels }) {
   const { t } = useMessages();
   const id = useId();
   const names = Object.keys(declared).sort();
@@ -352,7 +352,8 @@ function AttributeFields({ declared, form, onChange, labels }: { declared: Reado
   );
 }
 
-const formOf = (declared: Readonly<Record<string, Attribute>>, values: Record<string, unknown>) =>
+/** The form values of stored attributes. */
+export const formOf = (declared: Readonly<Record<string, Attribute>>, values: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(declared).map(([n, s]) => [n, attributeInput(s, values[n])]));
 
 /** A parent or scope: the chosen group with a change and a clear, or a picker. */

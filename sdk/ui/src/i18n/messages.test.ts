@@ -31,10 +31,11 @@ it("every content string is in every bundle with the same placeholders", async (
   const { admin } = await import("../locales/admin/en.js");
   const { groups } = await import("../locales/groups/en.js");
   const { discovery } = await import("../locales/discovery/en.js");
+  const { content } = await import("../locales/content/en.js");
   const leaves = (tree: object, prefix = ""): [string, string][] =>
     Object.entries(tree).flatMap(([k, v]) => (typeof v === "string" ? [[prefix + k, v] as [string, string]] : leaves(v as object, `${prefix}${k}.`)));
   const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
-  const english = leaves({ ...social, ...admin, ...groups, ...discovery });
+  const english = leaves({ ...social, ...admin, ...groups, ...discovery, ...content });
   for (const [lang, bundle] of Object.entries(bundles)) {
     const own = new Map(leaves(bundle as object));
     for (const [key, text] of english) {

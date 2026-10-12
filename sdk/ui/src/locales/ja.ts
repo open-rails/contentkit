@@ -3,12 +3,14 @@ import { admin } from "./admin/ja.js";
 import { social } from "./social/ja.js";
 import { groups } from "./groups/ja.js";
 import { discovery } from "./discovery/ja.js";
+import { content } from "./content/ja.js";
 
 export const ja: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
   ...groups,
   ...discovery,
+  ...content,
   common: {
     cancel: "キャンセル",
     close: "閉じる",
