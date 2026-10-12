@@ -25,7 +25,7 @@ type DocumentKey = search.DocumentKey
 // KeywordDocument is the host's canonical search input for one document.
 type KeywordDocument = search.KeywordDocument
 
-// Eligibility is the host's per-document eligibility join; see search.Eligibility.
+// Eligibility is the per-document visibility join; see search.Eligibility.
 type Eligibility = search.Eligibility
 
 // PublishedDocument is one keyword document as delivered to a DocumentSink.

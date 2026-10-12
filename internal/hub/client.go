@@ -89,13 +89,9 @@ type SearchOptions struct {
 	// value on every page when a truncated window must stay identical.
 	CandidateLimit int
 
-	// Eligibility maps each document to the host's access, publication and
-	// version-trait rules on that one document. Without it every document of
-	// a work is eligible.
+	// Eligibility keeps the documents the reader may see (the discovery
+	// routes' visibility join); without it every document is eligible.
 	Eligibility *Eligibility
-
-	FilterSQL  string
-	FilterArgs map[string]any
 }
 
 // SearchHit is one content item, represented by its matched document.
@@ -237,7 +233,7 @@ func hitFromGroup(g group) SearchHit {
 
 func (c *Client) searchOptions(lang string, limit int, kinds []string, opts SearchOptions) search.Options {
 	return search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit,
-		FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs, Eligibility: opts.Eligibility}
+		Eligibility: opts.Eligibility}
 }
 
 // searchKeyword runs one language's keyword window and returns its trace source index.
@@ -267,8 +263,6 @@ type TypeaheadOptions struct {
 	ContentKinds  []string
 	Limit         int
 	MinSimilarity float32
-	FilterSQL     string
-	FilterArgs    map[string]any
 	// Eligibility groups suggestions per content item; see SearchOptions.
 	Eligibility *Eligibility
 }
@@ -310,7 +304,7 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 
 	var docs []groupedDoc
 	for i, lang := range languages {
-		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs, Eligibility: opts.Eligibility})
+		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
 		if err != nil {
 			return nil, err
 		}

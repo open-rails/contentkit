@@ -53,9 +53,13 @@ const (
 	// and the viewer's library (/v1/.../offer, /v1/groups/{id}/join,
 	// /v1/me/library, /v1/offers).
 	OfferRoutes
+	// DiscoveryRoutes: lists, search, typeahead, similar and recommended
+	// contents, release dates, the reader's content filters and history,
+	// signals and exposures (/v1/contents, /v1/search, /v1/me/history, ...).
+	DiscoveryRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | OfferRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | OfferRoutes | DiscoveryRoutes
 )
 
 var groupModules = []struct {
@@ -70,10 +74,11 @@ var groupModules = []struct {
 	{GroupRoutes, []httpapi.Module{httpapi.Groups}, "groups"},
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
 	{OfferRoutes, []httpapi.Module{httpapi.Offers}, "offers"},
+	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "groups", "notifications", "offers" or "all"), as a server's configuration
+// "codes", "groups", "notifications", "offers", "discovery" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups
