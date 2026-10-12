@@ -653,8 +653,9 @@ layouts.
   writes).
 - **Content versions.** `media/versions` answers media's hooks from the
   content model: editors (staff, creators, owner-group editors) upload, a
-  person their own avatar; reads follow the catalog's `Visibility` and the
-  gate's `Access`; a version's media writes its pages, duration, size and
+  person their own avatar; reads follow the catalog's
+  `access.ContentResolver`, plus segments' release and the rule's preview;
+  a version's media writes its pages, duration, size and
   audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
   kind reaches viewers only through `{kind}.published` items: one per
   segment of its pages, a locked version's previews, and one playback item,
