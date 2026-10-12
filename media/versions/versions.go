@@ -203,7 +203,7 @@ func (s *Service) one(ctx context.Context, t Target) (version, error) {
 	return v, nil
 }
 
-// kind is a version's media kind with Publish, or an error.
+// published is a version's kind as its versions see it, which must publish.
 func (s *Service) published(v version) (*media.Kind, error) {
 	k, err := s.reg.Kind(v.Kind)
 	if err != nil || k.VersionKind() == nil || k.VersionKind().Publish == nil {

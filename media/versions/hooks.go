@@ -128,6 +128,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 // pubItem is one published item and what it shows.
 type pubItem struct {
 	id, publication, kind string
+	contentKind           string
 	version               Target
 	current               bool
 	start, end            int
@@ -171,7 +172,7 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 	now := s.o.Now()
 	for _, ref := range refs {
 		it, ok := items[ref.ContentID]
-		if !ok || !it.current {
+		if !ok || !it.current || ref.ContentKind != it.contentKind+media.PublishedSuffix {
 			continue
 		}
 		d := decision{sight: sights[it.version], open: opens[it.version], segs: segs[it.version.Version], pages: it.pages, now: now}
@@ -188,14 +189,16 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 // pubItems loads published items by id: segment items, and playback items
 // (a playback publication's id).
 func (s *Service) pubItems(ctx context.Context, ids []string) (map[string]pubItem, error) {
-	rows, err := s.o.Pool.Query(ctx, `SELECT i.id, p.id, p.kind, v.content_id, p.version_id, p.state = 'current', i.start_index, i.end_index,
+	rows, err := s.o.Pool.Query(ctx, `SELECT i.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', i.start_index, i.end_index,
 	jsonb_array_length(p.source->'pages')
 FROM `+s.t.pubItems+` i JOIN `+s.t.publications+` p ON p.tenant_id = i.tenant_id AND p.id = i.publication_id
 JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
+JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE i.tenant_id = $1 AND i.id = ANY($2)
 UNION ALL
-SELECT p.id, p.id, p.kind, v.content_id, p.version_id, p.state = 'current', 0, 0, 0
+SELECT p.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', 0, 0, 0
 FROM `+s.t.publications+` p JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
+JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, ids)
 	if err != nil {
 		return nil, err
@@ -204,8 +207,8 @@ WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, 
 	out := map[string]pubItem{}
 	for rows.Next() {
 		var it pubItem
-		if err := rows.Scan(&it.id, &it.publication, &it.kind, &it.version.Content, &it.version.Version, &it.current, &it.start, &it.end,
-			&it.pages); err != nil {
+		if err := rows.Scan(&it.id, &it.publication, &it.kind, &it.contentKind, &it.version.Content, &it.version.Version, &it.current,
+			&it.start, &it.end, &it.pages); err != nil {
 			return nil, err
 		}
 		out[it.id] = it
