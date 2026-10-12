@@ -34,20 +34,22 @@ const (
 	Media Module = "media"
 	// Codes resolves content codes.
 	Codes Module = "codes"
-	// Taxonomy is the taxonomy admin API.
-	Taxonomy Module = "taxonomy"
+	// Groups is group listings, group pages and group writes.
+	Groups Module = "groups"
 	// PublicCatalog is the public catalog API.
 	PublicCatalog Module = "catalog"
 	// Notifications is the user inbox and the service's publish route.
 	Notifications Module = "notifications"
+	// Kinds is the site's public content model.
+	Kinds Module = "kinds"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Content, Upload, Media, Codes, Taxonomy, PublicCatalog, Notifications}
+var Modules = []Module{Kinds, Content, Upload, Media, Codes, Groups, PublicCatalog, Notifications}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
-// content at its root and the others beneath their own first segment, which
-// no content kind may take.
+// content, groups and kinds at its root and the others beneath their own
+// first segment. Modules sharing a prefix share one router.
 func (m Module) Prefix() string {
 	switch m {
 	case Upload:
@@ -56,8 +58,6 @@ func (m Module) Prefix() string {
 		return Version + "/media"
 	case Codes:
 		return Version + "/codes"
-	case Taxonomy:
-		return Version + "/taxonomy"
 	case PublicCatalog:
 		return Version + "/catalog"
 	case Notifications:
@@ -68,7 +68,9 @@ func (m Module) Prefix() string {
 
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
-func Reserved() []string { return []string{"media", "codes", "taxonomy", "catalog", "notifications"} }
+func Reserved() []string {
+	return []string{"media", "codes", "groups", "contents", "kinds", "catalog", "notifications"}
+}
 
 // Tier is what a route requires of its caller before its handler acts. The
 // module's gate enforces it from the host's auth.Authenticator, asked at most
@@ -264,6 +266,20 @@ func Match(method, path string) (Spec, bool) {
 	return best, found
 }
 
+// MatchModule is the module serving a method and path: its route's, else
+// the module of any route on the path, whose router answers 405.
+func MatchModule(method, path string) (Module, bool) {
+	if s, ok := Match(method, path); ok {
+		return s.Module, true
+	}
+	for _, m := range []string{GET, POST, PUT, PATCH, DELETE} {
+		if s, ok := Match(m, path); ok {
+			return s.Module, true
+		}
+	}
+	return "", false
+}
+
 // matchPath matches pattern segments against path segments; the score ranks
 // literal segments earlier in the path above later ones.
 func matchPath(pattern, path []string) (int, bool) {
@@ -311,7 +327,7 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeUnavailable, CodeUpgrade}
 	case "module:media":
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
-	case "module:codes", "module:taxonomy", "module:catalog", "module:notifications":
+	case "module:codes", "module:groups", "module:catalog", "module:notifications", "module:kinds":
 		return []string{CodeInternal}
 	}
 	return nil

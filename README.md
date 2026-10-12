@@ -33,7 +33,7 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 | `tenant_id` | one site: `doujins`, `hentai0`, the marketplace |
 | `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
-| `taxonomy_id` | a generic ContentKit record: tag, artist, series, creator, character, voice actor |
+| `group_id` | a group: tag, artist, series, character, channel, playlist, featured rail |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |
 
 A language is metadata on a document or version, never part of a reference.
@@ -44,7 +44,7 @@ another tenant is an error, never remapped.
 
 | Package | Owns |
 |---|---|
-| `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
+| `contentref` | `ContentRef`, `ContentKey`, `GroupID` |
 | `contenturl` | uniform content URLs `[/{lang}]/{route}/{CODE}[/{slug}]`: permanent 9-character codes per tenant, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
 | `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
@@ -59,9 +59,9 @@ another tenant is an error, never remapped.
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
-| `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
+| `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
-| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
@@ -119,12 +119,11 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 
 | Group | Sub-path | Needs |
 |---|---|---|
-| `ContentRoutes` | `/v1`: posts, comments, reactions, favorites, polls, comment bans, moderation | always |
+| `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), posts, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists | `Config.Media` |
-| `CodeRoutes` | `/v1/codes/{code}` | a kind route |
-| `TaxonomyRoutes` | `/v1/taxonomy`, for `root:taxonomy:write` | group kinds |
-| `CatalogRoutes` | `/v1/catalog/totals` | `Deps.Listing` |
+| `CodeRoutes` | `/v1/codes/{code}` | always |
+| `GroupRoutes` | `/v1/groups`, `/v1/contents/{id}/groups`: listings and pages, writes for `root:groups:write` | always |
 | `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
 
 | Tier | Admits |
@@ -140,7 +139,7 @@ host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (owner, editor) are the resolver's. Behind a
 proxy, set `Request.RemoteAddr` to the client's address before the routes:
 anonymous reactions, votes and limits are keyed by it. No content kind may
-be named `media`, `codes`, `taxonomy`, `catalog` or `notifications`.
+be named `media`, `codes`, `groups`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table
 (`internal/httpapi`): method, path, tier, query, bodies and error codes. The
@@ -153,7 +152,7 @@ route or a wire type, run `go generate ./internal/contract`;
 ## Search
 
 Documents are one per content reference and language. The engine's search
-job keeps the documents of what ContentKit owns (posts and taxonomy nodes)
+job keeps the documents of what ContentKit owns (posts and groups)
 current from the dirty queue and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
 typeahead and discovery are internal (`internal/hub`) until their routes
@@ -392,35 +391,18 @@ per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
 content URLs, React hooks and styled components. See
 [sdk/ui/README.md](sdk/ui/README.md).
 
-## Taxonomy
+## Groups
 
-Nodes, names, edges and assignments are tenant-scoped; effective tags are the
-work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
-filter hold on one eligible version inside the same join as search. The PostgreSQL baseline always installs the taxonomy tables; see
-[docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
+owner, sellable, auth_scope, windows, version_level, roles, attributes).
+Writes are batches in one transaction; memberships keep
+`content_facets.group_ids` current, `Recount` (an engine job) rebuilds
+per-language counts and automatic covers from the facets, and
+`RefreshWindows` re-derives facets as rail windows open and close.
 
-```go
-store, _ := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "doujins",
-	Kinds: []string{"tag", "artist", "character", "series", "voice_actor"}, Languages: []string{"en", "es"},
-	CountEligibility: &search.Eligibility{SQL: releasedVersionSQL}})
-_ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersion(v2), TaxonomyID: "colored"}}, taxonomy.AssignOptions{})
-tags, _ := store.EffectiveTags(ctx, []contentref.ContentRef{g1.WithVersion(v2)})
-filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
-```
-
-`ListNodes` backs a catalog index page directly: the display name in the
-request language (falling back to the store's configured order, or pinned with
-`LanguageMode`), the per-language content count, an A-Z index, a name+alias
-search, hide-empty, five orders and offset paging with a total. The zero
-`ListOptions` keeps the keyset contract a full admin sync wants.
-
-```go
-page, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es",
-	ContentKind: "gallery", MinCount: 1, Sort: taxonomy.SortCount, Offset: 40, Limit: 20})
-// page.Total, and per row: Name, NameLanguage, Count.
-letter, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es", NamePrefix: "a"})
-cast, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "character", Related: "s-fate", Relation: taxonomy.RelationMemberOf})
-```
+The engine builds the store from `Config.Content`, serves it as
+`GroupRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
+(every minute) as its jobs; groups' keyword documents are its search job's.
 
 ## Signal plane and discovery
 
@@ -437,7 +419,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
 - Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
   `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
-  `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
+  `ranker.Popular` / `ranker.Scores` / `ranker.Groups`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - Similar and recommended content draw candidates from `Deps.Candidates`
   (default: co-engagement); see

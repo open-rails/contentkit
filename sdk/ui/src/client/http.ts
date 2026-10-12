@@ -1,6 +1,6 @@
 import { ContentKitError, aborted, readContentKitError } from "./errors.js";
-import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { ContentChange } from "./content/types.js";
+import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
@@ -20,8 +20,10 @@ export interface ContentKitMounts {
   upload?: Mount;
   /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
-  /** Taxonomy. Default `{baseUrl}/v1/taxonomy`. */
-  taxonomy?: string;
+  /** Groups. Default `{baseUrl}/v1`. */
+  groups?: string;
+  /** The site's content model. Default `{baseUrl}/v1`. */
+  kinds?: string;
   /** The public catalog. Default `{baseUrl}/v1/catalog`. */
   catalog?: string;
   /** User inbox. Default `{baseUrl}/v1/notifications`. */

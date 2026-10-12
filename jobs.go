@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -56,6 +58,9 @@ const (
 	repairEvery         = time.Hour
 	erasureEvery        = 24 * time.Hour
 	reclassifyEvery     = 10 * time.Minute
+	recountEvery        = 15 * time.Minute
+	windowsEvery        = time.Minute
+	windowsLookback     = 5 * time.Minute // well past windowsEvery, so no window change is missed
 )
 
 func (j *jobs) contribution() riverhelpers.Contribution {
@@ -77,6 +82,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -89,6 +95,8 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: onStart}))
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{}, true)
+		periodic("contentkit_groups_recount", recountEvery, groupsArgs{}, true)
+		periodic("contentkit_groups_windows", windowsEvery, groupsArgs{Windows: true}, true)
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
 		}
@@ -125,7 +133,7 @@ type searchSyncArgs struct{}
 func (searchSyncArgs) Kind() string { return "contentkit_search_sync" }
 
 // searchSyncWorker maintains the keyword documents of the kinds ContentKit
-// owns: posts and taxonomy nodes.
+// owns: posts and groups.
 type searchSyncWorker struct {
 	river.WorkerDefaults[searchSyncArgs]
 	e *Engine
@@ -134,28 +142,51 @@ type searchSyncWorker struct {
 func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { return 10 * time.Minute }
 
 func (w *searchSyncWorker) Work(ctx context.Context, _ *river.Job[searchSyncArgs]) error {
-	e := w.e
-	list := worker.ListContentPage(func(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-		if kind == content.KindPost {
+	e, g := w.e, w.e.groups
+	list := func(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
+		switch {
+		case kind == content.KindPost:
 			return e.content.ListContent(ctx, tenant, kind, language, cursor, limit)
+		case g.IsKind(kind):
+			return g.ListContent(ctx, tenant, kind, language, cursor, limit)
 		}
 		return nil, "", false, fmt.Errorf("contentkit: no documents for kind %q", kind)
-	})
-	build := worker.BuildKeywordDocuments(func(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-		if kind == content.KindPost {
+	}
+	build := func(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		switch {
+		case kind == content.KindPost:
 			return e.content.KeywordDocuments(ctx, tenant, kind, language, refs)
+		case g.IsKind(kind):
+			return g.BuildKeywordDocuments(ctx, tenant, kind, language, refs)
 		}
 		return nil, fmt.Errorf("contentkit: no documents for kind %q", kind)
-	})
-	kinds := []string{content.KindPost}
-	if e.taxonomy != nil {
-		list, build = e.taxonomy.Lister(list), e.taxonomy.Builder(build)
-		for k := range e.cfg.Content.GroupKinds {
-			kinds = append(kinds, k)
-		}
 	}
+	kinds := append([]string{content.KindPost}, slices.Sorted(maps.Keys(e.cfg.Content.GroupKinds))...)
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
 		SupportedLanguages: e.cfg.Content.Languages, ContentKinds: kinds, ListContent: list, BuildKeywordDocuments: build})
+}
+
+type groupsArgs struct {
+	// Windows refreshes the memberships whose time windows opened or closed;
+	// otherwise it recounts groups and their automatic covers.
+	Windows bool `json:"windows,omitempty"`
+}
+
+func (groupsArgs) Kind() string { return "contentkit_groups" }
+
+// groupsWorker keeps groups' derived state current.
+type groupsWorker struct {
+	river.WorkerDefaults[groupsArgs]
+	e *Engine
+}
+
+func (w *groupsWorker) Timeout(*river.Job[groupsArgs]) time.Duration { return 30 * time.Minute }
+
+func (w *groupsWorker) Work(ctx context.Context, job *river.Job[groupsArgs]) error {
+	if job.Args.Windows {
+		return w.e.groups.RefreshWindows(ctx, windowsLookback)
+	}
+	return w.e.groups.Recount(ctx)
 }
 
 type preferenceSyncArgs struct {

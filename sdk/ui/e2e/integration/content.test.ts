@@ -337,17 +337,17 @@ describe("content modules against the real ContentKit", () => {
     expect(changes).toContainEqual({ type: "poll.deleted", id: poll.id });
   });
 
-  it("taxonomy and codes go through the same mount", async () => {
+  it("groups and codes go through the same mount", async () => {
     const staff = ck("staff");
     const slug = `tag-${randomUUID().slice(0, 8)}`;
-    const [node] = await staff.taxonomy.createNodes([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name: "Night Sky", source_revision: 1 }], source_revision: 1 }]);
-    expect(node).toMatchObject({ kind: "tag", slug, state: "active" });
-    expect(changes).toContainEqual({ type: "taxonomy.changed" });
-    expect((await staff.taxonomy.nodes({ kind: "tag", id: [node!.taxonomy_id] })).nodes.map((n) => n.slug)).toEqual([slug]);
-    const detail = await staff.taxonomy.names(node!.taxonomy_id, "add", [{ language: "en", kind: "alias", name: "Starry", source_revision: 2 }]);
-    expect(detail.names.map((n) => n.name).sort()).toEqual(["Night Sky", "Starry"]);
-    expect(Object.keys(await staff.taxonomy.counts([node!.taxonomy_id]))).toEqual([]);
-    await expect(ck("alice").taxonomy.nodes()).rejects.toEqual(code("forbidden"));
+    const [group] = await staff.groups.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name: "Night Sky" }] }]);
+    expect(group).toMatchObject({ kind: "tag", slug, state: "active" });
+    expect(changes).toContainEqual({ type: "groups.changed" });
+    expect((await ck().groups.list({ kind: "tag", slug, language: "en" })).groups.map((g) => g.name)).toEqual(["Night Sky"]);
+    const names = await staff.groups.names(group!.id, "add", [{ language: "en", kind: "alias", name: "Starry" }]);
+    expect(names.map((n) => n.name).sort()).toEqual(["Night Sky", "Starry"]);
+    expect((await ck().groups.get(group!.id, "en")).counts).toEqual([]);
+    await expect(ck("alice").groups.create([])).rejects.toEqual(code("forbidden"));
 
     const post = await ck("editor").posts.create({ title: "Coded post", body: "b", language: "en" });
     expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "post", content_id: post.id, path: `/blog/${post.code}/coded-post` });

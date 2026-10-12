@@ -243,12 +243,12 @@ func ref(id string) signal.ContentRef { return contentref.New(fxTenant, fxKind, 
 // cid is the nth deterministic content id: a canonical UUIDv7, ordered by n.
 func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
-// Fixture artists: taxonomy ids are canonical UUIDv7s too.
+// Fixture artists: group ids are canonical UUIDv7s too.
 const (
-	fxArtist1 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000001")
-	fxArtist2 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000002")
-	fxArtist3 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000003")
-	fxArtist4 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000004")
+	fxArtist1 = contentref.GroupID("01930000-0000-7000-8000-000000000001")
+	fxArtist2 = contentref.GroupID("01930000-0000-7000-8000-000000000002")
+	fxArtist3 = contentref.GroupID("01930000-0000-7000-8000-000000000003")
+	fxArtist4 = contentref.GroupID("01930000-0000-7000-8000-000000000004")
 )
 
 // record drives every delivery through the hub the way a host recorder does:
@@ -420,7 +420,7 @@ func scoresByID(hits []popularity.Hit) map[string]float64 {
 // requires PolicyV1 to satisfy every judgment under viewer-weighted ranking.
 // The ClickHouse RankExpr and the Go formula must agree; public counts are
 // the raw metrics; windows are literal; a second tenant in the same database
-// never leaks; taxonomy popularity derives through the Catalog port; cache
+// never leaks; group popularity derives through the Catalog port; cache
 // entries are policy-named.
 func TestIntegrationPolicyFixture(t *testing.T) {
 	ctx := context.Background()
@@ -689,13 +689,13 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		t.Errorf("other tenant ranking: %+v", other)
 	}
 
-	// Taxonomy popularity derives through the Catalog join over the ranked
+	// Group popularity derives through the Catalog join over the ranked
 	// works; a record with no ranked member is absent; a work assigned twice
-	// to one record counts once; no taxonomy row ever reaches the signal plane.
+	// to one record counts once; no group row ever reaches the signal plane.
 	var catalogCalls []string
-	catalog := popularity.CatalogFunc(func(_ context.Context, tenant, contentKind, taxonomyKind string, contentIDs []string) (map[string][]contentref.TaxonomyID, error) {
-		catalogCalls = append(catalogCalls, fmt.Sprintf("%s/%s/%s/%d", tenant, contentKind, taxonomyKind, len(contentIDs)))
-		return map[string][]contentref.TaxonomyID{
+	catalog := popularity.CatalogFunc(func(_ context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error) {
+		catalogCalls = append(catalogCalls, fmt.Sprintf("%s/%s/%s/%d", tenant, contentKind, groupKind, len(contentIDs)))
+		return map[string][]contentref.GroupID{
 			fxCrowdDislike: {fxArtist1}, fxFive: {fxArtist1}, fxShort: {fxArtist2, fxArtist4, fxArtist4}, fxLongFull: {fxArtist2}, fxOutside: {fxArtist3},
 		}, nil
 	})
@@ -703,14 +703,14 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artists, err := taxRanker.Taxonomy(ctx, fxKind, "artist", fx.window)
+	artists, err := taxRanker.Groups(ctx, fxKind, "artist", fx.window)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArtists := []popularity.TaxonomyHit{
-		{TaxonomyID: fxArtist2, TaxonomyKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Viewers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
-		{TaxonomyID: fxArtist1, TaxonomyKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Viewers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
-		{TaxonomyID: fxArtist4, TaxonomyKind: "artist", Score: byID[fxShort], ContentCount: 1, Viewers: 20, MeanScore: byID[fxShort]},
+	wantArtists := []popularity.GroupHit{
+		{GroupID: fxArtist2, GroupKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Viewers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
+		{GroupID: fxArtist1, GroupKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Viewers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
+		{GroupID: fxArtist4, GroupKind: "artist", Score: byID[fxShort], ContentCount: 1, Viewers: 20, MeanScore: byID[fxShort]},
 	}
 	if fmt.Sprint(artists) != fmt.Sprint(wantArtists) {
 		t.Errorf("artist ranking:\n got %+v\nwant %+v", artists, wantArtists)
@@ -718,28 +718,28 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	if len(catalogCalls) != 1 || catalogCalls[0] != fmt.Sprintf("%s/%s/artist/%d", fxTenant, fxKind, len(chosen)) {
 		t.Errorf("catalog calls %v", catalogCalls)
 	}
-	allTimeArtists, err := taxRanker.Taxonomy(ctx, fxKind, "artist", signal.AllTime())
+	allTimeArtists, err := taxRanker.Groups(ctx, fxKind, "artist", signal.AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
 	for _, a := range allTimeArtists {
-		if a.TaxonomyID == fxArtist3 && a.ContentCount == 1 && a.Score > 0 {
+		if a.GroupID == fxArtist3 && a.ContentCount == 1 && a.Score > 0 {
 			found = true
 		}
 	}
 	if !found {
 		t.Errorf("all-time artist ranking lacks a3: %+v", allTimeArtists)
 	}
-	bounded, err := popularity.New(popularity.Config{Source: v1Hub, Policy: popularity.PolicyV1, Catalog: catalog, TaxonomyCandidateLimit: 1})
+	bounded, err := popularity.New(popularity.Config{Source: v1Hub, Policy: popularity.PolicyV1, Catalog: catalog, GroupCandidateLimit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if top, err := bounded.Taxonomy(ctx, fxKind, "artist", fx.window); err != nil || len(top) != 1 || top[0].TaxonomyID != fxArtist1 || top[0].ContentCount != 1 {
+	if top, err := bounded.Groups(ctx, fxKind, "artist", fx.window); err != nil || len(top) != 1 || top[0].GroupID != fxArtist1 || top[0].ContentCount != 1 {
 		t.Errorf("candidate bound 1: %+v %v", top, err)
 	}
-	if _, err := ranker.Taxonomy(ctx, fxKind, "artist", fx.window); err == nil {
-		t.Error("taxonomy ranking without a Catalog must fail")
+	if _, err := ranker.Groups(ctx, fxKind, "artist", fx.window); err == nil {
+		t.Error("group ranking without a Catalog must fail")
 	}
 	inventory, err := v1Hub.Inventory(ctx)
 	if err != nil {
@@ -747,7 +747,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	}
 	for _, row := range inventory {
 		if row.ContentKind != fxKind {
-			t.Errorf("signal plane holds a %q row: taxonomy popularity must not fan out", row.ContentKind)
+			t.Errorf("signal plane holds a %q row: group popularity must not fan out", row.ContentKind)
 		}
 	}
 

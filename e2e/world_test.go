@@ -34,8 +34,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // prefix is where the host mounts ContentKit's routes.
@@ -125,10 +123,10 @@ func (w *world) config() contentkit.Config {
 	return contentkit.Config{Tenant: w.tenant, Database: contentkit.DatabaseConfig{Schema: w.schema},
 		Content: kinds.Config{Languages: []string{"en"},
 			Kinds: map[string]kinds.Kind{
-				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag"}},
+				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag", "series"}},
 				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
-			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}}},
+			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true}}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
@@ -140,9 +138,22 @@ func (w *world) config() contentkit.Config {
 // and the hooks over the galleries and accounts it still owns.
 func (w *world) deps() contentkit.Deps {
 	return contentkit.Deps{Postgres: w.pool, Auth: w.ak.Authenticator(), Users: w.ak.UserInfo(), Store: w.env.Store,
-		Resolver: w, CanUpload: w,
-		Listing: &taxonomy.Listing{Kinds: []string{"gallery"}, Eligibility: search.Eligibility{SQL: `SELECT 'free'::text AS access`},
-			Access: access.Columns{Level: "h.access", TierName: "premium", Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}}}
+		Resolver: w, CanUpload: w}
+}
+
+// galleries writes gallery contents cid(n), each with the version
+// cid(n*10), as ContentKit's content routes will.
+func (w *world) galleries(ns ...int) {
+	w.t.Helper()
+	q := pgx.Identifier{w.schema}.Sanitize()
+	for _, n := range ns {
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_items (tenant_id, id, kind) VALUES ($1, $2, 'gallery')`, w.tenant, cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_versions (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, w.tenant, cid(n*10), cid(n)); err != nil {
+			w.t.Fatal(err)
+		}
+	}
 }
 
 // engine is the host's one ContentKit, started on its own River; edit

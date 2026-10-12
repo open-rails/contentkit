@@ -4,7 +4,7 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | interactions, moderation, polls, preferences, keyword search and taxonomy |
+| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | interactions, moderation, polls, preferences, keyword search and the retired taxonomy tables |
 | PostgreSQL | `migrations.Postgres` | `postgres/0002_search_invalid.up.sql` | durable invalid search-document state |
 | PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
 | PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
@@ -17,6 +17,8 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0011_media_commits.up.sql` | media commit journal and allocations (`content_media_commits`, `content_media_allocations`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0012_media_publications.up.sql` | current public publications per item (`content_media_publications`) and the media upgrade's progress (`content_media_upgrades`, `content_media_upgrade_failures`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0013_comment_author_index.up.sql` | a person's comments for moderators (`content_comments_author_idx`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0014_owned_content.up.sql` | ContentKit-owned content, versions, facets, offers and groups (#117) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0015_drop_taxonomy.up.sql` | drops the taxonomy tables groups replace; indexes windowed memberships |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
@@ -72,7 +74,7 @@ read/write access to `content_media_slots` and `content_media_slot_backfill`
 start: binding the media jobs to River schedules a one-time backfill.
 `0010` adds `content_codes` and `content_code_aliases`. The host's runtime
 role needs read/write access to both and EXECUTE on `contentkit_content_code()` (PUBLIC by default).
-Taxonomy and post writes register codes from then on, so grant the access
+Group and post writes register codes from then on, so grant the access
 before deploying code that uses `0010`.
 
 ## Host relationships
@@ -88,7 +90,7 @@ are not PostgreSQL foreign keys and have no cross-store FK enforcement.
 
 Back up authored content, moderation and retained-publication state,
 reactions, favorites and their revision sequence, source erasure fences,
-and the ClickHouse signal plane. Search documents and taxonomy counts are
+and the ClickHouse signal plane. Search documents and group counts are
 rebuildable. The baseline contains only current signal tables, including
 `subject_content_state.last_view_at`; it does not install retired signal
 formats or convert historical rows. See [restore.md](restore.md).

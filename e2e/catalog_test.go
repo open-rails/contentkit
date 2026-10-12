@@ -18,13 +18,13 @@ import (
 	"github.com/open-rails/helpers/notify"
 
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // One mount serves every module at its sub-path, and every route answers
@@ -43,6 +43,11 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	// What signed-out visitors may do: nothing here (the default).
 	var cfg content.Config
 	f.want(http.StatusOK, anon, "GET", "/config", nil, &cfg)
+	var model kindsroute.ContentModel
+	f.want(http.StatusOK, anon, "GET", "/kinds", nil, &model)
+	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tags" {
+		t.Fatalf("content model %+v", model)
+	}
 	if cfg.Anonymous != (content.Anonymous{}) {
 		t.Fatalf("config %+v", cfg)
 	}
@@ -181,47 +186,50 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNotFound, staff, "POST", "/moderation/comment/"+uuid.NewString()+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: 1}, nil)
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
 
-	// Taxonomy, behind root:taxonomy:write.
-	f.want(http.StatusForbidden, user, "GET", "/taxonomy/nodes", nil, nil)
-	var nodes []taxonomy.Node
-	name := func(n string) taxonomy.Name {
-		return taxonomy.Name{Language: "en", Kind: taxonomy.NameCanonical, Name: n}
+	// Groups: public reads, writes behind root:groups:write.
+	w.galleries(1, 2)
+	f.want(http.StatusForbidden, user, "POST", "/groups", []groups.GroupInput{}, nil)
+	name := func(n string) groups.Name { return groups.Name{Language: "en", Kind: groups.NameCanonical, Name: n} }
+	var made []groups.Group
+	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
+		{Kind: "tag", Slug: "color", Names: []groups.Name{name("Color")}},
+		{Kind: "tag", Slug: "colour", Names: []groups.Name{name("Colour")}},
+		{Kind: "series", Slug: "saga", Names: []groups.Name{name("Saga")}},
+	}, &made)
+	color, colour, saga := string(made[0].ID), string(made[1].ID), string(made[2].ID)
+	f.want(http.StatusConflict, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
+	var page groups.GroupPage
+	f.want(http.StatusOK, anon, "GET", "/groups?kind=tag&language=en&sort=name&limit=1", nil, &page)
+	if len(page.Groups) != 1 || page.Groups[0].Name != "Color" || page.Groups[0].Path == "" || page.NextCursor == "" {
+		t.Fatalf("groups page %+v", page)
 	}
-	f.want(http.StatusCreated, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{
-		{Kind: "tag", Slug: "color", Names: []taxonomy.Name{name("Color")}},
-		{Kind: "tag", Slug: "colour", Names: []taxonomy.Name{name("Colour")}},
-		{Kind: "tag", Slug: "art", Names: []taxonomy.Name{name("Art")}},
-	}, &nodes)
-	color, colour, art := string(nodes[0].TaxonomyID), string(nodes[1].TaxonomyID), string(nodes[2].TaxonomyID)
-	f.want(http.StatusConflict, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{{Kind: "tag", Slug: "color"}}, nil)
-	f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes?kind=tag&language=en&sort=name&limit=10", nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+color, nil, nil)
-	f.want(http.StatusNotFound, staff, "GET", "/taxonomy/nodes/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/not-an-id", nil, nil)
-	f.want(http.StatusOK, staff, "PATCH", "/taxonomy/nodes/"+art, taxonomy.NodeUpdate{Slug: ptr("arts")}, nil)
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/nodes/"+color+"/names", []taxonomy.Name{{Language: "en", Kind: taxonomy.NameAlias, Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/nodes/"+color+"/names", []taxonomy.Name{{Language: "en", Kind: taxonomy.NameAlias, Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/taxonomy/nodes/"+color+"/names", []taxonomy.Name{name("Color")}, nil)
-	edges := []taxonomy.Edge{{From: taxonomy.TaxonomyID(art), Relation: taxonomy.RelationParent, To: taxonomy.TaxonomyID(color)}}
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/edges", edges, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/edges", edges, nil)
-	assignments := []taxonomy.Assignment{{ContentRef: contentref.ContentRef{ContentKind: "gallery", ContentID: cid(1)}, TaxonomyID: taxonomy.TaxonomyID(color), Relation: "tag"}}
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/assignments?suppress_counts=true", assignments, nil)
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/counts/rebuild", nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/taxonomy/counts?taxonomy_id="+color, nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+color+"/assignments?content_kind=gallery&limit=10", nil, nil)
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/effective", []contentref.ContentRef{{ContentKind: "gallery", ContentID: cid(1)}}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/assignments", assignments, nil)
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/nodes/"+colour+"/merge", taxonomy.MergeInput{Into: taxonomy.TaxonomyID(color)}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/nodes/"+art, nil, nil)
-
-	// The public catalog's totals, open to anyone.
-	var totals taxonomy.Totals
-	f.want(http.StatusOK, anon, "GET", "/catalog/totals?kinds=gallery", nil, &totals)
-	if g, ok := totals.Kinds["gallery"]; !ok || g.Tiers == nil {
-		t.Fatalf("totals %+v", totals)
+	f.want(http.StatusOK, anon, "GET", "/groups/"+color+"?language=en", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
+	f.want(http.StatusBadRequest, anon, "GET", "/groups/not-an-id", nil, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/groups/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+color+"/names", []groups.Name{name("Color")}, nil)
+	edges := []groups.EdgeInput{{Relation: "related", To: groups.GroupID(colour)}}
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+cid(1)+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
+		{GroupID: groups.GroupID(color)}, {GroupID: groups.GroupID(saga)}, {GroupID: groups.GroupID(colour), VersionID: cid(10)}}}, nil)
+	var held groups.ContentMemberships
+	f.want(http.StatusOK, staff, "GET", "/contents/"+cid(1)+"/groups?language=en", nil, &held)
+	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
+		t.Fatalf("content groups %+v", held)
 	}
-	f.want(http.StatusBadRequest, anon, "GET", "/catalog/totals?kinds=post", nil, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: cid(2)}, {ContentID: cid(1)}}}, nil)
+	var members groups.MemberPage
+	f.want(http.StatusOK, staff, "GET", "/groups/"+saga+"/members?limit=10", nil, &members)
+	if len(members.Members) != 2 || members.Members[0].ContentID != cid(2) {
+		t.Fatalf("members %+v", members)
+	}
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/members", []groups.Membership{{ContentID: cid(2)}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
 	mediaScenario(t, f, user, anon)
 

@@ -16,7 +16,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // Config is the engine's configuration: plain data.
@@ -26,7 +25,7 @@ type Config struct {
 	Tenant   string         `yaml:"tenant" json:"tenant"`
 	Database DatabaseConfig `yaml:"database" json:"database"`
 	// Content is the site's content model: languages, tiers, content kinds
-	// (commentable and indexed) and group kinds (taxonomy). Required.
+	// (commentable and indexed) and group kinds. Required.
 	Content kinds.Config `yaml:"content" json:"content"`
 	// Interactions are what comments, reactions, favorites and polls allow.
 	Interactions InteractionsConfig `yaml:"interactions" json:"interactions"`
@@ -202,11 +201,9 @@ type Deps struct {
 	// Logger; nil is slog.Default().
 	Logger *slog.Logger
 
-	// Resolver, CanUpload and Listing answer for content the host still owns
-	// until ContentKit stores it (#120 content, #121 access, #122 totals);
-	// each lane deletes its hook. Nil Resolver resolves nothing but
-	// ContentKit's own posts and polls; nil Listing turns the catalog off.
+	// Resolver and CanUpload answer for content the host still owns until
+	// ContentKit stores it (#120 content, #121 access); each lane deletes its
+	// hook. Nil Resolver resolves nothing but ContentKit's own posts and polls.
 	Resolver  access.ContentResolver
 	CanUpload media.UploadAuthorizer
-	Listing   *taxonomy.Listing
 }

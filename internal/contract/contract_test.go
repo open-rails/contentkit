@@ -9,7 +9,6 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 func TestGeneratedContractIsFresh(t *testing.T) {
@@ -31,8 +30,7 @@ func TestModuleCodesAreRegistered(t *testing.T) {
 	}
 	for _, c := range []string{content.CodeInvalidRequest, content.CodeUnauthorized, content.CodeForbidden, content.CodeNotFound,
 		content.CodeConflict, content.CodeModerationRejected, content.CodeRateLimited, content.CodeCommentBanned,
-		content.CodeNotConfigured, content.CodeTenantMismatch, content.CodeInternal,
-		taxonomy.CodeInvalidRequest, taxonomy.CodeNotFound, taxonomy.CodeConflict, taxonomy.CodeInternal} {
+		content.CodeNotConfigured, content.CodeTenantMismatch, content.CodeInternal} {
 		if _, ok := statuses[c]; !ok {
 			statuses[c] = 0
 		}

@@ -68,3 +68,35 @@ func TestSiteFor(t *testing.T) {
 		t.Fatalf("unmatched host -> %s, want the first site", s.Name)
 	}
 }
+
+func TestValidateAttributes(t *testing.T) {
+	declared := map[string]Attribute{
+		"format": {Type: "enum", Values: []string{"doujin", "manga"}},
+		"pages":  {Type: "int"},
+		"link":   {Type: "string"},
+		"adult":  {Type: "bool"},
+		"born":   {Type: "time"},
+	}
+	if _, err := ValidateAttributes(declared, map[string]any{"link2": "x"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("undeclared attribute: %v", err)
+	}
+	got, err := ValidateAttributes(declared, map[string]any{"format": "manga", "pages": float64(12), "link": "x", "adult": true, "born": "2020-01-02T03:04:05+02:00"})
+	if err != nil || got["pages"] != int64(12) || got["born"] != "2020-01-02T01:04:05Z" || len(got) != 5 {
+		t.Fatalf("normalized %v %v", got, err)
+	}
+	if got, err := ValidateAttributes(declared, map[string]any{"link": nil}); err != nil || len(got) != 0 {
+		t.Fatalf("nil drops: %v %v", got, err)
+	}
+	for _, bad := range []map[string]any{{"format": "comic"}, {"pages": 1.5}, {"pages": "1"}, {"adult": "yes"}, {"born": "yesterday"}, {"link": 3.0}} {
+		if _, err := ValidateAttributes(declared, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%v accepted: %v", bad, err)
+		}
+	}
+}
+
+func TestRoutes(t *testing.T) {
+	r := doujins().Routes()
+	if r["gallery"] != "g" || r["tag"] != "tags" || r["voice_actor"] != "voice-actors" || len(r) != 6 {
+		t.Fatalf("routes %v", r)
+	}
+}

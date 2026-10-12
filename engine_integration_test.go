@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,13 +26,15 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 const tenant = "site"
@@ -81,7 +84,7 @@ func engineSchema(t *testing.T, pool *pgxpool.Pool) string {
 
 func siteConfig(schema string) Config {
 	return Config{Tenant: tenant, Database: DatabaseConfig{Schema: schema},
-		Content: kinds.Config{Languages: []string{"en"},
+		Content: kinds.Config{Languages: []string{"en"}, Restrictions: []string{"restricted"},
 			Kinds: map[string]kinds.Kind{
 				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}},
 				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
@@ -108,7 +111,7 @@ func serve(t *testing.T, routes []Route) server {
 	return server{t, mux}
 }
 
-func (s server) call(status int, actor access.Actor, method, target string, body, out any) {
+func (s server) call(status int, actor access.Actor, method, target string, body, out any) *httptest.ResponseRecorder {
 	s.t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -127,6 +130,7 @@ func (s server) call(status int, actor access.Actor, method, target string, body
 			s.t.Fatalf("%s %s: %v", method, target, err)
 		}
 	}
+	return rec
 }
 
 // One constructor migrates ContentKit's own schema (concurrently, twice), the
@@ -182,18 +186,26 @@ func TestEngineIntegration(t *testing.T) {
 		}
 	}
 
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|TaxonomyRoutes|NotificationRoutes {
+	chain, err := fs.Glob(migrations.Postgres, "*.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applied int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
+		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
+	}
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
 		t.Fatal("Routes without groups")
 	}
-	for _, g := range []RouteGroups{MediaRoutes, UploadRoutes, CatalogRoutes} {
+	for _, g := range []RouteGroups{MediaRoutes, UploadRoutes} {
 		if _, err := e.Routes(Routes{Prefix: "/api/ck", Groups: g}); err == nil {
 			t.Fatalf("group %d served without its module", g)
 		}
 	}
-	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | TaxonomyRoutes | NotificationRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | GroupRoutes | NotificationRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,8 +226,18 @@ func TestEngineIntegration(t *testing.T) {
 	var post content.Post
 	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/posts", content.PostInput{Title: ptr("Autumn Festival Report"), Body: ptr("b"), Language: ptr("en"), IsDraft: ptr(false)}, &post)
 	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/posts", content.PostInput{Title: ptr("No")}, nil)
-	if _, err := e.taxonomy.CreateNodes(ctx, []taxonomy.NodeInput{{Kind: "tag", Slug: "moonlit", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Moonlit"}}}}); err != nil {
-		t.Fatal(err)
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
+		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Moonlit"}}}}, nil)
+	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/groups?kind=tag", nil, nil)
+	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/nowhere/at/all/x", nil, nil)
+
+	// The public content model, without server-only parts.
+	var model kindsroute.ContentModel
+	rec := s.call(http.StatusOK, anon, "GET", "/api/ck/v1/kinds", nil, &model)
+	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil ||
+		rec.Header().Get("Cache-Control") != "public, max-age=300" || strings.Contains(rec.Body.String(), "restrictions") {
+		t.Fatalf("kinds %d %s", rec.Code, rec.Body)
 	}
 
 	if err := e.Ready(ctx); err == nil {

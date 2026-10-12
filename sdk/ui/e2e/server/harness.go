@@ -73,17 +73,19 @@ type harness struct {
 }
 
 // site is the content model: commentable kinds with their URL routes, and
-// the taxonomy's kinds.
+// the group kinds galleries and albums join.
 var site = func() kinds.Config {
 	one := kinds.VersionRules{Languages: "one"}
+	grouped := []string{"tag", "series", "character"}
 	return kinds.Config{Languages: []string{"en", "de", "ja"},
 		Kinds: map[string]kinds.Kind{
-			"gallery": {Route: "g", Presentation: "reader", Versions: one},
-			"album":   {Route: "post", Presentation: "post", Versions: one},
+			"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: grouped},
+			"album":   {Route: "post", Presentation: "post", Versions: one, Groups: grouped},
 			"video":   {Route: "watch", Presentation: "player", Versions: one},
 			"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		},
-		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}, "series": {}, "character": {}}}
+		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
+			"character": {Route: "characters", ScopedBy: "series"}}}
 }
 
 func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, err error) {
@@ -170,11 +172,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
 		return nil, err
 	}
-	routes := contenturl.Routes{"tag": "tag"}
-	for k, kind := range site().Kinds {
-		routes[k] = kind.Route
-	}
-	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: routes, Languages: site().Languages}); err != nil {
+	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: site().Routes(), Languages: site().Languages}); err != nil {
 		return nil, err
 	}
 

@@ -37,9 +37,11 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/video"
@@ -47,7 +49,6 @@ import (
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // DefaultSchema is Config.Database.Schema's default.
@@ -71,7 +72,7 @@ type Engine struct {
 	ownCH    clickhouse.Conn
 	content  *content.Runtime
 	notices  *notification.Store
-	taxonomy *taxonomy.Store
+	groups   *groups.Store
 	media    *engineMedia
 	resolver access.ContentResolver
 	uploader media.UploadAuthorizer
@@ -145,7 +146,7 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		return nil, err
 	}
 	e.notices = e.content.Notifications
-	if err := e.mount(deps); err != nil {
+	if err := e.mount(); err != nil {
 		return nil, err
 	}
 	e.jobs = &jobs{e: e}
@@ -307,9 +308,11 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	frames, err := video.NewFrames(deps.Store)
-	if err != nil {
-		return nil, err
+	var frames media.FrameGrabber
+	if f, err := video.NewFrames(deps.Store); err == nil {
+		frames = f
+	} else {
+		e.log.Warn("contentkit: no frame picker", "err", err) // it needs ffmpeg on PATH
 	}
 	rate := func(r RateLimitConfig) media.RateLimit {
 		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
@@ -370,7 +373,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 }
 
 // mount builds each configured module's handler and the in-process mux.
-func (e *Engine) mount(deps Deps) error {
+func (e *Engine) mount() error {
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
 	nh, err := e.notices.Handler(e.auth)
 	if err != nil {
@@ -382,53 +385,31 @@ func (e *Engine) mount(deps Deps) error {
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit})
 	}
 	c := e.cfg.Content
-	if len(c.GroupKinds) > 0 {
-		if e.taxonomy, err = taxonomy.New(taxonomy.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-			Kinds: slices.Sorted(maps.Keys(c.GroupKinds)), Languages: c.Languages, Listing: deps.Listing, Logger: e.log}); err != nil {
-			return err
-		}
-		if e.modules[httpapi.Taxonomy], err = e.taxonomy.Handler(e.auth); err != nil {
-			return err
-		}
-		if deps.Listing != nil {
-			if e.modules[httpapi.PublicCatalog], err = e.taxonomy.CatalogHandler(taxonomy.CatalogOptions{}); err != nil {
-				return err
+	if e.groups, err = groups.New(groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Logger: e.log}); err != nil {
+		return err
+	}
+	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {
+		return err
+	}
+	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c); err != nil {
+		return err
+	}
+	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
+	if err != nil {
+		return err
+	}
+	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
+		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
+			if l.ContentKind == content.KindPost {
+				return e.content.PostVisibility(r.Context(), l.ContentID)
 			}
-		}
+			return contenturl.Visible, nil
+		}})
+	if err != nil {
+		return err
 	}
-	routes := contenturl.Routes{}
-	for k, kind := range c.Kinds {
-		if kind.Route != "" {
-			routes[k] = kind.Route
-		}
-	}
-	for k, g := range c.GroupKinds {
-		if g.Route != "" {
-			routes[k] = g.Route
-		}
-	}
-	if len(routes) > 0 {
-		urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
-		if err != nil {
-			return err
-		}
-		router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: routes, Languages: c.Languages, Logger: e.log,
-			Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-				if l.ContentKind == content.KindPost {
-					return e.content.PostVisibility(r.Context(), l.ContentID)
-				}
-				return contenturl.Visible, nil
-			}})
-		if err != nil {
-			return err
-		}
-		e.modules[httpapi.Codes] = router.Handler()
-	}
-	mux := http.NewServeMux()
-	for m, h := range e.modules {
-		mux.Handle(m.Prefix()+"/", http.StripPrefix(m.Prefix(), h))
-	}
-	e.inproc = mux
+	e.modules[httpapi.Codes] = router.Handler()
+	e.inproc = e.dispatch("", e.modules)
 	return nil
 }
 
