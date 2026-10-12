@@ -315,8 +315,12 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
+	limiter, err := e.groupLimiter()
+	if err != nil {
+		return nil, err
+	}
 	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now}); err != nil {
+		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery
@@ -344,10 +348,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	}
 	rate := func(r RateLimitConfig) media.RateLimit {
 		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
-	}
-	limiter, err := e.groupLimiter()
-	if err != nil {
-		return nil, err
 	}
 	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring, Frames: frames,
 		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {

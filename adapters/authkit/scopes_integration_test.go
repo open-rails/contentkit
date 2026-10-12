@@ -172,6 +172,25 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 	var edited groups.Group
 	w.call(200, editorToken, "PATCH", path, groups.GroupUpdate{Names: name("Studio Two"), Attributes: map[string]any{}}, &edited)
 	w.call(403, editorToken, "PATCH", path, groups.GroupUpdate{Slug: ptr("renamed")}, nil)
+	var mine groups.MyGroupPage
+	w.call(200, editorToken, "GET", "/me/groups?kind=channel", nil, &mine)
+	if len(mine.Groups) != 2 || !mine.Groups[0].Editor && !mine.Groups[1].Editor {
+		t.Fatalf("the editor's groups %+v", mine)
+	}
+	for _, g := range mine.Groups {
+		// The editor owns the other, its scope's owner role included.
+		if g.ID == studio.ID && (!g.Editor || g.Owner) || g.ID != studio.ID && (!g.Owner || !g.Editor) {
+			t.Fatalf("the editor's %s: %+v", g.Slug, g)
+		}
+	}
+	w.call(200, creatorToken, "GET", "/me/groups", nil, &mine)
+	if len(mine.Groups) != 2 || !mine.Groups[0].Owner || !mine.Groups[1].Owner {
+		t.Fatalf("the creator's groups %+v", mine)
+	}
+	w.call(200, strangerToken, "GET", "/me/groups", nil, &mine)
+	if len(mine.Groups) != 0 {
+		t.Fatalf("a stranger's groups %+v", mine)
+	}
 	w.call(403, strangerToken, "PATCH", path, groups.GroupUpdate{Names: name("Mine")}, nil)
 	w.call(403, strangerToken, "DELETE", path, nil, nil)
 	w.call(200, staffToken, "PATCH", path, groups.GroupUpdate{Slug: ptr("studio-two")}, nil)

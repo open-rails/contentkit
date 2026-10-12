@@ -260,7 +260,7 @@ func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref
 		if err != nil {
 			return err
 		}
-		del = append(del, media.Deletion{Ref: ref})
+		del = append(del, media.Deletion{Ref: ref, Owner: GroupOwner(r.Kind, string(r.ID))})
 	}
 	if len(del) == 0 || g.s.m.Jobs == nil {
 		return nil

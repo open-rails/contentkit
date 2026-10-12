@@ -229,10 +229,10 @@ func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups [
 
 // Joined is the groups whose key viewer holds, bought, subscribed or joined
 // free: the request's one entitlements read (access.Gate.Filter), at most
-// access.HeldLimit of them.
+// access.HeldLimit of them. A failed read answers none.
 func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, error) {
 	f, err := s.gate.Filter(ctx, viewer)
-	if err != nil {
+	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
 	}
 	return f.Groups(), nil

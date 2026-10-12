@@ -48,18 +48,21 @@ const prefix = "/api/contentkit"
 // galleries and accounts it still owns. Fixtures stand in for the media
 // worker through their own registry over the same bucket and journal.
 type world struct {
-	t      *testing.T
-	ak     *authkit.Client
-	scope  auth.Scope // the root group: AuthKit's root scope, where staff hold their permissions
-	staff  iam.Role
-	pool   *pgxpool.Pool
-	schema string
-	tenant string // the media namespace too
-	env    *mediatest.Env
-	reg    *media.Registry
-	jobs   *media.Jobs
-	queue  *workqueue.Queue
-	owner  string // the gallery's owner, when a test has one
+	t     *testing.T
+	ak    *authkit.Client
+	scope auth.Scope // the root group: AuthKit's root scope, where staff hold their permissions
+	staff iam.Role
+	// channelEditor is the channel persona's role holding its settings and
+	// media permissions (access.GroupPermissions).
+	channelEditor iam.Role
+	pool          *pgxpool.Pool
+	schema        string
+	tenant        string // the media namespace too
+	env           *mediatest.Env
+	reg           *media.Registry
+	jobs          *media.Jobs
+	queue         *workqueue.Queue
+	owner         string // the gallery's owner, when a test has one
 }
 
 func newWorld(t *testing.T) *world {
@@ -74,6 +77,12 @@ func newWorld(t *testing.T) *world {
 		grants = append(grants, p)
 	}
 	w.staff = rbac.Root.Role("staff", grants...)
+	channel := rbac.Persona("channel")
+	var editing []iam.Grant
+	for _, p := range channel.Declare(access.GroupPermissions("channel")...) {
+		editing = append(editing, p)
+	}
+	w.channelEditor = channel.Role("editor", editing...)
 	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
 	var err error
 	if w.scope, err = w.ak.Scope(ctx, iam.RootGroup()); err != nil {
