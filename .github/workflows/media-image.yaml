@@ -1,8 +1,20 @@
 name: media-image
 'on':
   pull_request:
-    branches: [master, 'next/**']
+    branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - 'media/**'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - 'cmd/media-worker/**'
+    - '!cmd/*/Dockerfile'
+    - '.github/workflows/media-image.yaml'
+  # Integration branches: lane PRs merge without waiting; each push runs the full
+  # suite once and a newer push cancels it.
+  push:
+    branches: ['next/**']
     paths:
     - 'media/**'
     - '!**.md'

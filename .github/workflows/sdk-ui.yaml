@@ -1,8 +1,31 @@
 name: sdk-ui
 'on':
   pull_request:
-    branches: [master, 'next/**']
+    branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - 'sdk/ui/**'
+    - 'contenturl/testdata/**'
+    - '*.go'
+    - 'media/**'
+    - 'content/**'
+    - 'contenturl/**'
+    - 'groups/**'
+    - 'kinds/**'
+    - 'migrations/**'
+    - 'internal/**'
+    - 'access/**'
+    - 'cmd/media-gateway/**'
+    - 'cmd/media-worker/**'
+    - '.dockerignore'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - '.github/workflows/sdk-ui.yaml'
+  # Integration branches: lane PRs merge without waiting; each push runs the full
+  # suite once and a newer push cancels it.
+  push:
+    branches: ['next/**']
     paths:
     - 'sdk/ui/**'
     - 'contenturl/testdata/**'
