@@ -10,8 +10,9 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// Scopes provisions the AuthKit groups (scopes) of auth_scope group kinds:
-// adapters/authkit over an AuthKit client. Both methods are idempotent.
+// Scopes keeps the AuthKit groups (scopes) of auth_scope group kinds:
+// adapters/authkit over an AuthKit client. Provision and Retire are
+// idempotent.
 type Scopes interface {
 	// Provision makes each scope a live AuthKit group of its kind's persona,
 	// seeded with Owner as its owner when new; a scope retired before is
@@ -19,6 +20,9 @@ type Scopes interface {
 	Provision(ctx context.Context, scopes []Scope) error
 	// Retire stops each scope resolving and granting.
 	Retire(ctx context.Context, ids []string) error
+	// Holding lists the live scopes of the kinds' personas in which user
+	// holds the kind's access.GroupSettingsManage.
+	Holding(ctx context.Context, user string, kinds []string) ([]string, error)
 }
 
 // Scope is one group's AuthKit scope: ContentKit keys it by the group's id.
@@ -28,8 +32,19 @@ type Scope struct {
 	Owner string
 }
 
-// scopeBatch bounds the groups one SyncScopes transaction locks.
-const scopeBatch = 100
+// Folders deletes groups' media folders in a writing transaction.
+type Folders interface {
+	DeleteTx(ctx context.Context, tx pgx.Tx, groups []Ref) error
+}
+
+// Ref names one group with its kind.
+type Ref struct {
+	Kind string
+	ID   GroupID
+}
+
+// syncBatch bounds the groups one sync transaction locks.
+const syncBatch = 100
 
 // unscoped lists the groups among gs that need a scope provisioned.
 func (s *Store) unscoped(gs []Group) []string {
@@ -42,46 +57,36 @@ func (s *Store) unscoped(gs []Group) []string {
 	return out
 }
 
-// queueScopes queues the scope sync of ids in the writing transaction, when
-// River is bound and a Scopes provider is set.
-func (s *Store) queueScopes(ctx context.Context, q Querier, ids []string) error {
+// queueSync queues the sync of ids in the writing transaction, when River
+// is bound.
+func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 	client := s.river.bound()
 	tx, ok := q.(pgx.Tx)
-	if s.scopes == nil || client == nil || !ok || len(ids) == 0 {
+	if s.scopes == nil && s.purge == nil || client == nil || !ok || len(ids) == 0 {
 		return nil
 	}
-	_, err := client.InsertTx(ctx, tx, scopeArgs{Tenant: s.tenant, Groups: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
+	_, err := client.InsertTx(ctx, tx, syncArgs{Tenant: s.tenant, Groups: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
 	return err
 }
 
-// syncAfter syncs the scopes a committed write changed, best effort (the
+// syncAfter syncs the groups a committed write changed, best effort (the
 // queued job retries), and answers gs as they then stand. Bound to a
 // caller's transaction it leaves them to the job.
-func (s *Store) syncAfter(ctx context.Context, gs []Group) ([]Group, error) {
-	if s.scopes == nil || s.tx != nil {
+func (s *Store) syncAfter(ctx context.Context, gs []Group, changed []string) ([]Group, error) {
+	if s.tx != nil || len(changed) == 0 || s.scopes == nil && s.purge == nil {
 		return gs, nil
 	}
-	var ids []GroupID
-	for _, g := range gs {
-		active := g.State == StateActive
-		if active && g.AuthScope == "" && s.cfg.GroupKinds[g.Kind].AuthScope || !active && g.AuthScope != "" {
-			ids = append(ids, g.ID)
-		}
+	ids := make([]GroupID, len(changed))
+	for i, id := range changed {
+		ids[i] = GroupID(id)
 	}
-	if len(ids) == 0 {
+	if err := s.Sync(ctx, ids); err != nil {
+		s.log.WarnContext(ctx, "groups: sync failed; the job retries", "err", err)
 		return gs, nil
-	}
-	if err := s.SyncScopes(ctx, ids); err != nil {
-		s.log.WarnContext(ctx, "groups: scope sync failed; the job retries", "err", err)
-		return gs, nil
-	}
-	list := make([]string, len(ids))
-	for i, id := range ids {
-		list[i] = string(id)
 	}
 	var now map[GroupID]Group
 	if err := s.read(ctx, func(q Querier) (err error) {
-		now, err = s.byIDs(ctx, q, list)
+		now, err = s.byIDs(ctx, q, changed)
 		return err
 	}); err != nil {
 		return nil, err
@@ -93,6 +98,21 @@ func (s *Store) syncAfter(ctx context.Context, gs []Group) ([]Group, error) {
 		}
 	}
 	return out, nil
+}
+
+// Sync brings what follows from each group's state in line with it: its
+// AuthKit scope (SyncScopes) and, for a deleted user-owned group, the
+// deletion of the content it owns (Options.DeleteContents). Repeating it
+// changes nothing.
+func (s *Store) Sync(ctx context.Context, ids []GroupID) error {
+	if err := s.SyncScopes(ctx, ids); err != nil {
+		return err
+	}
+	list, err := uniqueIDs(ids)
+	if err != nil {
+		return err
+	}
+	return s.cascade(ctx, list)
 }
 
 // SyncScopes brings AuthKit in line with each group: an active group of an
@@ -110,7 +130,7 @@ func (s *Store) SyncScopes(ctx context.Context, ids []GroupID) error {
 	}
 	slices.Sort(list)
 	for len(list) > 0 {
-		n := min(len(list), scopeBatch)
+		n := min(len(list), syncBatch)
 		if err := s.syncScopes(ctx, list[:n]); err != nil {
 			return err
 		}
@@ -168,36 +188,93 @@ func (s *Store) syncScopes(ctx context.Context, ids []string) error {
 	})
 }
 
-// ReconcileScopes syncs every group whose scope AuthKit does not match yet:
-// those whose job was lost, or whose sync keeps failing.
-func (s *Store) ReconcileScopes(ctx context.Context) error {
-	if s.scopes == nil {
+func (s *Store) userKinds() []string {
+	var out []string
+	for name, gk := range s.cfg.GroupKinds {
+		if gk.Owner == "user" {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// cascade deletes the live content owned by those of groups that are
+// deleted user-owned groups (every one with nil groups), through
+// Options.DeleteContents, a batch at a time.
+func (s *Store) cascade(ctx context.Context, groups []string) error {
+	if s.purge == nil {
 		return nil
+	}
+	for after := ""; ; {
+		rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT c.id FROM %s c JOIN %s g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id
+ WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2::text[]) AND ($3::text[] IS NULL OR g.id = ANY($3::text[]))
+   AND c.state <> 'deleted' AND c.id > $4 ORDER BY c.id LIMIT %d`, s.table("content_items"), s.table("content_groups"), syncBatch),
+			s.tenant, s.userKinds(), groups, after)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+		if err := s.purge(ctx, ids); err != nil {
+			return fmt.Errorf("groups: delete owned content: %w", err)
+		}
+		after = ids[len(ids)-1]
+	}
+}
+
+// Reconcile syncs every group what follows from its state does not match
+// yet: those whose job was lost, or whose sync keeps failing.
+func (s *Store) Reconcile(ctx context.Context) error {
+	var errs []error
+	if s.scopes != nil {
+		var kinds []string
+		for name, gk := range s.cfg.GroupKinds {
+			if gk.AuthScope {
+				kinds = append(kinds, name)
+			}
+		}
+		for after := ""; ; {
+			var ids []GroupID
+			rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND id > $3
+ AND (state = 'active' AND auth_scope IS NULL AND kind = ANY($2::text[]) OR state <> 'active' AND auth_scope IS NOT NULL)
+ ORDER BY id LIMIT %d`, s.table("content_groups"), syncBatch), s.tenant, kinds, after)
+			if err == nil {
+				ids, err = pgx.CollectRows(rows, pgx.RowTo[GroupID])
+			}
+			if err != nil {
+				errs = append(errs, err)
+				break
+			}
+			if len(ids) == 0 {
+				break
+			}
+			if err := s.SyncScopes(ctx, ids); err != nil {
+				errs = append(errs, err)
+			}
+			after = string(ids[len(ids)-1])
+		}
+	}
+	return errors.Join(append(errs, s.cascade(ctx, nil))...)
+}
+
+// heldScopes is the live scopes of user-owned auth_scope kinds (of kind,
+// when set) in which user holds the kind's settings permission.
+func (s *Store) heldScopes(ctx context.Context, user, kind string) ([]string, error) {
+	if s.scopes == nil {
+		return nil, nil
 	}
 	var kinds []string
 	for name, gk := range s.cfg.GroupKinds {
-		if gk.AuthScope {
+		if gk.Owner == "user" && gk.AuthScope && (kind == "" || kind == name) {
 			kinds = append(kinds, name)
 		}
 	}
-	var errs []error
-	for after := ""; ; {
-		var ids []GroupID
-		rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND id > $3
- AND (state = 'active' AND auth_scope IS NULL AND kind = ANY($2::text[]) OR state <> 'active' AND auth_scope IS NOT NULL)
- ORDER BY id LIMIT %d`, s.table("content_groups"), scopeBatch), s.tenant, kinds, after)
-		if err == nil {
-			ids, err = pgx.CollectRows(rows, pgx.RowTo[GroupID])
-		}
-		if err != nil {
-			return errors.Join(append(errs, err)...)
-		}
-		if len(ids) == 0 {
-			return errors.Join(errs...)
-		}
-		if err := s.SyncScopes(ctx, ids); err != nil {
-			errs = append(errs, err)
-		}
-		after = string(ids[len(ids)-1])
+	if len(kinds) == 0 {
+		return nil, nil
 	}
+	slices.Sort(kinds)
+	return s.scopes.Holding(ctx, user, kinds)
 }

@@ -67,6 +67,9 @@ type Settlement struct {
 type PGLimits struct {
 	FilesPerHour int
 	BytesPerDay  int64
+	// Rates, when set, are an upload's per-uploader limits by the quota
+	// owner it writes for, in place of FilesPerHour and BytesPerDay.
+	Rates func(ctx context.Context, tenant, owner string) (filesPerHour int, bytesPerDay int64, err error)
 	// Quota is the owner's storage cap in bytes (<= 0 unlimited); nil disables quotas.
 	Quota func(ctx context.Context, tenant, owner string) (int64, error)
 	// ReservationTTL drops unsettled reservations (commit still enforces the
@@ -209,7 +212,14 @@ ON CONFLICT (tenant_id, object_key) DO UPDATE SET owner_id = EXCLUDED.owner_id, 
 // that hour and bytes over the last 24. The hour row lock serializes one
 // uploader's presigns.
 func (l *PGLimiter) rate(ctx context.Context, tx pgx.Tx, r Reservation) error {
-	if l.limits.FilesPerHour <= 0 && l.limits.BytesPerDay <= 0 {
+	filesPerHour, bytesPerDay := l.limits.FilesPerHour, l.limits.BytesPerDay
+	if l.limits.Rates != nil {
+		var err error
+		if filesPerHour, bytesPerDay, err = l.limits.Rates(ctx, r.Tenant, r.Owner); err != nil {
+			return fmt.Errorf("media: upload rates for %s: %w", r.Owner, err)
+		}
+	}
+	if filesPerHour <= 0 && bytesPerDay <= 0 {
 		return nil
 	}
 	var files int
@@ -220,11 +230,11 @@ ON CONFLICT (tenant_id, uploader, hour) DO UPDATE SET files = r.files + 1, bytes
 RETURNING files, hour`, r.Tenant, r.Uploader, r.Size).Scan(&files, &hour); err != nil {
 		return err
 	}
-	if l.limits.FilesPerHour > 0 && files > l.limits.FilesPerHour {
-		return &UploadError{Code: CodeRate, Message: fmt.Sprintf("upload rate limit: %d files per hour", l.limits.FilesPerHour),
+	if filesPerHour > 0 && files > filesPerHour {
+		return &UploadError{Code: CodeRate, Message: fmt.Sprintf("upload rate limit: %d files per hour", filesPerHour),
 			RetryAfter: time.Until(hour.Add(time.Hour))}
 	}
-	if l.limits.BytesPerDay <= 0 {
+	if bytesPerDay <= 0 {
 		return nil
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+l.rates+` WHERE tenant_id = $1 AND uploader = $2 AND hour <= now() - interval '1 day'`,
@@ -237,8 +247,8 @@ RETURNING files, hour`, r.Tenant, r.Uploader, r.Size).Scan(&files, &hour); err !
 WHERE tenant_id = $1 AND uploader = $2`, r.Tenant, r.Uploader).Scan(&day, &oldest); err != nil {
 		return err
 	}
-	if day > l.limits.BytesPerDay {
-		return &UploadError{Code: CodeRate, Message: fmt.Sprintf("upload rate limit: %d bytes per day", l.limits.BytesPerDay),
+	if day > bytesPerDay {
+		return &UploadError{Code: CodeRate, Message: fmt.Sprintf("upload rate limit: %d bytes per day", bytesPerDay),
 			RetryAfter: time.Until(oldest.Add(24 * time.Hour))}
 	}
 	return nil

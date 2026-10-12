@@ -10,10 +10,11 @@ import (
 // AvatarPreset is the media preset avatars render in (media.AvatarPreset).
 const AvatarPreset = "avatar"
 
-// Sales answers sellable groups' sales, every group of a page in one call:
-// offers.Service.
+// Sales answers sellable groups' sales, every group of a page in one call,
+// and the groups a viewer holds the key of: offers.Service.
 type Sales interface {
 	GroupAccess(ctx context.Context, viewer access.Actor, groups []string) ([]offers.GroupAccess, error)
+	Joined(ctx context.Context, viewer access.Actor) ([]string, error)
 }
 
 // shown is one group a page shows; fill completes it in place.

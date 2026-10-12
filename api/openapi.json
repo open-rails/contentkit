@@ -4339,6 +4339,84 @@
         ]
       }
     },
+    "/v1/me/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only groups of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name (the default), count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyGroupPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/groups/{id}/names": {
       "put": {
         "tags": [
@@ -5878,7 +5956,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5936,7 +6014,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
+        "summary": "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -9374,6 +9452,9 @@
           "max_per_owner": {
             "type": "integer"
           },
+          "uploads": {
+            "$ref": "#/components/schemas/UploadLimits"
+          },
           "sellable": {
             "type": "boolean"
           },
@@ -9931,6 +10012,96 @@
           "min_part_size",
           "max_part_size",
           "max_parts"
+        ]
+      },
+      "MyGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/Cover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "owner": {
+            "type": "boolean"
+          },
+          "editor": {
+            "type": "boolean"
+          },
+          "member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name",
+          "count",
+          "attributes",
+          "created_at",
+          "owner",
+          "editor",
+          "member"
+        ]
+      },
+      "MyGroupPage": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyGroup"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "groups"
         ]
       },
       "Name": {
@@ -11493,6 +11664,20 @@
           "contents",
           "groups"
         ]
+      },
+      "UploadLimits": {
+        "type": "object",
+        "properties": {
+          "files_per_hour": {
+            "type": "integer"
+          },
+          "bytes_per_day": {
+            "type": "integer"
+          },
+          "quota_bytes": {
+            "type": "integer"
+          }
+        }
       },
       "UploadRule": {
         "type": "object",

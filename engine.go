@@ -43,6 +43,7 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/kindsroute"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
@@ -344,8 +345,12 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	rate := func(r RateLimitConfig) media.RateLimit {
 		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
+	limiter, err := e.groupLimiter()
+	if err != nil {
+		return nil, err
+	}
 	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring, Frames: frames,
-		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit)}); err != nil {
+		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
 		return nil, err
 	}
 	if m.progress, err = workqueue.NewProgressSource(e.pool, mc.WorkerSchema); err != nil {
@@ -366,6 +371,31 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	return m, nil
+}
+
+// groupLimiter limits uploads to user-owned groups by their kind's
+// kinds.UploadLimits, keyed by the group (versions.GroupOwner); nil when no
+// kind sets any.
+func (e *Engine) groupLimiter() (*media.PGLimiter, error) {
+	limits := map[string]kinds.UploadLimits{}
+	for name, gk := range e.cfg.Content.GroupKinds {
+		if gk.Uploads != (kinds.UploadLimits{}) {
+			limits[name] = gk.Uploads
+		}
+	}
+	if len(limits) == 0 {
+		return nil, nil
+	}
+	of := func(owner string) kinds.UploadLimits {
+		kind, _, _ := versions.ParseGroupOwner(owner)
+		return limits[kind]
+	}
+	return media.NewPGLimiter(e.pool, e.schema, media.PGLimits{
+		Quota: func(_ context.Context, _, owner string) (int64, error) { return of(owner).QuotaBytes, nil },
+		Rates: func(_ context.Context, _, owner string) (int, int64, error) {
+			l := of(owner)
+			return l.FilesPerHour, l.BytesPerDay, nil
+		}})
 }
 
 func (e *Engine) contentOptions(deps Deps) content.Options {
@@ -420,7 +450,7 @@ func (e *Engine) mount(deps Deps) error {
 	c := e.cfg.Content
 	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log}
 	if e.media != nil {
-		opts.Covers = e.media.versions.GroupCovers()
+		opts.Covers, opts.Folders = e.media.versions.GroupCovers(), e.media.versions.GroupFolders()
 	}
 	if deps.Billing != nil {
 		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,

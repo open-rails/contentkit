@@ -560,6 +560,7 @@ export interface GroupKind {
   scoped_by?: string;
   owner?: string;
   max_per_owner?: number;
+  uploads?: UploadLimits;
   sellable?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
@@ -718,6 +719,32 @@ export interface MultipartReply {
   min_part_size: number;
   max_part_size: number;
   max_parts: number;
+}
+
+export interface MyGroup {
+  id: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: Cover;
+  avatar?: Avatar;
+  count: number;
+  attributes: Record<string, unknown>;
+  access?: GroupAccess;
+  created_at: string;
+  owner: boolean;
+  editor: boolean;
+  member: boolean;
+}
+
+export interface MyGroupPage {
+  groups: MyGroup[];
+  next_cursor?: string;
 }
 
 export interface Name {
@@ -1168,6 +1195,12 @@ export interface TicketBody {
 export interface Typeahead {
   contents: Card[];
   groups: GroupCard[];
+}
+
+export interface UploadLimits {
+  files_per_hour?: number;
+  bytes_per_day?: number;
+  quota_bytes?: number;
 }
 
 export interface UploadRule {

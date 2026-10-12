@@ -226,3 +226,14 @@ func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups [
 	}
 	return out, nil
 }
+
+// Joined is the groups whose key viewer holds, bought, subscribed or joined
+// free: the request's one entitlements read (access.Gate.Filter), at most
+// access.HeldLimit of them.
+func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, error) {
+	f, err := s.gate.Filter(ctx, viewer)
+	if err != nil {
+		return nil, err
+	}
+	return f.Groups(), nil
+}

@@ -162,10 +162,18 @@ type Options struct {
 	// Sales fills sellable groups' offers and the viewer's standing on
 	// reads: offers.Service. Optional.
 	Sales Sales
-	// Scopes provisions and retires the AuthKit scopes of auth_scope kinds.
-	// Optional: without it auth_scope is whatever staff set.
+	// Scopes provisions and retires the AuthKit scopes of auth_scope kinds,
+	// and lists a person's. Optional: without it auth_scope is whatever staff
+	// set.
 	Scopes Scopes
-	// Queue is the River queue of scope syncs; contentkit_groups when empty.
+	// Folders deletes a deleted user-owned group's media folder in the
+	// deleting transaction: media/versions.Service.GroupFolders. Optional.
+	Folders Folders
+	// DeleteContents deletes the content a deleted user-owned group owns
+	// (owner_group): the catalog's Delete, which keeps bought content
+	// readable to its buyers. Optional.
+	DeleteContents func(ctx context.Context, ids []string) error
+	// Queue is the River queue of group syncs; contentkit_groups when empty.
 	Queue string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
@@ -183,6 +191,8 @@ type Store struct {
 	covers  CoverResolver
 	sales   Sales
 	scopes  Scopes
+	folders Folders
+	purge   func(ctx context.Context, ids []string) error
 	queue   string
 	log     *slog.Logger
 	as      *writer
@@ -214,7 +224,8 @@ func New(opts Options) (*Store, error) {
 		queue = "contentkit_groups"
 	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged,
-		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, queue: queue, log: log, river: &riverBinding{}}, nil
+		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, folders: opts.Folders, purge: opts.DeleteContents, queue: queue, log: log,
+		river: &riverBinding{}}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.

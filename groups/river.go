@@ -12,29 +12,29 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// ScopeReconcileInterval is how often the engine syncs every group whose
-// AuthKit scope does not match it yet.
-const ScopeReconcileInterval = time.Minute
+// ReconcileInterval is how often the engine syncs every group whose scope or
+// owned content does not match its state yet.
+const ReconcileInterval = time.Minute
 
-type scopeArgs struct {
+type syncArgs struct {
 	Tenant string   `json:"tenant"`
 	Groups []string `json:"groups"`
 }
 
-func (scopeArgs) Kind() string { return "contentkit_group_scopes" }
+func (syncArgs) Kind() string { return "contentkit_group_sync" }
 
-type scopeReconcileArgs struct {
+type reconcileArgs struct {
 	Tenant string `json:"tenant"`
 }
 
-func (scopeReconcileArgs) Kind() string { return "contentkit_group_scopes_reconcile" }
+func (reconcileArgs) Kind() string { return "contentkit_group_reconcile" }
 
-type scopeWorker struct {
-	river.WorkerDefaults[scopeArgs]
+type syncWorker struct {
+	river.WorkerDefaults[syncArgs]
 	s *Store
 }
 
-func (w *scopeWorker) Work(ctx context.Context, job *river.Job[scopeArgs]) error {
+func (w *syncWorker) Work(ctx context.Context, job *river.Job[syncArgs]) error {
 	if job.Args.Tenant != w.s.tenant {
 		return river.JobCancel(fmt.Errorf("groups: job of tenant %q", job.Args.Tenant))
 	}
@@ -42,16 +42,16 @@ func (w *scopeWorker) Work(ctx context.Context, job *river.Job[scopeArgs]) error
 	for i, id := range job.Args.Groups {
 		ids[i] = GroupID(id)
 	}
-	return w.s.SyncScopes(ctx, ids)
+	return w.s.Sync(ctx, ids)
 }
 
-type scopeReconcileWorker struct {
-	river.WorkerDefaults[scopeReconcileArgs]
+type reconcileWorker struct {
+	river.WorkerDefaults[reconcileArgs]
 	s *Store
 }
 
-func (w *scopeReconcileWorker) Work(ctx context.Context, _ *river.Job[scopeReconcileArgs]) error {
-	return w.s.ReconcileScopes(ctx)
+func (w *reconcileWorker) Work(ctx context.Context, _ *river.Job[reconcileArgs]) error {
+	return w.s.Reconcile(ctx)
 }
 
 // riverBinding is the River client a store's composition bound.
@@ -67,9 +67,9 @@ func (b *riverBinding) bound() *river.Client[pgx.Tx] {
 	return b.client
 }
 
-// RiverJobs contributes the scope sync worker, its queue and the periodic
+// RiverJobs contributes the group sync worker, its queue and the periodic
 // reconcile to the engine's helpers/river composition. It composes once;
-// until bound, writes leave their scopes to the reconcile.
+// until bound, writes leave their syncs to the reconcile.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	b := s.river
 	claimed := false
@@ -83,18 +83,18 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[s.queue]; !ok {
 			cfg.Queues[s.queue] = river.QueueConfig{MaxWorkers: 1}
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &scopeWorker{s: s}); err != nil {
+		if err := river.AddWorkerSafely(cfg.Workers, &syncWorker{s: s}); err != nil {
 			return err
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &scopeReconcileWorker{s: s}); err != nil {
+		if err := river.AddWorkerSafely(cfg.Workers, &reconcileWorker{s: s}); err != nil {
 			return err
 		}
-		if s.scopes != nil {
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(ScopeReconcileInterval),
+		if s.scopes != nil || s.purge != nil {
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(ReconcileInterval),
 				func() (river.JobArgs, *river.InsertOpts) {
-					return scopeReconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,
-						UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: ScopeReconcileInterval}}
-				}, &river.PeriodicJobOpts{ID: "contentkit_group_scopes_reconcile_" + s.tenant, RunOnStart: true}))
+					return reconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,
+						UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: ReconcileInterval}}
+				}, &river.PeriodicJobOpts{ID: "contentkit_group_reconcile_" + s.tenant, RunOnStart: true}))
 		}
 		return nil
 	}, func(_ context.Context, bd riverhelpers.Binding) error {

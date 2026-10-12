@@ -1027,6 +1027,47 @@ func (c *Client) GetGroup(ctx context.Context, id string, q GetGroupQuery) (grou
 	return out, err
 }
 
+// GetMeGroupsQuery is the query of GetMeGroups.
+type GetMeGroupsQuery struct {
+	// only groups of this kind
+	Kind string
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+	// name (the default), count or newest
+	Sort string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 50 by default, at most 200
+	Limit int
+}
+
+func (q GetMeGroupsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.
+func (c *Client) GetMeGroups(ctx context.Context, q GetMeGroupsQuery) (groups.MyGroupPage, error) {
+	var out groups.MyGroupPage
+	err := c.call(ctx, http.MethodGet, "/v1/me/groups", q.values(), nil, &out)
+	return out, err
+}
+
 // PostGroups is POST /v1/groups (editor). Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) PostGroups(ctx context.Context, body []groups.GroupInput) ([]groups.Group, error) {
 	var out []groups.Group
@@ -1300,14 +1341,14 @@ func (c *Client) DeleteContentVersionOffer(ctx context.Context, id string, vid s
 	return out, err
 }
 
-// PutGroupOffer is PUT /v1/groups/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+// PutGroupOffer is PUT /v1/groups/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
 func (c *Client) PutGroupOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupOffer is DELETE /v1/groups/{id}/offer (editor). Withdraws a group's offer; members and subscribers keep theirs. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+// DeleteGroupOffer is DELETE /v1/groups/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
 func (c *Client) DeleteGroupOffer(ctx context.Context, id string) (offers.Offer, error) {
 	var out offers.Offer
 	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)

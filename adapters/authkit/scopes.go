@@ -12,8 +12,10 @@ import (
 	"fmt"
 
 	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/iam"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 )
 
@@ -24,6 +26,9 @@ type Client interface {
 	CreateGroup(ctx context.Context, g iam.NewGroup, opts ...authkit.Option) (iam.Group, error)
 	DeleteGroup(ctx context.Context, ref iam.GroupRef, opts ...authkit.Option) error
 	PurgeGroup(ctx context.Context, ref iam.GroupRef, opts ...authkit.Option) error
+	Permission(text string) (iam.Perm, error)
+	ListMemberships(ctx context.Context, s iam.Subject, p iam.PageRequest) (iam.ListPage[iam.Membership], error)
+	EffectivePermissions(ctx context.Context, who auth.Identity, refs []iam.GroupRef) (map[string][]iam.Perm, error)
 }
 
 var _ Client = (*authkit.Client)(nil)
@@ -74,4 +79,49 @@ func (s scopes) Retire(ctx context.Context, ids []string) error {
 		}
 	}
 	return nil
+}
+
+// Holding is the user's live groups of the kinds' personas whose effective
+// permissions cover the kind's access.GroupSettingsManage: one memberships
+// listing and one EffectivePermissions read.
+func (s scopes) Holding(ctx context.Context, user string, kinds []string) ([]string, error) {
+	want := map[iam.Persona]iam.Perm{}
+	for _, k := range kinds {
+		persona, err := s.c.Persona(k)
+		if err != nil {
+			return nil, fmt.Errorf("authkit: persona of group kind %s: %w", k, err)
+		}
+		if want[persona], err = s.c.Permission(access.GroupSettingsManage(k)); err != nil {
+			return nil, fmt.Errorf("authkit: %w", err)
+		}
+	}
+	var refs []iam.GroupRef
+	perm := map[string]iam.Perm{}
+	for m, err := range iam.All(func(p iam.PageRequest) (iam.ListPage[iam.Membership], error) {
+		return s.c.ListMemberships(ctx, iam.UserSubject(user), p)
+	}) {
+		if err != nil {
+			return nil, err
+		}
+		if p, ok := want[m.Group.Persona]; ok && m.Group.DeletedAt == nil {
+			refs, perm[m.Group.ID] = append(refs, iam.GroupByID(m.Group.ID)), p
+		}
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	grants, err := s.c.EffectivePermissions(ctx, iam.UserIdentity(user), refs)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for id, gs := range grants {
+		for _, g := range gs {
+			if perm[id].Matches(g) {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out, nil
 }

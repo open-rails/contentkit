@@ -74,7 +74,8 @@ func (s *Service) Put(ctx context.Context, puts []Put) ([]Offer, error) {
 }
 
 // Withdraw ends each target's active offer, in one transaction, and queues
-// its sync, which archives the product: buyers and subscribers keep theirs.
+// its sync, which archives the product: buyers keep theirs, and a group's
+// subscribers theirs until their paid period ends, without renewing.
 // A target without an active offer is ErrNotFound.
 func (s *Service) Withdraw(ctx context.Context, targets []Target) ([]Offer, error) {
 	var ids []string

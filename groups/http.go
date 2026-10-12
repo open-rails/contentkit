@@ -64,6 +64,11 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}", Resource: "groups", Auth: httpapi.Public,
 		Doc:   "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/groups", Resource: "groups", Auth: httpapi.User,
+		Doc: "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
+			httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 200")},
+		Responses: []httpapi.Reply{httpapi.OK(MyGroupPage{})}}, Serve: httpapi.H(handler.mine)},
 	editor(httpapi.POST, "/groups", "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []GroupInput{}, httpapi.Created([]Group{}),
 		httpapi.H(handler.create), creates),
 	editor(httpapi.PATCH, "/groups/{id}", "Updates a group's given fields; state restores or deletes it."+editors, GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), creates),
@@ -238,6 +243,14 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	page, err := h.as(r).List(r.Context(), ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
 		Slug: q.Get("slug"), Letter: q.Get("letter"), Language: q.Get("language"), ContentKind: q.Get("content_kind"),
 		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Limit: limit})
+	reply(w, http.StatusOK, page, err)
+}
+
+func (h handler) mine(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	page, err := h.as(r).Mine(r.Context(), ListOptions{Kind: q.Get("kind"), Language: q.Get("language"), Sort: Sort(q.Get("sort")),
+		Cursor: q.Get("cursor"), Limit: limit})
 	reply(w, http.StatusOK, page, err)
 }
 

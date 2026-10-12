@@ -203,7 +203,7 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 	if err != nil || bare[0].AuthScope != "" {
 		t.Fatalf("bare %+v %v", bare, err)
 	}
-	if err := w.store.ReconcileScopes(ctx); err != nil {
+	if err := w.store.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.store.SyncScopes(ctx, []groups.GroupID{bare[0].ID, studio.ID}); err != nil {

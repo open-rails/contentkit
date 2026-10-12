@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/kinds"
@@ -360,12 +361,12 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueScopes(ctx, q, s.unscoped(out))
+		return s.queueSync(ctx, q, s.unscoped(out))
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.syncAfter(ctx, out)
+	return s.syncAfter(ctx, out, s.unscoped(out))
 }
 
 func (s *Store) insertText(ctx context.Context, q Querier, rows []textRow) error {
@@ -424,7 +425,9 @@ func (s *Store) Groups(ctx context.Context, ids []GroupID) ([]Group, error) {
 // UpdateGroups applies each update in one transaction. A merged group is
 // never updated (ErrConflict). Deleting or restoring a group, or moving it to
 // another parent, re-derives the facets of the content it reaches, and
-// retires or provisions its AuthKit scope. Written as a person (As), each
+// retires or provisions its AuthKit scope; deleting a user-owned group
+// deletes its media folder and the content it owns (Options.Folders,
+// Options.DeleteContents). Written as a person (As), each
 // group is a user-owned one the person owns or holds
 // access.GroupSettingsManage in, its slug, links, owner and scope stay, and
 // a restore stays within the kind's MaxPerOwner (ErrLimit); anything else is
@@ -456,6 +459,7 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		return nil, fmt.Errorf("%w: a group is updated twice", ErrInvalid)
 	}
 	out := make([]Group, len(updates))
+	var changed []string
 	err = s.run(ctx, func(q Querier) error {
 		locked, err := s.lock(ctx, q, list)
 		if err != nil {
@@ -471,8 +475,10 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		var rows []updateRow
 		var texts []textRow
 		var names []nameRow
-		var textIDs, nameIDs, reach, scoped []string
+		changed = changed[:0]
+		var textIDs, nameIDs, reach []string
 		var restored []groupRow
+		var gone []Ref
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -488,11 +494,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 				reach = append(reach, string(g.ID))
 			}
 			if u.State != nil && *u.State != g.State {
-				if s.cfg.GroupKinds[g.Kind].AuthScope || g.AuthScope != "" {
-					scoped = append(scoped, string(g.ID))
+				gk := s.cfg.GroupKinds[g.Kind]
+				if gk.AuthScope || g.AuthScope != "" || gk.Owner == "user" {
+					changed = append(changed, string(g.ID))
 				}
-				if *u.State == StateActive {
+				switch {
+				case *u.State == StateActive:
 					restored = append(restored, row.groupRow)
+				case gk.Owner == "user":
+					gone = append(gone, Ref{Kind: g.Kind, ID: g.ID})
 				}
 			}
 			if u.Names != nil {
@@ -531,6 +541,11 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err := s.checkCaps(ctx, q, restored); err != nil {
 			return err
 		}
+		if tx, ok := q.(pgx.Tx); ok && s.folders != nil && len(gone) > 0 {
+			if err := s.folders.DeleteTx(ctx, tx, gone); err != nil {
+				return err
+			}
+		}
 		if len(nameIDs) > 0 {
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_names")), s.tenant, nameIDs); err != nil {
 				return err
@@ -566,12 +581,12 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueScopes(ctx, q, scoped)
+		return s.queueSync(ctx, q, changed)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.syncAfter(ctx, out)
+	return s.syncAfter(ctx, out, changed)
 }
 
 // updateRow is groupRow plus the state an update writes.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
@@ -108,14 +110,17 @@ func (s *Service) canEditGroup(ctx context.Context, actor access.Actor, t media.
 	if !ok || !r.active || !r.editor {
 		return media.UploadGrant{}, nil
 	}
-	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: cmpOr(r.owner, actor.ID)}, nil
+	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: GroupOwner(t.Ref.ContentKind, t.Ref.ContentID)}, nil
 }
 
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
+// GroupOwner is the quota owner of a group's uploads: "{kind}:{id}".
+func GroupOwner(kind, id string) string { return kind + ":" + id }
+
+// ParseGroupOwner is GroupOwner's kind and id; ok is false for any other
+// owner.
+func ParseGroupOwner(owner string) (kind, id string, ok bool) {
+	kind, id, ok = strings.Cut(owner, ":")
+	return kind, id, ok && kind != "" && id != ""
 }
 
 // CoverOf names a content's or a group's cover: Kind and ID are its owner;
@@ -239,4 +244,26 @@ func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]group
 		}
 	}
 	return out, nil
+}
+
+// GroupFolders deletes groups' media folders for the groups API
+// (groups.Options.Folders).
+func (s *Service) GroupFolders() groups.Folders { return groupFolders{s} }
+
+type groupFolders struct{ s *Service }
+
+// DeleteTx queues the deletion of each group's media item in tx.
+func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	del := make([]media.Deletion, 0, len(refs))
+	for _, r := range refs {
+		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+		if err != nil {
+			return err
+		}
+		del = append(del, media.Deletion{Ref: ref})
+	}
+	if len(del) == 0 || g.s.m.Jobs == nil {
+		return nil
+	}
+	return g.s.m.Jobs.DeleteItemsTx(ctx, tx, del...)
 }
