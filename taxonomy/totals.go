@@ -26,21 +26,26 @@ var (
 	remoteTotalsPolicy = cache.Options{Name: "contentkit.remote_catalog_totals", RefreshAfter: 10 * time.Minute, MaxStale: 24 * time.Hour}
 )
 
-// Listing is the public catalog Totals sizes: the works an anonymous listing
-// shows, and who opens each.
+// Listing is the catalog Totals sizes: the works its listings show, and who
+// opens each.
 type Listing struct {
 	// Kinds are the content kinds counted; Totals answers no other.
 	Kinds []string
 	// Eligibility is trusted host SQL joined laterally to each document sd, as
-	// search.Eligibility, but it admits only what a listing shows: no row unless
-	// the version is listed (live, not deleted, not unlisted, not hidden on this
-	// deployment), else one row Access reads as h. It is not CountEligibility,
-	// which also admits what listings hide. Reserved arg names: tenant, kinds,
-	// any_of_kinds, any_of_slugs, none_of_kinds, none_of_slugs and Access's.
+	// search.Eligibility, but it admits only what the members' listing shows:
+	// no row unless the version is visible there (live, not deleted, not hidden
+	// on this deployment), else one row Access and PublicListed read as h. It
+	// is not CountEligibility, which also admits what listings hide. Reserved
+	// arg names: tenant, kinds, any_of_kinds, any_of_slugs, none_of_kinds,
+	// none_of_slugs and Access's.
 	Eligibility search.Eligibility
 	// Access maps h to its access level: Level, Levels and Tier or TierName,
 	// expressions over h. ID, Kind and Scope are unused.
 	Access access.Columns
+	// PublicListed is a boolean expression over h: whether the anonymous
+	// listing shows the row. Only the public audience needs it; a tier counts
+	// every eligible row it opens. Empty: every eligible row.
+	PublicListed string
 	// Tiers are the tiers Totals reports; with Access.TierName it defaults to
 	// that one.
 	Tiers []string
@@ -80,6 +85,10 @@ func (s *Store) compileListing(l *Listing) (*listing, error) {
 		return nil, fmt.Errorf("%w: Listing.Access: %v", ErrInvalid, err)
 	}
 	out.audiences = expr
+	if pl := strings.TrimSpace(l.PublicListed); pl != "" {
+		// A row the anonymous listing hides still counts for the tiers that open it.
+		out.audiences = fmt.Sprintf("(CASE WHEN coalesce((%s), false) THEN %s ELSE array_remove(%s, %s) END)", pl, expr, expr, "'"+access.Anyone+"'")
+	}
 	reserved := []string{"tenant", "kinds", "any_of_kinds", "any_of_slugs", "none_of_kinds", "none_of_slugs"}
 	for k, v := range l.Eligibility.Args {
 		if _, dup := args[k]; dup || slices.Contains(reserved, k) {
@@ -99,7 +108,8 @@ type NodeKey struct {
 
 // CatalogScope narrows totals to one site's slice of the catalog by the nodes
 // effective on each counted version: its work's and its own active
-// assignments of active nodes, as listings filter by tags.
+// assignments of active nodes, as listings filter by tags. Interim: ContentKit's
+// general listing restrictions replace it; restricted modes wait for those.
 type CatalogScope struct {
 	// AnyOf keeps versions with at least one of these; empty keeps all.
 	AnyOf []NodeKey `json:"any_of,omitempty"`
@@ -142,9 +152,10 @@ type TotalsQuery struct {
 	Scope CatalogScope
 }
 
-// Total sizes one kind's listing: Public works anyone opens, and per tier
-// every work its holders open, public ones included. A work counts once
-// whatever its languages and versions.
+// Total sizes one kind: Public works the anonymous listing shows and anyone
+// opens, and per tier every eligible work its holders open, public ones and
+// ones the anonymous listing hides included. A work counts once whatever its
+// languages and versions.
 type Total struct {
 	Public int64            `json:"public"`
 	Tiers  map[string]int64 `json:"tiers"`

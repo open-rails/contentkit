@@ -4820,7 +4820,7 @@
         "tags": [
           "catalog"
         ],
-        "summary": "The listed works of each kind: how many anyone opens, and how many each tier's holders open. Cacheable for ten minutes.",
+        "summary": "Each kind's works: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
         "parameters": [
           {
             "name": "kinds",

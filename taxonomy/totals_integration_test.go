@@ -23,12 +23,14 @@ import (
 )
 
 // totalsFixture adds a host work table (hw: access value, tier, listed,
-// deleted) beside the version table hv, as both hosts keep access on the work.
+// deleted, shown in the anonymous listing) beside the version table hv, as
+// both hosts keep access on the work.
 func totalsFixture(t *testing.T, ctx context.Context) (*pgxpool.Pool, string) {
 	t.Helper()
 	pool, schema := testSchema(t, ctx)
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s.hw (tenant_id text NOT NULL, content_kind text NOT NULL, content_id text NOT NULL,
- access text NOT NULL, tier text, listed boolean NOT NULL DEFAULT true, deleted boolean NOT NULL DEFAULT false, PRIMARY KEY (tenant_id, content_kind, content_id))`, schema)); err != nil {
+ access text NOT NULL, tier text, listed boolean NOT NULL DEFAULT true, deleted boolean NOT NULL DEFAULT false,
+ public_listed boolean NOT NULL DEFAULT true, PRIMARY KEY (tenant_id, content_kind, content_id))`, schema)); err != nil {
 		t.Fatal(err)
 	}
 	return pool, schema
@@ -52,7 +54,7 @@ func addWorks(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema, ten
 // listedEligibility admits a live version of a listed, undeleted work and
 // exposes the work's access columns as h.
 func listedEligibility(schema string) search.Eligibility {
-	return search.Eligibility{SQL: fmt.Sprintf(`SELECT w.access, w.tier FROM %[1]s.hv hv
+	return search.Eligibility{SQL: fmt.Sprintf(`SELECT w.access, w.tier, w.public_listed FROM %[1]s.hv hv
  JOIN %[1]s.hw w ON w.tenant_id=hv.tenant_id AND w.content_kind=hv.content_kind AND w.content_id=hv.content_id
  WHERE hv.tenant_id=sd.tenant_id AND hv.content_kind=sd.content_kind AND hv.content_id=sd.content_id
    AND hv.version_id=sd.content_version_id AND hv.language=sd.language AND hv.live AND w.listed AND NOT w.deleted`, schema)}
@@ -203,6 +205,24 @@ func TestCatalogTotalsIntegration(t *testing.T) {
 		if _, err := New(Options{Pool: pool, Schema: schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"}, Listing: l}); !errors.Is(err, ErrInvalid) {
 			t.Errorf("listing %s: %v, want ErrInvalid", name, err)
 		}
+	}
+
+	// The anonymous listing hides g2 and g12; members still see both, so only
+	// public drops them: a free work counts for public only where it is listed.
+	addWorks(t, ctx, pool, schema, tenant, hostWork{"gallery", cid(12), "free", "", true, false})
+	indexVersions(t, ctx, pool, schema, tenant, version{"gallery", cid(12), "g12", "en", "Members only", true, true})
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.hw SET public_listed=false WHERE tenant_id=$1 AND content_id=ANY($2)`, schema), tenant, []string{cid(2), cid(12)}); err != nil {
+		t.Fatal(err)
+	}
+	split := newStore(t, pool, schema, tenant, func(o *Options) {
+		o.Listing = premiumListing(schema)
+		o.Listing.PublicListed = "h.public_listed"
+	})
+	if got := totals(split, TotalsQuery{Kinds: []string{"gallery"}}); got != `{"kinds":{"gallery":{"public":1,"tiers":{"premium":4}}}}` {
+		t.Errorf("public listing: %s", got)
+	}
+	if got := totals(split, TotalsQuery{Kinds: []string{"gallery"}, Scope: CatalogScope{AnyOf: []NodeKey{tagKey("yuri")}}}); got != `{"kinds":{"gallery":{"public":1,"tiers":{"premium":2}}}}` {
+		t.Errorf("public listing, scoped: %s", got)
 	}
 }
 

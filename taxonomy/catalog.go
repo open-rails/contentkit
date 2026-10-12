@@ -35,7 +35,7 @@ func init() { httpapi.Register(httpapi.PublicCatalog, catalogRoutes) }
 
 var catalogRoutes = []httpapi.Route[catalogHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/totals", Resource: "catalog", Auth: httpapi.Open,
-		Doc:       "The listed works of each kind: how many anyone opens, and how many each tier's holders open. Cacheable for ten minutes.",
+		Doc:       "Each kind's works: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
 		Query:     []httpapi.Param{httpapi.List("kinds", "content kinds to total; every listed kind by default")},
 		Responses: []httpapi.Reply{httpapi.OK(Totals{})}, Errors: []string{httpapi.CodeUnavailable}},
 		Serve: httpapi.H(catalogHandler.totals)},

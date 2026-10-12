@@ -1297,22 +1297,25 @@ store` serves the admin routes at `/taxonomy` to staff holding
 
 ### Catalog totals
 
-`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Scope})` sizes the public
-listing per kind: `public` works anyone opens and, per tier, every work its
-holders open (public included); a work counts once across languages and
+`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Scope})` sizes the catalog
+per kind: `public` is the works the anonymous listing shows and anyone opens;
+each tier is every work its holders see and open, public ones and ones the
+anonymous listing hides included. A work counts once across languages and
 versions. Configure `Options.Listing`: the kinds, a listing eligibility (not
-`CountEligibility`: it admits only live, undeleted, listed versions shown on
-this deployment) whose row carries the access columns, and `access.Columns`
-mapping them:
+`CountEligibility`: it admits only live, undeleted versions the members'
+listing shows on this deployment) whose row carries the access columns,
+`access.Columns` mapping them, and `PublicListed`, a boolean over that row
+(alias `h`) for the works the anonymous listing also shows:
 
 ```go
 Listing: &taxonomy.Listing{Kinds: []string{"gallery"},
-	Eligibility: search.Eligibility{SQL: `SELECT CASE WHEN g.is_premium THEN 'premium' ELSE 'free' END AS access
+	Eligibility: search.Eligibility{SQL: `SELECT CASE WHEN g.is_premium THEN 'premium' ELSE 'free' END AS access, g.is_unlisted
 	  FROM doujins.gallery_versions gv JOIN doujins.galleries g ON g.id = gv.gallery_id AND g.deleted_at IS NULL
 	  WHERE sd.content_kind = 'gallery' AND g.id::text = sd.content_id AND gv.id::text = sd.content_version_id
 	    AND gv.deleted_at IS NULL AND gv.live_at <= now()`},
 	Access: access.Columns{Level: "h.access", TierName: "premium",
-		Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}},
+		Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}},
+	PublicListed: "NOT h.is_unlisted"},
 ```
 
 A site's slice is a `taxonomy.CatalogScope`: `AnyOf`/`NoneOf` node keys
