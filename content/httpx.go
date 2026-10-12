@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/media"
@@ -172,10 +171,6 @@ func classifyErr(err error) (status int, code, msg string) {
 	var rej RejectedError
 	if errors.As(err, &rej) {
 		return http.StatusUnprocessableEntity, CodeModerationRejected, rej.Reason
-	}
-	var pgerr *pgconn.PgError
-	if errors.As(err, &pgerr) && pgerr.Code == "23505" && pgerr.ConstraintName == "content_posts_slug_uq" {
-		return http.StatusConflict, CodeConflict, "slug is already in use"
 	}
 	return http.StatusInternalServerError, CodeInternal, "internal error"
 }

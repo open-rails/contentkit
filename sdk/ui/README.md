@@ -15,7 +15,7 @@ pnpm add @openrails/contentkit-ui@X.Y.Z
 | `@openrails/contentkit-ui/react` | `ContentKitProvider` and every hook | `react` |
 | `@openrails/contentkit-ui/client` | `createContentKitClient`, `ContentKitError`, generated wire types, crop/aspect/rendition/ABR/gallery math | nothing |
 | `@openrails/contentkit-ui/urls` | content codes, `[/{lang}]/{route}/{CODE}[/{slug}]` paths, `canonical` | nothing |
-| `@openrails/contentkit-ui/editor` | `RichTextEditor`, `richTextEditor` (PostManager's body editor) | the optional peers `@tiptap/core`, `@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extensions` (3.31+) |
+| `@openrails/contentkit-ui/editor` | `RichTextEditor`, `richTextEditor` (ContentManager's body editor) | the optional peers `@tiptap/core`, `@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extensions` (3.31+) |
 | `@openrails/contentkit-ui/locales/{de,es,ja,ko,zh}` | message bundles (English is built in) | |
 | `@openrails/contentkit-ui/styles.css` | the stylesheet, scoped under `.ckui` (the root entry also installs it) | |
 
@@ -82,24 +82,25 @@ operation. This does not change the operation's result or its authentication.
   resumable multipart above (`onState`/`resume`). The bucket must allow CORS
   `PUT` from the app's origin with `Content-Type` and `x-amz-checksum-sha256`.
 - **Content modules**, one per resource, each method one route of the
-  generated route table with its generated types: `posts`, `comments`,
+  generated route table with its generated types: `contents`, `catalog`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
   `moderation`, `groups`, `codes`. Lists take `limit`/`offset` (the review
-  queue and group listings a `cursor`); staff lists are `posts.adminList` (`q` searches,
-  `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList` (`state`, `q`),
+  queue and group listings a `cursor`); `contents.manage` lists what the caller
+  manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
+  counts what is open; staff lists are `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
   a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's,
   `groups.uploadCover(group, file)` its cover; `client.kinds()` the content model.
-- **Images of posts and polls** go to the item's server-named upload path:
-  `media.uploadNamed(ref, file)` resolves the name content routes take;
-  `media.uploadInline(postId, file)` resolves a body image's reference
-  (`ref`, `contentkit:i-{uuid}`, what the body stores: `imageRef(name)`) and
-  a URL that shows it now; `posts.uploadCover`, `polls.uploadImage` and
+- **Images of content and polls** go to the item's server-named upload path:
+  `media.uploadNamed(ref, file)` resolves the name content routes take
+  (`contents.setCover`); `media.uploadInline({kind, id}, file)` resolves a
+  body image's reference (`ref`, `contentkit:i-{uuid}`, what the body stores:
+  `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
-  post's `body` shows the images' current public files and `images` maps
-  each name to its URL. `folders` renames the post and poll media kinds. A
-  post's public image files exist only while it is published; `usePost`
-  shows an unpublished post's images to its editors (below).
+  content's `body` shows the images' current public files and `images` maps
+  each name to its URL. `folders` renames the poll media kind. Public image
+  files exist only while the item is live; `useContent` shows an unpublished
+  item's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by
@@ -147,23 +148,23 @@ const { poll, vote } = usePoll(null, { language }); // the newest live poll
 const editor = usePollEditor(pollId);                // staff
 ```
 
-A post editor puts `editorBody` in its rich-text field and inserts what
+A content editor puts `text.body` in its rich-text field and inserts what
 `uploadImage(file)` resolves: URLs that show the images now (the file for a
-fresh upload, public files, signed editor views of an unpublished post's
-images, read and refreshed as needed). `update({ body })` stores each of
-those URLs as the image's reference (`storedBody(html)` does the same for a
-host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
+fresh upload, public files, signed editor views of an unpublished item's
+images, read and refreshed as needed). `putText({ title, body })` stores each
+of those URLs as the image's reference (`storedBody(html)` does the same for
+a host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
 
 ```tsx
-const editor = usePost(postId);
-<RichText value={editor.editorBody} onImage={editor.uploadImage} onSave={(html) => editor.update({ body: html })} />
+const editor = useContent(id, "blog", "en");
+<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.putText({ title, body: html })} />
 <img src={editor.coverSrc} alt="" />
 ```
 
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
 `useCanComment` (may the caller comment, may signed-out visitors, the ban
 that stops it, and what it may do to others' comments), `useLatestComments`,
-`usePolls`, `usePosts` (staff: `admin`, `deleted`, `q`), `usePost` (with `restore`), and for staff `useAdminComments`
+`usePolls`, `useManagedContents` (`kind`, `state`, `q`), `useContent` (with `publish`, `restore`), and for staff `useAdminComments`
 (`contentKind`, `author`), `useModerationQueue`, `useCommentBans`, `useGlobalCommentBan` (one user's), and
 `useStaffAccess`, `useAdminLocation`, `useFlowClient` and `usePaged`, which the admin flows are built from.
 
@@ -481,7 +482,7 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   `userHref`, `sections`, `pageSize`. `useCommentModerationAccess()`.
 
   ```tsx
-  <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "post"]} />
+  <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "blog"]} />
   ```
 
 - **`PollManager`**: every poll by language, month or day, state (live,
@@ -494,16 +495,17 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   <PollManager client={contentkit} basePath="/admin/polls" navigation={nav} languages={["en", "ja"]} />
   ```
 
-- **`PostManager`**: every post by language, draft state and text, deleted
-  ones to restore; title, slug, language, excerpt, schedule, cover and body
-  with inline images; draft or publish; the moderation state. Props:
-  `languages`, `renderEditor` (`richTextEditor` from `/editor`, or the
-  host's; a plain HTML field without it), `postHref`, `pageSize`.
-  `usePostManagerAccess()`.
+- **`ContentManager`**: the items of one `kind` the caller manages, by
+  state and text, deleted ones to restore; title, slug, description,
+  schedule, cover and body with inline images per language; publish or
+  unpublish; the moderation state. Props: `kind`, `languages`,
+  `renderEditor` (`richTextEditor` from `/editor`, or the host's; a plain
+  HTML field without it), `contentHref`, `pageSize`.
+  `useContentManagerAccess()`.
 
   ```tsx
   import { richTextEditor } from "@openrails/contentkit-ui/editor";
-  <PostManager client={contentkit} basePath="/admin/posts" navigation={nav} renderEditor={richTextEditor} />
+  <ContentManager kind="blog" client={contentkit} basePath="/admin/blog" navigation={nav} renderEditor={richTextEditor} />
   ```
 
   `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,

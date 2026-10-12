@@ -205,7 +205,7 @@ export const social = {
     stale: "It was edited since it was listed; review it again.",
     loadMore: "Show more",
     queueComments: "Comments",
-    queuePosts: "Posts",
+    queueContent: "Content",
     noAccess: "You don't have permission to moderate comments.",
     author: "Author",
     authorPlaceholder: "Filter by user id",

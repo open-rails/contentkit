@@ -1,7 +1,20 @@
 // Shared by the integration tests: the harness, named accounts, clients
 // against the real ContentKit, and a recorder of what a client sends.
 import { inject } from "vitest";
-import { createContentKitClient, fetchTransport, type CommitBody, type ContentKitClient, type MediaOptions, type Op, type PresignBody, type RefBody, type Transport } from "../../src/client/index.js";
+import {
+  createContentKitClient,
+  fetchTransport,
+  type CommitBody,
+  type Content,
+  type ContentKitClient,
+  type MediaOptions,
+  type Op,
+  type PresignBody,
+  type RefBody,
+  type Rule,
+  type Transport,
+  type VersionInput,
+} from "../../src/client/index.js";
 import { png as pngBytes } from "../support/bytes.js";
 import { Harness, type Config, type Role, type TestUser } from "../support/harness.js";
 
@@ -139,4 +152,31 @@ export function png(name: string, seed = 1, w = 48, h = 32): File {
 /** A fixture under e2e/fixtures as Node's File. */
 export function fixture(name: string, type: string, as = name): File {
   return new NodeFile([readFileSync(path.resolve(fixtures, name))], as, { type }) as unknown as File;
+}
+
+/** A content as tests create it through the catalog. */
+export interface SeedContent {
+  kind: string;
+  /** Titles by language. */
+  titles: Record<string, string>;
+  access?: Rule;
+  attributes?: Record<string, unknown>;
+  versions: VersionInput[];
+  /** Group ids, content-level memberships. */
+  groups?: string[];
+  /** Published now unless false (a draft). */
+  publish?: boolean;
+}
+
+/** Creates contents through the catalog's routes as staff: text, versions, groups, then published. */
+export async function seedContents(staff: ContentKitClient, items: SeedContent[]): Promise<Content[]> {
+  const out: Content[] = [];
+  for (const it of items) {
+    const text = Object.fromEntries(Object.entries(it.titles).map(([l, title]) => [l, { title }]));
+    let c = await staff.contents.create({ kind: it.kind, text, access: it.access, attributes: it.attributes, versions: it.versions });
+    if (it.groups?.length) await staff.groups.setOfContent(c.id, { memberships: it.groups.map((group_id) => ({ group_id })) });
+    if (it.publish !== false) c = await staff.contents.publish(c.id);
+    out.push(c);
+  }
+  return out;
 }

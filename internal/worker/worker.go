@@ -1,6 +1,7 @@
 // Package worker maintains one tenant's keyword documents: it drains the dirty
-// queue, runs a bounded cursor backfill and delivers every published document
-// to the optional DocumentSink.
+// queue and runs a bounded cursor backfill, building every document from
+// ContentKit's own records through its Sources (the catalog's content, the
+// groups').
 package worker
 
 import (
@@ -16,20 +17,24 @@ import (
 	"github.com/open-rails/contentkit/search"
 )
 
-// ListContentPage enumerates a tenant's content of one kind and language for
-// backfill: one bounded page from an opaque cursor, done when exhausted.
-type ListContentPage func(ctx context.Context, tenant, contentKind, language, cursor string, limit int) (refs []contentref.ContentRef, nextCursor string, done bool, err error)
-
-// BuildKeywordDocuments returns the current keyword document of every
-// requested reference that exists in the given language. A missing reference
-// means the content no longer exists and deletes its document. The worker
-// records invalid documents individually; return an error only for failed or
-// incomplete reads, never a partial result.
-type BuildKeywordDocuments func(ctx context.Context, tenant, contentKind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
+// Source builds one family of the tenant's documents.
+type Source interface {
+	// DocumentKinds are the content kinds it documents.
+	DocumentKinds() []string
+	// ListDocuments enumerates documented references of one kind and
+	// language for backfill: one bounded page from an opaque cursor, done
+	// when exhausted.
+	ListDocuments(ctx context.Context, kind, language, cursor string, limit int) (refs []contentref.ContentRef, nextCursor string, done bool, err error)
+	// BuildDocuments returns the current document of every reference that
+	// has one in language; a missing one deletes its document. The worker
+	// records invalid documents individually; an error is only for a failed
+	// or incomplete read, never a partial result.
+	BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
+}
 
 // Options configures one tenant's worker.
 type Options struct {
-	// Pool is released before every host callback, so one connection
+	// Pool is released before every source call, so one connection
 	// suffices. Required.
 	Pool   *pgxpool.Pool
 	Schema string
@@ -37,16 +42,9 @@ type Options struct {
 
 	// SupportedLanguages are the document languages backfill enumerates. Required.
 	SupportedLanguages []string
-	// ContentKinds are the kinds backfill enumerates. Dirty rows of any kind
-	// are built through BuildKeywordDocuments.
-	ContentKinds []string
-
-	// Required.
-	ListContent           ListContentPage
-	BuildKeywordDocuments BuildKeywordDocuments
-
-	// Sink receives every published or deleted document (see search.DocumentSink).
-	Sink search.DocumentSink
+	// Sources build the documents, each of its kinds; a dirty row of a kind
+	// no source documents deletes its document. Required.
+	Sources []Source
 
 	// Batch sizing (defaults are conservative).
 	DirtyBatchSize   int
@@ -86,11 +84,10 @@ type dirtyRow struct {
 }
 
 // SyncOnce runs one tick: drain one dirty batch, then a bounded backfill step.
-// No connection or transaction is held across host callbacks or sink calls:
-// each write is a short transaction fenced by the dirty-queue revision, so
-// overlapping ticks are safe (only duplicated work) and a stale build never
-// overwrites a newer one. Sink calls run after the document commits and
-// before its row is acknowledged.
+// No connection or transaction is held across source calls: each write is a
+// short transaction fenced by the dirty-queue revision, so overlapping ticks
+// are safe (only duplicated work) and a stale build never overwrites a newer
+// one.
 func SyncOnce(ctx context.Context, opts Options) error {
 	cfg := opts.withDefaults()
 	if cfg.Pool == nil {
@@ -102,14 +99,23 @@ func SyncOnce(ctx context.Context, opts Options) error {
 	if len(cfg.SupportedLanguages) == 0 {
 		return fmt.Errorf("worker: SupportedLanguages is required")
 	}
-	if cfg.ListContent == nil || cfg.BuildKeywordDocuments == nil {
-		return fmt.Errorf("worker: ListContent and BuildKeywordDocuments are required")
+	if len(cfg.Sources) == 0 {
+		return fmt.Errorf("worker: Sources are required")
 	}
 	qs, err := search.QuoteSchema(cfg.Schema)
 	if err != nil {
 		return err
 	}
-	w := syncer{cfg: cfg, qs: qs}
+	w := syncer{cfg: cfg, qs: qs, sources: map[string]Source{}}
+	for _, src := range cfg.Sources {
+		for _, k := range src.DocumentKinds() {
+			if _, dup := w.sources[k]; dup {
+				return fmt.Errorf("worker: kind %q has two sources", k)
+			}
+			w.sources[k] = src
+			w.kinds = append(w.kinds, k)
+		}
+	}
 	if err := w.dirty(ctx); err != nil {
 		return err
 	}
@@ -117,14 +123,16 @@ func SyncOnce(ctx context.Context, opts Options) error {
 }
 
 type syncer struct {
-	cfg Options
-	qs  string
+	cfg     Options
+	qs      string
+	sources map[string]Source
+	kinds   []string
 }
 
 type buildGroup struct{ kind, language string }
 
 // dirty publishes one batch: deletions first, then rebuilds grouped per kind
-// and language for batch-shaped host callbacks.
+// and language for batch-shaped sources.
 func (w syncer) dirty(ctx context.Context) error {
 	batch, err := w.readDirty(ctx)
 	if err != nil {
@@ -153,14 +161,17 @@ func (w syncer) dirty(ctx context.Context) error {
 		for _, r := range members {
 			refs = append(refs, r.ContentRef)
 		}
-		built, err := w.cfg.BuildKeywordDocuments(ctx, w.cfg.Tenant, g.kind, g.language, refs)
-		if err != nil {
-			return err
+		var built []search.KeywordDocument
+		if src, ok := w.sources[g.kind]; ok {
+			var err error
+			if built, err = src.BuildDocuments(ctx, g.kind, g.language, refs); err != nil {
+				return err
+			}
 		}
 		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
 		for _, doc := range built {
 			if doc.TenantID != w.cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
-				return fmt.Errorf("worker: builder returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
+				return fmt.Errorf("worker: source returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
 			}
 			byKey[identity(doc.DocumentKey)] = doc
 		}
@@ -225,10 +236,10 @@ func queueRows(rows []dirtyRow) ([]byte, error) {
 }
 
 // publish writes the documents of the rows whose revision is still current
-// (a row missing from built publishes an empty document, which deletes), then
-// delivers them to the sink and acknowledges them. Locking the current rows
-// holds back a concurrent host mark until the write commits, so its newer
-// revision is always published after this one.
+// (a row missing from built publishes an empty document, which deletes) and
+// acknowledges them. Locking the current rows holds back a concurrent mark
+// until the write commits, so its newer revision is always published after
+// this one.
 func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[documentIdentity]search.KeywordDocument) error {
 	if len(rows) == 0 {
 		return nil
@@ -323,52 +334,26 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 	if err != nil {
 		return err
 	}
-	var acked, retry []dirtyRow
+	acked := make([]dirtyRow, 0, len(eligible))
 	for _, p := range eligible {
-		r := dirtyRow{DocumentKey: p.doc.DocumentKey, Revision: p.revision}
-		if w.deliver(ctx, p.doc, p.revision) {
-			acked = append(acked, r)
-		} else {
-			retry = append(retry, r)
-		}
+		acked = append(acked, dirtyRow{DocumentKey: p.doc.DocumentKey, Revision: p.revision})
 	}
-	return w.ack(ctx, acked, retry)
+	return w.ack(ctx, acked)
 }
 
-// deliver reports whether the sink accepted the document (or there is none).
-func (w syncer) deliver(ctx context.Context, doc search.KeywordDocument, revision int64) bool {
-	if w.cfg.Sink == nil {
-		return true
+// ack removes published rows while their revision is current.
+func (w syncer) ack(ctx context.Context, acked []dirtyRow) error {
+	if len(acked) == 0 {
+		return nil
 	}
-	if strings.TrimSpace(doc.Title) == "" {
-		return w.cfg.Sink.Delete(ctx, doc.DocumentKey, revision) == nil
+	data, err := queueRows(acked)
+	if err != nil {
+		return err
 	}
-	return w.cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision}) == nil
-}
-
-// ack removes delivered rows and requeues failed deliveries under a new
-// revision; either applies only while the published revision is current.
-func (w syncer) ack(ctx context.Context, acked, retry []dirtyRow) error {
-	match := `d.tenant_id=$1 AND d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id AND d.language=r.language AND d.revision=r.revision`
-	if len(acked) > 0 {
-		data, err := queueRows(acked)
-		if err != nil {
-			return err
-		}
-		if _, err := w.cfg.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty d USING jsonb_to_recordset($2::jsonb) AS r%s WHERE %s`, w.qs, queueColumns, match), w.cfg.Tenant, data); err != nil {
-			return err
-		}
-	}
-	if len(retry) > 0 {
-		data, err := queueRows(retry)
-		if err != nil {
-			return err
-		}
-		if _, err := w.cfg.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_dirty d SET reason='sink_retry', updated_at=now() FROM jsonb_to_recordset($2::jsonb) AS r%s WHERE %s`, w.qs, queueColumns, match), w.cfg.Tenant, data); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = w.cfg.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty d USING jsonb_to_recordset($2::jsonb) AS r%s
+ WHERE d.tenant_id=$1 AND d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id
+ AND d.language=r.language AND d.revision=r.revision`, w.qs, queueColumns), w.cfg.Tenant, data)
+	return err
 }
 
 // backfill lists a bounded number of pages and queues them through the
@@ -380,7 +365,7 @@ func (w syncer) backfill(ctx context.Context) error {
 		return nil
 	}
 	pagesDone := 0
-	for _, kind := range cfg.ContentKinds {
+	for _, kind := range w.kinds {
 		for _, lang := range cfg.SupportedLanguages {
 			if pagesDone >= cfg.BackfillMaxPages {
 				return nil
@@ -396,7 +381,7 @@ func (w syncer) backfill(ctx context.Context) error {
 				continue
 			}
 			where := `tenant_id = $1 AND content_kind = $2 AND language = $3 AND cursor = $4 AND state = $5`
-			refs, nextCursor, done, err := cfg.ListContent(ctx, cfg.Tenant, kind, lang, cursor, cfg.BackfillPageSize)
+			refs, nextCursor, done, err := w.sources[kind].ListDocuments(ctx, kind, lang, cursor, cfg.BackfillPageSize)
 			if err != nil {
 				_, _ = cfg.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET last_error = $6, state = 'failed', updated_at = now() WHERE %s`, w.qs, where),
 					cfg.Tenant, kind, lang, cursor, state, err.Error())
@@ -405,7 +390,7 @@ func (w syncer) backfill(ctx context.Context) error {
 			rows := make([]map[string]string, 0, len(refs))
 			for _, ref := range refs {
 				if ref.TenantID != cfg.Tenant || ref.ContentKind != kind {
-					return fmt.Errorf("worker: ListContent returned %s outside the requested %s/%s", ref, cfg.Tenant, kind)
+					return fmt.Errorf("worker: source listed %s outside the requested %s/%s", ref, cfg.Tenant, kind)
 				}
 				rows = append(rows, map[string]string{"content_id": ref.ContentID, "content_version_id": ref.Version()})
 			}

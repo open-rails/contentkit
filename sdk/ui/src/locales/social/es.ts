@@ -206,7 +206,7 @@ export const social: typeof en = {
     stale: "Se editó desde que se listó; revísalo de nuevo.",
     loadMore: "Ver más",
     queueComments: "Comentarios",
-    queuePosts: "Publicaciones",
+    queueContent: "Publicaciones",
     noAccess: "No tienes permiso para moderar comentarios.",
     author: "Autor",
     authorPlaceholder: "Filtrar por id de usuario",

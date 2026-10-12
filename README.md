@@ -1,8 +1,9 @@
 # contentkit
 
 `contentkit` is the deterministic content library for the Doujins, Hentai0
-and marketplace hosts: tenant-scoped **interactions** (posts, comments,
-reactions, favorites, polls), **keyword search** over host content, the
+and marketplace hosts: tenant-scoped **content** (items, versions, groups),
+**interactions** (comments, reactions, favorites, polls), **keyword search**
+over that content, the
 ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
 erasure) and the **discovery reads** over both. It needs no model provider,
 API key or vector extension. Semantic search belongs entirely to the separate, deferred User Intelligence
@@ -58,8 +59,9 @@ another tenant is an error, never remapped.
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF, the `DocumentSink` port |
+| `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the `content_events` outbox, search documents, `Totals`, its jobs and `/v1/contents` routes |
+| `content` | comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF |
 | `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
@@ -100,17 +102,18 @@ for _, r := range routes {
   pg_trgm live in `public`.
 - `Config` is plain data (YAML/JSON); `Deps` holds connections and
   providers. Media's namespace is the tenant; content kinds' media are their
-  versions' (`media.ForContent`, the `media/versions` service), and
-  `Interactions.HostKinds` are the host's own commentable kinds with plain
-  media until #120.
+  versions' (`media.ForContent`, the `media/versions` service). All content
+  is the catalog's: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
   co-engagement, projection repair, erasure, groups' counts and windows,
+  the catalog's scheduled publishing, event delivery, counts and purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
   `Deps.Billing`, and the offers service from `Config.Offers`.
 - `Client()` is the HTTP surface as a Go client acting as the host, over an
-  in-process transport (for example `PublishNotifications`).
+  in-process transport (for example `PublishNotifications`,
+  `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
 
@@ -126,7 +129,7 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 
 | Group | Sub-path | Needs |
 |---|---|---|
-| `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), posts, comments, reactions, favorites, polls, comment bans, moderation | always |
+| `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage/contents`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
@@ -144,7 +147,7 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
 is 503. ContentKit names its staff permissions (`access.Permissions()`); the
 host declares them in its auth's roles from those constants. They are
-root-wide; per-item rights (owner, editor) are the resolver's. Behind a
+root-wide; per-item rights (creators, owner-group editors) are the catalog's. Behind a
 proxy, set `Request.RemoteAddr` to the client's address before the routes:
 anonymous reactions, votes and limits are keyed by it. No content kind may
 be named `media`, `codes`, `groups`, `contents`, `kinds`, `catalog` or `notifications`.
@@ -159,9 +162,8 @@ route or a wire type, run `go generate ./internal/contract`;
 
 ## Search
 
-Documents are one per content reference and language. The engine's search
-job keeps the documents of what ContentKit owns (posts and groups)
-current from the dirty queue and a bounded backfill; rejected documents are
+Documents are one per content item or group and language. The engine's
+search job keeps them current from the dirty queue and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
 typeahead and discovery are internal (`internal/hub`) until their routes
 land (#122). A hit's score is the keyword match tier (exact title 1, alias
@@ -261,9 +263,9 @@ public names carry a generation. Every URL is
 `Config.Media` is the registry (`media.Config`, without hooks) and how it is
 served; the engine builds the uploads, reads, journal, worker queue and jobs
 from it and `Deps.Store`. `Deps.PurgePublic` hears of overwritten public URLs
-for a CDN purge. Post and poll images are ContentKit's own when the registry
-declares the `post` and `poll` kinds; `Deps.Resolver` and `Deps.CanUpload`
-answer for the content the host still owns (#120 and #121 remove them).
+for a CDN purge. Every media item is ContentKit's: content kinds' through
+the catalog's resolver, groups', avatars' and, when the registry declares
+the `poll` kind, poll images.
 
 The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
 `avatar.User()` includes its upload rules and embedded default silhouette.
@@ -408,6 +410,26 @@ per-language counts and automatic covers from the facets, and
 The engine builds the store from `Config.Content`, serves it as
 `GroupRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
 (every minute) as its jobs; groups' keyword documents are its search job's.
+
+## Catalog
+
+`catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
+Writes are batches; each transaction keeps `content_facets` current (rules
+through `access.Rule.Facet`, groups through `EffectiveGroups`), marks search
+documents dirty, queues `content_events`, renames offers' products after
+titles and calls media (expose, republish, fork, delete). Published with a
+future `publish_at` is scheduled until a job makes it live. A deleted item
+stays readable to holders of its own keys; its media is erased after
+`DeletedRetention` unless it was sold.
+
+The `Viewer` is the one visibility rule: live content by its listing
+(`listed`; `members` for key holders; `unlisted` by direct link), the site's
+scope and the viewer's content filters, with `access.Filter.SQL` for lists
+and `Gate.Decide` for items; staff (`root:content:view-restricted`),
+creators and owner-group editors see everything. Discovery lists and searches
+under it; media and interactions resolve through it. Held text goes to the
+shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
+counts what anyone and each tier opens, per kind and language.
 
 ## Signal plane and discovery
 

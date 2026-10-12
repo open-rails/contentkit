@@ -1,6 +1,6 @@
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Card, Comment, Item, Poll, Post, RefBody } from "../client/generated/wire.js";
+import type { Card, Comment, Content, Item, Poll, RefBody } from "../client/generated/wire.js";
 import type { ContentKitChange } from "../client/http.js";
 
 /** One shared read: its data, whether a fetch is in flight, and its last failure. */
@@ -243,33 +243,23 @@ export class ResourceStore {
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameRef(t.ref, c.ref), () => c.counts);
         cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes } }));
-        if (c.ref.kind === "post") {
-          const totals = (p: Post): Post => (p.id === c.ref.id ? { ...p, total_likes: c.counts.likes, total_dislikes: c.counts.dislikes } : p);
-          patch<Post>((t) => t.type === "post" && t.id === c.ref.id, totals);
-          items<Post>(["posts"], totals);
-        }
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
         cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
         this.invalidate((t) => t.type === "favorites");
         break;
-      case "post.created":
-        this.invalidate((t) => t.type === "posts");
+      case "content.saved":
+        patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
+        // A state, kind or text change can move it between lists: refetch them.
+        this.invalidate((t) => t.type === "contents");
         break;
-      case "post.updated":
-        patch<Post | null>((t) => t.type === "post", (p) => (p?.id === c.post.id ? c.post : p));
-        items<Post>(["posts"], (x) => (x.id === c.post.id ? c.post : x));
+      case "content.changed":
+        this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
         break;
-      case "post.changed":
-        this.invalidate((t) => (t.type === "post" && t.id === c.id) || t.type === "posts");
-        break;
-      case "post.deleted":
-        items<Post>(["posts"], (x) => (x.id === c.id ? null : x));
-        this.invalidate((t) => t.type === "posts" && t.scope === "deleted");
-        break;
-      case "post.restored":
-        this.invalidate((t) => (t.type === "post" && t.id === c.post.id) || t.type === "posts");
+      case "content.deleted":
+        items<Content>(["contents"], (x) => (x.id === c.id ? null : x));
+        this.invalidate((t) => (t.type === "content" && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -302,7 +292,7 @@ export class ResourceStore {
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
         if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));
-        else this.invalidate((t) => (t.type === "post" && t.id === c.id) || t.type === "posts");
+        else this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
         break;
     }
   }

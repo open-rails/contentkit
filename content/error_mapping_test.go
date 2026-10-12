@@ -23,7 +23,7 @@ func decodeErr(t *testing.T, body string) errorBody {
 	return e
 }
 
-func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
+func TestErrorMapping_PollIDs(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{})
 	h := rt.Handler()
 	ctx := context.Background()
@@ -32,24 +32,12 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, slug := range []string{"taken", "available"} {
-		rec := doJSON(t, h, admin, "POST", "/posts", PostInput{Title: ptr(slug), Body: ptr("body"), Slug: ptr(slug)})
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	var postID string
-	if err := rt.store.pool.QueryRow(ctx, "SELECT id FROM "+rt.store.t.posts+" WHERE tenant_id=$1 AND slug='available'", rt.tenant).Scan(&postID); err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range []struct {
 		name, method, path string
 		body               any
 		status             int
 		code               string
 	}{
-		{"duplicate slug create", "POST", "/posts", PostInput{Title: ptr("new"), Body: ptr("body"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
-		{"duplicate slug update", "PATCH", "/posts/" + postID, PostInput{Title: ptr("changed"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
 		{"malformed poll update", "PATCH", "/polls/not-a-uuid", PollUpdate{Question: ptr("changed")}, http.StatusNotFound, CodeNotFound},
 		{"malformed vote option", "POST", "/polls/" + poll.ID + "/vote", map[string]string{"option_id": "not-a-uuid"}, http.StatusBadRequest, CodeInvalidRequest},
 	} {
@@ -60,14 +48,6 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 				t.Errorf("got %d %s; want %d %s", rec.Code, rec.Body.String(), c.status, c.code)
 			}
 		})
-	}
-	var count int
-	var title, slug string
-	if err := rt.store.pool.QueryRow(ctx, "SELECT title,slug,(SELECT count(*) FROM "+rt.store.t.posts+" WHERE tenant_id=$2) FROM "+rt.store.t.posts+" WHERE id=$1 AND tenant_id=$2", postID, rt.tenant).Scan(&title, &slug, &count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 2 || title != "available" || slug != "available" {
-		t.Errorf("failed slug writes changed stored posts: count=%d title=%q slug=%q", count, title, slug)
 	}
 }
 
@@ -80,10 +60,8 @@ func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
 	}
-	post := insertPost(t, rt)
 	name := image("i-00000000-0000-4000-8000-000000000000")
-	for _, route := range []string{"PUT /posts/" + post + "/cover", "POST /posts/" + post + "/images", "PUT /polls/" + poll.ID + "/image",
-		"PUT /polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
+	for _, route := range []string{"PUT /polls/" + poll.ID + "/image", "PUT /polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
 		method, path, _ := strings.Cut(route, " ")
 		b, _ := json.Marshal(name)
 		req := httptest.NewRequest(method, path, bytes.NewReader(b))
@@ -161,7 +139,7 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 		{"not visible", "GET", "/gallery/" + cid(902) + "/comments", "", http.StatusNotFound, CodeNotFound},
 		{"not accessible", "POST", "/gallery/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
 		{"invalid body", "POST", "/gallery/" + cid(1) + "/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
-		{"denied perm", "POST", "/posts", `{"title":"t","body":"b"}`, http.StatusForbidden, CodeForbidden},
+		{"denied perm", "POST", "/polls", `{"question":"q"}`, http.StatusForbidden, CodeForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -12,22 +12,6 @@ import (
 	"github.com/open-rails/contentkit/search"
 )
 
-// poolSink reads through the pool on every delivery, as an outbox sink does.
-type poolSink struct {
-	t    *testing.T
-	pool *pgxpool.Pool
-	n    int
-}
-
-func (s *poolSink) check(ctx context.Context) error {
-	s.n++
-	return hostRead(ctx, s.t, s.pool)
-}
-func (s *poolSink) Upsert(ctx context.Context, _ search.PublishedDocument) error { return s.check(ctx) }
-func (s *poolSink) Delete(ctx context.Context, _ search.DocumentKey, _ int64) error {
-	return s.check(ctx)
-}
-
 // hostRead is a host callback's query: it needs a pooled connection, and the
 // worker must hold none while it runs.
 func hostRead(ctx context.Context, t *testing.T, pool *pgxpool.Pool) error {
@@ -38,8 +22,8 @@ func hostRead(ctx context.Context, t *testing.T, pool *pgxpool.Pool) error {
 	return pool.QueryRow(ctx, "SELECT 1").Scan(&one)
 }
 
-// A one-connection pool runs a whole tick (dirty rebuild and delete, sink and
-// backfill) whose callbacks all query through that pool.
+// A one-connection pool runs a whole tick (dirty rebuild and delete, and
+// backfill) whose sources all query through that pool.
 func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 	ctx, base, schema := workerFixture(t)
 	pool := singlePool(t, ctx, base)
@@ -54,11 +38,9 @@ func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 		}
 		return titles(map[string]string{cid(1): "fresh", cid(3): "listed"})(ctx, tenant, kind, lang, refs)
 	})
-	opts.ListContent = func(ctx context.Context, _, _, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
+	source(opts).list = func(ctx context.Context, _, _, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
 		return []contentref.ContentRef{gallery(cid(3))}, "3", true, hostRead(ctx, t, pool)
 	}
-	sink := &poolSink{t: t, pool: pool}
-	opts.Sink = sink
 	tick, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for i := 0; i < 2; i++ {
@@ -74,9 +56,6 @@ func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 	}
 	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 0 {
 		t.Fatalf("dirty rows left: %d", n)
-	}
-	if sink.n != 3 {
-		t.Fatalf("sink deliveries: %d", sink.n)
 	}
 }
 

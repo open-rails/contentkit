@@ -126,10 +126,8 @@ export interface NamedUpload {
   file: FileInfo;
 }
 
-/** The media kinds of post and poll folders (content.Media.PostKind and PollKind). */
+/** The media kind of poll folders (content.Media.PollKind). A content item's folder is its kind's. */
 export interface ContentFolders {
-  /** Default "post". */
-  post?: string;
   /** Default "poll". */
   poll?: string;
 }
@@ -177,7 +175,7 @@ export class MediaClient {
     o: MediaOptions = {},
     folders: ContentFolders = {},
   ) {
-    this.folders = { post: folders.post ?? "post", poll: folders.poll ?? "poll" };
+    this.folders = { poll: folders.poll ?? "poll" };
     this.api = new MediaApi(http);
     this.transport = o.transport ?? defaultTransport;
     this.concurrency = o.concurrency ?? 4;
@@ -387,19 +385,15 @@ export class MediaClient {
   }
 
   /**
-   * An image for a post's rich-text body, uploaded to the post's folder;
-   * resolves with its reference to store in the body (`ref`) and a URL that
-   * shows it to the editor now (`url`, null while none exists).
+   * An image for a content item's rich-text body, uploaded to the item's
+   * folder (its kind and id); resolves with its reference to store in the
+   * body (`ref`) and a URL that shows it to the editor now (`url`, null while
+   * none exists).
    */
-  async uploadInline(post: string, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
-    const up = await this.uploadNamed(this.postRef(post), file, o);
-    const r: InlineImage = await call(this.http, "POST", "/posts/{id}/images", { params: { id: post }, body: { image: up.name }, signal: o.signal });
+  async uploadInline(item: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
+    const up = await this.uploadNamed(item, file, o);
+    const r: InlineImage = await call(this.http, "POST", "/contents/{id}/images", { params: { id: item.id }, body: { image: up.name }, signal: o.signal });
     return { ...up, ...r };
-  }
-
-  /** The media folder of a post. */
-  postRef(id: string): RefBody {
-    return { kind: this.folders.post, id };
   }
 
   /** The media folder of a poll. */

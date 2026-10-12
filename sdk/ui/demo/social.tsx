@@ -46,7 +46,7 @@ function Staff() {
       <ContentKitUiProvider appearance={{ theme }} language={lang}>
         <main style={{ maxWidth: 900, margin: "0 auto", padding: 16, display: "grid", gap: 20 }}>
           <section data-demo="moderation" style={panel}>
-            <CommentModeration contentKinds={[{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }]} itemHref={(i) => `#${i.kind}/${i.id}`} />
+            <CommentModeration contentKinds={[{ value: "video", label: "Videos" }, { value: "blog", label: "Posts" }]} itemHref={(i) => `#${i.kind}/${i.id}`} />
           </section>
           <section data-demo="poll-editor" style={panel}>
             <PollEditor languages={[{ value: "en", label: "English" }, { value: "ja", label: "日本語" }]} freeText />

@@ -3,6 +3,8 @@ package groups
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -34,22 +36,16 @@ const (
 	maxKeywords = 256
 )
 
-// IsKind reports whether kind is a configured group kind: the worker routes
-// its documents here.
-func (s *Store) IsKind(kind string) bool {
-	_, ok := s.cfg.GroupKinds[kind]
-	return ok
-}
+// DocumentKinds are the group kinds: the store is a worker.Source.
+func (s *Store) DocumentKinds() []string { return slices.Sorted(maps.Keys(s.cfg.GroupKinds)) }
 
-// BuildKeywordDocuments is the worker.BuildKeywordDocuments of group kinds:
-// one document per active group and language, titled by that language's
-// canonical name (falling back to English, then any language), with the
-// language's aliases and every other name as aliases and overflow as
-// keywords. Missing, merged and deleted groups yield no document.
-func (s *Store) BuildKeywordDocuments(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-	if tenant != s.tenant {
-		return nil, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
-	}
+// BuildDocuments builds group documents: one per active group and language,
+// titled by that language's canonical name (falling back to English, then
+// any language), with the language's aliases and every other name as
+// aliases and overflow as keywords. Missing, merged and deleted groups yield
+// no document.
+func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+	tenant := s.tenant
 	if _, err := s.groupKind(kind); err != nil {
 		return nil, err
 	}
@@ -165,12 +161,8 @@ func displayName(names []Name, language string, fallback []string) Name {
 	return best
 }
 
-// ListContent is the worker.ListContentPage of group kinds: active groups of
-// the kind in id order.
-func (s *Store) ListContent(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-	if tenant != s.tenant {
-		return nil, "", false, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
-	}
+// ListDocuments pages the active groups of kind in id order.
+func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
 	if _, err := s.groupKind(kind); err != nil {
 		return nil, "", false, err
 	}

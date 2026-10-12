@@ -4,7 +4,7 @@ import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { attributeInput, parseAttributes, slugify } from "../../client/group-fields.js";
-import type { Attribute, ContentModel, Group, GroupCard, GroupDetail, GroupKind, MergeReport, Name, Text } from "../../client/generated/wire.js";
+import type { Attribute, ContentModel, Group, GroupCard, GroupDetail, GroupKind, GroupsText as Text, MergeReport, Name } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup, useKinds, type UseGroup } from "../../react/groups.js";

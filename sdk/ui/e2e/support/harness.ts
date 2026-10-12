@@ -24,29 +24,6 @@ export interface Item {
   path?: string;
 }
 
-/** A content as the e2e host seeds it (e2e/server/seed.go). */
-export interface SeedContent {
-  kind: string;
-  titles?: Record<string, string>;
-  /** An access.Rule; public by default. */
-  access?: Record<string, unknown>;
-  listing?: "listed" | "members" | "unlisted";
-  restrictions?: string[];
-  attributes?: Record<string, unknown>;
-  /** Published this long ago; default 1. */
-  age_hours?: number;
-  favorites?: number;
-  versions: { languages: string[]; traits?: string[]; access?: Record<string, unknown>; pages?: number; future?: boolean }[];
-  /** Group ids, content-level memberships. */
-  groups?: string[];
-}
-
-export interface SeededContent {
-  id: string;
-  code: string;
-  versions: string[];
-}
-
 export interface Fault {
   /** The item id the request's path names; any when absent. */
   item?: string;
@@ -123,16 +100,6 @@ export class Harness {
   /** Registers an item with the host's resolver: owned by owner, locked to viewers when access is "none". */
   item(o: { kind: string; id?: string; owner?: string; access?: "full" | "none"; hidden?: boolean; title?: string }): Promise<Item> {
     return this.call("POST", "/items", o);
-  }
-
-  /** Contents with their text, code, versions, facets, memberships and keyword documents, as the catalog's routes will write them. */
-  contents(items: SeedContent[]): Promise<SeededContent[]> {
-    return this.call("POST", "/contents", items);
-  }
-
-  /** One content: contents([c])[0]. */
-  async content(c: SeedContent): Promise<SeededContent> {
-    return (await this.contents([c]))[0]!;
   }
 
   /** Runs the groups' count and automatic cover job now. */

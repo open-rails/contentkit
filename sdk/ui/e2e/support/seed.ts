@@ -155,3 +155,14 @@ export async function seedPolls(h: Harness) {
   await ck.polls.update(off.id, { is_active: false });
   return { staff, tag };
 }
+
+/** A published content made through the catalog's routes: titles by language, its versions, its groups. */
+export async function seedContent(
+  ck: ReturnType<typeof contentKit>,
+  o: { kind: string; titles: Record<string, string>; versions: { languages: string[]; traits?: string[] }[]; groups?: string[] },
+) {
+  const text = Object.fromEntries(Object.entries(o.titles).map(([l, title]) => [l, { title }]));
+  const c = await ck.contents.create({ kind: o.kind, text, versions: o.versions });
+  if (o.groups?.length) await ck.groups.setOfContent(c.id, { memberships: o.groups.map((group_id) => ({ group_id })) });
+  return ck.contents.publish(c.id);
+}

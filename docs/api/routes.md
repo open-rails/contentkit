@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (115). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (125). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -14,20 +14,11 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 |---|---|---|---|---|---|
 | GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes. |
 
-## Content: config, posts, comments, reactions, favorites, polls, bans, moderation (`/v1`)
+## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | GET | `/v1/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
-| GET | `/v1/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
-| GET | `/v1/posts/admin` | staff `root:posts:write` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
-| GET | `/v1/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders. |
-| POST | `/v1/posts` | staff `root:posts:write` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
-| PATCH | `/v1/posts/{id}` | staff `root:posts:write` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
-| DELETE | `/v1/posts/{id}` | staff `root:posts:write` | — | 204 — | Deletes a post. |
-| POST | `/v1/posts/{id}/restore` | staff `root:posts:write` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
-| PUT | `/v1/posts/{id}/cover` | staff `root:posts:write` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
-| POST | `/v1/posts/{id}/images` | staff `root:posts:write` | `ImageInput` | 200 `InlineImage` | The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now. |
 | GET | `/v1/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
 | POST | `/v1/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/v1/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
@@ -68,8 +59,32 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PUT | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
 | DELETE | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
 | GET | `/v1/{kind}/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a target, and the ban that stops it. |
-| GET | `/v1/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or posts awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
-| POST | `/v1/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or post, at the revision the queue listed. |
+| GET | `/v1/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or content items awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
+| POST | `/v1/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or content item, at the revision the queue listed. |
+
+## Contents: content items, versions, catalog totals (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
+| GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state. Query: `language`. |
+| GET | `/v1/contents/{id}/versions/{vid}` | public | — | 200 `Version` | One version of a content item as the viewer sees it, with its segments and access decision. Query: `language`. |
+| GET | `/v1/manage/contents` | public | — | 200 `Content[]` | Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit. Query: `kind`, `state`, `owner_group`, `q`, `language`, `limit`, `offset`. |
+| POST | `/v1/contents` | public | `ContentInput` | 201 `Content` | Creates a content item as a draft. root:content:write holders, or an owner group's editors in it. |
+| PATCH | `/v1/contents/{id}` | public | `ContentPatch` | 200 `Content` | Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}` | public | — | 204 — | Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors and root:content:write holders only. |
+| POST | `/v1/contents/{id}/restore` | public | — | 200 `Content` | Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only. |
+| POST | `/v1/contents/{id}/publish` | public | `PublishInput` | 200 `Content`<br>202 `Content` | Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only. |
+| POST | `/v1/contents/{id}/unpublish` | public | — | 200 `Content` | Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/text/{language}` | public | `CatalogText` | 200 `Content`<br>202 `Content` | Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}/text/{language}` | public | — | 200 `Content` | Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/creators` | public | `CreatorsInput` | 200 `Content` | Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only. |
+| POST | `/v1/contents/{id}/images` | public | `ImageInput` | 200 `InlineImage` | The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only. |
+| POST | `/v1/contents/{id}/versions` | public | `VersionInput` | 201 `Version` | Adds a version after the others. Creators, the owner group's editors and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/versions/order` | public | `OrderInput` | 200 `Content` | Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors and root:content:write holders only. |
+| PATCH | `/v1/contents/{id}/versions/{vid}` | public | `VersionInput` | 200 `Version` | Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}/versions/{vid}` | public | — | 204 — | Deletes a version; a content item keeps at least one. Creators, the owner group's editors and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/versions/{vid}/segments` | public | `SegmentsInput` | 200 `Version` | Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors and root:content:write holders only. |
 
 ## Media uploads (`/v1/media/upload`)
 

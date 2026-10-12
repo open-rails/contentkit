@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/open-rails/helpers/notify"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/notification"
 )
@@ -51,6 +53,36 @@ func (c *Client) PublishNotifications(ctx context.Context, notices []notify.Inpu
 	var out notification.Published
 	err := c.call(ctx, http.MethodPost, "/v1/notifications/publish", notification.Publication{Notifications: notices}, &out)
 	return out.Items, err
+}
+
+// CreateContent creates a draft content item (POST /v1/contents).
+func (c *Client) CreateContent(ctx context.Context, in catalog.ContentInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, "/v1/contents", in, &out)
+	return out, err
+}
+
+// UpdateContent edits a content item (PATCH /v1/contents/{id}).
+func (c *Client) UpdateContent(ctx context.Context, id string, patch catalog.ContentPatch) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPatch, "/v1/contents/"+url.PathEscape(id), patch, &out)
+	return out, err
+}
+
+// PublishContent publishes a content item now, or schedules it (POST
+// /v1/contents/{id}/publish).
+func (c *Client) PublishContent(ctx context.Context, id string, in catalog.PublishInput) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, "/v1/contents/"+url.PathEscape(id)+"/publish", in, &out)
+	return out, err
+}
+
+// UnpublishContent takes a content item back to a draft (POST
+// /v1/contents/{id}/unpublish).
+func (c *Client) UnpublishContent(ctx context.Context, id string) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodPost, "/v1/contents/"+url.PathEscape(id)+"/unpublish", nil, &out)
+	return out, err
 }
 
 func (c *Client) call(ctx context.Context, method, path string, in, out any) error {

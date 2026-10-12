@@ -3,91 +3,43 @@ package contentkit
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
 )
 
-// Post and poll images live in these media kinds (content.Media's defaults).
-const (
-	postFolder = "post"
-	pollFolder = "poll"
-)
+// pollFolder is the media kind of poll images (content.Media's default).
+const pollFolder = "poll"
 
-// owns reports a reference ContentKit answers for itself: post and poll
-// images, when the registry declares their kinds.
-func (e *Engine) owns(ref contentref.ContentRef) bool {
-	return e.media != nil && e.media.folders && (ref.ContentKind == postFolder || ref.ContentKind == pollFolder)
-}
+// pollMedia is versions.Others: poll images, the one media kind neither the
+// catalog nor groups own, through the content module.
+type pollMedia struct{ e *Engine }
 
-// engineResolver is the one access.ContentResolver content and media consume:
-// ContentKit's own posts and polls, then the host's (Deps.Resolver). The
-// catalog's resolver (visibility plus Gate.Decide, #120) replaces the host's
-// here, and Deps.Resolver and Deps.CanUpload go.
-type engineResolver struct {
-	e    *Engine
-	host access.ContentResolver
-}
-
-func (r engineResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	var own, host []contentref.ContentRef
+func (p pollMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	var polls []contentref.ContentRef
 	for _, ref := range refs {
-		if r.e.owns(ref) {
-			own = append(own, ref)
-		} else {
-			host = append(host, ref)
+		if ref.ContentKind == pollFolder && p.e.media.polls {
+			polls = append(polls, ref)
 		}
 	}
-	out := make(map[contentref.ContentKey]access.Resolution, len(refs))
-	if len(own) > 0 {
-		res, err := r.e.content.MediaResolver().Resolve(ctx, own, actor)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range res {
-			out[k] = v
-		}
+	if len(polls) == 0 {
+		return map[contentref.ContentKey]access.Resolution{}, nil
 	}
-	if len(host) > 0 && r.host != nil {
-		res, err := r.host.Resolve(ctx, host, actor)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range res {
-			out[k] = v
-		}
-	}
-	return out, nil
+	return p.e.content.MediaResolver().Resolve(ctx, polls, actor)
 }
 
-// others are the media kinds versions leaves to the engine: post and poll
-// images, and the host's own kinds.
-type others struct {
-	engineResolver
-	engineUploader
-}
-
-// noFacets leaves content_facets to the catalog's writes until it refreshes
-// them on media facts (#120).
-type noFacets struct{}
-
-func (noFacets) RefreshTx(context.Context, pgx.Tx, []string) error { return nil }
-
-// engineUploader authorizes uploads to ContentKit's own items itself and
-// asks the host (Deps.CanUpload) for the rest.
-type engineUploader struct {
-	e    *Engine
-	host media.UploadAuthorizer
-}
-
-func (u engineUploader) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	if u.e.owns(t.Ref) {
-		return u.e.content.CanUpload(ctx, actor, t)
-	}
-	if u.host == nil {
+func (p pollMedia) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	if t.Ref.ContentKind != pollFolder || !p.e.media.polls {
 		return media.UploadGrant{}, nil
 	}
-	return u.host.CanUpload(ctx, actor, t)
+	return p.e.content.CanUpload(ctx, actor, t)
+}
+
+// groupCovers resolves group covers through media, which is built after
+// groups.
+type groupCovers struct{ e *Engine }
+
+func (g groupCovers) Covers(ctx context.Context, covers []groups.CoverOf) ([][]groups.Rendition, error) {
+	return g.e.media.versions.GroupCovers().Covers(ctx, covers)
 }

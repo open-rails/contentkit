@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitClient, Group } from "../../src/client/index.js";
 import { ContentKitProvider, type GroupFilter, useContentGroups, useGroup, useGroupMembers, useGroups, useKinds, useStaffAccess } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
-import { Accounts, client, fixture, harness } from "./setup.js";
+import { Accounts, client, fixture, harness, seedContents } from "./setup.js";
 
 const wait = { timeout: 30_000, interval: 50 };
 const run = () => Math.random().toString(36).slice(2, 8);
@@ -46,8 +46,8 @@ describe("groups against the real ContentKit", () => {
     // Beta has two live contents, Alpha one: count order after the job runs.
     for (const [g, n] of [[beta, 2], [alpha, 1]] as const) {
       for (let i = 0; i < n; i++) {
-        const c = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
-        await staff.groups.addMembers(g.id, [{ content_id: c.id }]);
+        const [c] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r} ${i}` }, versions: [{ languages: ["en"] }] }]);
+        await staff.groups.addMembers(g.id, [{ content_id: c!.id }]);
       }
     }
     await h.recount();
@@ -112,20 +112,20 @@ describe("groups against the real ContentKit", () => {
     await waitFor(() => expect(result.current.group?.cover?.image).toMatch(/^i-[0-9a-f-]{36}$/), wait);
     const image = result.current.group!.cover!.image!;
     expect(await h.object({ kind: "artist", id: artist.id }, `cover/${image}`)).not.toBeNull();
-    const member = await h.content({ kind: "comic", favorites: 5, versions: [{ languages: ["en"] }] });
-    await staff.groups.addMembers(artist.id, [{ content_id: member.id }]);
-    await act(() => result.current.update({ cover: { content_id: member.id } }));
-    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member.id }), wait);
+    const [member] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r}` }, versions: [{ languages: ["en"] }] }]);
+    await staff.groups.addMembers(artist.id, [{ content_id: member!.id }]);
+    await act(() => result.current.update({ cover: { content_id: member!.id } }));
+    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id }), wait);
     await act(() => result.current.update({ cover: {} }));
     await h.recount();
     act(() => result.current.reload());
-    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member.id, auto: true }), wait);
+    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id, auto: true }), wait);
 
     // Merge into the circle: the hook shows the survivor, with the names and members moved.
     await act(() => result.current.merge(circle.id));
     await waitFor(() => expect(result.current.group?.id).toBe(circle.id), wait);
     expect(result.current.group?.names.map((n) => n.name)).toEqual(expect.arrayContaining([`Circle ${r}`, `A. ${r}`, `Artist ${r}`]));
-    expect((await staff.groups.members(circle.id)).members.map((m) => m.content_id)).toEqual([member.id]);
+    expect((await staff.groups.members(circle.id)).members.map((m) => m.content_id)).toEqual([member!.id]);
 
     const { result: other } = renderHook(() => useGroup(circle.id), { wrapper: wrap(c, "en") });
     await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
@@ -140,8 +140,8 @@ describe("groups against the real ContentKit", () => {
 
   it("useContentGroups and useGroupMembers: roles, positions, windows and version-level memberships", async () => {
     const r = run();
-    const content = await h.content({ kind: "comic", versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
-    const [, ja] = content.versions;
+    const [content] = await seedContents(staff, [{ kind: "comic", titles: { en: `Content ${r}` }, versions: [{ languages: ["en"] }, { languages: ["ja"] }] }]);
+    const ja = content!.versions[1]!.id;
     const artist = await create("artist", `pub-${r}`, [name("en", `Publisher ${r}`)]);
     const series = await create("series", `ser-${r}`, [name("en", `Series ${r}`)]);
     const voice = await create("voice_actor", `va-${r}`, [name("en", `Voice ${r}`)]);
@@ -149,7 +149,7 @@ describe("groups against the real ContentKit", () => {
     const from = "2026-01-01T00:00:00Z";
     const until = "2027-01-01T00:00:00Z";
 
-    const { result } = renderHook(() => useContentGroups(content.id), { wrapper: wrap(staff, "en") });
+    const { result } = renderHook(() => useContentGroups(content!.id), { wrapper: wrap(staff, "en") });
     await waitFor(() => expect(result.current.loading).toBe(false), wait);
     expect(result.current.memberships).toEqual([]);
     await act(() =>
@@ -166,7 +166,7 @@ describe("groups against the real ContentKit", () => {
     );
     await waitFor(() => expect(result.current.memberships).toHaveLength(5), wait);
     const by = (g: string, role = "") => result.current.memberships.find((m) => m.group_id === g && (m.role ?? "") === role);
-    expect(by(artist.id, "publisher")).toMatchObject({ content_id: content.id, state: "active" });
+    expect(by(artist.id, "publisher")).toMatchObject({ content_id: content!.id, state: "active" });
     expect(by(series.id)).toMatchObject({ position: 3 });
     expect(by(voice.id)).toMatchObject({ version_id: ja });
     expect(by(rail.id)).toMatchObject({ position: 1 });
@@ -176,25 +176,25 @@ describe("groups against the real ContentKit", () => {
     await expect(result.current.set([{ group_id: series.id, version_id: ja }], ["series"])).rejects.toMatchObject({ code: "invalid_request" });
 
     // The rail's members, from its side: another content, an order, a new window, a removal.
-    const second = await h.content({ kind: "comic", versions: [{ languages: ["en"] }] });
+    const [second] = await seedContents(staff, [{ kind: "comic", titles: { en: `Second ${r}` }, versions: [{ languages: ["en"] }] }]);
     const { result: members } = renderHook(() => useGroupMembers(rail.id), { wrapper: wrap(staff, "en") });
-    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content.id]), wait);
+    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content!.id]), wait);
     await act(async () => {
-      await members.current.add([{ content_id: second.id }]);
+      await members.current.add([{ content_id: second!.id }]);
     });
-    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content.id, second.id]), wait);
+    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content!.id, second!.id]), wait);
     await act(async () => {
-      await members.current.reorder([{ content_id: second.id }, { content_id: content.id }]);
+      await members.current.reorder([{ content_id: second!.id }, { content_id: content!.id }]);
     });
-    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([second.id, content.id]), wait);
+    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([second!.id, content!.id]), wait);
     await act(async () => {
-      await members.current.add([{ content_id: second.id, active_until: until }]);
+      await members.current.add([{ content_id: second!.id, active_until: until }]);
     });
     await waitFor(() => expect(Date.parse(members.current.items[0]?.active_until ?? "")).toBe(Date.parse(until)), wait);
     await act(async () => {
-      await members.current.remove([{ content_id: second.id }]);
+      await members.current.remove([{ content_id: second!.id }]);
     });
-    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content.id]), wait);
+    await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content!.id]), wait);
     // The content's memberships followed the group-side writes.
     await waitFor(() => expect(by(rail.id)?.position).toBe(2), wait);
   });

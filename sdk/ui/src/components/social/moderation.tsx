@@ -43,7 +43,7 @@ export function useCommentModerationAccess(o: FlowClientOptions = {}): StaffAcce
 /**
  * Staff: every comment (deleted, held and rejected ones with their text) to
  * delete, restore or ban its author, by content kind or author; the review
- * queue of held comments and posts to approve or reject; and the site's
+ * queue of held comments and content to approve or reject; and the site's
  * comment bans. Sections, filters and pages live in the URL under basePath;
  * the caller sees only the sections its permissions allow.
  */
@@ -259,14 +259,14 @@ function AllComments({ loc, view, client, ...p }: SectionProps) {
 function Queue({ loc, view, ...p }: SectionProps) {
   const m = useMessages();
   const { t } = m;
-  const kind: HeldKind = loc.query.get("kind") === "post" ? "post" : "comment";
+  const kind: HeldKind = loc.query.get("kind") === "content" ? "content" : "comment";
   const queue = useModerationQueue({ kind, pageSize: p.pageSize, client: p.client });
   return (
     <div className="grid gap-3">
       <div className="flex gap-2" role="group" aria-label={t("moderation.queue")}>
-        {(["comment", "post"] as const).map((k) => (
+        {(["comment", "content"] as const).map((k) => (
           <Button key={k} size="sm" variant={kind === k ? "default" : "outline"} aria-pressed={kind === k} onClick={() => loc.go(view, { kind: k === "comment" ? undefined : k })}>
-            {t(k === "post" ? "moderation.queuePosts" : "moderation.queueComments")}
+            {t(k === "content" ? "moderation.queueContent" : "moderation.queueComments")}
           </Button>
         ))}
       </div>

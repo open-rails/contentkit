@@ -1,10 +1,11 @@
+import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
+import { ContentsClient } from "./contents.js";
 import { BansClient } from "./content/bans.js";
 import { CommentsClient } from "./content/comments.js";
 import { FavoritesClient } from "./content/favorites.js";
 import { ModerationClient } from "./content/moderation.js";
 import { PollsClient } from "./content/polls.js";
-import { PostsClient } from "./content/posts.js";
 import { ReactionsClient } from "./content/reactions.js";
 import type { Config, ContentModel, RefBody } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
@@ -18,7 +19,7 @@ import { NotificationsClient } from "./notifications.js";
 export interface ContentKitClientOptions extends HttpOptions {
   /** Upload tuning (transport, part concurrency, retries). */
   media?: MediaOptions;
-  /** The media kinds of post and poll folders, when the host renamed them (content.Media). */
+  /** The media kind of poll folders, when the host renamed it (content.Media). */
   folders?: ContentFolders;
 }
 
@@ -29,8 +30,10 @@ export interface ContentKitClientOptions extends HttpOptions {
 export interface ContentKitClient {
   /** Uploads, multipart, commits, reads, frames, HLS bases, hls.js `xhrSetup` and inline images. */
   readonly media: MediaClient;
-  /** Published posts, staff CRUD, reactions, cover and body images. */
-  readonly posts: PostsClient;
+  /** Content items: reads, and writes for their creators, owner-group editors and staff. */
+  readonly contents: ContentsClient;
+  /** The catalog's totals by kind, language and audience. */
+  readonly catalog: CatalogClient;
   /** Threads, replies, edits, tombstones, reactions, standing, the latest feed, moderation. */
   readonly comments: CommentsClient;
   /** Likes and dislikes of an item. */
@@ -41,7 +44,7 @@ export interface ContentKitClient {
   readonly polls: PollsClient;
   /** Comment bans, owner and global. */
   readonly bans: BansClient;
-  /** The review queue of held comments and posts. */
+  /** The review queue of held comments and content. */
   readonly moderation: ModerationClient;
   /** Groups: listings, pages, staff writes and memberships. */
   readonly groups: GroupsClient;
@@ -72,7 +75,8 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
   const media = new MediaClient(h, mediaOptions, folders);
   return {
     media,
-    posts: new PostsClient(h, media),
+    contents: new ContentsClient(h),
+    catalog: new CatalogClient(h),
     comments: new CommentsClient(h),
     reactions: new ReactionsClient(h),
     favorites: new FavoritesClient(h),
