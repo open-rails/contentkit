@@ -20,8 +20,8 @@ type GroupInput struct {
 	Kind string  `json:"kind"`
 	Slug string  `json:"slug"`
 	// ScopeID is required for a kind scoped by another (a character's series).
-	ScopeID     GroupID        `json:"scope_id,omitempty"`
-	ParentID    GroupID        `json:"parent_id,omitempty"`
+	ScopeID    GroupID        `json:"scope_id,omitempty"`
+	ParentID   GroupID        `json:"parent_id,omitempty"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 	Cover      *Cover         `json:"cover,omitempty"`
 	Avatar     *Avatar        `json:"avatar,omitempty"`

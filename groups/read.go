@@ -54,16 +54,16 @@ type ListOptions struct {
 
 // GroupCard is a listed group: what a directory page or a chip needs.
 type GroupCard struct {
-	ID           GroupID        `json:"id"`
-	Kind         string         `json:"kind"`
-	Slug         string         `json:"slug"`
-	ScopeID      GroupID        `json:"scope_id,omitempty"`
-	ParentID     GroupID        `json:"parent_id,omitempty"`
-	Name         string         `json:"name"`
-	NameLanguage string         `json:"name_language,omitempty"`
-	Code         string         `json:"code,omitempty"`
-	Path         string         `json:"path,omitempty"`
-	Cover        *Cover         `json:"cover,omitempty"`
+	ID           GroupID `json:"id"`
+	Kind         string  `json:"kind"`
+	Slug         string  `json:"slug"`
+	ScopeID      GroupID `json:"scope_id,omitempty"`
+	ParentID     GroupID `json:"parent_id,omitempty"`
+	Name         string  `json:"name"`
+	NameLanguage string  `json:"name_language,omitempty"`
+	Code         string  `json:"code,omitempty"`
+	Path         string  `json:"path,omitempty"`
+	Cover        *Cover  `json:"cover,omitempty"`
 	// Avatar is a user-owned group's avatar.
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	Count      int            `json:"count"`

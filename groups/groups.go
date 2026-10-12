@@ -134,8 +134,8 @@ type Group struct {
 	// kind with auth_scope (Options.Scopes).
 	AuthScope string    `json:"auth_scope,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	Revision    int64          `json:"revision"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Revision  int64     `json:"revision"`
 }
 
 // Querier is a pgx pool, connection or transaction.
