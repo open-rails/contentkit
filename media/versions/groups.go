@@ -3,7 +3,10 @@ package versions
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
@@ -16,8 +19,8 @@ import (
 
 // A group kind's items, {kind, group}, hold the group's named covers (and a
 // user-owned group's avatars): staff holding root:groups:write edit them,
-// and its owner, and for a user-owned group its AuthKit scope's holders of
-// {kind}:media:write.
+// and for a user-owned group its owner and its AuthKit scope's holders of
+// {kind}:media:write or {kind}:settings:manage.
 
 // groupRight is what one actor may do with one group's item.
 type groupRight struct {
@@ -62,15 +65,8 @@ FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Te
 		switch {
 		case staff:
 			right.editor = true
-		case !actor.Person():
-		case r.owner == actor.ID:
-			right.editor = true
-		case userOwned && r.scope != "":
-			root, err := gate.RootScope(ctx, s.o.Auth)
-			if err != nil {
-				return nil, err
-			}
-			if right.editor, err = actor.Can(ctx, auth.Scope{Authority: root.Authority, ID: r.scope}, kind+":media:write"); err != nil {
+		case userOwned:
+			if right.editor, err = gate.GroupEditor(ctx, s.o.Auth, actor, r.owner, r.scope, access.GroupMediaWrite(kind), access.GroupSettingsManage(kind)); err != nil {
 				return nil, err
 			}
 		}
@@ -115,24 +111,30 @@ func (s *Service) canEditGroup(ctx context.Context, actor access.Actor, t media.
 	if !ok || !r.active || !r.editor {
 		return media.UploadGrant{}, nil
 	}
-	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: cmpOr(r.owner, actor.ID)}, nil
+	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: GroupOwner(t.Ref.ContentKind, t.Ref.ContentID)}, nil
 }
 
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
+// GroupOwner is the quota owner of a group's uploads: "{kind}:{id}".
+func GroupOwner(kind, id string) string { return kind + ":" + id }
+
+// ParseGroupOwner is GroupOwner's kind and id; ok is false for any other
+// owner.
+func ParseGroupOwner(owner string) (kind, id string, ok bool) {
+	kind, id, ok = strings.Cut(owner, ":")
+	return kind, id, ok && kind != "" && id != ""
 }
 
 // CoverOf names a content's or a group's cover: Kind and ID are its owner;
 // Image an image uploaded to the owner's item ("i-{uuid}"), else ContentID a
-// content whose cover it shows; with neither, a content owner's own.
+// content whose cover it shows; with neither, a content owner's own. With
+// Preset media.AvatarPreset it names a group's avatar: Image, else the
+// item's first, else the kind's default.
 type CoverOf struct {
 	Kind      string
 	ID        string
 	Image     string
 	ContentID string
+	Preset    string
 }
 
 // Covers resolves covers to their public renditions, per cover in order,
@@ -143,7 +145,7 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 	targets := make([]string, len(covers))
 	var contents []string
 	for i, c := range covers {
-		if c.Image != "" {
+		if c.Image != "" || c.Preset == media.AvatarPreset {
 			continue
 		}
 		targets[i] = c.ContentID
@@ -184,7 +186,13 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 	for i, c := range covers {
 		q := media.ImageQuery{Preset: media.CoverPreset, Name: c.Image}
 		var err error
-		if c.Image != "" {
+		if c.Preset == media.AvatarPreset {
+			if k, kerr := s.reg.Kind(c.Kind); kerr != nil || !slices.ContainsFunc(k.Public, func(p media.Public) bool { return p.Name == media.AvatarPreset }) {
+				continue // a host-declared kind without avatars
+			}
+			q.Preset = media.AvatarPreset
+			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
+		} else if c.Image != "" {
 			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
 		} else if f, ok := found[targets[i]]; ok {
 			q.Ref, err = s.reg.Ref(f.kind, targets[i])
@@ -206,7 +214,7 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 		if ok {
 			image = images[j][0]
 		} else {
-			image, ok = s.reg.DefaultImage(qs[j].Ref, media.CoverPreset)
+			image, ok = s.reg.DefaultImage(qs[j].Ref, qs[j].Preset)
 		}
 		if ok {
 			out[i] = image.Renditions
@@ -224,7 +232,7 @@ type groupCovers struct{ s *Service }
 func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]groups.Rendition, error) {
 	asked := make([]CoverOf, len(cs))
 	for i, c := range cs {
-		asked[i] = CoverOf{Kind: c.Kind, ID: string(c.ID), Image: c.Cover.Image, ContentID: c.Cover.ContentID}
+		asked[i] = CoverOf{Kind: c.Kind, ID: string(c.ID), Image: c.Cover.Image, ContentID: c.Cover.ContentID, Preset: c.Preset}
 	}
 	got, err := g.s.Covers(ctx, asked)
 	if err != nil {
@@ -237,4 +245,26 @@ func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]group
 		}
 	}
 	return out, nil
+}
+
+// GroupFolders deletes groups' media folders for the groups API
+// (groups.Options.Folders).
+func (s *Service) GroupFolders() groups.Folders { return groupFolders{s} }
+
+type groupFolders struct{ s *Service }
+
+// DeleteTx queues the deletion of each group's media item in tx.
+func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	del := make([]media.Deletion, 0, len(refs))
+	for _, r := range refs {
+		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+		if err != nil {
+			return err
+		}
+		del = append(del, media.Deletion{Ref: ref, Owner: GroupOwner(r.Kind, string(r.ID))})
+	}
+	if len(del) == 0 || g.s.m.Jobs == nil {
+		return nil
+	}
+	return g.s.m.Jobs.DeleteItemsTx(ctx, tx, del...)
 }

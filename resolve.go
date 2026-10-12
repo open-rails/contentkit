@@ -3,6 +3,8 @@ package contentkit
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
@@ -43,6 +45,14 @@ type groupCovers struct{ e *Engine }
 
 func (g groupCovers) Covers(ctx context.Context, covers []groups.CoverOf) ([][]groups.Rendition, error) {
 	return g.e.media.versions.GroupCovers().Covers(ctx, covers)
+}
+
+// groupFolders deletes group media folders through media, built after
+// groups.
+type groupFolders struct{ e *Engine }
+
+func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	return g.e.media.versions.GroupFolders().DeleteTx(ctx, tx, refs)
 }
 
 // interactionTargets resolves what interactions target: content items and

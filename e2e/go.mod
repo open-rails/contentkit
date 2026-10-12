@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.75.0
+	github.com/open-rails/contentkit/adapters/authkit v0.0.0
 	github.com/open-rails/contentkit/adapters/openrails v0.0.0
 	github.com/open-rails/helpers v1.12.0
 	github.com/open-rails/openrails v0.248.0
@@ -139,3 +140,5 @@ require (
 replace github.com/open-rails/contentkit => ../
 
 replace github.com/open-rails/contentkit/adapters/openrails => ../adapters/openrails
+
+replace github.com/open-rails/contentkit/adapters/authkit => ../adapters/authkit

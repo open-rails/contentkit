@@ -18,18 +18,25 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Handler serves the groups API (routes): public listings and group pages,
-// and staff writes for holders of access.GroupsWrite in a's root scope.
-// Errors are JSON {"error", "code"}: 400 for ErrInvalid, 404 for
-// ErrNotFound, 409 for ErrConflict and a sanitized 500 otherwise; the cause
-// always reaches Options.Logger.
+// Handler serves the groups API (routes): listings and group pages, each
+// with the viewer's standing with sellable groups; creator writes of
+// user-owned groups (As); and staff writes for holders of
+// access.GroupsWrite in a's root scope. Errors are JSON {"error", "code"}:
+// 400 for ErrInvalid, 403 for ErrForbidden, 404 for ErrNotFound, 409 for
+// ErrConflict and ErrLimit (limit_reached), 503 when auth or billing is
+// down and a sanitized 500 otherwise; the cause always reaches
+// Options.Logger.
 func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
 	if err := gate.Check(a, access.GroupsWrite); err != nil {
 		return nil, fmt.Errorf("groups: Handler: %w", err)
 	}
 	mux := http.NewServeMux()
-	g := &gate.Gate{Auth: a, Log: s.log}
-	httpapi.Mount(mux, g.Guard, handler{s}, routes)
+	g := &gate.Gate{Auth: a, Log: s.log, Then: func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(access.WithMemo(r.Context())))
+		})
+	}}
+	httpapi.Mount(mux, g.Guard, handler{s: s, auth: a}, routes)
 	return accessLog(s.log, mux), nil
 }
 
@@ -39,11 +46,14 @@ var (
 	language = httpapi.Text("language", "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with")
 	notFound = []string{httpapi.CodeNotFound}
 	writes   = []string{httpapi.CodeConflict, httpapi.CodeNotFound}
+	creates  = []string{httpapi.CodeConflict, httpapi.CodeNotFound, httpapi.CodeLimitReached}
 )
 
+const editors = " Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state."
+
 var routes = []httpapi.Route[handler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups", Resource: "groups", Auth: httpapi.Open,
-		Doc: "Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged.",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups", Resource: "groups", Auth: httpapi.Public,
+		Doc: "Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.",
 		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), httpapi.Text("parent", "only children of this group"),
 			httpapi.Text("scope", "only groups scoped by this group"), httpapi.Text("slug", "only the group with this slug"),
 			httpapi.Text("letter", "only sort names starting with this letter (a-z), or with anything else (#)"), language,
@@ -51,12 +61,18 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Text("sort", "name (the default), count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(GroupPage{})}}, Serve: httpapi.H(handler.list)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}", Resource: "groups", Auth: httpapi.Open,
-		Doc:   "An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor.",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}", Resource: "groups", Auth: httpapi.Public,
+		Doc:   "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
-	staff(httpapi.POST, "/groups", "Creates groups with their names and text.", []GroupInput{}, httpapi.Created([]Group{}), httpapi.H(handler.create), writes),
-	staff(httpapi.PATCH, "/groups/{id}", "Updates a group's given fields; state restores or deletes it.", GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), writes),
-	staff(httpapi.DELETE, "/groups/{id}", "Marks a group deleted.", nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/groups", Resource: "groups", Auth: httpapi.User,
+		Doc: "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
+			httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 200")},
+		Responses: []httpapi.Reply{httpapi.OK(MyGroupPage{})}}, Serve: httpapi.H(handler.mine)},
+	editor(httpapi.POST, "/groups", "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []GroupInput{}, httpapi.Created([]Group{}),
+		httpapi.H(handler.create), creates),
+	editor(httpapi.PATCH, "/groups/{id}", "Updates a group's given fields; state restores or deletes it."+editors, GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), creates),
+	editor(httpapi.DELETE, "/groups/{id}", "Marks a group deleted and retires its AuthKit scope."+editors, nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
 	staff(httpapi.PUT, "/groups/{id}/names", "Replaces a group's names and aliases.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.SetNames) }, writes),
 	staff(httpapi.POST, "/groups/{id}/names", "Adds names and aliases to a group; a new canonical name demotes the old one to an alias.", []Name{}, httpapi.OK([]Name{}),
@@ -82,6 +98,11 @@ var routes = []httpapi.Route[handler]{
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setContentGroups), writes, language),
 }
 
+func editor(method, path, doc string, request any, reply httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string) httpapi.Route[handler] {
+	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "groups", Doc: doc, Auth: httpapi.Editor,
+		Perm: string(access.GroupsWrite), Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
+}
+
 func staff(method, path, doc string, request any, reply httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string, query ...httpapi.Param) httpapi.Route[handler] {
 	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "groups", Doc: doc, Auth: httpapi.Staff,
 		Perm: string(access.GroupsWrite), Query: query, Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
@@ -99,7 +120,13 @@ type ContentMemberships struct {
 	Groups      []GroupCard  `json:"groups"`
 }
 
-type handler struct{ s *Store }
+type handler struct {
+	s    *Store
+	auth auth.Authenticator
+}
+
+// as is the store acting as the request's actor.
+func (h handler) as(r *http.Request) *Store { return h.s.As(h.auth, gate.Actor(r.Context())) }
 
 // statusWriter records the status and the cause fail() withheld from the
 // wire, for accessLog.
@@ -173,9 +200,21 @@ func fail(w http.ResponseWriter, err error) {
 		status, code = http.StatusNotFound, httpapi.CodeNotFound
 	case errors.Is(err, ErrConflict):
 		status, code = http.StatusConflict, httpapi.CodeConflict
+	case errors.Is(err, ErrLimit):
+		status, code = http.StatusConflict, httpapi.CodeLimitReached
+	case errors.Is(err, ErrForbidden):
+		status, code = http.StatusForbidden, httpapi.CodeForbidden
+	case errors.Is(err, auth.ErrUnauthenticated):
+		status, code = http.StatusUnauthorized, httpapi.CodeUnauthorized
+	case errors.Is(err, auth.ErrUnavailable), errors.Is(err, access.ErrUnavailable):
+		status, code = http.StatusServiceUnavailable, httpapi.CodeUnavailable
 	}
 	msg := "internal error"
-	if status != http.StatusInternalServerError {
+	switch status {
+	case http.StatusInternalServerError:
+	case http.StatusUnauthorized, http.StatusServiceUnavailable:
+		msg = code
+	default:
 		msg = err.Error()
 		var ce constraintError
 		if errors.As(err, &ce) {
@@ -201,14 +240,22 @@ func pathID(r *http.Request) GroupID { return GroupID(r.PathValue("id")) }
 func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	page, err := h.s.List(r.Context(), ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
+	page, err := h.as(r).List(r.Context(), ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
 		Slug: q.Get("slug"), Letter: q.Get("letter"), Language: q.Get("language"), ContentKind: q.Get("content_kind"),
 		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Limit: limit})
 	reply(w, http.StatusOK, page, err)
 }
 
+func (h handler) mine(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	page, err := h.as(r).Mine(r.Context(), ListOptions{Kind: q.Get("kind"), Language: q.Get("language"), Sort: Sort(q.Get("sort")),
+		Cursor: q.Get("cursor"), Limit: limit})
+	reply(w, http.StatusOK, page, err)
+}
+
 func (h handler) detail(w http.ResponseWriter, r *http.Request) {
-	d, err := h.s.Detail(r.Context(), pathID(r), r.URL.Query().Get("language"))
+	d, err := h.as(r).Detail(r.Context(), pathID(r), r.URL.Query().Get("language"))
 	reply(w, http.StatusOK, d, err)
 }
 
@@ -218,7 +265,7 @@ func (h handler) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	out, err := h.s.CreateGroups(r.Context(), in)
+	out, err := h.as(r).CreateGroups(r.Context(), in)
 	reply(w, http.StatusCreated, out, err)
 }
 
@@ -229,11 +276,11 @@ func (h handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.ID = pathID(r)
-	h.one(w, func() ([]Group, error) { return h.s.UpdateGroups(r.Context(), []GroupUpdate{u}) })
+	h.one(w, func() ([]Group, error) { return h.as(r).UpdateGroups(r.Context(), []GroupUpdate{u}) })
 }
 
 func (h handler) remove(w http.ResponseWriter, r *http.Request) {
-	h.one(w, func() ([]Group, error) { return h.s.DeleteGroups(r.Context(), []GroupID{pathID(r)}) })
+	h.one(w, func() ([]Group, error) { return h.as(r).DeleteGroups(r.Context(), []GroupID{pathID(r)}) })
 }
 
 func (h handler) one(w http.ResponseWriter, fn func() ([]Group, error)) {

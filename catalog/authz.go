@@ -5,8 +5,6 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/open-rails/authkit/auth"
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
 )
@@ -36,46 +34,53 @@ func (s *Store) staffRights(ctx context.Context, actor access.Actor) (staffRight
 	return r, nil
 }
 
-// groupEditor reports, per owner group, whether actor holds EditorPermission
-// in the group's AuthKit scope. Groups without a scope have no editors.
+// groupEditor reports, per owner group, whether actor edits its content: the
+// owner of a user-owned group, or a holder of access.GroupContentWrite of its
+// kind in its AuthKit scope.
 func (s *Store) groupEditor(ctx context.Context, q Querier, actor access.Actor, groupIDs []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if actor.Anonymous || actor.ID == "" || len(groupIDs) == 0 {
 		return out, nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, auth_scope FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = ANY($2) AND auth_scope IS NOT NULL AND auth_scope <> ''`,
-		s.tenant, groupIDs)
+	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.groups+`
+ WHERE tenant_id = $1 AND id = ANY($2) AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, groupIDs)
 	if err != nil {
 		return nil, err
 	}
-	scopes := map[string]string{}
+	type group struct{ kind, owner, scope string }
+	found := map[string]group{}
 	for rows.Next() {
-		var id, scope string
-		if err := rows.Scan(&id, &scope); err != nil {
+		var id string
+		var g group
+		if err := rows.Scan(&id, &g.kind, &g.owner, &g.scope); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		scopes[id] = scope
+		found[id] = g
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(scopes) == 0 {
-		return out, nil
-	}
-	root, err := gate.RootScope(ctx, s.guard.Auth)
-	if err != nil {
-		return nil, &AuthError{err}
-	}
-	for id, scope := range scopes {
-		ok, err := actor.Can(ctx, auth.Scope{Authority: root.Authority, ID: scope}, EditorPermission)
+	for id, g := range found {
+		ok, err := gate.GroupEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, access.GroupContentWrite(g.kind))
 		if err != nil {
 			return nil, &AuthError{err}
 		}
 		out[id] = ok
 	}
 	return out, nil
+}
+
+// readEditors is groupEditor for reads: a check that fails answers "not an
+// editor", logged, so it never fails a read of what the rule shows anyway.
+func (s *Store) readEditors(ctx context.Context, actor access.Actor, groupIDs []string) map[string]bool {
+	editors, err := s.groupEditor(ctx, s.pool, actor, groupIDs)
+	if err != nil {
+		s.log.WarnContext(ctx, "catalog: owner-group editor check failed; reading as a non-editor", "groups", groupIDs, "err", err)
+		return map[string]bool{}
+	}
+	return editors
 }
 
 // owned is what authorizing a write learned about one content item.

@@ -32,6 +32,9 @@ type Billing interface {
 	// Revoke takes back subjects' free grants of products; revoking what is
 	// not granted changes nothing.
 	Revoke(ctx context.Context, grants []Grant) error
+	// StopRenewals stops every subscription to products from renewing: each
+	// ends with its paid period. A stopped one stays as it is.
+	StopRenewals(ctx context.Context, productIDs []string) error
 }
 
 // Query is one entitlement read: exact keys and keyspace prefixes.

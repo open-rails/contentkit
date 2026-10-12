@@ -24,6 +24,7 @@ export interface AdminComment {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -68,6 +69,11 @@ export interface Attribute {
   sortable?: boolean;
 }
 
+export interface Avatar {
+  image?: string;
+  renditions?: Rendition[];
+}
+
 export interface BackgroundCue {
   file: string;
   from_page?: string;
@@ -87,6 +93,18 @@ export interface BanNotice {
   scope: string;
   reason?: string;
   until?: string;
+}
+
+export interface BannedWord {
+  word: string;
+  action: "mask" | "reject";
+  created_by: string;
+  created_at: string;
+}
+
+export interface BannedWordInput {
+  word: string;
+  action?: "mask" | "reject";
 }
 
 export interface Card {
@@ -150,6 +168,7 @@ export interface Comment {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -182,6 +201,7 @@ export interface CommentInput {
   body: string;
   reply_to_id?: string;
   anon_name?: string;
+  language?: string;
 }
 
 export interface CommentStanding {
@@ -341,6 +361,7 @@ export interface Count {
 
 export interface Counts {
   likes: number;
+  dislikes: number;
   favorites: number;
   views: number;
 }
@@ -459,14 +480,6 @@ export interface Failure {
   details?: ErrorDetails;
 }
 
-export interface FavoriteItem {
-  tenant_id: string;
-  content_kind: string;
-  content_id: string;
-  content_version_id?: string;
-  created_at: string;
-}
-
 export interface FavoriteState {
   favorited: boolean;
   count: number;
@@ -477,6 +490,7 @@ export interface FeedItem {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -550,11 +564,19 @@ export interface Group {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
   updated_at: string;
   revision: number;
+}
+
+export interface GroupAccess {
+  key: string;
+  offer?: Terms;
+  member: boolean;
+  unknown?: boolean;
 }
 
 export interface GroupCard {
@@ -568,8 +590,10 @@ export interface GroupCard {
   code?: string;
   path?: string;
   cover?: GroupsCover;
+  avatar?: Avatar;
   count: number;
   attributes: Record<string, unknown>;
+  access?: GroupAccess;
   created_at: string;
 }
 
@@ -583,6 +607,7 @@ export interface GroupDetail {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
@@ -599,6 +624,7 @@ export interface GroupDetail {
   children: GroupCard[];
   edges: Edge[];
   counts: Count[];
+  access?: GroupAccess;
 }
 
 export interface GroupInput {
@@ -609,6 +635,7 @@ export interface GroupInput {
   parent_id?: string;
   attributes?: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   names?: Name[];
@@ -627,6 +654,8 @@ export interface GroupKind {
   parent?: string;
   scoped_by?: string;
   owner?: string;
+  max_per_owner?: number;
+  uploads?: UploadLimits;
   sellable?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
@@ -659,8 +688,10 @@ export interface GroupUpdate {
   state?: "active" | "deleted" | "merged";
   attributes?: Record<string, unknown>;
   cover?: GroupsCover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
+  names?: Name[];
   text?: GroupsText[];
 }
 
@@ -701,6 +732,21 @@ export interface HeldPage {
   next?: string;
 }
 
+export interface IPBan {
+  network: string;
+  reason?: string;
+  until?: string;
+  banned_by: string;
+  banned_at: string;
+  expired: boolean;
+}
+
+export interface IPBanInput {
+  network: string;
+  reason?: string;
+  until?: string;
+}
+
 export interface ImageInput {
   image?: string;
 }
@@ -719,6 +765,18 @@ export interface Input {
   status?: string;
   action_requested?: boolean;
   severity?: string;
+}
+
+export interface Interaction {
+  content?: Card;
+  group?: GroupCard;
+  value: number;
+  at: string;
+}
+
+export interface InteractionPage {
+  items: Interaction[];
+  next_cursor?: string;
 }
 
 export interface Item {
@@ -808,6 +866,32 @@ export interface MultipartReply {
   min_part_size: number;
   max_part_size: number;
   max_parts: number;
+}
+
+export interface MyGroup {
+  id: string;
+  kind: string;
+  slug: string;
+  scope_id?: string;
+  parent_id?: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: GroupsCover;
+  avatar?: Avatar;
+  count: number;
+  attributes: Record<string, unknown>;
+  access?: GroupAccess;
+  created_at: string;
+  owner: boolean;
+  editor: boolean;
+  member: boolean;
+}
+
+export interface MyGroupPage {
+  groups: MyGroup[];
+  next_cursor?: string;
 }
 
 export interface Name {
@@ -1127,6 +1211,16 @@ export interface ReaderPlan {
   reader?: ReaderMeta;
 }
 
+export interface RecentSearch {
+  query: string;
+  results: number;
+  searched_at: string;
+}
+
+export interface RecentSearches {
+  searches: RecentSearch[];
+}
+
 export interface Recipient {
   audience: string;
   id: string;
@@ -1252,6 +1346,12 @@ export interface Totals {
 export interface Typeahead {
   contents: Card[];
   groups: GroupCard[];
+}
+
+export interface UploadLimits {
+  files_per_hour?: number;
+  bytes_per_day?: number;
+  quota_bytes?: number;
 }
 
 export interface UploadRule {

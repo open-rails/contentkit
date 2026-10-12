@@ -70,15 +70,15 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/comments": {
+    "/v1/contents/{id}/comments": {
       "get": {
         "tags": [
           "comments"
         ],
-        "summary": "A target's top-level comments with reply counts; the caller also sees its own held and rejected ones.",
+        "summary": "The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -86,9 +86,17 @@
             }
           },
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's comments; every language by default",
             "schema": {
               "type": "string"
             }
@@ -157,16 +165,173 @@
         "tags": [
           "comments"
         ],
-        "summary": "Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
+        "summary": "Comments on a content item or one of its versions in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "comment_banned",
+          "comment_too_long",
+          "forbidden",
+          "moderation_rejected",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/comments": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's comments; every language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "likes (most liked), best (Wilson lower bound) or newest (the default)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
+        "parameters": [
           {
             "name": "id",
             "in": "path",
@@ -242,6 +407,14 @@
         ],
         "summary": "The newest published comments across the tenant, with their targets; a page may under-fill.",
         "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's comments; every language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "limit",
             "in": "query",
@@ -758,15 +931,15 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/like": {
+    "/v1/contents/{id}/like": {
       "post": {
         "tags": [
           "reactions"
         ],
-        "summary": "Likes a target.",
+        "summary": "Likes a content item or one of its versions.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -774,9 +947,9 @@
             }
           },
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
             "schema": {
               "type": "string"
             }
@@ -819,15 +992,15 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/dislike": {
+    "/v1/contents/{id}/dislike": {
       "post": {
         "tags": [
           "reactions"
         ],
-        "summary": "Dislikes a target.",
+        "summary": "Dislikes a content item or one of its versions.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -835,9 +1008,9 @@
             }
           },
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
             "schema": {
               "type": "string"
             }
@@ -880,21 +1053,235 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/reaction": {
+    "/v1/contents/{id}/reaction": {
       "delete": {
         "tags": [
           "reactions"
         ],
-        "summary": "Clears the caller's reaction to a target.",
+        "summary": "Clears the caller's reaction to a content item or one of its versions.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "The like and dislike counts of a content item or one of its versions and the caller's own reaction.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/like": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Likes a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/dislike": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Dislikes a group.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/reaction": {
+      "delete": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Clears the caller's reaction to a group.",
+        "parameters": [
           {
             "name": "id",
             "in": "path",
@@ -944,16 +1331,8 @@
         "tags": [
           "reactions"
         ],
-        "summary": "A target's like and dislike counts and the caller's own reaction.",
+        "summary": "The like and dislike counts of a group and the caller's own reaction.",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
@@ -996,27 +1375,27 @@
         ]
       }
     },
-    "/v1/favorites": {
-      "get": {
+    "/v1/contents/{id}/favorite": {
+      "post": {
         "tags": [
           "favorites"
         ],
-        "summary": "The caller's favorites, newest first.",
+        "summary": "Favorites a content item or one of its versions the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
         "parameters": [
           {
-            "name": "limit",
-            "in": "query",
-            "description": "page size: 20 by default, at most 100",
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "integer"
+              "type": "string"
             }
           },
           {
-            "name": "offset",
+            "name": "version",
             "in": "query",
-            "description": "items to skip",
+            "description": "one version of the content item; the item itself by default",
             "schema": {
-              "type": "integer"
+              "type": "string"
             }
           }
         ],
@@ -1026,10 +1405,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/FavoriteItem"
-                  }
+                  "$ref": "#/components/schemas/FavoriteState"
                 }
               }
             }
@@ -1045,7 +1421,124 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "user",
-        "x-contentkit-errors": [],
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Unfavorites a content item or one of its versions, also one no longer visible. Answers the state with its favorite count.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "invalid_request",
+          "not_found"
+        ],
         "x-contentkit-error-sets": [
           "module:content",
           "auth",
@@ -1053,21 +1546,13 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/favorite": {
+    "/v1/groups/{id}/favorite": {
       "post": {
         "tags": [
           "favorites"
         ],
-        "summary": "Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count.",
+        "summary": "Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
@@ -1114,16 +1599,8 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count.",
+        "summary": "Unfavorites a group, also one no longer visible. Answers the state with its favorite count.",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
@@ -1158,6 +1635,7 @@
         "x-contentkit-errors": [
           "forbidden",
           "invalid_request",
+          "not_found",
           "rate_limited"
         ],
         "x-contentkit-error-sets": [
@@ -1170,16 +1648,8 @@
         "tags": [
           "favorites"
         ],
-        "summary": "A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible).",
+        "summary": "The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
@@ -2379,21 +2849,70 @@
         ]
       }
     },
-    "/v1/{kind}/{id}/can-comment": {
+    "/v1/contents/{id}/can-comment": {
       "get": {
         "tags": [
           "bans"
         ],
-        "summary": "Whether the caller may comment on a target, and the ban that stops it.",
+        "summary": "Whether the caller may comment on a content item or one of its versions, and the ban that stops it.",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentStanding"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/can-comment": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Whether the caller may comment on a group, and the ban that stops it.",
+        "parameters": [
           {
             "name": "id",
             "in": "path",
@@ -2567,6 +3086,268 @@
         ]
       }
     },
+    "/v1/moderation/banned-words": {
+      "get": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "The banned words and what each does.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BannedWord"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth"
+        ]
+      },
+      "post": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Bans words, or changes what banned ones do: mask (the default) or reject.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BannedWordInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BannedWord"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Unbans words.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/moderation/ip-bans": {
+      "get": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "The IP bans, newest first, expired ones included.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IPBan"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth"
+        ]
+      },
+      "post": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Bans addresses or networks from commenting and answering polls, or replaces their bans.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/IPBanInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IPBan"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Lifts the bans of addresses or networks.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:moderate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/catalog/totals": {
       "get": {
         "tags": [
@@ -2690,7 +3471,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2750,7 +3531,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2856,7 +3637,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -2922,7 +3703,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a version; a content item keeps at least one. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3072,7 +3853,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Creates a content item as a draft. root:content:write holders, or an owner group's editors in it.",
+        "summary": "Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3305,7 +4086,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Restores a deleted content item as it was. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3355,7 +4136,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3427,7 +4208,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3478,7 +4259,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3556,7 +4337,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Removes a content item's text in one language. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3615,7 +4396,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a content item's creators. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3675,7 +4456,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3736,7 +4517,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Adds a version after the others. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3796,7 +4577,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -3856,7 +4637,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors and root:content:write holders only.",
+        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4807,7 +5588,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged.",
+        "summary": "Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.",
         "parameters": [
           {
             "name": "kind",
@@ -4906,13 +5687,17 @@
           }
         },
         "security": [
-          {}
+          {},
+          {
+            "host": []
+          }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "open",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:groups",
+          "auth",
           "request"
         ]
       },
@@ -4920,7 +5705,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Creates groups with their names and text.",
+        "summary": "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "requestBody": {
           "required": true,
           "content": {
@@ -4958,11 +5743,12 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
-          "not_found"
+          "not_found",
+          "limit_reached"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
@@ -4976,7 +5762,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor.",
+        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
         "parameters": [
           {
             "name": "id",
@@ -5011,15 +5797,19 @@
           }
         },
         "security": [
-          {}
+          {},
+          {
+            "host": []
+          }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "open",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
+          "auth",
           "request"
         ]
       },
@@ -5027,7 +5817,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Updates a group's given fields; state restores or deletes it.",
+        "summary": "Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -5069,11 +5859,12 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
-          "not_found"
+          "not_found",
+          "limit_reached"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
@@ -5085,7 +5876,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Marks a group deleted.",
+        "summary": "Marks a group deleted and retires its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -5117,11 +5908,89 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "not_found"
         ],
+        "x-contentkit-error-sets": [
+          "module:groups",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only groups of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name (the default), count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyGroupPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "groups",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:groups",
           "auth",
@@ -6436,7 +7305,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6478,7 +7347,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -6493,7 +7363,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6525,7 +7395,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -6542,7 +7413,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6592,7 +7463,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -6607,7 +7479,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6647,7 +7519,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -6664,7 +7537,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For owners of the group and staff holding root:offers:write.",
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6706,7 +7579,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -6721,7 +7595,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For owners of the group and staff holding root:offers:write.",
+        "summary": "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -6753,7 +7627,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -7144,6 +8019,14 @@
             "description": "false ranks a signed-in reader's results as anyone's",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "description": "a signed-out reader's session, which keeps its recent searches",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -8159,6 +9042,329 @@
           "request"
         ]
       }
+    },
+    "/v1/me/favorites": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The content items (as their listing shows them) or groups the reader favorited, most recent first.",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "description": "contents (the default) or groups",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind or group kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/reactions": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The content items or groups the reader liked or disliked, most recent first: tag affinities and preferences.",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "query",
+            "description": "like or dislike; both by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "description": "contents (the default) or groups",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind or group kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/searches": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "description": "a signed-out reader's session, which keeps its recent searches",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "10 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentSearches"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Clears the reader's recent searches: one query, or every one so far.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "description": "a signed-out reader's session, which keeps its recent searches",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "description": "only this query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -8176,6 +9382,9 @@
             "type": "string"
           },
           "anon_name": {
+            "type": "string"
+          },
+          "language": {
             "type": "string"
           },
           "body": {
@@ -8328,6 +9537,20 @@
           "type"
         ]
       },
+      "Avatar": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
+          }
+        }
+      },
       "BackgroundCue": {
         "type": "object",
         "properties": {
@@ -8393,6 +9616,49 @@
         "required": [
           "scope"
         ]
+      },
+      "BannedWord": {
+        "type": "object",
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mask",
+              "reject"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "word",
+          "action",
+          "created_by",
+          "created_at"
+        ]
+      },
+      "BannedWordInput": {
+        "type": "object",
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mask",
+              "reject"
+            ]
+          }
+        }
       },
       "Card": {
         "type": "object",
@@ -8610,6 +9876,9 @@
           "anon_name": {
             "type": "string"
           },
+          "language": {
+            "type": "string"
+          },
           "body": {
             "type": "string"
           },
@@ -8714,6 +9983,9 @@
             "type": "string"
           },
           "anon_name": {
+            "type": "string"
+          },
+          "language": {
             "type": "string"
           }
         }
@@ -9289,6 +10561,9 @@
           "likes": {
             "type": "integer"
           },
+          "dislikes": {
+            "type": "integer"
+          },
           "favorites": {
             "type": "integer"
           },
@@ -9298,6 +10573,7 @@
         },
         "required": [
           "likes",
+          "dislikes",
           "favorites",
           "views"
         ]
@@ -9651,33 +10927,6 @@
           "message"
         ]
       },
-      "FavoriteItem": {
-        "type": "object",
-        "properties": {
-          "tenant_id": {
-            "type": "string"
-          },
-          "content_kind": {
-            "type": "string"
-          },
-          "content_id": {
-            "type": "string"
-          },
-          "content_version_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "tenant_id",
-          "content_kind",
-          "content_id",
-          "created_at"
-        ]
-      },
       "FavoriteState": {
         "type": "object",
         "properties": {
@@ -9706,6 +10955,9 @@
             "type": "string"
           },
           "anon_name": {
+            "type": "string"
+          },
+          "language": {
             "type": "string"
           },
           "body": {
@@ -9936,6 +11188,9 @@
           "cover": {
             "$ref": "#/components/schemas/GroupsCover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "owner_user_id": {
             "type": "string"
           },
@@ -9963,6 +11218,27 @@
           "created_at",
           "updated_at",
           "revision"
+        ]
+      },
+      "GroupAccess": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "member": {
+            "type": "boolean"
+          },
+          "unknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "member"
         ]
       },
       "GroupCard": {
@@ -9998,12 +11274,18 @@
           "cover": {
             "$ref": "#/components/schemas/GroupsCover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "count": {
             "type": "integer"
           },
           "attributes": {
             "type": "object",
             "additionalProperties": {}
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
           },
           "created_at": {
             "type": "string",
@@ -10055,6 +11337,9 @@
           },
           "cover": {
             "$ref": "#/components/schemas/GroupsCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
           },
           "owner_user_id": {
             "type": "string"
@@ -10120,6 +11405,9 @@
             "items": {
               "$ref": "#/components/schemas/Count"
             }
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
           }
         },
         "required": [
@@ -10163,6 +11451,9 @@
           },
           "cover": {
             "$ref": "#/components/schemas/GroupsCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
           },
           "owner_user_id": {
             "type": "string"
@@ -10220,6 +11511,12 @@
           },
           "owner": {
             "type": "string"
+          },
+          "max_per_owner": {
+            "type": "integer"
+          },
+          "uploads": {
+            "$ref": "#/components/schemas/UploadLimits"
           },
           "sellable": {
             "type": "boolean"
@@ -10329,11 +11626,20 @@
           "cover": {
             "$ref": "#/components/schemas/GroupsCover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "owner_user_id": {
             "type": "string"
           },
           "auth_scope": {
             "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
           },
           "text": {
             "type": "array",
@@ -10462,6 +11768,52 @@
           "items"
         ]
       },
+      "IPBan": {
+        "type": "object",
+        "properties": {
+          "network": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "banned_by": {
+            "type": "string"
+          },
+          "banned_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expired": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "network",
+          "banned_by",
+          "banned_at",
+          "expired"
+        ]
+      },
+      "IPBanInput": {
+        "type": "object",
+        "properties": {
+          "network": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ImageInput": {
         "type": "object",
         "properties": {
@@ -10526,6 +11878,45 @@
             "type": "string"
           }
         }
+      },
+      "Interaction": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/Card"
+          },
+          "group": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
+          "value": {
+            "type": "integer"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "value",
+          "at"
+        ]
+      },
+      "InteractionPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "Item": {
         "type": "object",
@@ -10847,6 +12238,96 @@
           "min_part_size",
           "max_part_size",
           "max_parts"
+        ]
+      },
+      "MyGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/GroupsCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "owner": {
+            "type": "boolean"
+          },
+          "editor": {
+            "type": "boolean"
+          },
+          "member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name",
+          "count",
+          "attributes",
+          "created_at",
+          "owner",
+          "editor",
+          "member"
+        ]
+      },
+      "MyGroupPage": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyGroup"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "groups"
         ]
       },
       "Name": {
@@ -11915,6 +13396,40 @@
           "previews"
         ]
       },
+      "RecentSearch": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "type": "integer"
+          },
+          "searched_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "query",
+          "results",
+          "searched_at"
+        ]
+      },
+      "RecentSearches": {
+        "type": "object",
+        "properties": {
+          "searches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentSearch"
+            }
+          }
+        },
+        "required": [
+          "searches"
+        ]
+      },
       "Recipient": {
         "type": "object",
         "properties": {
@@ -12340,6 +13855,20 @@
           "groups"
         ]
       },
+      "UploadLimits": {
+        "type": "object",
+        "properties": {
+          "files_per_hour": {
+            "type": "integer"
+          },
+          "bytes_per_day": {
+            "type": "integer"
+          },
+          "quota_bytes": {
+            "type": "integer"
+          }
+        }
+      },
       "UploadRule": {
         "type": "object",
         "properties": {
@@ -12663,6 +14192,7 @@
           "incomplete",
           "internal_error",
           "invalid_request",
+          "limit_reached",
           "moderation_rejected",
           "not_configured",
           "not_found",
@@ -12912,6 +14442,10 @@
     "invalid_request": {
       "status": 400,
       "meaning": "The request is malformed: its body, a query parameter or a path value."
+    },
+    "limit_reached": {
+      "status": 409,
+      "meaning": "The owner already has as many groups of the kind as the site allows (max_per_owner)."
     },
     "moderation_rejected": {
       "status": 422,
