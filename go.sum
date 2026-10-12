@@ -86,8 +86,8 @@ github.com/open-rails/helpers v1.10.1 h1:JHdfouHr630YY0INxfHe8FI0EHSBXAbO5VLA3wu
 github.com/open-rails/helpers v1.10.1-0.20261012013546-b6228219b9b3 h1:dP4hrq36eJABtneIFWC87hqZx/9jNsqRKorEta/6Iww=
 github.com/open-rails/helpers v1.10.1-0.20261012013546-b6228219b9b3/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
 github.com/open-rails/helpers v1.10.1/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
-github.com/open-rails/helpers v1.10.2-0.20261012014735-85896a569aa8 h1:PluJgasmIeiWNbslG2/LxXr26S2dBS6fLEzjQ9PKd30=
-github.com/open-rails/helpers v1.10.2-0.20261012014735-85896a569aa8/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
+github.com/open-rails/helpers v1.11.0 h1:2rIY2tS8eaVNYyOtf811w/e2llJtXm+OAcI0AihnJJY=
+github.com/open-rails/helpers v1.11.0/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
 github.com/open-rails/migratekit v1.0.5 h1:5D9b+Yp8+q5PQWl1U4fYrh+dcVcUTg3ROQAx26fhy/Y=
 github.com/open-rails/migratekit v1.0.5/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/migratekit v1.10.0 h1:ujeSd7Arz7etqkRhRUaHevOZy2PFX9+8874xZqOgzNs=
