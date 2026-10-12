@@ -215,3 +215,112 @@ CREATE TABLE content_external_ids (
 );
 
 CREATE INDEX content_external_ids_id_idx ON content_external_ids (tenant_id, entity, id);
+
+-- Groups: not content. Tags, artists, series, characters, channels, rails.
+-- They replace content_nodes/_names/_edges/_assignments/_node_counts, which
+-- the groups lane drops with the taxonomy package.
+CREATE TABLE content_groups (
+    tenant_id text NOT NULL,
+    id text NOT NULL,
+    kind text NOT NULL,
+    slug text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    parent_id text,
+    state text DEFAULT 'active'::text NOT NULL,
+    merged_into text,
+    attributes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    cover jsonb,
+    owner_user_id text,
+    auth_scope text,
+    access jsonb,
+    ever_sold boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    CONSTRAINT content_groups_ids_check CHECK (((tenant_id <> ''::text) AND (id <> ''::text) AND (kind <> ''::text) AND (slug <> ''::text))),
+    CONSTRAINT content_groups_state_check CHECK ((state = ANY (ARRAY['active'::text, 'merged'::text, 'deleted'::text]))),
+    CONSTRAINT content_groups_attributes_check CHECK ((jsonb_typeof(attributes) = 'object'::text))
+);
+
+CREATE UNIQUE INDEX content_groups_slug_idx ON content_groups (tenant_id, kind, scope_id, slug) WHERE (state = 'active'::text);
+CREATE INDEX content_groups_kind_idx ON content_groups (tenant_id, kind, state, id);
+CREATE INDEX content_groups_parent_idx ON content_groups (tenant_id, parent_id) WHERE (parent_id IS NOT NULL);
+CREATE INDEX content_groups_owner_idx ON content_groups (tenant_id, owner_user_id) WHERE (owner_user_id IS NOT NULL);
+
+CREATE TABLE content_group_names (
+    tenant_id text NOT NULL,
+    group_id text NOT NULL,
+    language text NOT NULL,
+    kind text NOT NULL,
+    name text NOT NULL,
+    normalized text GENERATED ALWAYS AS (contentkit_keyword_normalize(name)) STORED NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    PRIMARY KEY (tenant_id, group_id, language, normalized),
+    FOREIGN KEY (tenant_id, group_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT content_group_names_check CHECK (((language <> ''::text) AND (btrim(name) <> ''::text))),
+    CONSTRAINT content_group_names_kind_check CHECK ((kind = ANY (ARRAY['name'::text, 'alias'::text])))
+);
+
+CREATE UNIQUE INDEX content_group_names_canonical_idx ON content_group_names (tenant_id, group_id, language) WHERE (kind = 'name'::text);
+CREATE INDEX content_group_names_lookup_idx ON content_group_names (tenant_id, language, normalized);
+
+CREATE TABLE content_group_text (
+    tenant_id text NOT NULL,
+    group_id text NOT NULL,
+    language text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    sort_key text DEFAULT ''::text NOT NULL,
+    PRIMARY KEY (tenant_id, group_id, language),
+    FOREIGN KEY (tenant_id, group_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE content_group_edges (
+    tenant_id text NOT NULL,
+    from_id text NOT NULL,
+    relation text NOT NULL,
+    to_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    PRIMARY KEY (tenant_id, from_id, relation, to_id),
+    FOREIGN KEY (tenant_id, from_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, to_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT content_group_edges_check CHECK ((from_id <> to_id))
+);
+
+CREATE INDEX content_group_edges_to_idx ON content_group_edges (tenant_id, to_id, relation);
+
+-- A content item (version_id NULL) or one version in a group.
+CREATE TABLE content_memberships (
+    tenant_id text NOT NULL,
+    group_id text NOT NULL,
+    content_id text NOT NULL,
+    version_id text,
+    role text DEFAULT ''::text NOT NULL,
+    position integer,
+    active_from timestamp with time zone,
+    active_until timestamp with time zone,
+    state text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    FOREIGN KEY (tenant_id, group_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, content_id) REFERENCES content_items (tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, version_id) REFERENCES content_versions (tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT content_memberships_state_check CHECK ((state = ANY (ARRAY['active'::text, 'proposed'::text]))),
+    CONSTRAINT content_memberships_window_check CHECK (((active_from IS NULL) OR (active_until IS NULL) OR (active_until > active_from)))
+);
+
+CREATE UNIQUE INDEX content_memberships_key_idx ON content_memberships (tenant_id, group_id, content_id, version_id, role) NULLS NOT DISTINCT;
+CREATE INDEX content_memberships_content_idx ON content_memberships (tenant_id, content_id, version_id);
+CREATE INDEX content_memberships_group_idx ON content_memberships (tenant_id, group_id, position, content_id);
+
+CREATE TABLE content_group_counts (
+    tenant_id text NOT NULL,
+    group_id text NOT NULL,
+    content_kind text NOT NULL,
+    language text NOT NULL,
+    content_count integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    PRIMARY KEY (tenant_id, group_id, content_kind, language),
+    FOREIGN KEY (tenant_id, group_id) REFERENCES content_groups (tenant_id, id) ON DELETE CASCADE
+);
+
+CREATE INDEX content_group_counts_rank_idx ON content_group_counts (tenant_id, content_kind, language, content_count DESC);
