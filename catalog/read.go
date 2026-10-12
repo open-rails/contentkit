@@ -68,7 +68,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		if it == nil {
 			continue
 		}
-		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
+		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
 			Access: it.access, Restrictions: it.restrictions, Attributes: it.attributes, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
 			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt, UpdatedAt: it.updatedAt,
 			DeletedAt: it.deletedAt}
@@ -212,6 +212,7 @@ func (s *Store) pickLanguage(want string, texts map[string]Text) string {
 
 type itemRow struct {
 	kind, state, listing, ownerGroup  string
+	comments                          string
 	moderation, moderationReason      string
 	access                            access.Rule
 	restrictions                      []string
@@ -226,7 +227,7 @@ type itemRow struct {
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, kind, state, listing, coalesce(owner_group_id, ''), moderation, coalesce(moderation_reason, ''), access,
- restrictions, attributes, cover, published_snapshot, ever_sold, publish_at, published_at, deleted_at, created_at, updated_at, revision
+ restrictions, attributes, cover, published_snapshot, ever_sold, publish_at, published_at, deleted_at, created_at, updated_at, revision, comments
  FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
@@ -238,7 +239,7 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var r itemRow
 		var access, attrs, cover, snapshot []byte
 		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
-			&attrs, &cover, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision); err != nil {
+			&attrs, &cover, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(access, &r.access); err != nil {

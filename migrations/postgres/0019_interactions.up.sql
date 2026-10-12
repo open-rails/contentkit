@@ -1,6 +1,7 @@
 -- ContentKit #117 interactions: comments carry a language; tenant_id leads
--- the keys of comments and polls; facets carry dislikes; moderation rules and
--- recent searches are ContentKit data.
+-- the keys of comments and polls; facets carry dislikes; content items carry
+-- a comments setting; moderation rules and recent searches are ContentKit
+-- data.
 
 ALTER TABLE content_comments ADD COLUMN language text DEFAULT ''::text NOT NULL;
 ALTER TABLE content_comments DROP CONSTRAINT content_comments_reply_to_id_fkey;
@@ -50,6 +51,10 @@ CREATE UNIQUE INDEX content_poll_votes_user_uq ON content_poll_votes (tenant_id,
 CREATE INDEX content_poll_votes_option_idx ON content_poll_votes (tenant_id, option_id);
 
 ALTER TABLE content_facets ADD COLUMN dislikes integer DEFAULT 0 NOT NULL;
+
+-- A content item's comments: open, closed (shown, no new ones) or hidden.
+ALTER TABLE content_items ADD COLUMN comments text DEFAULT 'open'::text NOT NULL;
+ALTER TABLE content_items ADD CONSTRAINT content_items_comments_check CHECK ((comments = ANY (ARRAY['open'::text, 'closed'::text, 'hidden'::text])));
 
 -- Staff-edited moderation rules: a banned word masks or refuses comment and
 -- answer text; an IP ban (an address or a network) refuses them.

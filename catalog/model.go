@@ -141,20 +141,22 @@ type Content struct {
 	// Body shows each inline image with a current public file as its URL.
 	Body string `json:"body,omitempty"`
 	// Images maps each resolved image name of Body and the cover to its URL.
-	Images       map[string]string `json:"images,omitempty"`
-	Cover        *Cover            `json:"cover,omitempty"`
-	State        string            `json:"state"`
-	Listing      string            `json:"listing"`
-	PublishAt    *time.Time        `json:"publish_at,omitempty"`
-	PublishedAt  *time.Time        `json:"published_at,omitempty"`
-	Live         bool              `json:"live"`
-	Access       access.Rule       `json:"access"`
-	Restrictions []string          `json:"restrictions"`
-	Attributes   map[string]any    `json:"attributes"`
-	OwnerGroupID string            `json:"owner_group_id,omitempty"`
-	Creators     []Creator         `json:"creators"`
-	Groups       []GroupSummary    `json:"groups"`
-	Versions     []Version         `json:"versions"`
+	Images  map[string]string `json:"images,omitempty"`
+	Cover   *Cover            `json:"cover,omitempty"`
+	State   string            `json:"state"`
+	Listing string            `json:"listing"`
+	// Comments is open, closed or hidden.
+	Comments     string         `json:"comments"`
+	PublishAt    *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt  *time.Time     `json:"published_at,omitempty"`
+	Live         bool           `json:"live"`
+	Access       access.Rule    `json:"access"`
+	Restrictions []string       `json:"restrictions"`
+	Attributes   map[string]any `json:"attributes"`
+	OwnerGroupID string         `json:"owner_group_id,omitempty"`
+	Creators     []Creator      `json:"creators"`
+	Groups       []GroupSummary `json:"groups"`
+	Versions     []Version      `json:"versions"`
 	// Editor: the viewer may edit it; the fields below are theirs.
 	Editor           bool            `json:"editor"`
 	Text             map[string]Text `json:"text,omitempty"`

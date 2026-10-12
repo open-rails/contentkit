@@ -63,7 +63,7 @@ describe("content hooks against the real ContentKit", () => {
     };
   const video = async (o: { access?: "full" | "none" } = {}) => {
     const it = await h.item({ kind: "video", owner: acc.id("creator"), ...o });
-    return { kind: it.kind, id: it.id };
+    return { type: "contents" as const, id: it.id };
   };
 
   it("useComments: one read shared by every hook, posts and replies land in place, reactions apply at once and roll back", async () => {

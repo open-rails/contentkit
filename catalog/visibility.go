@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -415,17 +416,16 @@ func decision(d access.Decision) Decision {
 	return out
 }
 
-// directViews decides content items for actor without a site (media and
-// interactions know none).
+// directViews decides content items for actor on the request's site (the
+// host the route gate bound to ctx; the first site outside a request).
 func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []string) (map[string]*itemView, error) {
 	if len(ids) == 0 {
 		return map[string]*itemView{}, nil
 	}
-	v, err := s.Viewer(ctx, ViewerOptions{Actor: actor})
+	v, err := s.Viewer(ctx, ViewerOptions{Actor: actor, Host: gate.Site(ctx)})
 	if err != nil {
 		return nil, err
 	}
-	v.exclude, v.require, v.requireMissing = nil, nil, false
 	return v.decide(ctx, ids)
 }
 
@@ -453,7 +453,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	if err != nil || len(views) == 0 {
 		return out, err
 	}
-	owners, err := s.firstCreators(ctx, ids)
+	owners, err := s.owners(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +462,8 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		if ref.TenantID != s.tenant || iv == nil || !iv.visible || len(iv.versions) == 0 || iv.versions[0].kind != ref.ContentKind {
 			continue
 		}
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: owners[ref.ContentID]}
+		o := owners[ref.ContentID]
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -476,20 +477,24 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	return out, nil
 }
 
-func (s *Store) firstCreators(ctx context.Context, ids []string) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT ON (content_id) content_id, user_id FROM `+s.t.creators+`
- WHERE tenant_id = $1 AND content_id = ANY($2) ORDER BY content_id, position, user_id`, s.tenant, ids)
+// ownership is a content item's first creator and comments setting.
+type ownership struct{ creator, comments string }
+
+func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
+ AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), '') FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]ownership{}
 	for rows.Next() {
-		var id, user string
-		if err := rows.Scan(&id, &user); err != nil {
+		var id string
+		var o ownership
+		if err := rows.Scan(&id, &o.comments, &o.creator); err != nil {
 			return nil, err
 		}
-		out[id] = user
+		out[id] = o
 	}
 	return out, rows.Err()
 }

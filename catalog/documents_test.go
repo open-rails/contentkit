@@ -1,9 +1,10 @@
 package catalog
 
 import (
-	"github.com/open-rails/contentkit/access"
 	"slices"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"

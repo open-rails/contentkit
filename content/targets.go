@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // TargetType is what an interaction route names: a content item (optionally
@@ -20,6 +21,22 @@ const (
 	TargetContent TargetType = "contents"
 	TargetGroup   TargetType = "groups"
 )
+
+// A content item's comments setting (resolve.Resolution.Comments); groups'
+// comments are always open.
+const (
+	CommentsOpen   = "open"
+	CommentsClosed = "closed" // existing comments show; new ones and edits are refused
+	CommentsHidden = "hidden" // comments neither show nor take writes
+)
+
+// commentsOpen refuses comment writes where comments are closed or hidden.
+func commentsOpen(res resolve.Resolution) error {
+	if res.Comments == CommentsClosed || res.Comments == CommentsHidden {
+		return ErrCommentsClosed
+	}
+	return nil
+}
 
 // TargetTypes are the route families interactions are served under.
 var TargetTypes = []TargetType{TargetContent, TargetGroup}

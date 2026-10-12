@@ -161,6 +161,15 @@ func Host() access.Actor {
 	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
 }
 
+type siteKey struct{}
+
+// Site is the request host the gate bound to ctx: it picks the site whose
+// scope every read applies (kinds.Config.SiteFor). "" outside a request.
+func Site(ctx context.Context) string {
+	s, _ := ctx.Value(siteKey{}).(string)
+	return s
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
@@ -204,7 +213,8 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, a)))
+		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), siteKey{}, r.Host)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

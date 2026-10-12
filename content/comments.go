@@ -1,6 +1,7 @@
 package content
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -84,6 +85,9 @@ type Comment struct {
 // author-only and counted only once a reviewer approves it.
 func (c *comments) create(ctx context.Context, actor access.Actor, target contentref.ContentRef, in CommentInput) (Comment, error) {
 	ref, res, err := c.rt.resolveTarget(ctx, target, actor, true)
+	if err == nil {
+		err = commentsOpen(res)
+	}
 	if err != nil {
 		return Comment{}, err
 	}
@@ -246,9 +250,9 @@ func scanComment(row pgx.Row, cm *Comment) (replyTo, userID, anonName *string, d
 // and paginated, each with reply_count. Requires the target be visible (not
 // accessible: reading is allowed on premium-locked targets).
 func (c *comments) list(ctx context.Context, actor access.Actor, target contentref.ContentRef, language, sort string, limit, offset int) ([]Comment, error) {
-	ref, err := c.rt.gate(ctx, target, actor, false)
-	if err != nil {
-		return nil, err
+	ref, res, err := c.rt.resolveTarget(ctx, target, actor, false)
+	if err != nil || res.Comments == CommentsHidden {
+		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
 		WHERE `+keyPred(1)+` AND reply_to_id IS NULL AND `+visiblePred(5)+` AND ($8 = '' OR language = $8)
@@ -270,8 +274,8 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.rt.gate(ctx, ref, actor, false); err != nil {
-		return nil, err
+	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == CommentsHidden {
+		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
 		WHERE tenant_id = $5 AND reply_to_id = $1 AND `+visiblePred(2)+` ORDER BY created_at ASC LIMIT $3 OFFSET $4`, replyToID, viewerID(actor), limit, offset, c.s.tenant)
@@ -345,7 +349,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, language stri
 		}
 		for _, ref := range refs {
 			_, err := c.rt.admit(ref, res, false)
-			visible[ref.Key()] = err == nil
+			visible[ref.Key()] = err == nil && res[ref.Key()].Comments != CommentsHidden
 		}
 	}
 	kept := items[:0]
@@ -577,12 +581,14 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err := c.rt.checkIPBan(ctx, actor); err != nil {
 		return Comment{}, err
 	}
+	res, err := resolve.One(ctx, c.rt.resolver, target.ref, actor)
+	if err == nil {
+		err = commentsOpen(res)
+	}
+	if err != nil {
+		return Comment{}, err
+	}
 	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
-		// The content's owner, when the resolver still answers for it.
-		res, err := resolve.One(ctx, c.rt.resolver, target.ref, actor)
-		if err != nil {
-			return Comment{}, err
-		}
 		if err := c.rt.checkCommentBan(ctx, author, res.Owner); err != nil {
 			return Comment{}, err
 		}
@@ -721,8 +727,8 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	if err != nil {
 		return ReactionCounts{}, err
 	}
-	if _, err := c.rt.gate(ctx, ref, actor, false); err != nil {
-		return ReactionCounts{}, err
+	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == CommentsHidden {
+		return ReactionCounts{}, cmp.Or(err, ErrNotFound)
 	}
 	tx, err := c.s.beginMutation(ctx)
 	if err != nil {

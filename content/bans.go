@@ -1,6 +1,7 @@
 package content
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -360,8 +361,10 @@ const (
 type CommentStanding struct {
 	// CanComment: the caller may comment now. A signed-out caller may only
 	// where Anonymous says so.
-	CanComment bool       `json:"can_comment"`
-	Ban        *BanNotice `json:"ban,omitempty"`
+	CanComment bool `json:"can_comment"`
+	// Comments is the target's comments setting: open, closed or hidden.
+	Comments string     `json:"comments"`
+	Ban      *BanNotice `json:"ban,omitempty"`
 	// Anonymous: signed-out visitors may comment here, under a name
 	// (Options.Anonymous.Comments); otherwise they are asked to sign in.
 	Anonymous bool `json:"anonymous"`
@@ -388,8 +391,9 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, ta
 		writeErr(w, err)
 		return
 	}
-	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{}}
-	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous)
+	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{},
+		Comments: cmp.Or(res.Comments, CommentsOpen)}
+	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
 	err = rt.checkCommentBan(ctx, viewerID(actor), res.Owner)
 	if err == nil {
 		err = rt.checkIPBan(ctx, actor)

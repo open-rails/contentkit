@@ -32,7 +32,7 @@ describe("content modules against the real ContentKit", () => {
   /** A video owned by the creator; locked to viewers, or hidden from them. */
   const item = async (o: { access?: "full" | "none"; hidden?: boolean } = {}) => {
     const it = await h.item({ kind: "video", owner: acc.id("creator"), ...o });
-    return { kind: it.kind, id: it.id };
+    return { type: "contents" as const, id: it.id };
   };
   const code = (code: string) => expect.objectContaining({ name: "ContentKitError", code });
 
@@ -58,9 +58,9 @@ describe("content modules against the real ContentKit", () => {
     const updated = await editor.contents.putText(post.id, "en", { title: "Hello world", body: "edited" });
     expect(updated.text?.en?.body).toBe("edited");
     // A content item is a reaction target like any other.
-    expect(await ck("alice").reactions.set({ kind: "blog", id: post.id }, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
-    expect(await ck("bob").reactions.set({ kind: "blog", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
-    expect(await ck("alice").reactions.get({ kind: "blog", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
+    expect(await ck("alice").reactions.set({ type: "contents", id: post.id }, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
+    expect(await ck("bob").reactions.set({ type: "contents", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
+    expect(await ck("alice").reactions.get({ type: "contents", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
 
     await editor.contents.remove(post.id);
     expect(changes).toContainEqual({ type: "content.deleted", id: post.id });
@@ -114,7 +114,7 @@ describe("content modules against the real ContentKit", () => {
     const mod = ck("moderator");
     const top = await alice.comments.create(video, { body: "first!" });
     expect(top).toMatchObject({ body: "first!", user_id: acc.id("alice"), author: { username: acc.username("alice") }, reply_count: 0 });
-    expect(changes).toContainEqual({ type: "comment.created", ref: video, comment: top });
+    expect(changes).toContainEqual({ type: "comment.created", target: video, comment: top });
     const reply = await bob.comments.create(video, { body: "a reply", reply_to_id: top.id });
     await expect(bob.comments.create(video, { body: "deeper", reply_to_id: reply.id })).rejects.toEqual(code("invalid_request"));
     const anon = await ck(undefined, "10.1.0.7").comments.create(video, { body: "drive-by", anon_name: "Guest" });
@@ -161,8 +161,8 @@ describe("content modules against the real ContentKit", () => {
       expect.objectContaining({ code: "moderation_rejected", message: "not allowed here", status: 422 }),
     );
 
-    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
-    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, user_id: acc.id("creator"), moderate: false, ban_scopes: ["owner"] });
+    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, comments: "open", anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, comments: "open", anonymous: true, max_length: 400, user_id: acc.id("creator"), moderate: false, ban_scopes: ["owner"] });
     await expect(ck("carol").comments.create(video, { body: "é".repeat(401) })).rejects.toEqual(
       expect.objectContaining({ code: "comment_too_long", status: 422, details: { max: 400 } }),
     );
@@ -248,7 +248,7 @@ describe("content modules against the real ContentKit", () => {
       () => members().comments.create(video, { body: "drive-by", anon_name: "Guest" }),
       () => members().comments.react(top.id, 1),
       () => members().reactions.set(video, 1),
-      () => members().reactions.set({ kind: "blog", id: post.id }, 1),
+      () => members().reactions.set({ type: "contents", id: post.id }, 1),
       () => members().polls.vote(poll.id, poll.options[0]!.id),
     ]) {
       await expect(refused()).rejects.toEqual(expect.objectContaining({ code: "unauthorized", status: 401 }));
@@ -266,7 +266,7 @@ describe("content modules against the real ContentKit", () => {
     expect(await ck(undefined, "10.2.0.2").reactions.set(video, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
     expect(await ck(undefined, "10.2.0.1").reactions.set(video, -1)).toEqual({ likes: 0, dislikes: 2, mine: -1 });
     expect(await ck(undefined, "10.2.0.1").reactions.set(video, 0)).toEqual({ likes: 0, dislikes: 1, mine: 0 });
-    expect(changes).toContainEqual({ type: "reaction.changed", ref: video, counts: { likes: 0, dislikes: 1, mine: 0 } });
+    expect(changes).toContainEqual({ type: "reaction.changed", target: video, counts: { likes: 0, dislikes: 1, mine: 0 } });
     await expect(ck("alice").reactions.set(await item({ access: "none" }), 1)).rejects.toEqual(code("forbidden"));
     await expect(ck("alice").reactions.get(await item({ hidden: true }))).rejects.toEqual(code("not_found"));
 
@@ -278,11 +278,11 @@ describe("content modules against the real ContentKit", () => {
     expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
     expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
     expect(await ck(await h.user()).favorites.set(video, true)).toEqual({ favorited: true, count: 2 });
-    expect(changes).toContainEqual({ type: "favorite.changed", ref: video, favorited: true, count: 2 });
+    expect(changes).toContainEqual({ type: "favorite.changed", target: video, favorited: true, count: 2 });
     expect(await ck().favorites.get(video)).toEqual({ favorited: false, count: 2 });
-    expect((await fan.favorites.list()).map((f) => f.content_id)).toEqual([video.id]);
+    expect((await fan.favorites.mine()).items.map((f) => f.content?.id)).toEqual([video.id]);
     expect(await fan.favorites.set(video, false)).toEqual({ favorited: false, count: 1 });
-    expect(await fan.favorites.list()).toEqual([]);
+    expect((await fan.favorites.mine()).items).toEqual([]);
   });
 
   it("polls: final votes, free-text answers, options, images, and the staff list", async () => {

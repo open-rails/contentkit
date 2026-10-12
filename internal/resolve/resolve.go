@@ -31,6 +31,9 @@ type Resolution struct {
 	// owner), "" when none does. A comment ban in that owner's scope applies
 	// to it.
 	Owner string
+	// Comments is the item's comments setting: open (also ""), closed or
+	// hidden.
+	Comments string
 }
 
 // Full reports access to the item: everything private is served.

@@ -2,12 +2,13 @@ package catalog
 
 import (
 	"encoding/json"
-	"github.com/open-rails/contentkit/access"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 // Totals count content items, never versions: once in the kind and once per

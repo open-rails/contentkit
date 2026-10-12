@@ -216,7 +216,8 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
-		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0`); err != nil {
+		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0; SELECT language FROM `+rt.store.t.comments+` LIMIT 0;
+		SELECT action FROM `+rt.store.t.bannedWords+` LIMIT 0; SELECT network FROM `+rt.store.t.ipBans+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (contentkit.New applies it): %w", rt.schema, err)
 	}
 	return nil

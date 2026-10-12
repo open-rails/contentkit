@@ -231,15 +231,26 @@ mux.Handle("/", router.Middleware(spa))
 ## Interactions (`content`)
 
 The content module owns comments, reactions, favorites and polls in
-ContentKit's `content_*` interaction tables. Every row is keyed by the
-`ContentRef` of the catalog's content: `(tenant_id, content_kind, content_id,
-content_version_id)`; comment threading is `reply_to_id`. Routes are
-`/{kind}/{id}/comments|like|dislike|reaction|favorite`,
-`/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=&author=`,
-`/favorites`, `/polls...` (incl. `/polls/{id}/answer`),
-`/moderation/held`, `/moderation/{kind}/{id}/resolve`, `/comment-bans...`,
-`/global-comment-bans...`, `/{kind}/{id}/can-comment`; `kind` must be in
-`ContentKinds`.
+ContentKit's `content_*` interaction tables. They target ContentKit's own
+content items (optionally one version, `?version=`) and groups, stored under
+the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
+content_id, content_version_id)`. Routes are
+`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
+the same under `/v1/groups/{id}/`, then `/comments/{cid}/...`,
+`/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
+`/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
+group answers as its survivor; a deleted one, or content the request's site
+excludes, is `404`.
+
+Comments carry a `language` (one of the site's, or none): `?language=`
+narrows a list or the latest feed to one thread, and a reply joins its
+comment's. A content item's `comments` setting (`PATCH /v1/contents/{id}`,
+its editors) is `open`, `closed` (existing comments show; new ones and edits
+answer `403 comments_closed`) or `hidden` (none show). The reader's favorites
+and reactions, as cards, are `GET /v1/me/favorites` and `GET
+/v1/me/reactions?target=contents|groups&kind=&value=like|dislike` (tag
+preferences); their counts reach `content_facets` (`likes`, `dislikes`,
+`favorites`, `rating`) through the catalog's counts job.
 
 Ports (in `content` unless qualified):
 
@@ -332,10 +343,18 @@ transactions, then a short source-revision CAS transaction commits the verdict;
 a concurrent edit returns `409` for retry. Provider waits never hold row or
 subject locks.
 
-`content.BasicModerator{AllowLinks, DupWindow, CensorWords}` is the
-deterministic default (links, per-process duplicate guard, censor list);
-compose it in front of an AI moderator with `content.Chain{basic, ai}` — the
-first reject/review wins, an error fails the chain closed.
+Banned words and IP bans are data staff edit (`root:comments:moderate`):
+`GET|POST|DELETE /v1/moderation/banned-words` (`{"word", "action"}`: `mask`,
+the default, replaces each word containing it with asterisks; `reject`
+refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
+(`{"network", "reason", "until"}`: an address or CIDR network). They apply to
+every comment and free-text answer before the moderator; an IP-banned write
+answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
+
+`content.BasicModerator{AllowLinks, DupWindow}` is the deterministic default
+(links, per-process duplicate guard); compose it in front of an AI moderator
+with `content.Chain{basic, ai}`: the first reject/review wins, an error
+fails the chain closed.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
@@ -542,10 +561,17 @@ that fits the reader (`display_language` first, then position).
   reader may show or hide, and `include_deleted`.
 - `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
   `session` names the browser), `POST /exposures`.
+- `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
+  liked and disliked, contents as cards or groups, most recent first.
+- `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
+  searches, one per query, newest first, which `GET /search` keeps (its
+  `session` names a signed-out browser). A clear hides what came before it
+  (`?query=` removes one); an hourly job deletes hidden ones, erased
+  people's and those unused for 180 days. Erasure deletes them.
 
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
-by kind, likes, favorites and all-time viewers, the access decision
+by kind, likes, dislikes, favorites and all-time viewers, the access decision
 (`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
 reader's favorite and progress, `published_at` and attributes. Signal reads
 answer 501 `not_configured` without ClickHouse.

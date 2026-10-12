@@ -13,6 +13,9 @@ var (
 	ErrForbidden = errors.New("content: not accessible")
 	// ErrTenant: a reference of another tenant reached this runtime.
 	ErrTenant = errors.New("content: reference belongs to another tenant")
+	// ErrCommentsClosed: the target's comments are closed or hidden. -> 403
+	// comments_closed
+	ErrCommentsClosed = errors.New("content: comments are closed")
 	// ErrNoClassifier: a free-text poll needs an AnswerClassifier. -> 501
 	ErrNoClassifier = errors.New("content: free-text polls need an AnswerClassifier")
 )

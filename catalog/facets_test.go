@@ -3,11 +3,12 @@ package catalog
 import (
 	"context"
 	"encoding/json"
-	"github.com/open-rails/contentkit/access"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/access"
 
 	"github.com/jackc/pgx/v5"
 )

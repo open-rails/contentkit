@@ -17,11 +17,11 @@ export { IMAGE_SCHEME, imageRef, imageRefs, ContentsClient, type ManageQuery } f
 export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";
-export { FavoritesClient } from "./content/favorites.js";
+export { FavoritesClient, type MineQuery } from "./content/favorites.js";
 export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from "./content/polls.js";
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
-export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
+export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort, type Target } from "./content/types.js";
 export { GroupsClient, type GroupQuery, type MemberQuery } from "./groups.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
