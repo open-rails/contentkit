@@ -4007,7 +4007,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged.",
+        "summary": "Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.",
         "parameters": [
           {
             "name": "kind",
@@ -4106,13 +4106,17 @@
           }
         },
         "security": [
-          {}
+          {},
+          {
+            "host": []
+          }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "open",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:groups",
+          "auth",
           "request"
         ]
       },
@@ -4120,7 +4124,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Creates groups with their names and text.",
+        "summary": "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "requestBody": {
           "required": true,
           "content": {
@@ -4158,11 +4162,12 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
-          "not_found"
+          "not_found",
+          "limit_reached"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
@@ -4176,7 +4181,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor.",
+        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
         "parameters": [
           {
             "name": "id",
@@ -4211,15 +4216,19 @@
           }
         },
         "security": [
-          {}
+          {},
+          {
+            "host": []
+          }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "open",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
+          "auth",
           "request"
         ]
       },
@@ -4227,7 +4236,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Updates a group's given fields; state restores or deletes it.",
+        "summary": "Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -4269,11 +4278,12 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "conflict",
-          "not_found"
+          "not_found",
+          "limit_reached"
         ],
         "x-contentkit-error-sets": [
           "module:groups",
@@ -4285,7 +4295,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Marks a group deleted.",
+        "summary": "Marks a group deleted and retires its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -4317,7 +4327,7 @@
           }
         ],
         "x-contentkit-module": "groups",
-        "x-contentkit-auth": "staff",
+        "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:groups:write",
         "x-contentkit-errors": [
           "not_found"
@@ -5636,7 +5646,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5678,7 +5688,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -5693,7 +5704,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5725,7 +5736,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -5742,7 +5754,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5792,7 +5804,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -5807,7 +5820,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5847,7 +5860,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -5864,7 +5878,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For owners of the group and staff holding root:offers:write.",
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5906,7 +5920,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -5921,7 +5936,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For owners of the group and staff holding root:offers:write.",
+        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
         "parameters": [
           {
             "name": "id",
@@ -5953,7 +5968,8 @@
           }
         ],
         "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:offers:write",
         "x-contentkit-errors": [
           "not_found",
           "conflict"
@@ -7714,6 +7730,20 @@
           "type"
         ]
       },
+      "Avatar": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
+          }
+        }
+      },
       "BackgroundCue": {
         "type": "object",
         "properties": {
@@ -9017,6 +9047,9 @@
           "cover": {
             "$ref": "#/components/schemas/Cover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "owner_user_id": {
             "type": "string"
           },
@@ -9044,6 +9077,27 @@
           "created_at",
           "updated_at",
           "revision"
+        ]
+      },
+      "GroupAccess": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "member": {
+            "type": "boolean"
+          },
+          "unknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "member"
         ]
       },
       "GroupCard": {
@@ -9079,12 +9133,18 @@
           "cover": {
             "$ref": "#/components/schemas/Cover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "count": {
             "type": "integer"
           },
           "attributes": {
             "type": "object",
             "additionalProperties": {}
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
           },
           "created_at": {
             "type": "string",
@@ -9136,6 +9196,9 @@
           },
           "cover": {
             "$ref": "#/components/schemas/Cover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
           },
           "owner_user_id": {
             "type": "string"
@@ -9201,6 +9264,9 @@
             "items": {
               "$ref": "#/components/schemas/Count"
             }
+          },
+          "access": {
+            "$ref": "#/components/schemas/GroupAccess"
           }
         },
         "required": [
@@ -9244,6 +9310,9 @@
           },
           "cover": {
             "$ref": "#/components/schemas/Cover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
           },
           "owner_user_id": {
             "type": "string"
@@ -9301,6 +9370,9 @@
           },
           "owner": {
             "type": "string"
+          },
+          "max_per_owner": {
+            "type": "integer"
           },
           "sellable": {
             "type": "boolean"
@@ -9387,11 +9459,20 @@
           "cover": {
             "$ref": "#/components/schemas/Cover"
           },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
           "owner_user_id": {
             "type": "string"
           },
           "auth_scope": {
             "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
           },
           "text": {
             "type": "array",
@@ -11559,6 +11640,7 @@
           "incomplete",
           "internal_error",
           "invalid_request",
+          "limit_reached",
           "moderation_rejected",
           "not_configured",
           "not_found",
@@ -11781,6 +11863,10 @@
     "invalid_request": {
       "status": 400,
       "meaning": "The request is malformed: its body, a query parameter or a path value."
+    },
+    "limit_reached": {
+      "status": 409,
+      "meaning": "The owner already has as many groups of the kind as the site allows (max_per_owner)."
     },
     "moderation_rejected": {
       "status": 422,

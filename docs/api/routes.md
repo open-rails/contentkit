@@ -4,7 +4,7 @@
 
 Every route of ContentKit's HTTP API (115). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, catalog `/v1/catalog`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
-**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
+**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
@@ -103,11 +103,11 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/groups` | open | — | 200 `GroupPage` | Lists active groups with name, code, path, cover and count, filtered, ordered and cursor-paged. Query: `kind`, `parent`, `scope`, `slug`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
-| GET | `/v1/groups/{id}` | open | — | 200 `GroupDetail` | An active group with its names, text, attributes, parent, scope, children, cover, edges and counts; a merged group answers with its survivor. Query: `language`. |
-| POST | `/v1/groups` | staff `root:groups:write` | `GroupInput[]` | 201 `Group[]` | Creates groups with their names and text. |
-| PATCH | `/v1/groups/{id}` | staff `root:groups:write` | `GroupUpdate` | 200 `Group` | Updates a group's given fields; state restores or deletes it. |
-| DELETE | `/v1/groups/{id}` | staff `root:groups:write` | — | 200 `Group` | Marks a group deleted. |
+| GET | `/v1/groups` | public | — | 200 `GroupPage` | Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged. Query: `kind`, `parent`, `scope`, `slug`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
+| GET | `/v1/groups/{id}` | public | — | 200 `GroupDetail` | An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor. Query: `language`. |
+| POST | `/v1/groups` | editor `root:groups:write` | `GroupInput[]` | 201 `Group[]` | Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
+| PATCH | `/v1/groups/{id}` | editor `root:groups:write` | `GroupUpdate` | 200 `Group` | Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
+| DELETE | `/v1/groups/{id}` | editor `root:groups:write` | — | 200 `Group` | Marks a group deleted and retires its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
 | PUT | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Replaces a group's names and aliases. |
 | POST | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Adds names and aliases to a group; a new canonical name demotes the old one to an alias. |
 | DELETE | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Removes names and aliases from a group. |
@@ -145,12 +145,12 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| PUT | `/v1/contents/{id}/offer` | user | `Terms` | 200 `Offer` | Puts an offer on a content item: its content key opens every version. For creators of the content, owners of its owner group and staff holding root:offers:write. |
-| DELETE | `/v1/contents/{id}/offer` | user | — | 200 `Offer` | Withdraws a content item's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write. |
-| PUT | `/v1/contents/{id}/versions/{vid}/offer` | user | `Terms` | 200 `Offer` | Puts an offer on one version: its version key opens it. For creators of the content, owners of its owner group and staff holding root:offers:write. |
-| DELETE | `/v1/contents/{id}/versions/{vid}/offer` | user | — | 200 `Offer` | Withdraws a version's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write. |
-| PUT | `/v1/groups/{id}/offer` | user | `Terms` | 200 `Offer` | Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For owners of the group and staff holding root:offers:write. |
-| DELETE | `/v1/groups/{id}/offer` | user | — | 200 `Offer` | Withdraws a group's offer; members and subscribers keep theirs. For owners of the group and staff holding root:offers:write. |
+| PUT | `/v1/contents/{id}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| DELETE | `/v1/contents/{id}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| PUT | `/v1/contents/{id}/versions/{vid}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| DELETE | `/v1/contents/{id}/versions/{vid}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| PUT | `/v1/groups/{id}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
+| DELETE | `/v1/groups/{id}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a group's offer; members and subscribers keep theirs. For the group's owner, holders of {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
 | POST | `/v1/groups/{id}/join` | user | — | 200 `GroupJoin` | Joins a group free to join: grants the viewer its key. |
 | DELETE | `/v1/groups/{id}/join` | user | — | 200 `GroupJoin` | Leaves a group joined free; a bought membership stays. |
 | GET | `/v1/me/library` | user | — | 200 `LibraryPage` | The content the viewer bought, newest first, deleted content included. Query: `language`, `cursor`, `limit`. |
@@ -194,6 +194,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `incomplete` | 409 | A multipart upload is missing parts. |
 | `internal_error` | 500 | A server fault; the cause is in the server log. |
 | `invalid_request` | 400 | The request is malformed: its body, a query parameter or a path value. |
+| `limit_reached` | 409 | The owner already has as many groups of the kind as the site allows (max_per_owner). |
 | `moderation_rejected` | 422 | The moderator refused the text; `error` says why. |
 | `not_configured` | 501 | The capability needs a port the host did not configure; retrying does not help. |
 | `not_found` | 404 | Nothing by that name, or nothing the actor may see. |

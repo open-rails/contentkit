@@ -65,6 +65,11 @@ export interface Attribute {
   sortable?: boolean;
 }
 
+export interface Avatar {
+  image?: string;
+  renditions?: Rendition[];
+}
+
 export interface BackgroundCue {
   file: string;
   from_page?: string;
@@ -464,11 +469,19 @@ export interface Group {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: Cover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
   updated_at: string;
   revision: number;
+}
+
+export interface GroupAccess {
+  key: string;
+  offer?: Terms;
+  member: boolean;
+  unknown?: boolean;
 }
 
 export interface GroupCard {
@@ -482,8 +495,10 @@ export interface GroupCard {
   code?: string;
   path?: string;
   cover?: Cover;
+  avatar?: Avatar;
   count: number;
   attributes: Record<string, unknown>;
+  access?: GroupAccess;
   created_at: string;
 }
 
@@ -497,6 +512,7 @@ export interface GroupDetail {
   merged_into?: string;
   attributes: Record<string, unknown>;
   cover?: Cover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   created_at: string;
@@ -513,6 +529,7 @@ export interface GroupDetail {
   children: GroupCard[];
   edges: Edge[];
   counts: Count[];
+  access?: GroupAccess;
 }
 
 export interface GroupInput {
@@ -523,6 +540,7 @@ export interface GroupInput {
   parent_id?: string;
   attributes?: Record<string, unknown>;
   cover?: Cover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
   names?: Name[];
@@ -541,6 +559,7 @@ export interface GroupKind {
   parent?: string;
   scoped_by?: string;
   owner?: string;
+  max_per_owner?: number;
   sellable?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
@@ -566,8 +585,10 @@ export interface GroupUpdate {
   state?: "active" | "deleted" | "merged";
   attributes?: Record<string, unknown>;
   cover?: Cover;
+  avatar?: Avatar;
   owner_user_id?: string;
   auth_scope?: string;
+  names?: Name[];
   text?: Text[];
 }
 

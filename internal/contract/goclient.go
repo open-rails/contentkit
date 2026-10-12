@@ -20,7 +20,8 @@ import (
 const GoClientFile = "client_gen.go"
 
 // goMethod names a route's client method: its HTTP verb, then its path's
-// literal segments in Pascal case, each singular before a wildcard:
+// literal segments in Pascal case, each singular before a wildcard naming
+// one item:
 // PATCH /v1/groups/{id} is PatchGroup, PUT /v1/contents/{id}/versions/{vid}/offer
 // PutContentVersionOffer.
 func goMethod(r httpapi.Spec) string {
@@ -30,7 +31,7 @@ func goMethod(r httpapi.Spec) string {
 		if strings.HasPrefix(seg, "{") {
 			continue
 		}
-		if i+1 < len(segs) && strings.HasPrefix(segs[i+1], "{") {
+		if i+1 < len(segs) && strings.HasPrefix(segs[i+1], "{") && !strings.HasSuffix(segs[i+1], "...}") {
 			seg = singular(seg)
 		}
 		name += pascal(seg)

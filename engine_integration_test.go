@@ -34,6 +34,7 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -284,13 +285,14 @@ func TestEngineIntegration(t *testing.T) {
 
 	// The host publishes notices in process; people read their inbox over HTTP.
 	recipient := notify.Recipient{Audience: notify.AudienceUser, ID: "u1"}
-	items, err := e.Client().PublishNotifications(ctx, []notify.Input{{Recipient: recipient, Origin: notify.Origin{System: "app", Scope: tenant, ID: "a"},
-		Kind: "app.hello", CreatedAt: time.Now().UTC()}})
+	published, err := e.Client().PostNotificationsPublish(ctx, notification.Publication{Notifications: []notify.Input{{Recipient: recipient,
+		Origin: notify.Origin{System: "app", Scope: tenant, ID: "a"}, Kind: "app.hello", CreatedAt: time.Now().UTC()}}})
+	items := published.Items
 	if err != nil || len(items) != 1 {
 		t.Fatalf("publish %+v %v", items, err)
 	}
 	var ce *Error
-	if _, err := e.Client().PublishNotifications(ctx, nil); !errors.As(err, &ce) || ce.Code != "invalid_request" {
+	if _, err := e.Client().PostNotificationsPublish(ctx, notification.Publication{}); !errors.As(err, &ce) || ce.Code != "invalid_request" {
 		t.Fatalf("empty publish: %v", err)
 	}
 	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/notifications/publish", map[string]any{"notifications": []notify.Input{}}, nil)
