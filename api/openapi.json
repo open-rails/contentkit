@@ -3857,7 +3857,6 @@
           "conflict",
           "forbidden",
           "not_found",
-          "no_membership",
           "not_configured"
         ],
         "x-contentkit-error-sets": [
@@ -4030,8 +4029,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found",
-          "no_membership"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -4228,8 +4226,7 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "forbidden",
-          "no_membership"
+          "forbidden"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -4917,8 +4914,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found",
-          "no_membership"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -15567,7 +15563,6 @@
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
-          "no_membership",
           "not_configured",
           "not_found",
           "not_uploaded",
@@ -15833,10 +15828,6 @@
     "moderation_rejected": {
       "status": 422,
       "meaning": "The moderator refused the text; `error` says why."
-    },
-    "no_membership": {
-      "status": 409,
-      "meaning": "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first."
     },
     "not_configured": {
       "status": 501,

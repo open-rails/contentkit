@@ -245,7 +245,6 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `invalid_request` | 400 | The request is malformed: its body, a query parameter or a path value. |
 | `limit_reached` | 409 | The owner already has as many groups of the kind as the site allows (max_per_owner). |
 | `moderation_rejected` | 422 | The moderator refused the text; `error` says why. |
-| `no_membership` | 409 | Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first. |
 | `not_configured` | 501 | The capability needs a port the host did not configure; retrying does not help. |
 | `not_found` | 404 | Nothing by that name, or nothing the actor may see. |
 | `not_uploaded` | 409 | A commit names an upload that has not landed; `blobs` lists the ones to upload again. |

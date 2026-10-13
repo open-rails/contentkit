@@ -281,9 +281,6 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		if err := s.checkRuleGroups(ctx, tx, p.Access); err != nil {
 			return nil, err
 		}
-		if err := s.checkSold(ctx, tx, nil, p.Access); err != nil {
-			return nil, err
-		}
 		if p.OwnerGroupID != "" {
 			var ok bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active')`, s.tenant, p.OwnerGroupID).Scan(&ok); err != nil {
@@ -395,9 +392,6 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			}
 			var access, attrs, cover []byte
 			if u.Access != nil {
-				if err := s.checkRuleChange(ctx, tx, u.ID, *u.Access); err != nil {
-					return fx, err
-				}
 				access, _ = json.Marshal(u.Access)
 			}
 			if u.Attributes != nil {
@@ -450,19 +444,6 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		}
 		return fx, nil
 	})
-}
-
-// checkRuleChange checks content id's rule becoming now (checkSold).
-func (s *Store) checkRuleChange(ctx context.Context, tx pgx.Tx, id string, now access.Rule) error {
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, id).Scan(&raw); err != nil {
-		return err
-	}
-	var was access.Rule
-	if err := json.Unmarshal(raw, &was); err != nil {
-		return err
-	}
-	return s.checkSold(ctx, tx, &was, &now)
 }
 
 // inheritingVersions are the versions of content id that follow its rule.
@@ -1043,7 +1024,7 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return "", err
 	}
-	if err := s.checkVersionRule(ctx, tx, nil, r.access); err != nil {
+	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return "", err
 	}
 	id := contentref.NewID()
@@ -1075,31 +1056,16 @@ func (s *Store) checkFork(ctx context.Context, tx pgx.Tx, p VersionPut) error {
 	return nil
 }
 
-// checkVersionRule checks a version's override becoming now from was
-// (stored JSON, nil for none).
-func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, was, now []byte) error {
-	if now == nil {
+// checkVersionRule checks a version's override (stored JSON, nil for none).
+func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) error {
+	if raw == nil {
 		return nil
 	}
-	rule := func(raw []byte) (*access.Rule, error) {
-		if raw == nil {
-			return nil, nil
-		}
-		var r access.Rule
-		return &r, json.Unmarshal(raw, &r)
-	}
-	before, err := rule(was)
-	if err != nil {
+	var r access.Rule
+	if err := json.Unmarshal(raw, &r); err != nil {
 		return err
 	}
-	after, err := rule(now)
-	if err != nil {
-		return err
-	}
-	if err := s.checkRuleGroups(ctx, tx, after); err != nil {
-		return err
-	}
-	return s.checkSold(ctx, tx, before, after)
+	return s.checkRuleGroups(ctx, tx, &r)
 }
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {
@@ -1113,12 +1079,12 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return err
 	}
-	was, wasRule := cur.state, cur.access
+	was := cur.state
 	r, err := s.versionRow(k, kind, v, &cur)
 	if err != nil {
 		return err
 	}
-	if err := s.checkVersionRule(ctx, tx, wasRule, r.access); err != nil {
+	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return err
 	}
 	// A state or schedule change restarts the publication clock.

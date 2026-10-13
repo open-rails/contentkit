@@ -27,7 +27,6 @@ const (
 	CodeInternal       = "internal_error"
 	CodeTenantMismatch = "tenant_mismatch"
 	CodeLimitReached   = "limit_reached"
-	CodeNoMembership   = "no_membership"
 )
 
 var codes = []ErrorCode{
@@ -41,7 +40,6 @@ var codes = []ErrorCode{
 	{CodeConflict, http.StatusConflict, "A concurrent change, a path or slug already taken, or an operation id already used for another commit."},
 	{"incomplete", http.StatusConflict, "A multipart upload is missing parts."},
 	{CodeLimitReached, http.StatusConflict, "The owner already has as many groups of the kind as the site allows (max_per_owner)."},
-	{CodeNoMembership, http.StatusConflict, "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first."},
 	{"not_uploaded", http.StatusConflict, "A commit names an upload that has not landed; `blobs` lists the ones to upload again."},
 	{"too_many_files", http.StatusConflict, "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit."},
 	{"gone", http.StatusGone, "The content was removed."},

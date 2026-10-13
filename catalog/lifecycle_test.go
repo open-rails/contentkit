@@ -237,26 +237,19 @@ func TestValidationIntegration(t *testing.T) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
 		}
 	}
-	// Members-only content needs its group to sell a membership: on create,
-	// switching the item's rule or a version's override; a rule that stays
-	// with its group passes once the offer is gone.
+	// Members-only content needs no membership offer: existing members keep
+	// access and the group may sell one later.
 	members := &access.Rule{Level: access.GroupPPV, Group: unsold}
 	quiet := gallery("Quiet", "en")
 	quiet.Access = members
-	if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{quiet}); !errors.Is(err, ErrNoMembership) {
-		t.Errorf("members-only on an unsold group: %v, want ErrNoMembership", err)
+	if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{quiet}); err != nil {
+		t.Errorf("members-only on an unsold group: %v", err)
 	}
-	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: members}}}); !errors.Is(err, ErrNoMembership) {
-		t.Errorf("switching to an unsold group: %v, want ErrNoMembership", err)
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: members}}}); err != nil {
+		t.Errorf("switching to an unsold group: %v", err)
 	}
-	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Access: members}}}); !errors.Is(err, ErrNoMembership) {
-		t.Errorf("a version's override on an unsold group: %v, want ErrNoMembership", err)
-	}
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+pgx.Identifier{f.schema, "content_offers"}.Sanitize()+` SET state = 'withdrawn' WHERE target_id = $1`, channel); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.GroupPPV, Group: channel}}}}); err != nil {
-		t.Errorf("staying with a group whose offer was withdrawn: %v", err)
+	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Access: members}}}); err != nil {
+		t.Errorf("a version's override on an unsold group: %v", err)
 	}
 	segs := []Segment{{Start: 0, End: 5}, {Start: 3, End: 9}}
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Segments: &segs}}}); !errors.Is(err, ErrInvalid) {
