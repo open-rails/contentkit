@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "Sprache",
     version: "Version",
     locked: "Gesperrt",
+    lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
     saved: "Gespeichert.",

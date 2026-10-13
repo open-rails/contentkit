@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "언어",
     version: "버전",
     locked: "잠김",
+    lockedOption: "{name} (잠김)",
   },
   contentEditor: {
     saved: "저장했습니다.",

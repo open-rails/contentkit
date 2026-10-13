@@ -27,6 +27,7 @@ export const content = {
     language: "Language",
     version: "Version",
     locked: "Locked",
+    lockedOption: "{name} (locked)",
   },
   contentEditor: {
     saved: "Saved.",

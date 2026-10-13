@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "语言",
     version: "版本",
     locked: "已锁定",
+    lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
     saved: "已保存。",

@@ -1,7 +1,7 @@
 import { LockIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { Decision, Terms, Version } from "../../client/generated/wire.js";
 import type { DecisionOffer } from "../../client/offers.js";
@@ -15,6 +15,7 @@ import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { formatDate } from "../social/parts.js";
 import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+import type { PlayerMenuItem } from "../video-player.js";
 
 /** An offer's price and period in words: "$2.99", "$4.99 / 30 days", "$1.99 for 48 hours". */
 export function priceLabel(m: Translator, terms: Terms): string {
@@ -122,16 +123,21 @@ function versionName(v: Version, languageName: (l: string) => string, labels?: L
   return v.label || (v.traits.length ? v.traits.map((x) => labelOf(labels, x)).join(" · ") : v.languages.map(languageName).join(", "));
 }
 
+const primary = (v: Version) => v.languages[0] ?? "";
+
+/** The shown version, the versions' languages and the shown language's variants. */
+function choices(versions: readonly Version[], value: string | null | undefined) {
+  const current = versions.find((v) => v.id === value) ?? versions[0]!;
+  const language = primary(current);
+  return { current, language, languages: [...new Set(versions.map(primary))], variants: versions.filter((v) => primary(v) === language) };
+}
+
 /** Chooses among a content's versions: a language first when they differ in language, then its variants (traits, labels). */
 export function VersionPicker({ versions, value, onChange, labels, className, appearance }: VersionPickerProps) {
   const { t } = useMessages();
   const languageName = useLanguageName();
   if (versions.length < 2) return null;
-  const current = versions.find((v) => v.id === value) ?? versions[0]!;
-  const primary = (v: Version) => v.languages[0] ?? "";
-  const languages = [...new Set(versions.map(primary))];
-  const language = primary(current);
-  const variants = versions.filter((v) => primary(v) === language);
+  const { current, language, languages, variants } = choices(versions, value);
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("flex flex-wrap items-center gap-2 text-sm", className)} data-ckui="version-picker">
       {languages.length > 1 && (
@@ -175,4 +181,41 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
       )}
     </ContentKitUiRoot>
   );
+}
+
+/** VersionPicker as VideoPlayer settings entries (menuItems), for a watch page. */
+export function useVersionMenuItems(
+  versions: readonly Version[],
+  value: string | null | undefined,
+  onChange: (version: string) => void,
+  labels?: Labels,
+): PlayerMenuItem[] {
+  const { t } = useMessages();
+  const languageName = useLanguageName();
+  return useMemo(() => {
+    if (versions.length < 2) return [];
+    const { current, language, languages, variants } = choices(versions, value);
+    const out: PlayerMenuItem[] = [];
+    if (languages.length > 1)
+      out.push({
+        label: t("versions.language"),
+        value: language,
+        options: languages.map((l) => ({ value: l, label: languageName(l) })),
+        onChange: (l) => {
+          const v = versions.find((x) => primary(x) === l);
+          if (v) onChange(v.id);
+        },
+      });
+    if (variants.length > 1)
+      out.push({
+        label: t("versions.version"),
+        value: current.id,
+        options: variants.map((v) => {
+          const name = versionName(v, languageName, labels);
+          return { value: v.id, label: v.decision.allowed ? name : t("versions.lockedOption", { name }) };
+        }),
+        onChange,
+      });
+    return out;
+  }, [versions, value, onChange, labels, t, languageName]);
 }

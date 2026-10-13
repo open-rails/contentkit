@@ -81,12 +81,12 @@ export interface UseHistory extends UseList<Card> {
   forget: (o?: { kind?: string; content_id?: string }) => Promise<void>;
 }
 
-/** What the signed-in reader engaged with, most recent first; nothing signed out. */
-export function useHistory(q: HistoryQuery = {}, o: { client?: ContentKitClient } = {}): UseHistory {
+/** What the signed-in reader engaged with, most recent first; nothing signed out, or when q is null. */
+export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKitClient } = {}): UseHistory {
   const { client, store, scope, viewer } = useContentScope(o.client);
-  const query = useDisplay(q)!;
+  const query = useDisplay(q);
   const guarded = useGuarded();
-  const list = useList(store, viewer === null ? null : keyOf("history", scope, query), { type: "history" }, async (cursor, signal) =>
+  const list = useList(store, viewer === null || !query ? null : keyOf("history", scope, query), { type: "history" }, async (cursor, signal) =>
     page(await client.discovery.history({ ...query, cursor: cursor as string | undefined }, signal)),
   );
   const forget = useCallback((f: { kind?: string; content_id?: string } = {}) => guarded(() => client.discovery.forgetHistory(f)), [client, guarded]);

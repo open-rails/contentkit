@@ -156,22 +156,53 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
   similar?: string;
   /** For the signed-in reader. */
   recommendations?: boolean;
-  /** Filters and reader options of either source. */
+  /** The reader's history: { status: "in_progress" } is a continue-watching rail. */
+  history?: HistoryQuery;
+  /** An ordered group's members in its order: a featured rail (its windows apply). */
+  group?: string;
+  /** Any list: a sort and filters. */
+  list?: ContentQuery;
+  /** Filters and reader options of a similar or recommended rail. */
   query?: RailQuery;
+  /** A link beside the heading, e.g. to the whole list. */
+  more?: ReactNode;
 }
 
-/** A horizontal row of similar or recommended contents; hidden when it has none or the site runs without them. */
-export function ContentRail({ title, similar, recommendations, query = {}, ...p }: ContentRailProps) {
-  const q = useMemo(() => ({ ...query, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
-  const like = useSimilar(recommendations ? null : similar, q, { client: p.client });
+/**
+ * A horizontal row of contents: similar, recommended, the reader's history,
+ * an ordered group's members or any list. It hides itself when it has none or
+ * the site runs without what it needs.
+ */
+export function ContentRail({ title, similar, recommendations, history, group, list: listQuery, query = {}, more, ...p }: ContentRailProps) {
+  const limit = query.limit ?? p.pageSize ?? 12;
+  const q = useMemo(() => ({ ...query, limit }), [query, limit]);
+  const listing = useMemo(
+    () => (listQuery ? { ...listQuery, limit: listQuery.limit ?? limit } : group ? { groups: [group], sort: "position" as const, limit } : null),
+    [listQuery, group, limit],
+  );
+  const like = useSimilar(recommendations || history || listing ? null : similar, q, { client: p.client });
   const mine = useRecommendations(recommendations ? q : null, { client: p.client });
-  const rail: UseRail = recommendations ? mine : like;
+  const seen = useHistory(history ? { ...history, limit: history.limit ?? limit } : null, { client: p.client });
+  const listed = useContents(listing, { client: p.client });
+  const rail: UseRail = recommendations
+    ? mine
+    : history || listing
+      ? (() => {
+          const l = history ? seen : listed;
+          return { items: l.items, loading: l.loading, error: l.error, unavailable: l.error?.code === "not_configured", reload: l.reload };
+        })()
+      : like;
   const { kinds } = useKinds({ client: p.client });
-  const exposure = useExposure(rail.items, { surface: p.surface ?? (recommendations ? "recommendations" : "similar"), render: JSON.stringify([similar, q]), client: p.client });
-  if (rail.unavailable || (!rail.loading && !rail.items.length) || (!recommendations && !similar)) return null;
+  const surface = p.surface ?? (recommendations ? "recommendations" : history ? "history" : group ? "featured" : listing ? "list" : "similar");
+  const exposure = useExposure(rail.items, { surface, render: JSON.stringify([similar, recommendations, history, group, listing, q]), client: p.client });
+  const source = similar || recommendations || history || group || listing;
+  if (!source || rail.unavailable || (!rail.loading && !rail.items.length)) return null;
   return (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="content-rail">
-      <h2 className="text-base font-semibold">{title}</h2>
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="content-rail" data-surface={surface}>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold">{title}</h2>
+        {more}
+      </div>
       <ol className="flex snap-x gap-4 overflow-x-auto pb-2">
         {(rail.loading && !rail.items.length ? Array.from({ length: 6 }, () => null) : rail.items).map((card, i) => (
           <li key={card?.id ?? i} className="w-36 shrink-0 snap-start sm:w-44" ref={card ? exposure.track(card.id, i + 1) : undefined}>

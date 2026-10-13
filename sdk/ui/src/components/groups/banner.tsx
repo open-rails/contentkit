@@ -18,6 +18,13 @@ import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { priceLabel } from "../content/paywall.js";
 import { GroupAvatar, GroupCover, type GroupLike } from "./parts.js";
 
+/** A group's active offer as decisions carry one: {key, target, terms, price_id}. */
+export function groupOffer(id: string, a: GroupAccess): DecisionOffer | undefined {
+  const o = a.offer as DecisionOffer | GroupAccess["offer"] | undefined;
+  if (!o) return undefined;
+  return "terms" in o ? o : { key: a.key, target: { kind: "group", id }, terms: o };
+}
+
 export interface MembershipBoxProps {
   group: Pick<GroupDetail, "id" | "kind" | "name"> & { access?: GroupAccess };
   /** Buys a sold membership: the host creates the order through billing-ui. */
@@ -41,7 +48,7 @@ export function MembershipBox({ group, onCheckout, onSignIn, client: own, onErro
   if (!a) return null;
   const signedOut = ctx?.viewer === null;
   const signIn = onSignIn ?? ctx?.onSignIn;
-  const offer: DecisionOffer | undefined = a.offer ? { key: a.key, target: { kind: "group", id: group.id }, terms: a.offer } : undefined;
+  const offer = groupOffer(group.id, a);
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-2 rounded-lg border border-border p-3 text-sm", className)} data-ckui="membership-box" data-member={a.member}>
       {a.unknown ? (
