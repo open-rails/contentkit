@@ -47,24 +47,30 @@ for (const mode of ["alone", "router"] as const) {
   }
 }
 
+test.describe("re-encode", () => {
+  test.skip(({ isMobile }) => isMobile, "one Chromium run covers a re-encode");
+
+  for (const mode of ["alone", "router"] as const) {
+    test(`media item panel: replace the source and choose the poster (${mode})`, async ({ page }) => {
+      const owner = await h.user();
+      const video = await seedVideo(h, owner);
+      await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode }));
+      const panel = page.locator("[data-ckui=media-item-panel]");
+      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
+      await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));
+      await expect(state(page)).toHaveAttribute("data-state", "processing", { timeout: 30_000 });
+      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
+
+      await panel.getByRole("button", { name: "Choose poster" }).click();
+      const picker = page.getByRole("dialog", { name: "Set cover" });
+      await picker.getByRole("button", { name: "Use this frame" }).click({ timeout: 60_000 });
+      await expect(picker).toBeHidden({ timeout: 60_000 });
+      await expect(panel.locator("[data-ckui=media-poster] img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 90_000 });
+    });
+  }
+});
+
 for (const mode of ["alone", "router"] as const) {
-  test(`media item panel: replace the source and choose the poster (${mode})`, async ({ page }) => {
-    const owner = await h.user();
-    const video = await seedVideo(h, owner);
-    await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode }));
-    const panel = page.locator("[data-ckui=media-item-panel]");
-    await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
-    await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));
-    await expect(state(page)).toHaveAttribute("data-state", "processing", { timeout: 30_000 });
-    await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
-
-    await panel.getByRole("button", { name: "Choose poster" }).click();
-    const picker = page.getByRole("dialog", { name: "Set cover" });
-    await picker.getByRole("button", { name: "Use this frame" }).click({ timeout: 60_000 });
-    await expect(picker).toBeHidden({ timeout: 60_000 });
-    await expect(panel.locator("[data-ckui=media-poster] img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 90_000 });
-  });
-
   test(`media item panel: a failed encode shows why, and regenerate retries it (${mode})`, async ({ page }) => {
     const owner = await h.user();
     const it = await h.item({ kind: "video", owner: owner.id });

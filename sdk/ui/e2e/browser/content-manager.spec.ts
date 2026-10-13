@@ -59,10 +59,10 @@ for (const mode of ["alone", "router"] as const) {
 
       // Scheduled, then published now.
       await form.getByLabel("Goes live (optional)").fill(localInput(new Date(Date.now() + 3 * 86_400_000)));
-      await form.getByRole("button", { name: "Publish" }).click();
+      await form.getByRole("button", { name: "Publish", exact: true }).click();
       await expect(form.getByText("Scheduled", { exact: true })).toBeVisible();
       await form.getByLabel("Goes live (optional)").fill("");
-      await form.getByRole("button", { name: "Publish" }).click();
+      await form.getByRole("button", { name: "Publish", exact: true }).click();
       await expect(form.getByText("Published", { exact: true })).toBeVisible();
 
       // The list, then delete and restore.
