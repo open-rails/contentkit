@@ -70,6 +70,9 @@ const (
 	CodeCommentBanned = "comment_banned"
 	// CodeCommentsClosed: the target's comments are closed or hidden. -> 403
 	CodeCommentsClosed = "comments_closed"
+	// CodeCommentsLocked: the caller can't open the content, so its comments
+	// take no writes from them. -> 403
+	CodeCommentsLocked = "comments_locked"
 	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
 	// details.max is the limit in characters. -> 422
 	CodeCommentTooLong = "comment_too_long"
@@ -157,6 +160,8 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusForbidden, CodeCommentBanned, banned.Error()
 	case errors.Is(err, ErrCommentsClosed):
 		return http.StatusForbidden, CodeCommentsClosed, "comments are closed here"
+	case errors.Is(err, ErrCommentsLocked):
+		return http.StatusForbidden, CodeCommentsLocked, "open the content to see and write its comments"
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):

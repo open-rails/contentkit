@@ -38,6 +38,7 @@ export const social: typeof en = {
     reply: "답글",
     replyingTo: "{name}님에게 답글",
     empty: "아직 댓글이 없습니다. 첫 댓글을 남겨 보세요!",
+    unlock: "잠금을 해제하고 댓글 보기",
     loadMore: "댓글 더 보기",
     loading: "댓글을 불러오는 중…",
     loadFailed: "댓글을 불러오지 못했습니다.",
@@ -224,6 +225,8 @@ export const social: typeof en = {
     unauthorized: "세션이 만료되었습니다. 다시 로그인하세요.",
     not_found: "더 이상 사용할 수 없습니다.",
     conflict: "다른 곳에서 변경되었습니다. 새로고침 후 다시 시도하세요.",
+    comments_locked: "댓글을 보고 쓰려면 잠금을 해제하세요.",
+    not_joinable: "지금은 이 그룹에 가입할 수 없습니다.",
     rate_limited: "요청이 너무 많습니다. {seconds}초 후에 다시 시도하세요.",
   },
 };

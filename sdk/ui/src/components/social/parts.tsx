@@ -20,11 +20,14 @@ import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { useGuarded } from "../../react/context.js";
 
+const WORDED = ["forbidden", "unauthorized", "not_found", "conflict", "comments_locked", "not_joinable"] as const;
+const worded = (code: string): code is (typeof WORDED)[number] => (WORDED as readonly string[]).includes(code);
+
 /** A content refusal or fault in words: the content wording for shared codes, else the code's. */
 export function contentError(m: Translator, e: unknown): string {
   const err = toContentKitError(e);
   if (err.code === "rate_limited") return m.t("contentErrors.rate_limited", { seconds: err.retryAfter ?? 60 });
-  if (err.code === "forbidden" || err.code === "unauthorized" || err.code === "not_found" || err.code === "conflict") return m.t(`contentErrors.${err.code}`);
+  if (worded(err.code)) return m.t(`contentErrors.${err.code}`);
   if (err.code === "moderation_rejected") return err.message ? m.t("comments.rejected", { reason: err.message }) : m.t("comments.rejectedNoReason");
   return m.error(err);
 }

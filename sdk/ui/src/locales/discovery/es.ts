@@ -4,6 +4,7 @@ export const discovery: typeof en = {
   contents: {
     unknownAccess: "No disponible ahora",
     members: "Miembros",
+    joinFree: "Unirse gratis",
     forSale: "A la venta",
     locked: "Bloqueado",
     pages_one: "{count} página",

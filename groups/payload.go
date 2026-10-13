@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -16,12 +17,28 @@ import (
 const AvatarPreset = "avatar"
 
 // Sales answers sellable groups' sales, every group of a page in one call,
-// and the groups a viewer holds the key of, and re-syncs the products of
-// renamed groups in the writing transaction: offers.Service.
+// the groups a viewer holds the key of and, for their offer editors, groups'
+// current offers, and re-syncs the products of renamed groups in the writing
+// transaction: offers.Service.
 type Sales interface {
 	GroupAccess(ctx context.Context, viewer access.Actor, groups []string) ([]offers.GroupAccess, error)
 	Joined(ctx context.Context, viewer access.Actor) ([]string, error)
+	Current(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []offers.Target) ([]*offers.Offer, error)
 	Resync(ctx context.Context, tx pgx.Tx, targets []offers.Target) error
+}
+
+// currentOffer is g's current offer when the store's viewer edits its offers;
+// nil otherwise, or when the check fails.
+func (s *Store) currentOffer(ctx context.Context, g Group) *offers.Offer {
+	if s.sales == nil || s.as == nil || !s.cfg.GroupKinds[g.Kind].Sellable {
+		return nil
+	}
+	got, err := s.sales.Current(ctx, s.as.auth, s.as.actor, []offers.Target{{Kind: offers.GroupTarget, ID: string(g.ID)}})
+	if err != nil {
+		s.log.WarnContext(ctx, "groups: offer editor check failed; reading without the offer", "group", g.ID, "err", err)
+		return nil
+	}
+	return got[0]
 }
 
 // resyncSold re-syncs the offers of the sellable groups among gs, whose

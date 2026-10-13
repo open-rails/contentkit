@@ -424,6 +424,37 @@ func TestRecount(t *testing.T) {
 	}
 }
 
+// A group counts the content it owns as well as its members, each item once
+// per language it serves and once overall, never once per version or twice
+// for being both.
+func TestRecountOwnedContent(t *testing.T) {
+	f := newFixture(t)
+	ch := f.create(GroupInput{Kind: "channel", Slug: "studio", OwnerUserID: "owner"})[0]
+	f.content("video", 1, live("en"), live("es"))
+	f.content("video", 2, version{languages: []string{"en", "es"}, live: &past})
+	f.content("video", 3, live("en"))
+	f.exec(`UPDATE {s}.content_facets SET owner_group_id = $1 WHERE content_id = ANY($2)`, string(ch.ID), []string{cid(1), cid(2)})
+	f.add(Membership{GroupID: ch.ID, ContentID: cid(2)}, Membership{GroupID: ch.ID, ContentID: cid(3)})
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	d, err := f.s.Detail(f.ctx, ch.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ""
+	for _, c := range d.Counts {
+		got += fmt.Sprintf("%s/%s=%d ", c.ContentKind, c.Language, c.Count)
+	}
+	if got != "video/=3 video/en=3 video/es=2 " {
+		t.Fatalf("counts %s", got)
+	}
+	page, err := f.s.List(f.ctx, ListOptions{Kind: "channel"})
+	if err != nil || len(page.Groups) != 1 || page.Groups[0].Count != 3 {
+		t.Fatalf("card %+v %v", page.Groups, err)
+	}
+}
+
 // Listings filter, resolve names in the request language and page every
 // order by cursor without repeating or dropping a group.
 func TestList(t *testing.T) {
@@ -480,6 +511,9 @@ func TestList(t *testing.T) {
 	}
 	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0"}); page.Groups[0].Count != 2 || page.Groups[0].Path != "/tags/"+page.Groups[0].Code+"/delta" {
 		t.Fatalf("all languages %+v", page.Groups[0])
+	}
+	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0", Language: "en"}); page.Groups[0].Path != "/tags/"+page.Groups[0].Code+"/delta" {
+		t.Fatalf("the default language is unprefixed: %+v", page.Groups[0])
 	}
 	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"}} {
 		if _, err := f.s.List(f.ctx, opts); !errors.Is(err, ErrInvalid) {

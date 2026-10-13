@@ -7,6 +7,7 @@ import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
 import { Input } from "#ckui/ui/input";
+import { useScopeProps } from "../../scope.js";
 import { RenditionImg } from "../rendition-img.js";
 import { ErrorLine } from "../social/parts.js";
 
@@ -45,24 +46,30 @@ export interface GroupCoverProps {
   className?: string;
 }
 
-/** A group's cover: its renditions, else its initial on a muted tile. */
-export function GroupCover({ group, src, className }: GroupCoverProps) {
-  const box = cn("overflow-hidden rounded-md bg-muted", className);
-  const initial = <span className={cn(box, "grid place-items-center text-lg font-semibold text-muted-foreground")}>{(group.name || group.slug).trim().charAt(0).toUpperCase() || "?"}</span>;
-  if (src) return <img src={src} alt="" className={cn(box, "object-cover")} data-ckui="group-cover" />;
-  const renditions = group.cover?.renditions;
-  if (renditions?.length) return <RenditionImg outputs={renditions} fit="cover" skeleton className={box} fallback={initial} data-ckui="group-cover" />;
+/** A group's cover or avatar image; its own styling root, so it renders anywhere in the host. */
+function GroupImage({ group, src, className, shape, slot }: GroupCoverProps & { shape: string; slot: "group-cover" | "group-avatar" }) {
+  const scope = useScopeProps();
+  const box = cn(scope.className, "overflow-hidden bg-muted", shape, className);
+  const root = { "data-ckui-theme": scope["data-ckui-theme"], style: scope.style, "data-ckui": slot };
+  const initial = (
+    <span {...root} className={cn(box, "grid place-items-center font-semibold text-muted-foreground", slot === "group-cover" && "text-lg")}>
+      {(group.name || group.slug).trim().charAt(0).toUpperCase() || "?"}
+    </span>
+  );
+  if (src) return <img {...root} src={src} alt="" className={cn(box, "object-cover")} />;
+  const renditions = (slot === "group-cover" ? group.cover : group.avatar)?.renditions;
+  if (renditions?.length) return <RenditionImg {...root} outputs={renditions} fit="cover" skeleton className={box} fallback={initial} />;
   return initial;
 }
 
+/** A group's cover: its renditions, else its initial on a muted tile. */
+export function GroupCover(p: GroupCoverProps) {
+  return <GroupImage {...p} shape="rounded-md" slot="group-cover" />;
+}
+
 /** A group's avatar: its renditions, else its initial in a circle. */
-export function GroupAvatar({ group, src, className }: GroupCoverProps) {
-  const box = cn("aspect-square overflow-hidden rounded-full bg-muted", className);
-  const initial = <span className={cn(box, "grid place-items-center font-semibold text-muted-foreground")}>{(group.name || group.slug).trim().charAt(0).toUpperCase() || "?"}</span>;
-  if (src) return <img src={src} alt="" className={cn(box, "object-cover")} data-ckui="group-avatar" />;
-  const renditions = group.avatar?.renditions;
-  if (renditions?.length) return <RenditionImg outputs={renditions} fit="cover" skeleton className={box} fallback={initial} data-ckui="group-avatar" />;
-  return initial;
+export function GroupAvatar(p: GroupCoverProps) {
+  return <GroupImage {...p} shape="aspect-square rounded-full" slot="group-avatar" />;
 }
 
 /** A link to a group's page: `href`, else its canonical path; in-app through the provider's navigate. */

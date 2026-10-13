@@ -182,7 +182,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		c.Counts.Views = p.Views + baseline
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
-			c.Path = contenturl.Path(q.path, route, contenturl.Code(code), c.slug)
+			c.Path = contenturl.Path(contenturl.Prefix(s.o.Kinds.Languages, q.path), route, contenturl.Code(code), c.slug)
 		}
 		if c.Attributes == nil {
 			c.Attributes = map[string]any{}

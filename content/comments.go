@@ -80,12 +80,15 @@ type Comment struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// create gates on accessibility and comment bans, sanitizes and screens the
-// body and inserts. A reply must target a published top-level comment on the
+// create gates on the content opening for actor (commentsLocked) and comment
+// bans, sanitizes and screens the body and inserts. A reply must target a published top-level comment on the
 // same reference; replies are one level deep. A held comment is stored
 // author-only and counted only once a reviewer approves it.
 func (c *comments) create(ctx context.Context, actor access.Actor, target contentref.ContentRef, in CommentInput) (Comment, error) {
-	ref, res, err := c.rt.resolveTarget(ctx, target, actor, true)
+	ref, res, err := c.rt.resolveTarget(ctx, target, actor, false)
+	if err == nil {
+		err = commentsLocked(res)
+	}
 	if err == nil {
 		err = commentsOpen(res)
 	}
@@ -248,11 +251,12 @@ func scanComment(row pgx.Row, cm *Comment) (replyTo, userID, anonName *string, d
 
 // list returns the target's published top-level comments (plus the caller's
 // own held/rejected ones) in language ("" for every language), newest-first
-// and paginated, each with reply_count. Requires the target be visible (not
-// accessible: reading is allowed on premium-locked targets).
+// and paginated, each with reply_count. Requires the target be visible; on
+// content the actor can't open they are withheld, like a locked body (the
+// standing says why).
 func (c *comments) list(ctx context.Context, actor access.Actor, target contentref.ContentRef, language, sort string, limit, offset int) ([]Comment, error) {
 	ref, res, err := c.rt.resolveTarget(ctx, target, actor, false)
-	if err != nil || res.Comments == CommentsHidden {
+	if err != nil || res.Comments == CommentsHidden || !opensComments(res) {
 		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
@@ -266,7 +270,8 @@ func (c *comments) list(ctx context.Context, actor access.Actor, target contentr
 }
 
 // replies returns a comment's direct published replies (plus the caller's
-// own), oldest-first + paginated. Gated on the target content's visibility.
+// own), oldest-first + paginated. Gated on the target content's visibility
+// and, like list, withheld where the actor can't open it.
 func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID string, limit, offset int) ([]Comment, error) {
 	if !uuidRe.MatchString(replyToID) {
 		return nil, ErrNotFound
@@ -275,7 +280,7 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 	if err != nil {
 		return nil, err
 	}
-	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == CommentsHidden {
+	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == CommentsHidden || !opensComments(res) {
 		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
@@ -306,7 +311,7 @@ type FeedItem struct {
 
 // latest returns the newest published comments across all content of the
 // tenant (tombstones excluded), dropping ones whose target the resolver no
-// longer shows to this actor, so a page may under-fill. The page's distinct
+// longer shows to this actor or that it can't open, so a page may under-fill. The page's distinct
 // references are resolved in one resolver call.
 func (c *comments) latest(ctx context.Context, actor access.Actor, language string, limit, offset int) ([]FeedItem, error) {
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
@@ -350,7 +355,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, language stri
 		}
 		for _, ref := range refs {
 			_, err := c.rt.admit(ref, res, false)
-			visible[ref.Key()] = err == nil && res[ref.Key()].Comments != CommentsHidden
+			visible[ref.Key()] = err == nil && res[ref.Key()].Comments != CommentsHidden && opensComments(res[ref.Key()])
 		}
 	}
 	kept := items[:0]
@@ -572,8 +577,8 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Co
 // edit re-sanitizes, re-screens and updates a comment's body: the verdict on
 // the new text sets its state, so a held comment publishes on approval and a
 // published one is withdrawn on review. Allowed for the owner or a
-// moderator; an owner banned in the content's scope may not. 404 if missing
-// or soft-deleted.
+// moderator; an owner banned in the content's scope, or who can't open the
+// content, may not. 404 if missing or soft-deleted.
 func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody string) (Comment, error) {
 	target, err := c.loadForWrite(ctx, actor, cid, false)
 	if err != nil {
@@ -590,6 +595,9 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 		return Comment{}, err
 	}
 	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
+		if err := commentsLocked(res); err != nil {
+			return Comment{}, err
+		}
 		if err := c.rt.checkCommentBan(ctx, author, res); err != nil {
 			return Comment{}, err
 		}
@@ -730,8 +738,9 @@ func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, er
 }
 
 // reactTx writes the caller's reaction to a comment and denormalizes the split
-// counter on the comment row in the same tx. Its owning content must be visible;
-// the comment must still be published and not deleted when its row is locked.
+// counter on the comment row in the same tx. Its owning content must be visible
+// and open to the actor; the comment must still be published and not deleted
+// when its row is locked.
 func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (ReactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return ReactionCounts{}, ErrNotFound
@@ -742,6 +751,8 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	}
 	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == CommentsHidden {
 		return ReactionCounts{}, cmp.Or(err, ErrNotFound)
+	} else if err := commentsLocked(res); err != nil {
+		return ReactionCounts{}, err
 	}
 	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
@@ -825,9 +836,13 @@ func commentRoutes() []httpapi.Route[*comments] {
 	var out []httpapi.Route[*comments]
 	for _, typ := range TargetTypes {
 		noun := targetNoun(typ)
+		withheld := ""
+		if typ == TargetContent {
+			withheld = " Withheld (empty) where the caller can't open the content; the standing says so."
+		}
 		out = append(out,
 			httpapi.Route[*comments]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/comments", Resource: "comments", Auth: httpapi.Public,
-				Doc:       "The top-level comments on " + noun + " with reply counts; the caller also sees its own held and rejected ones.",
+				Doc:       "The top-level comments on " + noun + " with reply counts; the caller also sees its own held and rejected ones." + withheld,
 				Query:     targetQuery(typ, append([]httpapi.Param{languageParam, sortParam}, httpapi.Page...)...),
 				Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
 				Serve: func(c *comments) http.HandlerFunc { return c.rt.targetHandler(typ, c.handleList) }},
@@ -835,7 +850,7 @@ func commentRoutes() []httpapi.Route[*comments] {
 				Doc:     "Comments on " + noun + " in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
 				Query:   targetQuery(typ),
 				Request: CommentInput{}, Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
-				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 				Serve: func(c *comments) http.HandlerFunc { return c.handleCreate(typ) }})
 	}
 	return append(append(out, otherCommentRoutes...), commentModerationRoutes...)
@@ -859,14 +874,14 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 		Responses: []httpapi.Reply{httpapi.OK(Restored{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*comments).handleRestore)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/{cid}/replies", Resource: "comments", Auth: httpapi.Public,
-		Doc:   "A comment's replies, oldest first.",
+		Doc:   "A comment's replies, oldest first; withheld (empty) where the caller can't open the content.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*comments).handleReplies)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",
@@ -879,7 +894,7 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 
 func commentReaction(method, verb, doc string, value int16) httpapi.Route[*comments] {
 	return httpapi.Route[*comments]{Spec: httpapi.Spec{Method: method, Path: "/comments/{cid}/" + verb, Resource: "comments", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeCommentsLocked, CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(c *comments) http.HandlerFunc { return c.handleReact(value) }}
 }
 

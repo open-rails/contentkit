@@ -1,4 +1,4 @@
-import type { DiscoveryClient } from "./discovery.js";
+import type { ContentKitClient } from "./client.js";
 import { toContentKitError } from "./errors.js";
 import type { ExposureInput, SignalInput } from "./generated/wire.js";
 
@@ -43,19 +43,20 @@ export function readerSession(): string {
 
 /**
  * Batched, best-effort signals and exposures: gathered for `delay`, sent in
- * one request each, flushed with keepalive when the page hides. A site
- * without the signal plane (not_configured) turns them off.
+ * one request each, flushed with keepalive when the page hides. A site whose
+ * content model says it records no signals gets none.
  */
 export class Beacons {
   private signals: SignalInput[] = [];
   private exposures: ExposureInput[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private off = false;
+  private recorded: Promise<boolean> | undefined;
   private readonly session: () => string | undefined;
   private readonly delay: number;
 
   constructor(
-    private readonly discovery: DiscoveryClient,
+    private readonly client: Pick<ContentKitClient, "discovery" | "kinds">,
     o: BeaconOptions = {},
   ) {
     this.session = o.session ?? readerSession;
@@ -95,11 +96,16 @@ export class Beacons {
     this.timer = undefined;
     const signals = this.signals.splice(0);
     const exposures = this.exposures.splice(0);
-    if (this.off) return;
+    if (this.off || (!signals.length && !exposures.length)) return;
+    if (!(await this.recording())) {
+      this.off = true;
+      return;
+    }
     const session = this.session();
     const sends: Promise<void>[] = [];
-    for (let i = 0; i < signals.length; i += MAX) sends.push(this.discovery.signals(signals.slice(i, i + MAX), session, { keepalive }));
-    for (let i = 0; i < exposures.length; i += MAX) sends.push(this.discovery.exposures(exposures.slice(i, i + MAX), session, { keepalive }));
+    const { discovery } = this.client;
+    for (let i = 0; i < signals.length; i += MAX) sends.push(discovery.signals(signals.slice(i, i + MAX), session, { keepalive }));
+    for (let i = 0; i < exposures.length; i += MAX) sends.push(discovery.exposures(exposures.slice(i, i + MAX), session, { keepalive }));
     const done = await Promise.allSettled(sends);
     if (done.some((r) => r.status === "rejected" && toContentKitError(r.reason).code === "not_configured")) this.off = true;
   }
@@ -112,7 +118,16 @@ export class Beacons {
     this.schedule();
   }
 
+  /** Whether the site records signals, asked once at the first event; an unreadable model sends anyway (a not_configured answer still turns them off). */
+  private recording(): Promise<boolean> {
+    return (this.recorded ??= this.client.kinds().then(
+      (m) => m.signals,
+      () => true,
+    ));
+  }
+
   private schedule(): void {
+    void this.recording();
     if (this.signals.length + this.exposures.length >= MAX) return void this.flush();
     this.timer ??= setTimeout(() => void this.flush(), this.delay);
   }

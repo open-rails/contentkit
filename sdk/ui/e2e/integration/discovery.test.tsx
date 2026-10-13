@@ -259,15 +259,15 @@ describe("discovery against the real ContentKit", () => {
     expect(result.current.similar.items).toEqual([]);
     await waitFor(() => expect(result.current.history.error?.code).toBe("not_configured"), wait);
 
-    // The first batch learns the site has no signal plane; later ones are not sent.
+    // The content model says the site records no signals: none are sent.
     const rec = recorder();
-    const b = new Beacons(client(h, cfg, reader, { record: rec }).discovery, { delay: 10_000 });
+    const b = new Beacons(client(h, cfg, reader, { record: rec }), { delay: 10_000 });
     b.click(one!.id, { surface: "test", position: 1 });
     b.view(one!.id).update({ progress: 3 });
     await b.flush();
     b.click(one!.id);
     b.exposure({ render_id: "r1", stage: "rendered", shown: [{ content_id: one!.id, position: 1 }] });
     await b.flush();
-    expect(rec.calls.filter((x) => x.endsWith("/signals") || x.endsWith("/exposures"))).toEqual([`${cfg.api}/v1/signals`]);
+    expect(rec.calls.filter((x) => x.endsWith("/signals") || x.endsWith("/exposures"))).toEqual([]);
   });
 });

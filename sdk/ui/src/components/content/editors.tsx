@@ -31,6 +31,7 @@ const LISTINGS: readonly Listing[] = ["listed", "members", "unlisted"];
 const COMMENTS = ["open", "closed", "hidden"] as const;
 type Comments = (typeof COMMENTS)[number];
 const LEVELS: readonly Rule["level"][] = ["public", "tier", "ppv", "group", "group_ppv"];
+const grouped = (l: Rule["level"]) => l === "group" || l === "group_ppv";
 
 function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
   return (
@@ -134,23 +135,34 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
   );
 }
 
-/** A rule's form: level, tiers, group, preview and when it turns free. */
-function RuleFields({ value, onChange, model, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; labels?: Labels; client: ContentKitClient }) {
+/** A rule's form: level, tiers, group (the content's owner group by default), the preview its kind has and when it turns free. */
+function RuleFields({ value, onChange, model, kind, owner, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; kind: string; owner?: string; labels?: Labels; client: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
   const tiers = model?.tiers ?? [];
+  const spec = model?.kinds[kind];
   const groupKinds = Object.entries(model?.group_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
-  const [groupKind, setGroupKind] = useState(groupKinds[0] ?? "");
+  // Picked once the model has loaded: its first group kind until one is chosen.
+  const [chosenKind, setGroupKind] = useState<string>();
+  const groupKind = chosenKind ?? groupKinds[0] ?? "";
   const named = useGroupNames(value.group_id ? [value.group_id] : [], { client });
   const group = value.group_id ? named.get(value.group_id) : undefined;
   const set = (patch: Partial<Rule>) => onChange({ ...value, ...patch });
+  const pages = spec?.presentation === "reader";
+  const segments = !!spec?.segments;
   return (
     <div className="grid gap-3" data-ckui="rule-fields">
       <div className="grid gap-1.5 sm:max-w-xs">
         <Label>{t("contentEditor.access")}</Label>
-        <Select value={value.level} onValueChange={(v) => onChange({ level: v as Rule["level"], preview: value.preview, free_after: value.free_after })}>
+        <Select
+          value={value.level}
+          onValueChange={(v) => {
+            const level = v as Rule["level"];
+            onChange({ level, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
+          }}
+        >
           <SelectTrigger size="sm" aria-label={t("contentEditor.access")}>
             <SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue>
           </SelectTrigger>
@@ -178,7 +190,7 @@ function RuleFields({ value, onChange, model, labels, client }: { value: Rule; o
           ))}
         </fieldset>
       )}
-      {(value.level === "group" || value.level === "group_ppv") && (
+      {grouped(value.level) && (
         <div className="flex flex-wrap items-end gap-2">
           {group || value.group_id ? (
             <span className="rounded-md border border-border px-2 py-0.5" data-ckui="rule-group">
@@ -204,28 +216,32 @@ function RuleFields({ value, onChange, model, labels, client }: { value: Rule; o
       )}
       {value.level !== "public" && (
         <div className="grid gap-3 sm:grid-cols-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-pages`}>{t("contentEditor.previewPages")}</Label>
-            <Input
-              id={`${id}-pages`}
-              className="h-8"
-              type="number"
-              min={0}
-              value={value.preview?.pages ?? ""}
-              onChange={(e) => set({ preview: { ...value.preview, pages: e.target.value ? Math.max(0, Math.trunc(Number(e.target.value))) : undefined } })}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-segments`}>{t("contentEditor.previewSegments")}</Label>
-            <Input
-              id={`${id}-segments`}
-              className="h-8"
-              type="number"
-              min={0}
-              value={value.preview?.segments ?? ""}
-              onChange={(e) => set({ preview: { ...value.preview, segments: e.target.value ? Math.max(0, Math.trunc(Number(e.target.value))) : undefined } })}
-            />
-          </div>
+          {pages && (
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${id}-pages`}>{t("contentEditor.previewPages")}</Label>
+              <Input
+                id={`${id}-pages`}
+                className="h-8"
+                type="number"
+                min={0}
+                value={value.preview?.pages ?? ""}
+                onChange={(e) => set({ preview: { ...value.preview, pages: e.target.value ? Math.max(0, Math.trunc(Number(e.target.value))) : undefined } })}
+              />
+            </div>
+          )}
+          {segments && (
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${id}-segments`}>{t("contentEditor.previewSegments")}</Label>
+              <Input
+                id={`${id}-segments`}
+                className="h-8"
+                type="number"
+                min={0}
+                value={value.preview?.segments ?? ""}
+                onChange={(e) => set({ preview: { ...value.preview, segments: e.target.value ? Math.max(0, Math.trunc(Number(e.target.value))) : undefined } })}
+              />
+            </div>
+          )}
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-free`}>{t("contentEditor.freeAfter")}</Label>
             <Input id={`${id}-free`} className="h-8" type="datetime-local" value={toLocalInput(value.free_after)} onChange={(e) => set({ free_after: fromLocalInput(e.target.value) })} />
@@ -235,6 +251,9 @@ function RuleFields({ value, onChange, model, labels, client }: { value: Rule; o
     </div>
   );
 }
+
+/** A rule the server takes: a group level names its group. */
+const complete = (r: Rule) => !grouped(r.level) || !!r.group_id;
 
 /** A rule as stored: empty previews and absent fields left out. */
 function cleanRule(r: Rule): Rule {
@@ -268,10 +287,10 @@ export function AccessEditor({ content, ...p }: Common & { content: Content }) {
           void save.run(() => client.contents.update(content.id, { access: cleanRule(rule), revision: content.revision })).then((d) => d && setSaved(true));
         }}
       >
-        <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} client={client} />
+        <RuleFields value={rule} onChange={setRule} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
         <ErrorLine error={save.error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending}>
+          <Button type="submit" size="sm" disabled={save.pending || !complete(rule)}>
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
           <Saved show={saved} />
@@ -296,7 +315,8 @@ export function versionLabel(v: Version, languageName: (l: string) => string, la
 /**
  * A content's versions: order, languages, traits, label, state and
  * schedule, an access override and its own offer, segments (chapters) and
- * the version's media folder; add and delete.
+ * the version's media folder; add and delete. A kind whose one version is
+ * hidden shows only that version's segments and media.
  */
 export function VersionsEditor({ content, media = true, ...p }: Common & { content: Content; media?: boolean }) {
   const { t } = useMessages();
@@ -307,7 +327,17 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
   const add = useAction("content.save", p.onError);
   const [open, setOpen] = useState<string | null>(null);
   const versions = useMemo(() => [...content.versions].sort((a, b) => a.position - b.position), [content.versions]);
-  if (spec?.versions.hidden) return null;
+  if (!spec) return null;
+  if (spec.versions.hidden) {
+    const only = versions[0];
+    if (!only || (!media && !spec.segments)) return null;
+    return (
+      <Section title={t("contentEditor.media")} ckui="version-media">
+        {spec.segments && <SegmentsEditor content={content} version={only} {...p} />}
+        {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: only.id }} label={t("contentEditor.media")} />}
+      </Section>
+    );
+  }
   const languages = model?.languages ?? [];
   return (
     <Section title={t("contentEditor.versions")} ckui="versions-editor">
@@ -467,10 +497,10 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
           <Switch size="sm" checked={own} onCheckedChange={setOwn} />
           {t("contentEditor.ownAccess")}
         </label>
-        {own && <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} client={client} />}
+        {own && <RuleFields value={rule} onChange={setRule} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
         <ErrorLine error={save.error} />
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
+          <Button type="submit" size="sm" disabled={save.pending || !langs.length || (own && !complete(rule))}>
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
           <Saved show={saved} />

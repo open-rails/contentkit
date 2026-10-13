@@ -68,6 +68,7 @@ func TestRouterCanonicalizes(t *testing.T) {
 		{"GET", "/g/" + string(video) + "/night-before-the-counteroffensive/", http.StatusMovedPermanently, canonical},
 		{"GET", "/es/watch/" + string(video), http.StatusMovedPermanently, "/es/watch/" + string(video) + "/la-noche-antes"},
 		{"GET", "/es/watch/" + string(video) + "/la-noche-antes", http.StatusTeapot, ""},
+		{"GET", "/en" + canonical, http.StatusTeapot, ""}, // a host routing /{default}/... keeps its prefix
 		{"GET", "/g/" + string(dup) + "/old-duplicate", http.StatusMovedPermanently, canonical},
 		{"GET", "/g/" + string(hidden) + "/hidden-gallery", http.StatusTeapot, ""},   // invisible: the host's 404
 		{"GET", "/g/" + strings.ToLower(string(removed)), http.StatusGone, ""},       // removed: 410, no redirect
@@ -105,6 +106,9 @@ func TestRouterCanonicalizes(t *testing.T) {
 	if rec, body := get("/api/content-urls/" + lower + "?lang=es"); rec.Code != 200 || body.Code != video || body.Path != "/es/watch/"+string(video)+"/la-noche-antes" ||
 		body.ContentKind != "video" || body.ContentID != id(1) || body.Slugs["es"] != "la-noche-antes" {
 		t.Fatalf("lookup %d %s", rec.Code, rec.Body.String())
+	}
+	if rec, body := get("/api/content-urls/" + string(video) + "?lang=en"); rec.Code != 200 || body.Path != canonical {
+		t.Fatalf("the default language is unprefixed: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec, body := get("/api/content-urls/" + string(dup)); rec.Code != 200 || body.Code != video || body.Path != canonical {
 		t.Fatalf("merged lookup %d %s", rec.Code, rec.Body.String())

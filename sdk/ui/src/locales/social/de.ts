@@ -38,6 +38,7 @@ export const social: typeof en = {
     reply: "Antworten",
     replyingTo: "Antwort an {name}",
     empty: "Noch keine Kommentare. Schreib den ersten!",
+    unlock: "Freischalten, um Kommentare zu sehen",
     loadMore: "Weitere Kommentare anzeigen",
     loading: "Kommentare werden geladen…",
     loadFailed: "Die Kommentare konnten nicht geladen werden.",
@@ -224,6 +225,8 @@ export const social: typeof en = {
     unauthorized: "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
     not_found: "Das ist nicht mehr verfügbar.",
     conflict: "Das wurde anderswo geändert. Lade neu und versuch es erneut.",
+    comments_locked: "Schalte das frei, um Kommentare zu sehen und zu schreiben.",
+    not_joinable: "Dieser Gruppe kann man gerade nicht beitreten.",
     rate_limited: "Zu viele Anfragen. Versuch es in {seconds} s erneut.",
   },
 };

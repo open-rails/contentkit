@@ -3,6 +3,7 @@ export const discovery = {
   contents: {
     unknownAccess: "Unavailable right now",
     members: "Members",
+    joinFree: "Free to join",
     forSale: "For sale",
     locked: "Locked",
     pages_one: "{count} page",

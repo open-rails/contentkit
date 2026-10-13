@@ -6,8 +6,8 @@ import (
 )
 
 // Count is the number of distinct live, listed contents of one kind in a
-// group (its descendants included) serving one language; Language "" counts
-// every language once.
+// group (its descendants included) or owned by it, serving one language;
+// Language "" counts every language once.
 type Count struct {
 	ContentKind string `json:"content_kind"`
 	Language    string `json:"language"`
@@ -19,14 +19,14 @@ const liveListed = `NOT f.deleted AND f.listing = 'listed' AND f.live_from IS NO
 
 // Recount rebuilds content_group_counts from content_facets, whose rows are
 // versions: per active group, content kind and language, the distinct live,
-// listed contents. It also re-picks every automatic cover: the
-// most-favorited live, listed member. It is an engine job; counts may lag
-// writes until it runs.
+// listed contents it holds or owns. It also re-picks every automatic cover:
+// the most-favorited live, listed member. It is an engine job; counts may
+// lag writes until it runs.
 func (s *Store) Recount(ctx context.Context) error {
 	return s.run(ctx, func(q Querier) error {
 		if _, err := q.Exec(ctx, fmt.Sprintf(`WITH c AS (
  SELECT gid AS group_id, f.kind AS content_kind, l.language, count(DISTINCT f.content_id)::int AS n
- FROM %[1]s f CROSS JOIN LATERAL unnest(f.group_ids) AS gid CROSS JOIN LATERAL unnest(array_append(f.languages, '')) AS l(language)
+ FROM %[1]s f CROSS JOIN LATERAL unnest(array_append(f.group_ids, f.owner_group_id)) AS gid CROSS JOIN LATERAL unnest(array_append(f.languages, '')) AS l(language)
  JOIN %[2]s g ON g.tenant_id = f.tenant_id AND g.id = gid AND g.state = 'active'
  WHERE f.tenant_id = $1 AND %[4]s
  GROUP BY 1, 2, 3),

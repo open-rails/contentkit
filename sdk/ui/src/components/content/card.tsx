@@ -44,7 +44,7 @@ export function lockLabel(m: Translator, a: CardAccess, tiers: readonly string[]
   if (a.allowed) return null;
   if (a.unknown) return m.t("contents.unknownAccess");
   const offer = a.offers?.[0];
-  if (offer) return priceLabel(m, offer.terms);
+  if (offer) return offer.target.kind === "group" && Number(offer.terms.amount) === 0 ? m.t("contents.joinFree") : priceLabel(m, offer.terms);
   const tier = a.sell?.find((k) => tiers.includes(k));
   if (tier) return labelOf(labels, tier);
   if (a.sell?.some((k) => k.includes(":group:"))) return m.t("contents.members");

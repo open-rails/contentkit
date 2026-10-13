@@ -39,6 +39,9 @@ type handler struct {
 	auth auth.Authenticator
 }
 
+// codeNotJoinable answers a join of a group without a free offer.
+const codeNotJoinable = "not_joinable"
+
 const (
 	contentEditors = " For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write."
 	groupEditors   = " For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
@@ -53,7 +56,7 @@ var routes = []httpapi.Route[handler]{
 		Terms{}, putOffer(groupTarget)),
 	edit(httpapi.DELETE, "/groups/{id}/offer", "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews."+groupEditors, nil, withdrawOffer(groupTarget)),
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/groups/{id}/join", Resource: "offers", Doc: "Joins a group free to join: grants the viewer its key.",
-		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
+		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, codeNotJoinable}},
 		Serve: httpapi.H(handler.join)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/groups/{id}/join", Resource: "offers", Doc: "Leaves a group joined free; a bought membership stays.",
 		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
@@ -200,6 +203,8 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		code, msg = httpapi.CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden):
 		code, msg = httpapi.CodeForbidden, "forbidden"
+	case errors.Is(err, ErrNotJoinable):
+		code, msg = codeNotJoinable, err.Error()
 	case errors.Is(err, ErrConflict):
 		code, msg = httpapi.CodeConflict, err.Error()
 	case errors.Is(err, access.ErrUnavailable), errors.Is(err, auth.ErrUnavailable):

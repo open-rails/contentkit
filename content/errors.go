@@ -16,6 +16,9 @@ var (
 	// ErrCommentsClosed: the target's comments are closed or hidden. -> 403
 	// comments_closed
 	ErrCommentsClosed = errors.New("content: comments are closed")
+	// ErrCommentsLocked: the actor can't open the content the comments are
+	// on. -> 403 comments_locked
+	ErrCommentsLocked = errors.New("content: comments are locked")
 	// ErrNoClassifier: a free-text poll needs an AnswerClassifier. -> 501
 	ErrNoClassifier = errors.New("content: free-text polls need an AnswerClassifier")
 )

@@ -4,6 +4,7 @@ export const discovery: typeof en = {
   contents: {
     unknownAccess: "現在利用できません",
     members: "メンバー限定",
+    joinFree: "無料で参加",
     forSale: "販売中",
     locked: "ロック中",
     pages_one: "{count} ページ",

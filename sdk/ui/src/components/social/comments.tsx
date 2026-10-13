@@ -77,6 +77,8 @@ interface Thread {
   liftBan: (user: { id: string; name: string }) => void;
   /** A post was refused by a ban: its notice. */
   onBanned: (ban: BanNoticeData) => void;
+  /** A write was refused as locked: the standing changed. */
+  onLocked: () => void;
 }
 
 type Act = "comment" | "react";
@@ -146,12 +148,22 @@ export function Comments(p: CommentsProps) {
       setRefusal(ban);
       reloadStanding();
     },
+    onLocked: reloadStanding,
   };
   const ban = standing?.ban ?? refusal;
   const canWrite = standing ? standing.can_comment : true;
   const heading = p.heading === undefined ? (p.count === undefined ? t("comments.title") : m.plural("comments.count", p.count)) : p.heading;
 
   if (standing?.comments === "hidden") return null;
+  if (standing?.locked)
+    return (
+      <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments" data-locked="">
+        {heading !== false && <h2 className="text-base font-semibold">{heading}</h2>}
+        <p className="rounded-lg border border-border p-3 text-muted-foreground" data-ckui="comments-locked">
+          {t("comments.unlock")}
+        </p>
+      </ContentKitUiRoot>
+    );
   return (
     <ThreadContext.Provider value={thread}>
       <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments">
@@ -490,6 +502,7 @@ function Composer(p: ComposerProps) {
       const err = toContentKitError(e);
       thread.report(err, p.operation);
       if (err.code === "comment_banned" && err.ban) thread.onBanned(err.ban);
+      else if (err.code === "comments_locked") thread.onLocked();
       else if (err.code === "rate_limited") setError(err.retryAfter ? t("comments.rateLimited", { seconds: err.retryAfter }) : t("comments.rateLimitedSoon"));
       else setError(contentError(m, err));
     } finally {

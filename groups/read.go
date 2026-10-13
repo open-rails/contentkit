@@ -98,6 +98,8 @@ type GroupDetail struct {
 	// Access is a sellable group's sale: its key, active offer and the
 	// viewer's standing.
 	Access *offers.GroupAccess `json:"access,omitempty"`
+	// Offer is a sellable group's current offer, for its offer editors.
+	Offer *offers.Offer `json:"offer,omitempty"`
 }
 
 type listCursor struct {
@@ -265,7 +267,7 @@ func (s *Store) path(kind, code, slug, language string) string {
 	if route == "" || code == "" {
 		return ""
 	}
-	return contenturl.Path(language, route, contenturl.Code(code), slug)
+	return contenturl.Path(contenturl.Prefix(s.cfg.Languages, language), route, contenturl.Code(code), slug)
 }
 
 // List pages active groups with their display name, code, path, cover,
@@ -428,7 +430,11 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 			shows = append(shows, cardShown(g))
 		}
 	}
-	return d, s.fill(ctx, shows)
+	if err := s.fill(ctx, shows); err != nil {
+		return d, err
+	}
+	d.Offer = s.currentOffer(ctx, d.Group)
+	return d, nil
 }
 
 func pointers(cards []GroupCard) []*GroupCard {

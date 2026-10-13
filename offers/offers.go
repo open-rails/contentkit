@@ -31,6 +31,8 @@ var (
 	ErrNotFound  = errors.New("offers: not found")
 	ErrForbidden = errors.New("offers: forbidden")
 	ErrConflict  = errors.New("offers: conflict")
+	// ErrNotJoinable is a join of a group without a free offer.
+	ErrNotJoinable = errors.New("offers: not free to join")
 )
 
 // TargetKind is what an offer sells.

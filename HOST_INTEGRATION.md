@@ -189,8 +189,10 @@ byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
 - **Canonical redirects.** The router maps kinds to routes. Mount its middleware
   in front of the pages, or in front of the SPA shell. A missing or stale slug,
   a wrong route, a merged code or a trailing slash gets a 301 to the canonical
-  path, with the query kept. The canonical path carries the language prefix and
-  that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
+  path, with the query kept. A request's language prefix stays in its
+  canonical path, with that language's slug. Paths ContentKit answers (content,
+  cards, groups, the codes route) leave the site's default language (the
+  first of `Languages`) unprefixed and prefix the others. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
   content items' visibility itself (`catalog.Store.Visibility`). For groups, map the group state: a deleted group
@@ -251,7 +253,12 @@ Comments carry a `language` (one of the site's, or none): `?language=`
 narrows a list or the latest feed to one thread, and a reply joins its
 comment's. A content item's `comments` setting (`PATCH /v1/contents/{id}`,
 its editors) is `open`, `closed` (existing comments show; new ones and edits
-answer `403 comments_closed`) or `hidden` (none show). The reader's favorites
+answer `403 comments_closed`) or `hidden` (none show). Comments on content
+follow its access, as its `body` does: to a viewer who can't open the item (or
+a version-level comment's version), and doesn't edit it, lists, replies and the
+latest feed withhold them, the standing (`GET .../can-comment`) says `locked`,
+and posting, replying, editing and reacting answer `403 comments_locked`.
+Counts stay visible; moderation queues keep them. The reader's favorites
 and reactions, as cards, are `GET /v1/me/favorites` and `GET
 /v1/me/reactions?target=contents|groups&kind=&value=like|dislike` (tag
 preferences); their counts reach `content_facets` (`likes`, `dislikes`,
@@ -585,8 +592,12 @@ A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
 (`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
-reader's favorite and progress, `published_at` and attributes. Signal reads
-answer 501 `not_configured` without ClickHouse.
+reader's favorite and progress, `published_at` and attributes. Without a
+signal plane (no ClickHouse, or one `New` can't reach, which fails the
+`contentkit_clickhouse` probe) the engine runs on Postgres: `GET /v1/kinds`
+says `"signals": false`, contentkit-ui sends no signals or exposures, popular
+sorts use what `content_facets` holds, and signal reads and writes answer 501
+`not_configured`.
 
 ## Search job
 

@@ -23,7 +23,7 @@ import (
 	"github.com/open-rails/helpers/notify"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes.
 func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
 	var out kindsroute.ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
@@ -71,7 +71,7 @@ func (q GetContentCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetContentComments is GET /v1/contents/{id}/comments (public). The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones.
+// GetContentComments is GET /v1/contents/{id}/comments (public). The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Withheld (empty) where the caller can't open the content; the standing says so.
 func (c *Client) GetContentComments(ctx context.Context, id string, q GetContentCommentsQuery) ([]content.Comment, error) {
 	var out []content.Comment
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -235,7 +235,7 @@ func (q GetCommentRepliesQuery) values() url.Values {
 	return v
 }
 
-// GetCommentReplies is GET /v1/comments/{cid}/replies (public). A comment's replies, oldest first.
+// GetCommentReplies is GET /v1/comments/{cid}/replies (public). A comment's replies, oldest first; withheld (empty) where the caller can't open the content.
 func (c *Client) GetCommentReplies(ctx context.Context, cid string, q GetCommentRepliesQuery) ([]content.Comment, error) {
 	var out []content.Comment
 	err := c.call(ctx, http.MethodGet, expand("/v1/comments/{cid}/replies", "{cid}", url.PathEscape(cid)), q.values(), nil, &out)

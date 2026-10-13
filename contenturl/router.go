@@ -31,9 +31,10 @@ const (
 type RouterOptions struct {
 	// Routes maps content kinds to the host's routes. Required.
 	Routes Routes
-	// Languages are the language segments a path may start with
-	// (/{lang}/{route}/...). The prefix is kept in canonical paths and picks
-	// the localized slug.
+	// Languages are the site's languages, its default first: the segments a
+	// path may start with (/{lang}/{route}/...). A request's prefix is kept
+	// in its canonical path and picks the localized slug; Path and the codes
+	// route leave the default language unprefixed (Prefix).
 	Languages []string
 	// BaseURL ("https://example.com") makes Middleware send the canonical URL
 	// as a `Link: <url>; rel="canonical"` header. Empty: no header.
@@ -79,10 +80,14 @@ func NewRouter(store *Store, opts RouterOptions) (*Router, error) {
 	return &Router{store: store, opts: opts, log: log}, nil
 }
 
-// Path returns link's canonical path under language ("" unprefixed); false
-// when its kind has no route.
+// Path returns link's canonical path in language: its slug there, under
+// Prefix(language); false when its kind has no route.
 func (r *Router) Path(link Link, language string) (string, bool) {
-	return Canonical(r.opts.Routes, language, link)
+	route, ok := r.opts.Routes[link.ContentKind]
+	if !ok {
+		return "", false
+	}
+	return Path(Prefix(r.opts.Languages, language), route, link.Code, link.SlugFor(language)), true
 }
 
 // Decision is the canonical verdict on a request.
@@ -129,7 +134,8 @@ func (r *Router) Decide(req *http.Request) (Decision, error) {
 }
 
 func (r *Router) decide(req *http.Request, link Link, language string) (Decision, error) {
-	path, ok := r.Path(link, language)
+	// The request's own prefix stays: hosts routing /{default}/... keep theirs.
+	path, ok := Canonical(r.opts.Routes, language, link)
 	if !ok {
 		return Decision{}, nil
 	}

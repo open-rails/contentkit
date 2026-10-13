@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/internal/testauth"
@@ -61,6 +62,10 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	}
 	s := serve(t, routes)
 	u1, staff := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "staff", Kind: "user"}
+	var model kindsroute.ContentModel
+	if s.call(http.StatusOK, access.Actor{Anonymous: true}, "GET", "/ck/v1/kinds", nil, &model); !model.Signals {
+		t.Fatal("the content model says signals are off")
+	}
 	var c catalog.Content
 	s.call(http.StatusCreated, staff, "POST", "/ck/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Harbor"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
