@@ -38,9 +38,10 @@ type RouterOptions struct {
 	// BaseURL ("https://example.com") makes Middleware send the canonical URL
 	// as a `Link: <url>; rel="canonical"` header. Empty: no header.
 	BaseURL string
-	// Visibility is the host's verdict on resolved content (drafts, removed
-	// content, viewer restrictions). nil: every registered code is Visible.
-	Visibility func(r *http.Request, link Link) (Visibility, error)
+	// Visibility is the host's verdict on each resolved link, in order
+	// (drafts, removed content, viewer restrictions). nil: every registered
+	// code is Visible.
+	Visibility func(r *http.Request, links []Link) ([]Visibility, error)
 	// Gone answers requests for Gone content. nil: a plain 410.
 	Gone http.Handler
 	// Logger receives resolution failures (5xx). nil: slog.Default().
@@ -98,7 +99,6 @@ type Decision struct {
 	Language string
 	Path     string // the canonical path
 	Location string // Path plus the request's query
-	Locator  string // DecideAlias: the alias's position inside the content
 }
 
 // Decide parses the request path, resolves its code and compares the path
@@ -109,12 +109,13 @@ func (r *Router) Decide(req *http.Request) (Decision, error) {
 	if !ok {
 		return Decision{}, nil
 	}
-	link, err := r.store.Resolve(req.Context(), p.Code)
-	if errors.Is(err, ErrNotFound) {
-		return Decision{}, nil
-	}
+	links, err := r.store.Resolve(req.Context(), []Code{p.Code})
 	if err != nil {
 		return Decision{}, err
+	}
+	link, ok := links[p.Code]
+	if !ok {
+		return Decision{}, nil
 	}
 	d, err := r.decide(req, link, p.Language)
 	if err != nil || !d.Matched {
@@ -132,14 +133,11 @@ func (r *Router) decide(req *http.Request, link Link, language string) (Decision
 	if !ok {
 		return Decision{}, nil
 	}
-	v := Visible
-	if r.opts.Visibility != nil {
-		var err error
-		if v, err = r.opts.Visibility(req, link); err != nil {
-			return Decision{}, err
-		}
+	v, err := r.visibility(req, []Link{link})
+	if err != nil {
+		return Decision{}, err
 	}
-	switch v {
+	switch v[0] {
 	case Visible:
 		return Decision{Matched: true, Link: link, Language: language, Path: path, Location: path}, nil
 	case Gone:
@@ -149,22 +147,20 @@ func (r *Router) decide(req *http.Request, link Link, language string) (Decision
 	}
 }
 
-// DecideAlias resolves a legacy identifier for a host's legacy redirect:
-// Matched with the canonical Path (Redirect is always true), Gone, or
-// neither (unknown or hidden: 404). language picks the prefix and slug.
-func (r *Router) DecideAlias(req *http.Request, source, legacyKind, key, language string) (Decision, error) {
-	m, err := r.store.ResolveAlias(req.Context(), source, legacyKind, key)
-	if errors.Is(err, ErrNotFound) {
-		return Decision{}, nil
+// visibility is the host's verdict on each link.
+func (r *Router) visibility(req *http.Request, links []Link) ([]Visibility, error) {
+	if r.opts.Visibility == nil || len(links) == 0 {
+		out := make([]Visibility, len(links))
+		for i := range out {
+			out[i] = Visible
+		}
+		return out, nil
 	}
-	if err != nil {
-		return Decision{}, err
+	v, err := r.opts.Visibility(req, links)
+	if err == nil && len(v) != len(links) {
+		err = fmt.Errorf("contenturl: Visibility answered %d verdicts for %d links", len(v), len(links))
 	}
-	d, err := r.decide(req, m.Link, language)
-	if d.Matched {
-		d.Redirect, d.Locator = true, m.Locator
-	}
-	return d, err
+	return v, err
 }
 
 type ctxKey struct{}
@@ -221,11 +217,80 @@ type errorBody struct {
 // Tenant is the tenant whose codes the router resolves.
 func (r *Router) Tenant() string { return r.store.Tenant() }
 
+// AliasLookup is legacy identifiers to resolve, at most MaxAliases.
+type AliasLookup struct {
+	Aliases []AliasKey `json:"aliases"`
+}
+
+// MaxAliases bounds an AliasLookup.
+const MaxAliases = 100
+
+// Alias statuses.
+const (
+	AliasFound    = "found"
+	AliasNotFound = "not_found" // unknown, or hidden from the request's visitor
+	AliasGone     = "gone"      // its content was removed
+)
+
+// AliasResult is what one alias resolves to.
+type AliasResult struct {
+	AliasKey
+	// Status is found, not_found or gone.
+	Status string `json:"status"`
+	// Resolved is a found alias's link and canonical path.
+	Resolved *Resolved `json:"resolved,omitempty"`
+	// Locator is a found alias's position inside its content, such as a page.
+	Locator string `json:"locator,omitempty"`
+}
+
+// AliasResults answers an AliasLookup in its order.
+type AliasResults struct {
+	Aliases []AliasResult `json:"aliases"`
+}
+
+// ResolveAliases resolves legacy identifiers for req's visitor, as the
+// codes route resolves a code: hidden content is not_found, removed content
+// gone. language picks the paths' prefix and slug.
+func (r *Router) ResolveAliases(req *http.Request, keys []AliasKey, language string) (AliasResults, error) {
+	matches, err := r.store.ResolveAliases(req.Context(), keys)
+	if err != nil {
+		return AliasResults{}, err
+	}
+	var links []Link
+	for _, m := range matches {
+		if m != nil {
+			links = append(links, m.Link)
+		}
+	}
+	verdicts, err := r.visibility(req, links)
+	if err != nil {
+		return AliasResults{}, err
+	}
+	out := AliasResults{Aliases: make([]AliasResult, len(keys))}
+	n := 0
+	for i, m := range matches {
+		res := AliasResult{AliasKey: keys[i], Status: AliasNotFound}
+		if m != nil {
+			switch verdicts[n] {
+			case Visible:
+				path, _ := r.Path(m.Link, language)
+				res.Status, res.Resolved, res.Locator = AliasFound, &Resolved{Link: m.Link, Path: path}, m.Locator
+			case Gone:
+				res.Status = AliasGone
+			}
+			n++
+		}
+		out.Aliases[i] = res
+	}
+	return out, nil
+}
+
 // Handler serves GET /{code}[?lang=xx]: the code's link and canonical path,
 // for clients that hold only a code. Any Crockford spelling resolves; the
 // response carries the canonical code. Unknown and hidden codes are 404
 // not_found, Gone content 410 gone, malformed codes 400 invalid_request.
-// The engine serves it as the codes route group (/v1/codes).
+// POST /aliases resolves legacy identifiers the same way, in batches. The
+// engine serves them as the codes route group (/v1/codes).
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, nil, r, codeRoutes)
@@ -240,6 +305,12 @@ var codeRoutes = []httpapi.Route[*Router]{
 		Query:     []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug")},
 		Responses: []httpapi.Reply{httpapi.OK(Resolved{})}, Errors: []string{"gone", httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Router).resolve)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/aliases", Resource: "codes", Auth: httpapi.Open,
+		Doc: "Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: " +
+			"found, not_found (unknown or hidden) or gone; at most 100.",
+		Query:   []httpapi.Param{httpapi.Text("lang", "the language of the paths' prefix and slug")},
+		Request: AliasLookup{}, Responses: []httpapi.Reply{httpapi.OK(AliasResults{})}},
+		Serve: httpapi.H((*Router).aliases)},
 }
 
 func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
@@ -253,13 +324,17 @@ func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: "unknown language", Code: "invalid_request"})
 		return
 	}
-	link, err := r.store.Resolve(req.Context(), code)
-	v := Visible
-	if err == nil && r.opts.Visibility != nil {
-		v, err = r.opts.Visibility(req, link)
+	links, err := r.store.Resolve(req.Context(), []Code{code})
+	link, found := links[code]
+	v := Hidden
+	if err == nil && found {
+		var vs []Visibility
+		if vs, err = r.visibility(req, []Link{link}); err == nil {
+			v = vs[0]
+		}
 	}
 	switch {
-	case errors.Is(err, ErrNotFound) || err == nil && v != Visible && v != Gone:
+	case err == nil && v != Visible && v != Gone:
 		writeJSON(w, http.StatusNotFound, errorBody{Error: "no content has this code", Code: "not_found"})
 	case err != nil:
 		r.log.ErrorContext(req.Context(), "contenturl: resolve", "code", code, "err", err)
@@ -269,6 +344,35 @@ func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
 	default:
 		path, _ := r.Path(link, lang)
 		writeJSON(w, http.StatusOK, Resolved{Link: link, Path: path})
+	}
+}
+
+func (r *Router) aliases(w http.ResponseWriter, req *http.Request) {
+	lang := req.URL.Query().Get("lang")
+	if lang != "" && !slices.Contains(r.opts.Languages, lang) {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: "unknown language", Code: "invalid_request"})
+		return
+	}
+	var in AliasLookup
+	dec := json.NewDecoder(http.MaxBytesReader(w, req.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: "body: " + err.Error(), Code: "invalid_request"})
+		return
+	}
+	if len(in.Aliases) > MaxAliases {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: fmt.Sprintf("at most %d aliases", MaxAliases), Code: "invalid_request"})
+		return
+	}
+	out, err := r.ResolveAliases(req, in.Aliases, lang)
+	switch {
+	case errors.Is(err, ErrInvalid):
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error(), Code: "invalid_request"})
+	case err != nil:
+		r.log.ErrorContext(req.Context(), "contenturl: resolve aliases", "err", err)
+		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "internal error", Code: "internal_error"})
+	default:
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 

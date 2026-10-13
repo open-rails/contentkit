@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	pngenc "image/png"
@@ -134,6 +135,7 @@ func catalogBatch() importer.Batch {
 		},
 		Contents: []importer.ContentRecord{
 			{ExternalID: "gallery:1", ID: id("gallery", 1), Kind: "gallery", State: "published", PublishedAt: ptr(t0.Add(24 * time.Hour)), Code: "GAZ000001",
+				Comments: "closed", ViewBaseline: 200_412,
 				Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
 				Creators: []catalog.Creator{{UserID: "u-1"}},
 				Text:     map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
@@ -257,6 +259,8 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT state || ' ' || extract(epoch FROM published_at)::bigint || ' ' || extract(epoch FROM created_at)::bigint || ' ' || extract(epoch FROM updated_at)::bigint
  FROM $s.content_items WHERE id = $1`, "published 1577923200 1577836800 1578009600"},
 		{`SELECT access::text || ' ' || attributes::text FROM $s.content_items WHERE id = $1`, `{"level": "tier", "tiers": ["premium"]} {"format": "doujin"}`},
+		{`SELECT comments || ' ' || view_baseline FROM $s.content_items WHERE id = $1`, "closed 200412"},
+		{`SELECT string_agg(DISTINCT view_baseline::text, ',') FROM $s.content_facets WHERE content_id = $1`, "200412"},
 		{`SELECT string_agg(language || '=' || title, ',' ORDER BY language) FROM $s.content_text WHERE content_id = $1`, "en=First,ja=最初"},
 		{`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`, id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0"},
 		{`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "2"},
@@ -275,6 +279,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT string_agg(vote_count::text, ',' ORDER BY position) FROM $s.content_poll_options WHERE question_id = (SELECT id FROM $s.content_poll_questions WHERE question = 'Best?') AND $1 <> ''`, "2,1"},
 		{`SELECT code FROM $s.content_codes WHERE content_id = '` + id("tag", 1) + `' AND $1 <> ''`, "TAG000001"},
 		{`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "published true"},
+		{`SELECT comments || ' ' || view_baseline FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "open 0"},
 		{`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`, "en"},
 		{`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`, id("series", 2) + " hero"},
 		{`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`, "2"},
@@ -309,6 +314,60 @@ func TestImportConverges(t *testing.T) {
 	}
 	if f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x") != "22" {
 		t.Errorf("external ids duplicated: %s", f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x"))
+	}
+}
+
+// A content item's comments setting and legacy view count import like its
+// other fields: re-sending converges, a change is written, an omitted
+// setting is open. Reads show the baseline in views and most_viewed.
+func TestImportCommentsAndViewBaseline(t *testing.T) {
+	f := newEngine(t)
+	gallery := func(n int64, comments string, views int64) importer.ContentRecord {
+		ext := fmt.Sprintf("gallery:%d", n)
+		return importer.ContentRecord{ExternalID: ext, ID: id("gallery", n), Kind: "gallery", State: "published", PublishedAt: &t0, Comments: comments,
+			ViewBaseline: views, Text: map[string]catalog.Text{"en": {Title: ext}},
+			Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, ID: id("version", n), Languages: []string{"en"}, PublishedAt: &t0}}}
+	}
+	read := func() (map[string]string, []string) {
+		t.Helper()
+		page, err := f.e.Client().GetContents(t.Context(), contentkit.GetContentsQuery{Kind: "gallery", Sort: "most_viewed"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, order := map[string]string{}, []string{}
+		for _, c := range page.Contents {
+			item, err := f.e.Client().GetContent(t.Context(), c.ID, contentkit.GetContentQuery{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state[c.ID] = fmt.Sprintf("%s %d", item.Comments, c.Counts.Views)
+			order = append(order, c.ID)
+		}
+		return state, order
+	}
+	g1, g2 := id("gallery", 1), id("gallery", 2)
+	b := importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "hidden", 1_000), gallery(2, "", 10)}}
+	if res := f.importBatch(t, b); len(res.Failed) > 0 {
+		t.Fatalf("import %+v", res.Failed)
+	}
+	state, order := read()
+	if state[g1] != "hidden 1000" || state[g2] != "open 10" || !slices.Equal(order, []string{g1, g2}) {
+		t.Fatalf("after import %v %v", state, order)
+	}
+	revisions := f.scalar(t, `SELECT string_agg(revision::text, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
+	if res := f.importBatch(t, b); len(res.Failed) > 0 || f.scalar(t, `SELECT string_agg(revision::text, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x") != revisions {
+		t.Fatalf("re-import changed the items: %+v", res)
+	}
+	b.Contents[0] = gallery(1, "", 5)
+	if res := f.importBatch(t, b); len(res.Failed) > 0 {
+		t.Fatalf("edit %+v", res.Failed)
+	}
+	if state, order := read(); state[g1] != "open 5" || !slices.Equal(order, []string{g2, g1}) {
+		t.Fatalf("after edit %v %v", state, order)
+	}
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "maybe", 0), gallery(2, "", -1)}})
+	if len(res.Failed) != 2 || res.Failed[0].Code != importer.CodeInvalid || res.Failed[1].Code != importer.CodeInvalid {
+		t.Fatalf("invalid records %+v", res)
 	}
 }
 

@@ -1366,6 +1366,27 @@ func (c *Client) GetCode(ctx context.Context, code string, q GetCodeQuery) (cont
 	return out, err
 }
 
+// PostCodesAliasesQuery is the query of PostCodesAliases.
+type PostCodesAliasesQuery struct {
+	// the language of the paths' prefix and slug
+	Lang string
+}
+
+func (q PostCodesAliasesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Lang != "" {
+		v.Set("lang", q.Lang)
+	}
+	return v
+}
+
+// PostCodesAliases is POST /v1/codes/aliases (open). Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: found, not_found (unknown or hidden) or gone; at most 100.
+func (c *Client) PostCodesAliases(ctx context.Context, body contenturl.AliasLookup, q PostCodesAliasesQuery) (contenturl.AliasResults, error) {
+	var out contenturl.AliasResults
+	err := c.call(ctx, http.MethodPost, "/v1/codes/aliases", q.values(), body, &out)
+	return out, err
+}
+
 // GetGroupsQuery is the query of GetGroups.
 type GetGroupsQuery struct {
 	// only groups of this kind
@@ -1888,7 +1909,7 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardGroups []string

@@ -64,7 +64,7 @@ var (
 	}
 	cardGroups = httpapi.List("card_groups", "the group kinds cards name; every kind with a page by default")
 	pageParams = []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}
-	sortParam  = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
+	sortParam  = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
 	signals    = []string{"not_configured"}
 )
 

@@ -105,6 +105,7 @@ CREATE TABLE content_items (
     comments text DEFAULT 'open'::text NOT NULL,
     first_published_at timestamp with time zone,
     deleted_with_group text,
+    view_baseline bigint DEFAULT 0 NOT NULL,
     CONSTRAINT content_items_pkey PRIMARY KEY (tenant_id, id),
     CONSTRAINT content_items_access_check CHECK ((jsonb_typeof(access) = 'object'::text)),
     CONSTRAINT content_items_attributes_check CHECK ((jsonb_typeof(attributes) = 'object'::text)),
@@ -112,7 +113,8 @@ CREATE TABLE content_items (
     CONSTRAINT content_items_ids_check CHECK (((tenant_id <> ''::text) AND (id <> ''::text) AND (kind <> ''::text))),
     CONSTRAINT content_items_listing_check CHECK ((listing = ANY (ARRAY['listed'::text, 'members'::text, 'unlisted'::text]))),
     CONSTRAINT content_items_moderation_check CHECK ((moderation = ANY (ARRAY['approved'::text, 'held'::text, 'rejected'::text]))),
-    CONSTRAINT content_items_state_check CHECK ((state = ANY (ARRAY['draft'::text, 'published'::text, 'deleted'::text])))
+    CONSTRAINT content_items_state_check CHECK ((state = ANY (ARRAY['draft'::text, 'published'::text, 'deleted'::text]))),
+    CONSTRAINT content_items_view_baseline_check CHECK ((view_baseline >= 0))
 );
 
 CREATE INDEX content_items_deleted_with_group_idx ON content_items USING btree (tenant_id, deleted_with_group) WHERE (deleted_with_group IS NOT NULL);
@@ -382,6 +384,7 @@ CREATE TABLE content_facets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     dislikes integer DEFAULT 0 NOT NULL,
     free_applied boolean DEFAULT false NOT NULL,
+    view_baseline bigint DEFAULT 0 NOT NULL,
     CONSTRAINT content_facets_pkey PRIMARY KEY (tenant_id, version_id),
     CONSTRAINT content_facets_tenant_id_version_id_fkey FOREIGN KEY (tenant_id, version_id) REFERENCES content_versions(tenant_id, id) ON DELETE CASCADE
 );

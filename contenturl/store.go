@@ -165,6 +165,7 @@ func (s *Store) links(ctx context.Context, keys []codes.Key) (map[codes.Key]Link
 		return nil, err
 	}
 	further := map[codes.Key]Code{}
+	var chained []Code
 	for rows.Next() {
 		var k codes.Key
 		l, merged, err := s.scanLink(rows, &k.Kind, &k.ID)
@@ -175,19 +176,22 @@ func (s *Store) links(ctx context.Context, keys []codes.Key) (map[codes.Key]Link
 		out[k] = l
 		if merged != "" {
 			further[k] = Code(merged)
+			chained = append(chained, Code(merged))
 		}
 	}
 	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if err := rows.Err(); err != nil || len(chained) == 0 {
+		return out, err
 	}
 	// Redirects are one hop; follow a longer chain the way Resolve does.
+	survivors, err := s.Resolve(ctx, chained)
+	if err != nil {
+		return nil, err
+	}
 	for k, code := range further {
-		l, err := s.Resolve(ctx, code)
-		if err != nil {
-			return nil, err
+		if l, ok := survivors[code]; ok {
+			out[k] = l
 		}
-		out[k] = l
 	}
 	return out, nil
 }
@@ -218,44 +222,56 @@ func (s *Store) Links(ctx context.Context, refs []contentref.ContentRef) (map[co
 
 const maxHops = 4
 
-// Resolve returns the link a code names, following a merge to the survivor.
-// ErrNotFound when the tenant has no such code.
-func (s *Store) Resolve(ctx context.Context, code Code) (Link, error) {
-	if !code.Valid() {
-		return Link{}, ErrInvalidCode
+// Resolve returns the link each code names, following merges to the
+// survivor; a code the tenant does not have is absent. A code not in
+// canonical form is ErrInvalidCode.
+func (s *Store) Resolve(ctx context.Context, cs []Code) (map[Code]Link, error) {
+	out := make(map[Code]Link, len(cs))
+	// at maps each code to look up to the asked codes leading to it.
+	at := map[Code][]Code{}
+	for _, c := range cs {
+		if !c.Valid() {
+			return nil, ErrInvalidCode
+		}
+		at[c] = []Code{c}
 	}
-	for hop := 0; hop < maxHops; hop++ {
-		rows, err := s.q().Query(ctx, fmt.Sprintf(`SELECT %s FROM %s.content_codes c
+	for hop := 0; len(at) > 0; hop++ {
+		if hop == maxHops {
+			return nil, fmt.Errorf("contenturl: a code redirects more than %d times", maxHops)
+		}
+		pending := make([]string, 0, len(at))
+		for c := range at {
+			pending = append(pending, string(c))
+		}
+		rows, err := s.q().Query(ctx, fmt.Sprintf(`SELECT %s, c.code FROM %s.content_codes c
  JOIN %[2]s.content_codes t ON t.tenant_id = c.tenant_id AND t.code = coalesce(c.merged_into, c.code)
- WHERE c.tenant_id = $1 AND c.code = $2`, linkColumns, s.qs), s.tenant, string(code))
+ WHERE c.tenant_id = $1 AND c.code = ANY($2)`, linkColumns, s.qs), s.tenant, pending)
 		if err != nil {
-			return Link{}, err
+			return nil, err
 		}
-		l, merged, found, err := s.one(rows)
-		if err != nil {
-			return Link{}, err
+		next := map[Code][]Code{}
+		for rows.Next() {
+			var from string
+			l, merged, err := s.scanLink(rows, &from)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			for _, asked := range at[Code(from)] {
+				if merged == "" {
+					out[asked] = l
+				} else {
+					next[Code(merged)] = append(next[Code(merged)], asked)
+				}
+			}
 		}
-		if !found {
-			return Link{}, fmt.Errorf("%w: code %s", ErrNotFound, code)
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
 		}
-		if merged == "" {
-			return l, nil
-		}
-		code = Code(merged)
+		at = next
 	}
-	return Link{}, fmt.Errorf("contenturl: code %s redirects more than %d times", code, maxHops)
-}
-
-func (s *Store) one(rows codes.Rows) (Link, string, bool, error) {
-	defer rows.Close()
-	if !rows.Next() {
-		return Link{}, "", false, rows.Err()
-	}
-	l, merged, err := s.scanLink(rows)
-	if err != nil {
-		return Link{}, "", false, err
-	}
-	return l, merged, true, rows.Err()
+	return out, nil
 }
 
 // Merge makes from's code redirect to into's: both stay valid, from's resolves
@@ -273,40 +289,71 @@ func (s *Store) Merge(ctx context.Context, from, into contentref.ContentRef) err
 	return s.write(ctx, func(q codes.Querier) error { return codes.Merge(ctx, q, s.qs, s.tenant, f, t) })
 }
 
+// AliasKey names another system's identifier: the system (an import
+// batch's source), the identifier's space and the identifier.
+type AliasKey struct {
+	Source string `json:"source"`
+	Kind   string `json:"kind"`
+	Key    string `json:"key"`
+}
+
 // AliasMatch is what an alias resolves to.
 type AliasMatch struct {
 	Link
 	Locator string
 }
 
-// ResolveAlias returns what an alias names, following merges.
-func (s *Store) ResolveAlias(ctx context.Context, source, legacyKind, key string) (AliasMatch, error) {
-	if err := codes.ValidAlias(source, legacyKind, key); err != nil {
-		return AliasMatch{}, err
+// ResolveAliases returns what each alias names, following merges, in keys'
+// order: nil for one the tenant does not have.
+func (s *Store) ResolveAliases(ctx context.Context, keys []AliasKey) ([]*AliasMatch, error) {
+	out := make([]*AliasMatch, len(keys))
+	if len(keys) == 0 {
+		return out, nil
 	}
-	rows, err := s.q().Query(ctx, fmt.Sprintf(`SELECT code, coalesce(locator, '') FROM %s.content_code_aliases
- WHERE tenant_id = $1 AND source = $2 AND legacy_kind = $3 AND legacy_key = $4`, s.qs), s.tenant, source, legacyKind, key)
+	sources, kinds, ks := make([]string, len(keys)), make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		if err := codes.ValidAlias(k.Source, k.Kind, k.Key); err != nil {
+			return nil, err
+		}
+		sources[i], kinds[i], ks[i] = k.Source, k.Kind, k.Key
+	}
+	rows, err := s.q().Query(ctx, fmt.Sprintf(`SELECT r.i, a.code, coalesce(a.locator, '')
+ FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS r(source, kind, key, i)
+ JOIN %s.content_code_aliases a ON a.tenant_id = $1 AND a.source = r.source AND a.legacy_kind = r.kind AND a.legacy_key = r.key`, s.qs),
+		s.tenant, sources, kinds, ks)
 	if err != nil {
-		return AliasMatch{}, err
+		return nil, err
 	}
-	var code, locator string
-	found := rows.Next()
-	if found {
-		err = rows.Scan(&code, &locator)
+	type hit struct {
+		code    Code
+		locator string
+	}
+	hits := map[int]hit{}
+	var found []Code
+	for rows.Next() {
+		var i int
+		var code string
+		var h hit
+		if err := rows.Scan(&i, &code, &h.locator); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		h.code = Code(code)
+		hits[i-1] = h
+		found = append(found, h.code)
 	}
 	rows.Close()
-	if err == nil {
-		err = rows.Err()
+	if err := rows.Err(); err != nil || len(found) == 0 {
+		return out, err
 	}
+	links, err := s.Resolve(ctx, found)
 	if err != nil {
-		return AliasMatch{}, err
+		return nil, err
 	}
-	if !found {
-		return AliasMatch{}, fmt.Errorf("%w: alias %s/%s %q", ErrNotFound, source, legacyKind, key)
+	for i, h := range hits {
+		if l, ok := links[h.code]; ok {
+			out[i] = &AliasMatch{Link: l, Locator: h.locator}
+		}
 	}
-	l, err := s.Resolve(ctx, Code(code))
-	if err != nil {
-		return AliasMatch{}, err
-	}
-	return AliasMatch{Link: l, Locator: locator}, nil
+	return out, nil
 }

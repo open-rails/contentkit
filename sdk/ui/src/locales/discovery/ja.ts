@@ -48,6 +48,7 @@ export const discovery: typeof en = {
     sort_popular: "人気",
     sort_top_rated: "高評価",
     sort_most_favorited: "お気に入り数",
+    sort_most_viewed: "閲覧数",
     sort_random: "ランダム",
     sort_position: "順番",
     period_7d: "今週",
