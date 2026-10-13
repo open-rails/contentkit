@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -33,6 +34,7 @@ import (
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/contract"
+	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -265,20 +267,57 @@ func (w *world) person(role iam.Role) (authtest.User, string) {
 // server serves the engine's routes under prefix, every response held to
 // the route catalog.
 type server struct {
-	t       *testing.T
-	h       http.Handler
-	checker *contract.Checker
-	mu      sync.Mutex
-	broken  []string
+	t      *testing.T
+	h      http.Handler
+	mu     sync.Mutex
+	broken []string
+}
+
+// suiteChecker holds every server of the suite to the route catalog and
+// collects the routes they reached.
+var suiteChecker = sync.OnceValues(func() (*contract.Checker, error) { return contract.NewChecker(os.DirFS("..")) })
+
+// TestMain fails a full run (no -run or -skip) that left a catalog route
+// unreached by every test.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if code == 0 && flag.Lookup("test.run").Value.String() == "" && flag.Lookup("test.skip").Value.String() == "" {
+		if missing := unreached(); len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "routes no test reached:\n  %s\n", strings.Join(missing, "\n  "))
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// unreached is the catalog's routes no server reached; none when no test
+// served (all skipped).
+func unreached() []string {
+	checker, err := suiteChecker()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	served := checker.Served()
+	if len(served) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, r := range httpapi.Catalog() {
+		if !served[contract.RouteID(r)] {
+			missing = append(missing, contract.RouteID(r))
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 func serve(t *testing.T, e *contentkit.Engine) *server {
 	t.Helper()
-	checker, err := contract.NewChecker(os.DirFS(".."))
+	checker, err := suiteChecker()
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{t: t, checker: checker}
+	s := &server{t: t}
 	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: e.RouteGroups()})
 	if err != nil {
 		t.Fatal(err)

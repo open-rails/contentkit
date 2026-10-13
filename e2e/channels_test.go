@@ -319,9 +319,10 @@ func (v countedVerified) Can(ctx context.Context, scope auth.Scope, perm string)
 	return v.Verified.(auth.PermissionChecker).Can(ctx, scope, perm)
 }
 
-// A signed-in reader of a published channel post costs AuthKit no editor
-// check, and a failing one never fails it; the channel's writer still sees
-// its draft, and a failing check hides a draft rather than answering 503.
+// A signed-in reader's detail of a published channel post asks AuthKit once
+// whether they edit it, and a failing check never fails it; the channel's
+// writer still sees its draft, and a failing check hides a draft rather than
+// answering 503.
 func TestChannelPostReads(t *testing.T) {
 	w := newWorld(t)
 	writer, writerToken := w.person(iam.Role{})
@@ -349,8 +350,8 @@ func TestChannelPostReads(t *testing.T) {
 	counter.asked.Store(0)
 	var got catalog.Content
 	f.want(http.StatusOK, readerToken, "GET", "/contents/"+post.ID, nil, &got)
-	if got.ID != post.ID || got.Editor || counter.asked.Load() != 0 {
-		t.Fatalf("published read %+v: %d group checks, want none", got, counter.asked.Load())
+	if got.ID != post.ID || got.Editor || counter.asked.Load() != 1 {
+		t.Fatalf("published read %+v: %d group checks, want one", got, counter.asked.Load())
 	}
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+draft.ID, nil, &got)
 	if !got.Editor || counter.asked.Load() == 0 {

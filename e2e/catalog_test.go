@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +24,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
-	"github.com/open-rails/contentkit/internal/contract"
-	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/notification"
@@ -34,8 +31,8 @@ import (
 )
 
 // One mount serves every module at its sub-path, and every route answers
-// what the catalog declares: each response of this scenario is checked
-// against its route, and every route of the catalog is reached.
+// what the catalog declares: each response is checked against its route
+// (the suite reaches every route: TestMain).
 func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
@@ -297,17 +294,6 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	mediaScenario(t, f, album, user, anon)
 	versionsScenario(t, w, f, staff, o.ID, owner, user, anon)
 
-	served := f.checker.Served()
-	var missing []string
-	for _, r := range httpapi.Catalog() {
-		if !served[contract.RouteID(r)] {
-			missing = append(missing, contract.RouteID(r))
-		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Errorf("routes this scenario never reached:\n  %s", strings.Join(missing, "\n  "))
-	}
 }
 
 func mediaScenario(t *testing.T, f *server, album, user, anon string) {
@@ -364,8 +350,9 @@ func mediaScenario(t *testing.T, f *server, album, user, anon string) {
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 6 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
-		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" {
+	if len(presets) != 7 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" ||
+		!slices.ContainsFunc(presets, func(p media.PresetRule) bool { return p.Kind == "blog.body" && p.Name == "inline" }) {
 		t.Fatalf("presets %+v", presets)
 	}
 }

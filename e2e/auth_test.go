@@ -16,6 +16,7 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/media"
 )
 
 // ContentKit's gates over a real AuthKit: anonymous without a credential,
@@ -81,7 +82,8 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
 		{"groups of the site's, without the permission", user, "POST", "/groups", []map[string]string{{"kind": "tag", "slug": "nope"}}, 403, ""},
 		{"groups, an application holding it", app, "POST", "/groups", []any{}, 201, ""},
-		{"upload, an application", app, "POST", "/media/upload/abort", map[string]string{"ticket": "x"}, 403, ""},
+		{"upload, a person who doesn't edit it", user, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album}, "cover", []byte("x")), 403, ""},
+		{"upload, an application holding it", app, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album}, "cover", []byte("x")), 200, ""},
 		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + album, nil, 401, `Bearer error="invalid_token"`},
 		{"media read, anonymous", "", "GET", "/media/album/" + album, nil, 200, ""},
 	} {
