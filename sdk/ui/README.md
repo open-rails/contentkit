@@ -229,7 +229,7 @@ op. Nothing is uploaded.
 ### usePublicImage
 
 ```tsx
-const { image, rule, isDefault } = usePublicImage("user", userId, "avatar");
+const { image, rule, isDefault } = usePublicImage({ kind: "user", id: userId }, "avatar");
 <SlotImage image={image} fallback={<Initials name={name} />} />
 ```
 

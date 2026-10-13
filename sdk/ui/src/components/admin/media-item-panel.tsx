@@ -172,7 +172,7 @@ function SourceSection({ item, path, video, client, onError }: { item: RefBody; 
 function PosterSection({ item, path, video, preset, client, onError }: { item: RefBody; path: string; video: string; preset: string; client: ContentKitClient; onError?: Inner["onError"] }) {
   const { t } = useMessages();
   const [open, setOpen] = useState(false);
-  const { image, reload } = usePublicImage(item.kind, item.id, preset, { client });
+  const { image, reload } = usePublicImage(item, preset, { client });
   return (
     <section className="grid gap-2" data-ckui="media-poster">
       <h3 className="font-medium">{t("mediaPanel.poster")}</h3>

@@ -29,7 +29,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     const ref = { kind: "user", id: alice.id };
     const r = recorder();
     const c = client(h, cfg, alice, { record: r });
-    const { result } = renderHook(() => usePublicImage("user", alice.id, "avatar"), { wrapper: wrap(c) });
+    const { result } = renderHook(() => usePublicImage({ kind: "user", id: alice.id }, "avatar"), { wrapper: wrap(c) });
     await waitFor(() => expect(result.current.loading).toBe(false), wait);
     // The harness's avatar preset declares no default: no URL that would 404.
     expect(result.current).toMatchObject({ image: null, isDefault: false, rule: { kind: "user", name: "avatar", from: "avatar", namespace: "accounts", widths: [64, 128, 256], aspect: "1:1", default: false } });
@@ -46,7 +46,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     expect(result.current.image).toMatchObject({ preset: "avatar", aspect: "1:1" });
 
     const reads = r.calls.filter((x) => x === "/read").length;
-    const listed = renderHook(() => usePublicImage("user", alice.id, "avatar", { image: { preset: "avatar", renditions: own } }), { wrapper: wrap(c) });
+    const listed = renderHook(() => usePublicImage({ kind: "user", id: alice.id }, "avatar", { image: { preset: "avatar", renditions: own } }), { wrapper: wrap(c) });
     expect(listed.result.current.image?.renditions).toEqual(own);
     expect(r.calls.filter((x) => x === "/read").length).toBe(reads);
   });
@@ -58,7 +58,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     await client(h, cfg, bob).media.waitFor(ref, "avatar", wait);
     // A fresh client fetches the presets once: that request is refused.
     await h.faults([{ fault: "api", path: "/api/contentkit/v1/media/presets", method: "GET", status: 404, code: "not_found", times: 1 }]);
-    const { result } = renderHook(() => usePublicImage("user", bob.id, "avatar"), { wrapper: wrap(client(h, cfg, bob)) });
+    const { result } = renderHook(() => usePublicImage({ kind: "user", id: bob.id }, "avatar"), { wrapper: wrap(client(h, cfg, bob)) });
     await waitFor(() => expect(result.current.image?.renditions.length).toBeGreaterThan(0), wait);
     expect(result.current.rule).toBeUndefined();
     expect(result.current.isDefault).toBe(false);

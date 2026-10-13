@@ -46,8 +46,8 @@ for (const mode of ["alone", "router"] as const) {
       await page.keyboard.press("End");
       await flow.locator("[data-ckui=rich-text-editor] input[type=file]").setInputFiles(small);
       await expect.poll(() => imagesLoaded(page), { timeout: 30_000 }).toBe(true);
-      await flow.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(flow.getByText("Saved.")).toBeVisible();
+      await form.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(form.getByText("Saved.")).toBeVisible();
       const ck = contentKit(h, editor);
       await expect.poll(async () => (await ck.contents.get(id)).text?.en?.body, { timeout: 15_000 }).toMatch(/<img src="contentkit:i-[0-9a-f-]{36}"/);
 
@@ -58,11 +58,11 @@ for (const mode of ["alone", "router"] as const) {
       await page.screenshot({ path: `${dir}/content-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
 
       // Scheduled, then published now.
-      await flow.getByLabel("Goes live (optional)").fill(localInput(new Date(Date.now() + 3 * 86_400_000)));
-      await flow.getByRole("button", { name: "Publish" }).click();
+      await form.getByLabel("Goes live (optional)").fill(localInput(new Date(Date.now() + 3 * 86_400_000)));
+      await form.getByRole("button", { name: "Publish" }).click();
       await expect(form.getByText("Scheduled", { exact: true })).toBeVisible();
-      await flow.getByLabel("Goes live (optional)").fill("");
-      await flow.getByRole("button", { name: "Publish" }).click();
+      await form.getByLabel("Goes live (optional)").fill("");
+      await form.getByRole("button", { name: "Publish" }).click();
       await expect(form.getByText("Published", { exact: true })).toBeVisible();
 
       // The list, then delete and restore.
