@@ -111,7 +111,8 @@ func newWorld(t *testing.T) *world {
 }
 
 // mediaConfig is the site's media registry: albums' content-level files,
-// books' versions, blog images, accounts' avatars and poll images.
+// books' versions, blog images, accounts' avatars, poll images and the
+// covers of a record the host keeps (request).
 func (w *world) mediaConfig() media.Config {
 	images := []string{"image/png"}
 	folder := func(name string) media.Kind {
@@ -139,6 +140,8 @@ func (w *world) mediaConfig() media.Config {
 				Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
 					Image: media.Image{Aspect: media.Square}, Default: "avatar.png"}}},
 			blog, folder("poll"),
+			{Name: "request", KeepOriginals: true, Uploads: []media.Upload{{Path: "cover", Types: images, MaxBytes: 1 << 20}},
+				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}}}},
 		},
 		Avatars: media.Avatars{Kind: "user", Preset: "avatar"}}
 }

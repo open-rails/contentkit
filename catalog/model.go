@@ -121,14 +121,33 @@ type Version struct {
 	Text map[string]VersionText `json:"text,omitempty"`
 	// Offer is the version's current offer, for its offer editors.
 	Offer *offers.Offer `json:"offer,omitempty"`
+	// Viewer is the signed-in reader's standing with the version.
+	Viewer *ViewerState `json:"viewer,omitempty"`
 }
 
-// GroupSummary names one group a content item belongs to.
+// ViewerState is a signed-in reader's own standing with a content item or
+// version: their favorite and, with a signal plane, where they are in it.
+type ViewerState struct {
+	Favorited bool `json:"favorited"`
+	// Seen, Completed, Progress, ProgressMax and Resume (the client's own
+	// pointer, such as a page) come from the signal plane.
+	Seen        bool       `json:"seen"`
+	Completed   bool       `json:"completed"`
+	Progress    uint32     `json:"progress"`
+	ProgressMax uint32     `json:"progress_max"`
+	Resume      string     `json:"resume,omitempty"`
+	LastViewAt  *time.Time `json:"last_view_at,omitempty"`
+}
+
+// GroupSummary names one group a content item belongs to; Code and Path are
+// its page, as content's are, when its kind has one.
 type GroupSummary struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+	Code string `json:"code,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 // Content is a content item as a viewer sees it: its text in the viewer's
@@ -175,6 +194,9 @@ type Content struct {
 	// Views counts its distinct viewers of all time plus its imported legacy
 	// view count, as cards' counts.views do.
 	Views int64 `json:"views"`
+	// Viewer is the signed-in reader's standing with the item, to resume
+	// it; each version carries its own.
+	Viewer *ViewerState `json:"viewer,omitempty"`
 	// Editor: the viewer may edit it; the fields below are theirs.
 	Editor           bool            `json:"editor"`
 	Text             map[string]Text `json:"text,omitempty"`

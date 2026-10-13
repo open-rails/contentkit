@@ -186,6 +186,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, user, "POST", item+"/favorite", nil, nil)
 	f.want(http.StatusOK, user, "GET", item+"/favorite", nil, nil)
 	f.want(http.StatusOK, user, "GET", "/me/favorites", nil, nil)
+	var detail catalog.Content
+	f.want(http.StatusOK, user, "GET", item, nil, &detail)
+	if v := detail.Viewer; v == nil || !v.Favorited || v.Seen || len(detail.Versions) != 1 || detail.Versions[0].Viewer == nil {
+		t.Fatalf("the reader's standing on detail %+v", detail)
+	}
+	var anonymous catalog.Content
+	if f.want(http.StatusOK, anon, "GET", item, nil, &anonymous); anonymous.Viewer != nil {
+		t.Fatalf("anonymous standing %+v", anonymous.Viewer)
+	}
 	f.want(http.StatusOK, user, "DELETE", item+"/favorite", nil, nil)
 
 	// Polls.
@@ -265,6 +274,18 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "GET", "/contents/"+g1+"/groups?language=en", nil, &held)
 	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
 		t.Fatalf("content groups %+v", held)
+	}
+	// Content detail names its groups with their pages, as cards do.
+	var named catalog.Content
+	f.want(http.StatusOK, anon, "GET", "/contents/"+g1+"?language=ja", nil, &named)
+	routes := map[string]string{"tag": "/ja/tags/", "series": "/ja/series/"}
+	for _, g := range named.Groups {
+		if g.Code == "" || !strings.HasPrefix(g.Path, routes[g.Kind]+g.Code+"/") {
+			t.Fatalf("group page %+v", g)
+		}
+	}
+	if len(named.Groups) != 3 {
+		t.Fatalf("detail groups %+v", named.Groups)
 	}
 	f.want(http.StatusOK, staff, "POST", "/groups/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)
@@ -355,7 +376,7 @@ func mediaScenario(t *testing.T, f *server, album, user, anon string) {
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 7 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+	if len(presets) != 8 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
 		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" ||
 		!slices.ContainsFunc(presets, func(p media.PresetRule) bool { return p.Kind == "blog.body" && p.Name == "inline" }) {
 		t.Fatalf("presets %+v", presets)

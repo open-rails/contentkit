@@ -536,28 +536,23 @@ func (s *Store) links(ctx context.Context, items map[string]*itemRow) (map[strin
 	return out, rows.Err()
 }
 
-// groupSummaries names groups in language, falling back to any name.
+// groupSummaries names the active groups among ids in language, with their
+// pages' paths, as group cards do.
 func (s *Store) groupSummaries(ctx context.Context, ids []string, language string) (map[string]GroupSummary, error) {
 	out := map[string]GroupSummary{}
-	if len(ids) == 0 {
+	if len(ids) == 0 || s.groups == nil {
 		return out, nil
 	}
-	if language == "" {
-		language = s.defaultLanguage()
+	gids := make([]groups.GroupID, len(ids))
+	for i, id := range ids {
+		gids[i] = groups.GroupID(id)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT g.id, g.kind, g.slug, coalesce((SELECT n.name FROM `+s.t.groupNames+` n
- WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $3 DESC, n.language = $4 DESC, n.language LIMIT 1), g.slug)
- FROM `+s.t.groups+` g WHERE g.tenant_id = $1 AND g.id = ANY($2) AND g.state = 'active'`, s.tenant, ids, language, s.defaultLanguage())
+	cards, err := s.groups.Cards(ctx, gids, groups.CardOptions{Language: language})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var g GroupSummary
-		if err := rows.Scan(&g.ID, &g.Kind, &g.Slug, &g.Name); err != nil {
-			return nil, err
-		}
-		out[g.ID] = g
+	for _, g := range cards {
+		out[string(g.ID)] = GroupSummary{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, Name: g.Name, Code: g.Code, Path: g.Path}
 	}
-	return out, rows.Err()
+	return out, nil
 }

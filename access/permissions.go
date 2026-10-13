@@ -12,7 +12,7 @@ const (
 	// item, and see everything.
 	ContentWrite Permission = "root:content:write"
 	// ContentViewRestricted: see every content item, whatever its state,
-	// listing, site scope or access.
+	// listing, site scope or access, and the site's content statistics.
 	ContentViewRestricted Permission = "root:content:view-restricted"
 	// PollsWrite: create, edit and delete polls, their options and images,
 	// and see scheduled and inactive ones.

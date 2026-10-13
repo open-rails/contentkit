@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/ext"
@@ -656,4 +657,50 @@ HAVING strength > 0%[5]s, insert_deduplication_token = ?`, st.db, escapeCHString
 		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}
 	return nil
+}
+
+// DayActivity is one UTC day of a kind's views: view sessions and the
+// distinct subjects, and signed-in subjects, who viewed.
+type DayActivity struct {
+	Day     time.Time
+	Views   uint64
+	Viewers uint64
+	Users   uint64
+}
+
+// Activity returns a content kind's work-level view activity per UTC day of
+// the window, newest first; days without views are absent.
+func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window Window) ([]DayActivity, error) {
+	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(contentKind) == "" {
+		return nil, fmt.Errorf("signal: tenant and contentKind are required")
+	}
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
+	pred, predArgs := window.dayPredicate("day")
+	q := fmt.Sprintf(`SELECT day, toUInt64(sum(s_views)), toUInt64(countIf(s_views > 0)), toUInt64(countIf(s_views > 0 AND subject_kind = '%[1]s'))
+FROM (
+    SELECT day, subject_kind, subject, sum(views) AS s_views
+    FROM %[2]s.subject_content_daily FINAL
+    WHERE tenant = ? AND content_kind = ?%[3]s AND events > 0%[4]s AND %[5]s
+    GROUP BY day, subject_kind, subject
+)
+GROUP BY day
+HAVING sum(s_views) > 0
+ORDER BY day DESC%[6]s`, SubjectKindUser, st.db, workLevel, pred, st.notErased(), finalSettings)
+	rows, err := st.conn.Query(ctx, q, append([]any{tenant, contentKind}, predArgs...)...)
+	if err != nil {
+		return nil, fmt.Errorf("signal: activity: %w", err)
+	}
+	defer rows.Close()
+	var out []DayActivity
+	for rows.Next() {
+		var d DayActivity
+		if err := rows.Scan(&d.Day, &d.Views, &d.Viewers, &d.Users); err != nil {
+			return nil, fmt.Errorf("signal: activity scan: %w", err)
+		}
+		d.Day = utcDay(d.Day)
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

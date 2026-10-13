@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
@@ -38,12 +39,12 @@ type Card struct {
 	Groups map[string][]Chip `json:"groups"`
 	// Owner is the owner group's card (a channel's name, path, avatar and
 	// cover).
-	Owner       *groups.GroupCard `json:"owner,omitempty"`
-	Counts      Counts            `json:"counts"`
-	Access      CardAccess        `json:"access"`
-	Viewer      *ViewerState      `json:"viewer,omitempty"`
-	PublishedAt *time.Time        `json:"published_at,omitempty"`
-	Attributes  map[string]any    `json:"attributes"`
+	Owner       *groups.GroupCard    `json:"owner,omitempty"`
+	Counts      Counts               `json:"counts"`
+	Access      CardAccess           `json:"access"`
+	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`
+	PublishedAt *time.Time           `json:"published_at,omitempty"`
+	Attributes  map[string]any       `json:"attributes"`
 }
 
 // CardVersion is the version a card shows.
@@ -87,18 +88,6 @@ type CardAccess struct {
 	// Offers are the purchasable offers of Sell's keys; tiers are the host's
 	// to label.
 	Offers []offers.Sale `json:"offers,omitempty"`
-}
-
-// ViewerState is the signed-in reader's own standing with a content item.
-type ViewerState struct {
-	Favorited bool `json:"favorited"`
-	// Seen, Completed and Progress come from the signal plane.
-	Seen        bool       `json:"seen"`
-	Completed   bool       `json:"completed"`
-	Progress    uint32     `json:"progress"`
-	ProgressMax uint32     `json:"progress_max"`
-	Resume      string     `json:"resume,omitempty"`
-	LastViewAt  *time.Time `json:"last_view_at,omitempty"`
 }
 
 // ContentPage is one page of cards.
@@ -371,51 +360,69 @@ func person(a access.Actor) string {
 	return ""
 }
 
-// viewerState fills a signed-in reader's favorites and, with a signal plane,
-// their progress. A failed signal read leaves progress out.
+// viewerState fills a signed-in reader's standing with the cards' items.
 func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []cardRow) error {
 	if !actor.Person() || len(rows) == 0 {
 		return nil
 	}
-	kinds, ids := make([]string, len(rows)), make([]string, len(rows))
 	refs := make([]contentref.ContentRef, len(rows))
 	for i, c := range rows {
-		kinds[i], ids[i] = c.Kind, c.ID
 		refs[i] = contentref.New(s.o.Tenant, c.Kind, c.ID)
-		rows[i].Viewer = &ViewerState{}
 	}
-	fav, err := s.o.Pool.Query(ctx, `SELECT f.content_id FROM `+s.t.favorites+` f JOIN unnest($3::text[], $4::text[]) AS r(kind, id)
- ON f.content_kind = r.kind AND f.content_id = r.id WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_version_id IS NULL AND f.value = 1`,
-		s.o.Tenant, actor.ID, kinds, ids)
-	if err != nil {
-		return err
-	}
-	favorited, err := pgx.CollectRows(fav, pgx.RowTo[string])
+	got, err := s.Standing(ctx, actor, refs)
 	if err != nil {
 		return err
 	}
 	for i := range rows {
-		rows[i].Viewer.Favorited = slices.Contains(favorited, rows[i].ID)
+		rows[i].Viewer = &got[i]
+	}
+	return nil
+}
+
+// Standing is a signed-in person's standing with content items and versions,
+// per ref in order: their favorites and, with a signal plane, their progress.
+// A failed signal read leaves progress out.
+func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]catalog.ViewerState, error) {
+	out := make([]catalog.ViewerState, len(refs))
+	if !actor.Person() || len(refs) == 0 {
+		return out, nil
+	}
+	kinds, ids, versions := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+	for i, r := range refs {
+		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
+	}
+	fav, err := s.o.Pool.Query(ctx, `SELECT r.n FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
+ WHERE EXISTS (SELECT 1 FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_kind = r.kind AND f.content_id = r.id
+  AND f.content_version_id IS NOT DISTINCT FROM nullif(r.version, '') AND f.value = 1)`, s.o.Tenant, actor.ID, kinds, ids, versions)
+	if err != nil {
+		return nil, err
+	}
+	favorited, err := pgx.CollectRows(fav, pgx.RowTo[int64])
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range favorited {
+		out[n-1].Favorited = true
 	}
 	if s.recs == nil {
-		return nil
+		return out, nil
 	}
 	states, err := s.o.Hub.States(ctx, signal.Subject{UserID: actor.ID}, refs)
 	if err != nil {
 		s.o.Logger.WarnContext(ctx, "discovery: viewer progress unavailable", "err", err)
-		return nil
+		return out, nil
 	}
 	for i, ref := range refs {
 		st, ok := states[ref.Key()]
 		if !ok {
 			continue
 		}
-		v := rows[i].Viewer
+		v := &out[i]
 		v.Seen, v.Completed, v.Progress, v.ProgressMax, v.Resume = st.Seen, st.Completed, st.MaxProgress, st.ProgressMax, st.Resume
 		if !st.LastViewAt.IsZero() {
 			t := st.LastViewAt
 			v.LastViewAt = &t
 		}
 	}
-	return nil
+	return out, nil
 }

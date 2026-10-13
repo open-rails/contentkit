@@ -68,6 +68,12 @@ type Offers interface {
 	Current(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []offers.Target) ([]*offers.Offer, error)
 }
 
+// Standing reads a signed-in person's standing with content items and
+// versions, per ref in order: *discovery.Service.
+type Standing interface {
+	Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]ViewerState, error)
+}
+
 // Sanitizer cleans rich text on write: content.ContentProcessor.
 type Sanitizer = content.ContentProcessor
 
@@ -118,6 +124,7 @@ type Store struct {
 	moderator Moderation
 	body      Sanitizer
 	media     *Media
+	standing  Standing
 	retention time.Duration
 	documents func(ctx context.Context, q Querier) error
 	now       func() time.Time
@@ -197,6 +204,41 @@ func (s *Store) BindModeration(m Moderation) {
 	if s.moderator == nil {
 		s.moderator = m
 	}
+}
+
+// BindStanding fills detail reads' viewer state from st; call it once,
+// before serving.
+func (s *Store) BindStanding(st Standing) { s.standing = st }
+
+// fillStanding attaches a signed-in person's standing with each item and
+// its versions, in one read.
+func (s *Store) fillStanding(ctx context.Context, actor access.Actor, items []*Content) error {
+	if s.standing == nil || !actor.Person() {
+		return nil
+	}
+	var refs []contentref.ContentRef
+	var into []**ViewerState
+	for _, c := range items {
+		if c == nil {
+			continue
+		}
+		ref := s.Ref(c.Kind, c.ID)
+		refs, into = append(refs, ref), append(into, &c.Viewer)
+		for i := range c.Versions {
+			refs, into = append(refs, ref.WithVersion(c.Versions[i].ID)), append(into, &c.Versions[i].Viewer)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	got, err := s.standing.Standing(ctx, actor, refs)
+	if err != nil {
+		return err
+	}
+	for i := range got {
+		*into[i] = &got[i]
+	}
+	return nil
 }
 
 // Tenant is the store's tenant.

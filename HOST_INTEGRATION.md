@@ -560,7 +560,10 @@ visibility rule (access, site scope, content filters, listing and language)
 over `content_facets`, and answers one card per content item with the version
 that fits the reader (`display_language` first, then position).
 
-- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `traits`,
+- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `owner_group`,
+  `creators` (credited user ids), `access` (`public`: what anyone opens now;
+  `tier`, `group`, `ppv`, `group_ppv`: what stays locked at that level),
+  `tiers` (locked behind one of them: a subscribe page's premium), `traits`,
   `attribute=name:value` (declared filterable attributes), `released_on`
   (`YYYY-MM-DD` or `YYYY-MM`, in `tz`), `view_status`
   (`unseen|in_progress|completed`, signed in), `language` (only content
@@ -582,6 +585,14 @@ that fits the reader (`display_language` first, then position).
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
   liked and disliked, contents as cards or groups, most recent first.
+- `GET /sitemap/contents?kind=`, `GET /sitemap/groups?kind=` (open): the
+  request site's live, listed pages by id (`cursor`, up to 10000 a page),
+  each with `lastmod` and its path per language it serves. Content filters
+  and access don't apply.
+- Staff (`root:content:view-restricted`): `GET /stats/activity` (views,
+  viewers and signed-in viewers per day) and `GET /stats/top` (`metric`
+  views or comments, `period`, `access`, `tiers`). `GET /me/stats`: the
+  reader's finished contents per kind, comments and the reactions they got.
 - `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
   searches, one per query, newest first, which `GET /search` keeps (its
   `session` names a signed-out browser). A clear hides what came before it
@@ -592,7 +603,9 @@ A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
 (`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
-reader's favorite and progress, `published_at` and attributes. Without a
+reader's favorite and progress, `published_at` and attributes. Content
+detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
+`viewer` standing on the item and each version, to resume from. Without a
 signal plane (no ClickHouse, or one `New` can't reach, which fails the
 `contentkit_clickhouse` probe) the engine runs on Postgres: `GET /v1/kinds`
 says `"signals": false`, contentkit-ui sends no signals or exposures, popular
@@ -687,6 +700,11 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
 
+- **Site images.** A kind no content or group kind owns (nor `Avatars`, nor
+  `poll`) holds images of records the host keeps, keyed by the host's id:
+  Doujins' translation requests' covers. In the engine anyone reads its
+  public files (`GET /v1/media/{kind}/{id}`) and holders of
+  `root:content:write` or `root:import:write` upload them.
 - **Account avatars.** Import `github.com/open-rails/contentkit/media/avatar`
   and register `avatar.User()` for the standard shared user-avatar kind. It
   accepts JPEG, PNG and WebP up to 10 MiB, renders square WebP images at

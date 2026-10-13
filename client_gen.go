@@ -1893,6 +1893,12 @@ type GetContentsQuery struct {
 	ExcludeGroups []string
 	// owner group ids (channels): only content one of them owns
 	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1932,6 +1938,15 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if len(q.OwnerGroup) > 0 {
 		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -1991,6 +2006,12 @@ type GetSearchQuery struct {
 	ExcludeGroups []string
 	// owner group ids (channels): only content one of them owns
 	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -2037,6 +2058,15 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if len(q.OwnerGroup) > 0 {
 		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -2151,6 +2181,12 @@ type GetContentSimilarQuery struct {
 	ExcludeGroups []string
 	// owner group ids (channels): only content one of them owns
 	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -2186,6 +2222,15 @@ func (q GetContentSimilarQuery) values() url.Values {
 	}
 	if len(q.OwnerGroup) > 0 {
 		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -2237,6 +2282,12 @@ type GetRecommendationsQuery struct {
 	ExcludeGroups []string
 	// owner group ids (channels): only content one of them owns
 	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -2272,6 +2323,15 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if len(q.OwnerGroup) > 0 {
 		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -2325,6 +2385,12 @@ type GetReleaseDatesQuery struct {
 	ExcludeGroups []string
 	// owner group ids (channels): only content one of them owns
 	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -2363,6 +2429,15 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if len(q.OwnerGroup) > 0 {
 		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -2701,6 +2776,152 @@ func (q DeleteMeSearchesQuery) values() url.Values {
 // DeleteMeSearches is DELETE /v1/me/searches (public). Clears the reader's recent searches: one query, or every one so far.
 func (c *Client) DeleteMeSearches(ctx context.Context, q DeleteMeSearchesQuery) error {
 	return c.call(ctx, http.MethodDelete, "/v1/me/searches", q.values(), nil, nil)
+}
+
+// GetSitemapContentsQuery is the query of GetSitemapContents.
+type GetSitemapContentsQuery struct {
+	// the content kind; required
+	Kind string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 1000 by default, at most 10000
+	Limit int
+}
+
+func (q GetSitemapContentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetSitemapContents is GET /v1/sitemap/contents (open). Pages through the site's public content pages of one kind, by id, for host sitemaps: live, listed and in the request's site scope, each with every language it serves.
+func (c *Client) GetSitemapContents(ctx context.Context, q GetSitemapContentsQuery) (discovery.SitemapPage, error) {
+	var out discovery.SitemapPage
+	err := c.call(ctx, http.MethodGet, "/v1/sitemap/contents", q.values(), nil, &out)
+	return out, err
+}
+
+// GetSitemapGroupsQuery is the query of GetSitemapGroups.
+type GetSitemapGroupsQuery struct {
+	// the group kind; required
+	Kind string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 1000 by default, at most 10000
+	Limit int
+}
+
+func (q GetSitemapGroupsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetSitemapGroups is GET /v1/sitemap/groups (open). Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.
+func (c *Client) GetSitemapGroups(ctx context.Context, q GetSitemapGroupsQuery) (discovery.SitemapPage, error) {
+	var out discovery.SitemapPage
+	err := c.call(ctx, http.MethodGet, "/v1/sitemap/groups", q.values(), nil, &out)
+	return out, err
+}
+
+// GetStatsActivityQuery is the query of GetStatsActivity.
+type GetStatsActivityQuery struct {
+	// the content kind; required
+	Kind string
+	// the last days, today included: 7 by default, at most 90
+	Days int
+}
+
+func (q GetStatsActivityQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Days != 0 {
+		v.Set("days", fmt.Sprint(q.Days))
+	}
+	return v
+}
+
+// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.
+func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) (discovery.Activity, error) {
+	var out discovery.Activity
+	err := c.call(ctx, http.MethodGet, "/v1/stats/activity", q.values(), nil, &out)
+	return out, err
+}
+
+// GetStatsTopQuery is the query of GetStatsTop.
+type GetStatsTopQuery struct {
+	// the content kind; required
+	Kind string
+	// views (the default) or comments
+	Metric string
+	// 7d, 30d (the default), 90d, 365d or all
+	Period string
+	// public, tier, group, ppv or group_ppv, as lists filter
+	Access []string
+	// configured tiers, as lists filter
+	Tiers []string
+	// the language of titles and paths; the site's first by default
+	Language string
+	// 10 by default, at most 100
+	Limit int
+}
+
+func (q GetStatsTopQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Metric != "" {
+		v.Set("metric", q.Metric)
+	}
+	if q.Period != "" {
+		v.Set("period", q.Period)
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetStatsTop is GET /v1/stats/top (staff). A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.
+func (c *Client) GetStatsTop(ctx context.Context, q GetStatsTopQuery) (discovery.TopContents, error) {
+	var out discovery.TopContents
+	err := c.call(ctx, http.MethodGet, "/v1/stats/top", q.values(), nil, &out)
+	return out, err
+}
+
+// GetMeStats is GET /v1/me/stats (user). The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received.
+func (c *Client) GetMeStats(ctx context.Context) (discovery.MyStats, error) {
+	var out discovery.MyStats
+	err := c.call(ctx, http.MethodGet, "/v1/me/stats", nil, nil, &out)
+	return out, err
 }
 
 // PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.

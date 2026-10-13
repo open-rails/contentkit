@@ -114,7 +114,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 
 func (b Batch) records() int {
 	n := len(b.Groups) + len(b.Memberships) + len(b.Offers) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
-		len(b.Votes) + len(b.Answers) + len(b.Signals)
+		len(b.Votes) + len(b.Answers) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
 		n += 1 + len(c.Versions)
 	}

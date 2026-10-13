@@ -117,7 +117,7 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 		Resolver: f.cat.Resolver(), Visibility: f.cat}); err != nil {
 		t.Fatal(err)
 	}
-	if f.h, err = f.svc.Handler(testauth.Auth{Claims: map[string][]string{"fan": {"premium"}}}); err != nil {
+	if f.h, err = f.svc.Handler(testauth.Auth{Authz: staffOnly{}, Claims: map[string][]string{"fan": {"premium"}}}); err != nil {
 		t.Fatal(err)
 	}
 	return f

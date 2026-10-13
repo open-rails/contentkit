@@ -346,7 +346,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	}
 	m.polls = declared[pollFolder]
 	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
-		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: pollMedia{e},
+		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, Redis: deps.Redis},
 		Logger:    e.log, Now: now}); err != nil {
 		return nil, err
@@ -542,6 +542,7 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 	if e.discover, err = discovery.New(o); err != nil {
 		return err
 	}
+	e.catalog.BindStanding(e.discover)
 	e.modules[httpapi.Discovery], err = e.discover.Handler(e.auth)
 	return err
 }

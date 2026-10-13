@@ -38,7 +38,8 @@ func (d *directory) Get(ctx context.Context, ids []string) (map[string]userinfo.
 // ContentKit's own media: a person's own published avatar,
 // the preset's default for one without, nothing for a deleted account. A
 // person uploads their own avatar through the gate; another may not.
-// Erasing a person deletes their avatar: their comments show the default.
+// Erasing a person deletes their avatar: their comments show the default;
+// erasing one without an avatar completes.
 func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -111,6 +112,12 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 
 	if report, err := e.EraseSubjects(ctx, []signal.Subject{{UserID: alice.ID}}); err != nil || !report.Complete() {
 		t.Fatalf("erasing alice: %+v %v", report, err)
+	}
+	// Someone who never uploaded one erases completely too, and again.
+	for range 2 {
+		if report, err := e.EraseSubjects(ctx, []signal.Subject{{UserID: bob.ID}}); err != nil || !report.Complete() {
+			t.Fatalf("erasing bob: %+v %v", report, err)
+		}
 	}
 	avatars, err := w.reg.Item(ref)
 	if err != nil {

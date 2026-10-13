@@ -49,6 +49,9 @@ type Batch struct {
 	Votes           []VoteRecord     `json:"votes,omitempty"`
 	Answers         []AnswerRecord   `json:"answers,omitempty"`
 	Signals         []SignalRecord   `json:"signals,omitempty"`
+	// Deletes, written last, remove records gone from the source. Records
+	// are never deleted by their absence from a batch.
+	Deletes []DeleteRecord `json:"deletes,omitempty"`
 }
 
 // Ref names a record by its ContentKit id or by its external id under the
@@ -312,6 +315,17 @@ type SignalRecord struct {
 	Resume   string `json:"resume,omitempty"`
 }
 
+// DeleteRecord deletes a record the source no longer has, as its delete
+// route would: a content item, version, group, comment or poll, by its
+// external id under the batch's source. One already deleted (or since
+// erased) stays as it is, so re-sending converges; an external id never
+// imported fails not_found.
+type DeleteRecord struct {
+	// Entity is content, version, group, comment or poll.
+	Entity     string `json:"entity"`
+	ExternalID string `json:"external_id"`
+}
+
 // Sections, in the order a batch writes them.
 const (
 	SectionGroups      = "groups"
@@ -326,6 +340,7 @@ const (
 	SectionVotes       = "votes"
 	SectionAnswers     = "answers"
 	SectionSignals     = "signals"
+	SectionDeletes     = "deletes"
 )
 
 // Entities of external ids.
