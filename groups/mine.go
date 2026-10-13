@@ -3,7 +3,10 @@ package groups
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 // MyGroup is a group of the viewer's, with how it is theirs.
@@ -14,6 +17,8 @@ type MyGroup struct {
 	// Editor: the viewer holds its kind's access.GroupSettingsManage in its
 	// AuthKit scope.
 	Editor bool `json:"editor"`
+	// Writer: the viewer holds its kind's access.GroupContentWrite there.
+	Writer bool `json:"writer"`
 	// Member: the viewer holds its key.
 	Member bool `json:"member"`
 }
@@ -24,9 +29,9 @@ type MyGroupPage struct {
 	NextCursor string    `json:"next_cursor,omitempty"`
 }
 
-// Mine pages the active groups the store's viewer (As) owns, edits through
-// its AuthKit scope (Options.Scopes) or holds the key of (Options.Sales),
-// filtered, ordered and paged as List.
+// Mine pages the active groups the store's viewer (As) owns, edits or
+// writes content of through its AuthKit scope (Options.Scopes) or holds the
+// key of (Options.Sales), filtered, ordered and paged as List.
 func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error) {
 	out := MyGroupPage{Groups: []MyGroup{}}
 	v := s.viewer()
@@ -43,23 +48,28 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 			return out, err
 		}
 	}
-	type mine struct{ owner, editor, member bool }
+	type mine struct{ owner, editor, writer, member bool }
 	rel := map[GroupID]mine{}
 	err = s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, coalesce(owner_user_id, '') = $2, coalesce(auth_scope = ANY($3::text[]), false), coalesce(id = ANY($4::text[]), false)
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, kind, coalesce(auth_scope, ''), coalesce(owner_user_id, '') = $2, coalesce(id = ANY($4::text[]), false)
  FROM %s WHERE tenant_id = $1 AND state = 'active' AND (owner_user_id = $2 OR auth_scope = ANY($3::text[]) OR id = ANY($4::text[]))`,
-			s.table("content_groups")), s.tenant, v.ID, scopes, joined)
+			s.table("content_groups")), s.tenant, v.ID, slices.Collect(maps.Keys(scopes)), joined)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var id GroupID
+			var kind, scope string
 			var m mine
-			if err := rows.Scan(&id, &m.owner, &m.editor, &m.member); err != nil {
+			if err := rows.Scan(&id, &kind, &scope, &m.owner, &m.member); err != nil {
 				return err
 			}
-			rel[id] = m
+			held := scopes[scope]
+			m.editor, m.writer = slices.Contains(held, access.GroupSettingsManage(kind)), slices.Contains(held, access.GroupContentWrite(kind))
+			if m.owner || m.editor || m.writer || m.member {
+				rel[id] = m
+			}
 		}
 		return rows.Err()
 	})
@@ -91,7 +101,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 	}
 	for _, g := range page.Groups {
 		m := rel[g.ID]
-		out.Groups = append(out.Groups, MyGroup{GroupCard: g, Owner: m.owner, Editor: m.editor, Member: m.member})
+		out.Groups = append(out.Groups, MyGroup{GroupCard: g, Owner: m.owner, Editor: m.editor, Writer: m.writer, Member: m.member})
 	}
 	out.NextCursor = page.NextCursor
 	return out, nil

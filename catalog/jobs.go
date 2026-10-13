@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -104,13 +105,38 @@ func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
 // were never sold: their media folders and their rows. Sold ones stay for
 // their holders. It returns how many it erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+	return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
+ ORDER BY id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, s.now().Add(-s.retention))
+}
+
+// ExpireDrafts erases the drafts of kinds with a DraftTTL that never went
+// live and were created longer than it ago: their media folders and their
+// rows. It returns how many it erased.
+func (s *Store) ExpireDrafts(ctx context.Context) (int, error) {
+	var names []string
+	var cutoffs []time.Time
+	for _, name := range slices.Sorted(maps.Keys(s.cfg.Kinds)) {
+		if ttl := s.cfg.Kinds[name].DraftTTL; ttl > 0 {
+			names, cutoffs = append(names, name), append(cutoffs, s.now().Add(-ttl))
+		}
+	}
+	if len(names) == 0 {
+		return 0, nil
+	}
+	return s.erase(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c JOIN unnest($2::text[], $3::timestamptz[]) AS k(kind, cutoff) ON c.kind = k.kind
+ WHERE c.tenant_id = $1 AND c.state = 'draft' AND c.first_published_at IS NULL AND NOT c.ever_sold AND c.created_at < k.cutoff
+ ORDER BY c.id LIMIT 200 FOR UPDATE OF c SKIP LOCKED`, s.tenant, names, cutoffs)
+}
+
+// erase deletes the content items query selects (id, kind), locked, with
+// their media folders and documents.
+func (s *Store) erase(ctx context.Context, query string, args ...any) (int, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
- ORDER BY id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, s.now().Add(-s.retention))
+	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -166,6 +192,10 @@ type purgeDeletedArgs struct{}
 
 func (purgeDeletedArgs) Kind() string { return "contentkit_catalog_purge_deleted" }
 
+type expireDraftsArgs struct{}
+
+func (expireDraftsArgs) Kind() string { return "contentkit_catalog_expire_drafts" }
+
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
 	run func(context.Context) (int, error)
@@ -178,7 +208,7 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 
 // RiverJobs contributes the catalog's periodic jobs to the engine's River
 // client: scheduled publication (every 30s), event delivery (5s), interaction
-// counts (5m) and purging deleted content (1h).
+// counts (5m), purging deleted content (1h) and expiring drafts (10m).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-catalog", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -202,6 +232,9 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
 			},
+			func() error {
+				return river.AddWorkerSafely(cfg.Workers, &jobWorker[expireDraftsArgs]{run: s.ExpireDrafts})
+			},
 		} {
 			if err := add(); err != nil {
 				return err
@@ -211,7 +244,8 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			periodic("contentkit_catalog_publish_due", 30*time.Second, publishDueArgs{}),
 			periodic("contentkit_catalog_deliver_events", 5*time.Second, deliverEventsArgs{}),
 			periodic("contentkit_catalog_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
-			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}))
+			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}),
+			periodic("contentkit_catalog_expire_drafts", 10*time.Minute, expireDraftsArgs{}))
 		return nil
 	}, nil, nil)
 }

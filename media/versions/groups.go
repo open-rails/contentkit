@@ -246,11 +246,28 @@ func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]group
 	return out, nil
 }
 
-// GroupFolders deletes groups' media folders for the groups API
-// (groups.Options.Folders).
+// GroupFolders hides, shows and deletes groups' media folders for the groups
+// API (groups.Options.Folders).
 func (s *Service) GroupFolders() groups.Folders { return groupFolders{s} }
 
 type groupFolders struct{ s *Service }
+
+// ExposeTx queues bringing each group's media item to its state in tx: a
+// deleted group's is hidden, a restored one's shown.
+func (g groupFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	items := make([]contentref.ContentRef, 0, len(refs))
+	for _, r := range refs {
+		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+		if err != nil {
+			return err
+		}
+		items = append(items, ref)
+	}
+	if len(items) == 0 || g.s.m.Jobs == nil {
+		return nil
+	}
+	return g.s.m.Jobs.ExposeTx(ctx, tx, items...)
+}
 
 // DeleteTx queues the deletion of each group's media item in tx.
 func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {

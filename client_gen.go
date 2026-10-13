@@ -1154,7 +1154,7 @@ func (q GetMeGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.
+// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit ({kind}:settings:manage) or write content of ({kind}:content:write) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.
 func (c *Client) GetMeGroups(ctx context.Context, q GetMeGroupsQuery) (groups.MyGroupPage, error) {
 	var out groups.MyGroupPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/groups", q.values(), nil, &out)

@@ -388,25 +388,28 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	shown := map[string][]facetRow{}
 	decisions := map[string]Decision{}
-	opens := map[string]bool{}
+	locked := map[string]bool{}
 	for i, r := range slices.Concat(live, held) {
+		if !ds[i].Allowed {
+			locked[r.contentID] = true
+		}
 		if i >= len(live) && !ds[i].Allowed {
 			continue
 		}
 		shown[r.contentID] = append(shown[r.contentID], r)
 		decisions[r.versionID] = decision(ds[i])
-		opens[r.contentID] = opens[r.contentID] || ds[i].Allowed
 	}
 	// Owner-group editorship is asked once per owner group: unless every,
 	// only of items the rule does not show whole (drafts, scheduled, deleted,
-	// held, out of the site's scope) or does not open.
+	// held, out of the site's scope) or leaves a version locked, so an editor
+	// is never offered a version of their group's.
 	var groups []string
 	for id, rs := range byID {
 		g := rs[0].ownerGroup
 		if g == "" || known(id) || slices.Contains(groups, g) {
 			continue
 		}
-		if every || !opens[id] || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+		if every || locked[id] || len(shown[id]) == 0 || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
 			groups = append(groups, g)
 		}
 	}

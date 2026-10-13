@@ -38,6 +38,7 @@ type world struct {
 	t      *testing.T
 	ak     *authkit.Client
 	editor iam.Role
+	writer iam.Role // channel:content:write only
 	staff  iam.Role
 	store  *groups.Store
 	bare   *groups.Store // the same tables without Scopes
@@ -60,6 +61,7 @@ func newWorld(t *testing.T) *world {
 	perms := channel.Declare(access.GroupPermissions("channel")...)
 	settings := perms[slices.Index(access.GroupPermissions("channel"), access.GroupSettingsManage("channel"))]
 	w.editor = channel.Role("editor", settings)
+	w.writer = channel.Role("writer", perms[slices.Index(access.GroupPermissions("channel"), access.GroupContentWrite("channel"))])
 	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
 
 	ctx := t.Context()
@@ -186,8 +188,15 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 		}
 	}
 	w.call(200, creatorToken, "GET", "/me/groups", nil, &mine)
-	if len(mine.Groups) != 2 || !mine.Groups[0].Owner || !mine.Groups[1].Owner {
+	if len(mine.Groups) != 2 || !mine.Groups[0].Owner || !mine.Groups[1].Owner || !mine.Groups[0].Writer {
 		t.Fatalf("the creator's groups %+v", mine)
+	}
+	// A holder of channel:content:write alone finds the channel as its writer.
+	writer, writerToken := w.person()
+	authtest.GrantRole(t, w.ak, iam.GroupByID(studio.AuthScope), iam.UserSubject(writer.ID), w.writer)
+	w.call(200, writerToken, "GET", "/me/groups", nil, &mine)
+	if g := mine.Groups; len(g) != 1 || g[0].ID != studio.ID || !g[0].Writer || g[0].Editor || g[0].Owner || g[0].Member {
+		t.Fatalf("the writer's groups %+v", mine)
 	}
 	w.call(200, strangerToken, "GET", "/me/groups", nil, &mine)
 	if len(mine.Groups) != 0 {

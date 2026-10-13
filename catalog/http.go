@@ -52,12 +52,12 @@ var routes = []httpapi.Route[*Store]{
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
-		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
+		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNoMembership}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Edits a content item's listing, access, restrictions, attributes, cover or creators." + editorsDoc,
 		Request: ContentPatch{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
+		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, httpapi.CodeNoMembership, "not_configured"}},
 		Serve: httpapi.H((*Store).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Deletes a content item: holders of its key still read it; one never sold is erased after the retention." + editorsDoc,
@@ -95,7 +95,7 @@ var routes = []httpapi.Route[*Store]{
 		Serve: httpapi.H((*Store).handleImage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Adds a version after the others." + editorsDoc,
-		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.Created(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
+		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.Created(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, httpapi.CodeNoMembership}},
 		Serve: httpapi.H((*Store).handleCreateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/versions/order", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Orders a content item's versions: ids lists each version that is not deleted, first first." + editorsDoc,
@@ -103,7 +103,7 @@ var routes = []httpapi.Route[*Store]{
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments." + editorsDoc,
-		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
+		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, httpapi.CodeNoMembership}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Deletes a version; a content item keeps at least one." + editorsDoc,
@@ -213,6 +213,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusUnauthorized, httpapi.CodeUnauthorized, "authentication required"
 	case errors.Is(err, ErrInvalid):
 		return http.StatusBadRequest, httpapi.CodeInvalidRequest, err.Error()
+	case errors.Is(err, ErrNoMembership):
+		return http.StatusConflict, httpapi.CodeNoMembership, err.Error()
 	case errors.Is(err, ErrNotFound), errors.Is(err, content.ErrNotFound):
 		return http.StatusNotFound, httpapi.CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, content.ErrSubjectErased):

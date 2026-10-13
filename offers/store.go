@@ -285,18 +285,30 @@ func (s *Service) markSold(ctx context.Context, tx pgx.Tx, targets []Target) err
 }
 
 // Resync queues a sync of the active offers of targets in tx, for a change
-// that moves what OpenRails shows (a content or group renamed).
+// that moves what OpenRails shows (a content or group renamed); targets
+// without one cost nothing.
 func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error {
 	kinds, ids := make([]string, len(targets)), make([]string, len(targets))
+	byKey := map[Target]Target{}
 	for i, t := range targets {
 		kinds[i], ids[i] = string(t.Kind), t.ID
+		byKey[Target{Kind: t.Kind, ID: t.ID}] = t
 	}
-	if _, err := tx.Exec(ctx, `UPDATE `+s.t.offers+` SET revision = revision + 1, updated_at = now()
-		WHERE tenant_id = $1 AND state = 'active' AND (target_kind, target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
-		s.tenant, kinds, ids); err != nil {
+	rows, err := tx.Query(ctx, `UPDATE `+s.t.offers+` SET revision = revision + 1, updated_at = now()
+		WHERE tenant_id = $1 AND state = 'active' AND (target_kind, target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+		RETURNING target_kind, target_id`, s.tenant, kinds, ids)
+	if err != nil {
 		return err
 	}
-	return s.enqueue(ctx, tx, targets)
+	active, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Target, error) {
+		var t Target
+		err := r.Scan(&t.Kind, &t.ID)
+		return byKey[t], err
+	})
+	if err != nil {
+		return err
+	}
+	return s.enqueue(ctx, tx, active)
 }
 
 // Authorize admits actor to change targets' offers (editors): staff, the

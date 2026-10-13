@@ -2738,6 +2738,7 @@
           "conflict",
           "forbidden",
           "not_found",
+          "no_membership",
           "not_configured"
         ],
         "x-contentkit-error-sets": [
@@ -2910,7 +2911,8 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found"
+          "not_found",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -3107,7 +3109,8 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "forbidden"
+          "forbidden",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -3795,7 +3798,8 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found"
+          "not_found",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -5164,7 +5168,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+        "summary": "The viewer's active groups: those they own, edit ({kind}:settings:manage) or write content of ({kind}:content:write) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
         "parameters": [
           {
             "name": "kind",
@@ -10504,6 +10508,9 @@
           "member": {
             "type": "boolean"
           },
+          "editor": {
+            "type": "boolean"
+          },
           "unknown": {
             "type": "boolean"
           }
@@ -11292,6 +11299,9 @@
           },
           "sort": {
             "type": "string"
+          },
+          "draft_ttl": {
+            "type": "integer"
           }
         },
         "required": [
@@ -11605,6 +11615,9 @@
           "editor": {
             "type": "boolean"
           },
+          "writer": {
+            "type": "boolean"
+          },
           "member": {
             "type": "boolean"
           }
@@ -11619,6 +11632,7 @@
           "created_at",
           "owner",
           "editor",
+          "writer",
           "member"
         ]
       },
@@ -13815,6 +13829,7 @@
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
+          "no_membership",
           "not_configured",
           "not_found",
           "not_uploaded",
@@ -14076,6 +14091,10 @@
     "moderation_rejected": {
       "status": 422,
       "meaning": "The moderator refused the text; `error` says why."
+    },
+    "no_membership": {
+      "status": 409,
+      "meaning": "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first."
     },
     "not_configured": {
       "status": 501,

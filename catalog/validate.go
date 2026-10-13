@@ -134,6 +134,34 @@ func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*access
 	return nil
 }
 
+// membersOf is the group a rule makes its content members-only in; "" for
+// any other rule.
+func membersOf(r *access.Rule) string {
+	if r == nil || r.Level != access.GroupLevel && r.Level != access.GroupPPV {
+		return ""
+	}
+	return r.Group
+}
+
+// checkSold refuses, with ErrNoMembership, a write moving content's rule
+// (was to now) into a group's members that sells no membership; a rule
+// staying with its group passes, whatever the group's offer since.
+func (s *Store) checkSold(ctx context.Context, q Querier, was, now *access.Rule) error {
+	g := membersOf(now)
+	if g == "" || g == membersOf(was) {
+		return nil
+	}
+	var sold bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.offers+` WHERE tenant_id = $1 AND target_kind = 'group' AND target_id = $2 AND state = 'active')`,
+		s.tenant, g).Scan(&sold); err != nil {
+		return err
+	}
+	if !sold {
+		return fmt.Errorf("%w: group %s has no active offer", ErrNoMembership, g)
+	}
+	return nil
+}
+
 func (s *Store) checkRestrictions(rs []string) ([]string, error) {
 	out := []string{}
 	for _, r := range rs {

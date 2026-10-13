@@ -424,10 +424,12 @@ func (s *Store) Groups(ctx context.Context, ids []GroupID) ([]Group, error) {
 
 // UpdateGroups applies each update in one transaction. A merged group is
 // never updated (ErrConflict). Deleting or restoring a group, or moving it to
-// another parent, re-derives the facets of the content it reaches, and
-// retires or provisions its AuthKit scope; deleting a user-owned group
-// deletes its media folder and the content it owns (Options.Folders,
-// Options.DeleteContents). Written as a person (As), each
+// another parent, re-derives the facets of the content it reaches, retires
+// or provisions its AuthKit scope and hides or shows its media; deleting a
+// user-owned group deletes the content it owns, restoring it restores that
+// content and, within the retention, its media (Options.Owned,
+// Options.Folders). Renaming a sellable group renames its offer's product.
+// Written as a person (As), each
 // group is a user-owned one the person owns or holds
 // access.GroupSettingsManage in, its slug, links, owner and scope stay, and
 // a restore stays within the kind's MaxPerOwner (ErrLimit); anything else is
@@ -478,7 +480,7 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		changed = changed[:0]
 		var textIDs, nameIDs, reach []string
 		var restored []groupRow
-		var gone []Ref
+		var flipped, renamed []Ref
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -498,12 +500,13 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 				if gk.AuthScope || g.AuthScope != "" || gk.Owner == "user" {
 					changed = append(changed, string(g.ID))
 				}
-				switch {
-				case *u.State == StateActive:
+				if *u.State == StateActive {
 					restored = append(restored, row.groupRow)
-				case gk.Owner == "user":
-					gone = append(gone, Ref{Kind: g.Kind, ID: g.ID})
 				}
+				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
+			}
+			if u.Names != nil || u.Slug != nil {
+				renamed = append(renamed, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			if u.Names != nil {
 				n, err := validateNames(g.ID, u.Names)
@@ -541,8 +544,8 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err := s.checkCaps(ctx, q, restored); err != nil {
 			return err
 		}
-		if tx, ok := q.(pgx.Tx); ok && s.folders != nil && len(gone) > 0 {
-			if err := s.folders.DeleteTx(ctx, tx, gone); err != nil {
+		if tx, ok := q.(pgx.Tx); ok && s.folders != nil && len(flipped) > 0 {
+			if err := s.folders.ExposeTx(ctx, tx, flipped); err != nil {
 				return err
 			}
 		}
@@ -553,6 +556,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if err := s.insertNames(ctx, q, names); err != nil {
 				return err
 			}
+		}
+		if err := s.resyncSold(ctx, q, renamed); err != nil {
+			return err
 		}
 		if len(textIDs) > 0 {
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_text")), s.tenant, textIDs); err != nil {

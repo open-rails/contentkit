@@ -166,17 +166,38 @@ type Options struct {
 	// and lists a person's. Optional: without it auth_scope is whatever staff
 	// set.
 	Scopes Scopes
-	// Folders deletes a deleted user-owned group's media folder in the
-	// deleting transaction: media/versions.Service.GroupFolders. Optional.
+	// Folders hides a deleted group's media and shows it again on restore,
+	// in the writing transaction, and purges a user-owned group's once it
+	// stayed deleted for DeletedRetention: media/versions.Service.GroupFolders.
+	// Optional.
 	Folders Folders
-	// DeleteContents deletes the content a deleted user-owned group owns
-	// (owner_group): the catalog's Delete, which keeps bought content
-	// readable to its buyers. Optional.
-	DeleteContents func(ctx context.Context, ids []string) error
+	// DeletedRetention is how long a deleted user-owned group keeps its media
+	// for a restore; zero is DefaultDeletedRetention.
+	DeletedRetention time.Duration
+	// Owned deletes the content a deleted user-owned group owns
+	// (owner_group) and restores it with the group: the catalog. Optional.
+	Owned OwnedContent
 	// Queue is the River queue of group syncs; contentkit_groups when empty.
 	Queue string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
+}
+
+// DefaultDeletedRetention is how long a deleted user-owned group keeps its
+// media folder, so a restore brings it back.
+const DefaultDeletedRetention = 30 * 24 * time.Hour
+
+// OwnedContent follows user-owned groups' deletion and restore with the
+// content they own (owner_group): the catalog. A nil groups is every group.
+type OwnedContent interface {
+	// DeleteOwned deletes the live content of the deleted ones among groups,
+	// recording each group as its content's cause; bought content stays
+	// readable to its buyers.
+	DeleteOwned(ctx context.Context, groups []string) error
+	// RestoreOwned restores the content the active ones among groups
+	// deleted when they were, unless it was purged since; content deleted
+	// for another reason stays deleted.
+	RestoreOwned(ctx context.Context, groups []string) error
 }
 
 // Store is one tenant's groups.
@@ -192,7 +213,8 @@ type Store struct {
 	sales   Sales
 	scopes  Scopes
 	folders Folders
-	purge   func(ctx context.Context, ids []string) error
+	keep    time.Duration
+	owned   OwnedContent
 	queue   string
 	log     *slog.Logger
 	as      *writer
@@ -223,8 +245,12 @@ func New(opts Options) (*Store, error) {
 	if queue == "" {
 		queue = "contentkit_groups"
 	}
+	keep := opts.DeletedRetention
+	if keep <= 0 {
+		keep = DefaultDeletedRetention
+	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged,
-		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, folders: opts.Folders, purge: opts.DeleteContents, queue: queue, log: log,
+		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, log: log,
 		river: &riverBinding{}}, nil
 }
 

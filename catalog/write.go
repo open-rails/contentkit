@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -270,6 +271,9 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		if err := s.checkRuleGroups(ctx, tx, p.Access); err != nil {
 			return nil, err
 		}
+		if err := s.checkSold(ctx, tx, nil, p.Access); err != nil {
+			return nil, err
+		}
 		if p.OwnerGroupID != "" {
 			var ok bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active')`, s.tenant, p.OwnerGroupID).Scan(&ok); err != nil {
@@ -376,6 +380,9 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			}
 			var access, attrs, cover []byte
 			if u.Access != nil {
+				if err := s.checkRuleChange(ctx, tx, u.ID, *u.Access); err != nil {
+					return fx, err
+				}
 				access, _ = json.Marshal(u.Access)
 			}
 			if u.Attributes != nil {
@@ -428,6 +435,19 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		}
 		return fx, nil
 	})
+}
+
+// checkRuleChange checks content id's rule becoming now (checkSold).
+func (s *Store) checkRuleChange(ctx context.Context, tx pgx.Tx, id string, now access.Rule) error {
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, id).Scan(&raw); err != nil {
+		return err
+	}
+	var was access.Rule
+	if err := json.Unmarshal(raw, &was); err != nil {
+		return err
+	}
+	return s.checkSold(ctx, tx, &was, &now)
 }
 
 // inheritingVersions are the versions of content id that follow its rule.
@@ -779,14 +799,101 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 			if o.state != StateDeleted {
 				return fx, ErrNotFound
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL,
- state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
+			if err := s.restoreRows(ctx, tx, []string{id}); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, Event{Type: EventContentRestored, Kind: o.kind, ContentID: id})
 		}
 		return fx, nil
 	})
+}
+
+// restoreRows brings deleted items back as they were: published (or
+// scheduled) when they had been, else drafts.
+func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,
+ state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
+	return err
+}
+
+// ownedBatch bounds the content one owned-content transaction locks.
+const ownedBatch = 100
+
+// DeleteOwned deletes the live content of the deleted user-owned groups
+// among groups (every one with nil), recording each group as its content's
+// cause (groups.OwnedContent): holders of a deleted item's key still read
+// it, and one never sold is erased after the retention.
+func (s *Store) DeleteOwned(ctx context.Context, groups []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id
+ WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, groups, EventContentDeleted,
+		func(ctx context.Context, tx pgx.Tx, ids, causes []string) error {
+			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_group = r.cause
+ FROM unnest($2::text[], $3::text[]) AS r(id, cause) WHERE c.tenant_id = $1 AND c.id = r.id`, s.tenant, ids, causes)
+			return err
+		})
+}
+
+// RestoreOwned restores the content the active groups among groups (every
+// one with nil) deleted when they were deleted (groups.OwnedContent), as
+// Restore does; content deleted for another reason stays deleted, and
+// content purged since is gone.
+func (s *Store) RestoreOwned(ctx context.Context, groups []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.deleted_with_group
+ WHERE c.tenant_id = $1 AND g.state = 'active' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state = 'deleted'
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, groups, EventContentRestored,
+		func(ctx context.Context, tx pgx.Tx, ids, _ []string) error { return s.restoreRows(ctx, tx, ids) })
+}
+
+// followOwned writes, a batch at a time, the content items query selects
+// (id, kind, group) with write, each batch in one transaction with the
+// write's effects.
+func (s *Store) followOwned(ctx context.Context, query string, groups []string, typ string,
+	write func(ctx context.Context, tx pgx.Tx, ids, causes []string) error) error {
+	var userKinds []string
+	for name, gk := range s.cfg.GroupKinds {
+		if gk.Owner == "user" {
+			userKinds = append(userKinds, name)
+		}
+	}
+	if len(userKinds) == 0 {
+		return nil
+	}
+	for {
+		tx, err := s.begin(ctx)
+		if err != nil {
+			return err
+		}
+		ids, causes, events, err := func() ([]string, []string, []Event, error) {
+			rows, err := tx.Query(ctx, query, s.tenant, userKinds, groups)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			defer rows.Close()
+			var ids, causes []string
+			var events []Event
+			for rows.Next() {
+				var id, kind, group string
+				if err := rows.Scan(&id, &kind, &group); err != nil {
+					return nil, nil, nil, err
+				}
+				ids, causes = append(ids, id), append(causes, group)
+				events = append(events, Event{Type: typ, Kind: kind, ContentID: id})
+			}
+			return ids, causes, events, rows.Err()
+		}()
+		if err == nil && len(ids) > 0 {
+			if err = write(ctx, tx, ids, causes); err == nil {
+				if err = s.apply(ctx, tx, ids, effects{events: events, expose: true}); err == nil {
+					err = tx.Commit(ctx)
+				}
+			}
+		}
+		_ = tx.Rollback(ctx)
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+	}
 }
 
 // PutVersions creates (VersionID "") or edits versions and returns their ids
@@ -921,7 +1028,7 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return "", err
 	}
-	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
+	if err := s.checkVersionRule(ctx, tx, nil, r.access); err != nil {
 		return "", err
 	}
 	id := contentref.NewID()
@@ -953,15 +1060,31 @@ func (s *Store) checkFork(ctx context.Context, tx pgx.Tx, p VersionPut) error {
 	return nil
 }
 
-func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) error {
-	if raw == nil {
+// checkVersionRule checks a version's override becoming now from was
+// (stored JSON, nil for none).
+func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, was, now []byte) error {
+	if now == nil {
 		return nil
 	}
-	var r access.Rule
-	if err := json.Unmarshal(raw, &r); err != nil {
+	rule := func(raw []byte) (*access.Rule, error) {
+		if raw == nil {
+			return nil, nil
+		}
+		var r access.Rule
+		return &r, json.Unmarshal(raw, &r)
+	}
+	before, err := rule(was)
+	if err != nil {
 		return err
 	}
-	return s.checkRuleGroups(ctx, tx, &r)
+	after, err := rule(now)
+	if err != nil {
+		return err
+	}
+	if err := s.checkRuleGroups(ctx, tx, after); err != nil {
+		return err
+	}
+	return s.checkSold(ctx, tx, before, after)
 }
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {
@@ -975,12 +1098,12 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return err
 	}
-	was := cur.state
+	was, wasRule := cur.state, cur.access
 	r, err := s.versionRow(k, kind, v, &cur)
 	if err != nil {
 		return err
 	}
-	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
+	if err := s.checkVersionRule(ctx, tx, wasRule, r.access); err != nil {
 		return err
 	}
 	// A state or schedule change restarts the publication clock.

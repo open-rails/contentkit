@@ -708,8 +708,9 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   and regenerates it. Apps sharing a namespace use one Postgres database:
   `PGLocker` takes advisory locks, which are per database, and Ceph RGW has
   no conditional PUT to fall back on.
-- The stock worker reads the registry as JSON (`json.Marshal(reg)` into
-  `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
+- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
+  and hooks are not included): an engine's is `Config.MediaKinds()`, printed
+  by `contentkit media-config`.
 
 ### Uploads and commit ops
 

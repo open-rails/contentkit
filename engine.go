@@ -209,12 +209,8 @@ func (e *Engine) validate(deps Deps) error {
 	if cfg.Media != nil {
 		mc := *cfg.Media
 		cfg.Media = &mc
-		switch mc.Namespace {
-		case "":
-			mc.Namespace = cfg.Tenant
-		case cfg.Tenant:
-		default:
-			return fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, cfg.Tenant)
+		if _, err := cfg.MediaKinds(); err != nil {
+			return err
 		}
 		h := cfg.Media.Hooks
 		if h.Resolver != nil || h.CanUpload != nil || h.PurgePublic != nil || h.ItemReady != nil || h.ItemCommitted != nil || h.Failed != nil {
@@ -294,8 +290,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
-		// A deleted channel's posts go the catalog's way: bought ones stay readable.
-		DeleteContents: func(ctx context.Context, ids []string) error { return e.catalog.Delete(ctx, gate.Host(), ids) }}
+		Owned: ownedContent{e}}
 	if e.cfg.Media != nil {
 		opts.Covers, opts.Folders = groupCovers{e}, groupFolders{e}
 	}
@@ -321,7 +316,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
 	mc := e.cfg.Media
-	reg, err := media.ForContent(mc.Config, e.cfg.Content)
+	reg, err := e.cfg.MediaKinds()
 	if err != nil {
 		return nil, err
 	}
@@ -671,11 +666,12 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 }
 
 // EraseSubjects erases subjects from every plane: signals, interaction data,
-// inboxes and data retained by moderation and classifier providers; approved
-// authored content stays (content.EraseSubjects). Retry while error != nil or
-// !report.Complete(); Remaining names a plane that could not finish
-// (content_plane, signal_plane). Without a signal plane only the content
-// plane is erased.
+// inboxes, people's avatars (media.Config.Avatars) and data retained by
+// moderation and classifier providers; approved authored content stays
+// (content.EraseSubjects). Retry while error != nil or !report.Complete();
+// Remaining names a plane that could not finish (content_plane, media_plane,
+// signal_plane). Without a signal plane only the content and media planes
+// are erased.
 func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
 	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
 	if len(subjects) > signal.MaxErasureSubjects {
@@ -700,11 +696,36 @@ func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (
 		}
 	}
 	contentErr := e.content.EraseSubjects(ctx, actors)
+	mediaErr := e.eraseAvatars(ctx, actors)
 	if signalErr != nil {
 		report.Remaining["signal_plane"] = 1
 	}
 	if contentErr != nil {
 		report.Remaining["content_plane"] = 1
 	}
-	return report, errors.Join(signalErr, contentErr)
+	if mediaErr != nil {
+		report.Remaining["media_plane"] = 1
+	}
+	return report, errors.Join(signalErr, contentErr, mediaErr)
+}
+
+// eraseAvatars deletes people's avatar items, their uploads and public
+// files: one job each, queued together.
+func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
+	if e.media == nil || len(users) == 0 {
+		return nil
+	}
+	kind := e.media.reg.Config().Avatars.Kind
+	if kind == "" {
+		return nil
+	}
+	del := make([]media.Deletion, len(users))
+	for i, u := range users {
+		ref, err := e.media.reg.Ref(kind, u)
+		if err != nil {
+			return err
+		}
+		del[i] = media.Deletion{Ref: ref, Owner: u}
+	}
+	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error { return e.media.jobs.DeleteItemsTx(ctx, tx, del...) })
 }

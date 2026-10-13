@@ -46,10 +46,26 @@ func (g groupCovers) Covers(ctx context.Context, covers []groups.CoverOf) ([][]g
 	return g.e.media.versions.GroupCovers().Covers(ctx, covers)
 }
 
-// groupFolders deletes group media folders through media, built after
-// groups.
+// groupFolders hides, shows and deletes group media folders through media,
+// built after groups.
 type groupFolders struct{ e *Engine }
+
+func (g groupFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	return g.e.media.versions.GroupFolders().ExposeTx(ctx, tx, refs)
+}
 
 func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
 	return g.e.media.versions.GroupFolders().DeleteTx(ctx, tx, refs)
+}
+
+// ownedContent deletes and restores user-owned groups' content through the
+// catalog, built after groups.
+type ownedContent struct{ e *Engine }
+
+func (o ownedContent) DeleteOwned(ctx context.Context, groups []string) error {
+	return o.e.catalog.DeleteOwned(ctx, groups)
+}
+
+func (o ownedContent) RestoreOwned(ctx context.Context, groups []string) error {
+	return o.e.catalog.RestoreOwned(ctx, groups)
 }
