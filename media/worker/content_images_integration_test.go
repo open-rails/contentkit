@@ -319,9 +319,39 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		}
 	}
 	regenerated := resolved("the regenerated images", published.Images)
-	eventually(t, "the body images' first generation's retirement", 2*time.Minute, func() bool {
-		return !exists(published.Images[a]) && !exists(published.Images[b])
-	})
+	for deadline := time.Now().Add(2 * time.Minute); exists(published.Images[a]) || exists(published.Images[b]); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			// The state that kept them, for the flake this has been.
+			ref, _ := reg.Ref("blog"+media.BodySuffix, id)
+			item, _ := reg.Item(ref)
+			m, _, err := jobs.Manifests().Get(ctx, ref)
+			t.Logf("first generation: %s %s; manifest err=%v", published.Images[a], published.Images[b], err)
+			if m != nil {
+				for _, f := range m.Files {
+					t.Logf("file %s blob=%s pending=%v public=%+v", f.Path, f.Blob, f.Pending, f.Public)
+				}
+			}
+			for o, err := range env.Store.List(ctx, item.PublicPrefix()) {
+				t.Logf("public %s %v err=%v", o.Key, o.LastModified, err)
+			}
+			rows, err := pool.Query(ctx, `SELECT id, state, attempt, args::text, errors::text, created_at, finalized_at FROM `+workers+`.river_job ORDER BY id`)
+			if err == nil {
+				for rows.Next() {
+					var (
+						id, attempt int64
+						state, args string
+						errs        *string
+						created     time.Time
+						finalized   *time.Time
+					)
+					_ = rows.Scan(&id, &state, &attempt, &args, &errs, &created, &finalized)
+					t.Logf("job %d %s attempt=%d %s errors=%v created=%v finalized=%v", id, state, attempt, args, errs, created, finalized)
+				}
+				rows.Close()
+			}
+			t.Fatal("timed out waiting for the body images' first generation's retirement")
+		}
+	}
 	eventually(t, "the cover's first generation's retirement", 2*time.Minute, func() bool { return !exists(published.Images[cover]) })
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
