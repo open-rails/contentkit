@@ -78,7 +78,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	limit := pageLimit(o.Limit, 24)
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
-		srt, err := s.parseSort(o.Sort, o.Filter)
+		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
 		if err != nil {
 			return empty, err
 		}

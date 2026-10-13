@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -118,6 +119,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			q("/contents", "kind", "comic"), q("/contents", "kind", "gallery", "traits", "dubbed"), q("/contents", "attribute", "format:manga"),
 			q("/contents", "kind", "gallery", "attribute", "format:novel"), q("/contents", "released_on", "yesterday"), q("/contents", "sort", "loudest"),
 			q("/contents", "sort", "newest:7d"), q("/contents", "sort", "most_viewed:7d"), q("/contents", "sort", "popular:2d"), q("/contents", "sort", "position"), q("/contents", "mode", "peek"),
+			q("/contents", "sort", "position", "groups", f.ids["romance"]),
 			q("/contents", "language", "fr"), q("/contents", "view_status", "unseen"), q("/contents", "cursor", "nope"),
 		} {
 			if status, code := f.call(http.MethodGet, host, "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
@@ -189,6 +191,23 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if status, _ := f.call(http.MethodGet, host, "", "/me/content-filters", nil, nil); status != http.StatusUnauthorized {
 		t.Fatalf("anonymous content filters: %d", status)
 	}
+	// A hidden group's content stays out of other lists, but its own page
+	// shows what its count counts.
+	if err := f.groups.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := f.groups.List(f.ctx, groups.ListOptions{Kind: "tag", Slug: "big-breasts"})
+	if err != nil || len(dir.Groups) != 1 {
+		t.Fatalf("directory: %+v %v", dir, err)
+	}
+	for _, user := range []string{"", "plain"} {
+		if got, _ := f.list(host, user, q("/contents", "kind", "gallery")); slices.Contains(got, f.cid(2)) {
+			t.Fatalf("a default-hidden tag listed for %q: %v", user, got)
+		}
+		if got, _ := f.list(host, user, q("/contents", "groups", f.ids["big-breasts"])); len(got) != dir.Groups[0].Count || !reflect.DeepEqual(got, []string{f.cid(2)}) {
+			t.Fatalf("the hidden tag's page for %q = %v, its count %d", user, got, dir.Groups[0].Count)
+		}
+	}
 	for _, bad := range []ContentFiltersUpdate{
 		{Filters: []FilterSetting{{GroupID: f.ids["romance"], Visible: false}}},
 		{Filters: []FilterSetting{{GroupID: f.ids["yaoi"]}, {GroupID: f.ids["yaoi"], Visible: true}}},
@@ -209,6 +228,9 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	got, page := f.list(host, "plain", q("/contents", "kind", "gallery"))
 	if !reflect.DeepEqual(got, []string{f.cid(2), f.cid(1)}) {
 		t.Fatalf("shown big-breasts, hidden yaoi = %v", got)
+	}
+	if got, _ := f.list(host, "plain", q("/contents", "groups", f.ids["yaoi"])); !reflect.DeepEqual(got, []string{f.cid(3)}) {
+		t.Fatalf("the yaoi page with yaoi hidden = %v", got)
 	}
 	bravo := page.Contents[0]
 	if bravo.Access.Allowed || !slices.Contains(bravo.Access.Sell, "premium") || bravo.Access.Preview == nil || bravo.Access.Preview.Pages != 3 {
@@ -341,7 +363,8 @@ func sorted(s []string) []string {
 }
 
 // Lists filter by access (what anyone opens, what stays locked at a level or
-// behind a tier) and by credited creator; search shares the filters.
+// behind a tier) and by credited creator; search shares the filters. Locked
+// cards preview the kind's default pages when their rule names none.
 func TestListFiltersByAccessAndCreator(t *testing.T) {
 	f := newFixture(t, nil, "")
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
@@ -375,6 +398,16 @@ func TestListFiltersByAccessAndCreator(t *testing.T) {
 		}
 		if got, _ := f.list(host, "", path); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	_, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "oldest"))
+	for i, want := range []int{0, 2, 0, 2} {
+		got := 0
+		if p := page.Contents[i].Access.Preview; p != nil {
+			got = p.Pages
+		}
+		if got != want || page.Contents[i].Access.Allowed != (want == 0) {
+			t.Errorf("card %d previews %d pages (allowed %t), want %d", i+1, got, page.Contents[i].Access.Allowed, want)
 		}
 	}
 	for _, bad := range []string{q("/contents", "access", "vip"), q("/contents", "tiers", "gold"), q("/search", "q", "x", "tiers", "gold")} {

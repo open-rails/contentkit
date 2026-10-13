@@ -32,6 +32,10 @@ type ViewerOptions struct {
 	// EditorGroups are owner groups (channels) whose editors see their whole
 	// content in lists; the viewer's editorship of each is checked.
 	EditorGroups []string
+	// Requested are groups a list requires (a group's page): the viewer's
+	// content filters do not hide them, so the page shows what the group's
+	// count counts.
+	Requested []string
 }
 
 // Viewer is the one visibility rule (ContentKit #117 spec §4) for one
@@ -130,6 +134,9 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		for id, o := range overrides {
 			hidden[id] = o == "hide"
 		}
+	}
+	for _, id := range o.Requested {
+		delete(hidden, id)
 	}
 	v.hidden = []string{}
 	for id, h := range hidden {
@@ -367,6 +374,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 			rows.Close()
 			return nil, fmt.Errorf("catalog: version %s: %w", r.versionID, err)
 		}
+		r.rule = r.rule.Previewed(s.cfg.Kinds[r.kind])
 		byID[r.contentID] = append(byID[r.contentID], r)
 		creator[r.contentID] = creator[r.contentID] || isCreator
 	}
