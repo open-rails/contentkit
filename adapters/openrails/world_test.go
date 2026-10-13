@@ -71,7 +71,7 @@ func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 		defer cancel()
 		_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{orSchema}.Sanitize()+" CASCADE")
 	})
-	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: orSchema, RiverSchema: orSchema}, TestMode: openrails.Sandbox,
+	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: orSchema, RiverSchema: orSchema},
 		ProviderWriteMode: openrails.ProviderWritesReadOnly, Merchants: map[string]openrails.MerchantDeclaration{tenant: {DisplayName: "OnlyDemo"}}}
 	for _, edit := range edits {
 		edit(&cfg)
