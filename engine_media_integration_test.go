@@ -14,13 +14,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
@@ -257,4 +260,90 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents/"+locked.ID, nil, &public)
 	signed(public, name)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog.body/"+locked.ID, nil, nil)
+}
+
+// Engine jobs erase what nobody keeps: a blog draft that never went live is
+// expired after its kind's draft_ttl, media folder included; a deleted
+// channel's media is hidden, kept for a restore through the retention, then
+// purged once.
+func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
+	ctx := t.Context()
+	env := mediatest.Open(t)
+	pool := pgtest.Pool(t, nil)
+	schema := engineSchema(t, pool)
+	cfg := siteConfig(schema)
+	cfg.Tenant = env.Tenant
+	blog := cfg.Content.Kinds["blog"]
+	blog.DraftTTL = time.Hour
+	cfg.Content.Kinds["blog"] = blog
+	cfg.Content.GroupKinds["channel"] = kinds.GroupKind{Route: "c", Owner: "user"}
+	cfg.Media = &MediaConfig{
+		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
+			Uploads: []media.Upload{{Path: "{name}", Content: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
+				{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}}}}},
+		Delivery: DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
+	}
+	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Store: env.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close(ctx) })
+	if err := e.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	jobs := func(kind, id string) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+
+			` WHERE kind = $1 AND args::text LIKE '%' || $2 || '%'`, kind, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	staff := testauth.Actor(access.Actor{ID: "staff", Kind: "user"}, staffAuthz{})
+	ids, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Abandoned"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+table("content_items")+` SET created_at = now() - interval '2 hours' WHERE id = $1`, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", ids[0]) == 0 {
+		t.Fatalf("expired %d (%v), folder deletions queued %d", n, err, jobs("contentkit_media_delete_folder", ids[0]))
+	}
+
+	made, err := e.groups.CreateGroups(ctx, []groups.GroupInput{{Kind: "channel", Slug: "studio", OwnerUserID: "u1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := made[0].ID
+	if _, err := e.groups.DeleteGroups(ctx, []groups.GroupID{ch}); err != nil {
+		t.Fatal(err)
+	}
+	if jobs("contentkit_media_expose", string(ch)) == 0 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
+		t.Fatal("deleting the channel did not hide its media, or deleted it")
+	}
+	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 0 {
+		t.Fatalf("purged %d (%v) within the retention", n, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+table("content_groups")+` SET deleted_at = now() - interval '31 days' WHERE id = $1`, ch); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
+		t.Fatalf("purged %d (%v) past the retention", n, err)
+	}
+	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 0 {
+		t.Fatalf("purged again %d (%v)", n, err)
+	}
+	active := groups.StateActive
+	if _, err := e.groups.UpdateGroups(ctx, []groups.GroupUpdate{{ID: ch, State: &active}}); err != nil {
+		t.Fatal(err)
+	}
+	var deletedAt, purgedAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT deleted_at, media_purged_at FROM `+table("content_groups")+` WHERE id = $1`, ch).Scan(&deletedAt, &purgedAt); err != nil ||
+		deletedAt != nil || purgedAt != nil {
+		t.Fatalf("restored: deleted_at %v, media_purged_at %v, %v", deletedAt, purgedAt, err)
+	}
 }
