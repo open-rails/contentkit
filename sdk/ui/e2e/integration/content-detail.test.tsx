@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { isPending, type ContentKitClient } from "../../src/client/index.js";
 import { ContentKitProvider, useContentDetail, useReaderPlan, useSegmentPages } from "../../src/react/index.js";
+import { useVersionMenuItems, type PlayerMenuItem } from "../../src/index.js";
 import type { Config } from "../support/harness.js";
 import { Accounts, client, harness, png, seedContents, wait } from "./setup.js";
 
@@ -98,5 +99,37 @@ describe("content pages against the real ContentKit", () => {
     expect(plan.segments[0]).toMatchObject({ start: 0, end: 2, released: true, locked: false });
     const { result: pages } = renderHook(() => useSegmentPages(plan.segments[0], "low"), { wrapper: wrap(anon, { viewer: null }) });
     await waitFor(() => expect(pages.current.pages.map((p) => !!p.url)).toEqual([true, true]), wait);
+  });
+
+  it("useVersionMenuItems: the player's language and version entries switch the version shown", async () => {
+    const r = run();
+    const [c] = await seedContents(staff, [
+      {
+        kind: "comic",
+        titles: { en: `Reel ${r}` },
+        access: { level: "tier", tiers: ["premium"] },
+        versions: [{ languages: ["en"] }, { languages: ["en"], traits: ["colored"], access: { level: "public" } }, { languages: ["ja"] }],
+      },
+    ]);
+    const [plain, colored, ja] = c!.versions;
+    const { result } = renderHook(
+      () => {
+        const [version, setVersion] = useState<string | null>(null);
+        const d = useContentDetail(c!.id, { version });
+        return { shown: d.version?.id, menu: useVersionMenuItems(d.versions, d.version?.id, setVersion) as Extract<PlayerMenuItem, { options: unknown }>[] };
+      },
+      { wrapper: wrap(client(h, cfg, null), { viewer: null, language: "en" }) },
+    );
+    await waitFor(() => expect(result.current.menu).toHaveLength(2), quick);
+    const [language, variant] = result.current.menu;
+    expect(language).toMatchObject({ label: "Language", value: "en", options: [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }] });
+    expect(variant).toMatchObject({ label: "Version", options: [{ value: plain!.id, label: "English (locked)" }, { value: colored!.id, label: "Colored" }] });
+
+    act(() => variant!.onChange(colored!.id));
+    expect(result.current.shown).toBe(colored!.id);
+    expect(result.current.menu[1]!.value).toBe(colored!.id);
+    act(() => language!.onChange("ja"));
+    expect(result.current.shown).toBe(ja!.id);
+    expect(result.current.menu.map((m) => [m.label, m.value])).toEqual([["Language", "ja"]]);
   });
 });

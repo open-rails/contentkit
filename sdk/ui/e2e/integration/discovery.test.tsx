@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Beacons, type ContentKitClient, type GroupCard } from "../../src/client/index.js";
+import { ContentRail } from "../../src/index.js";
 import {
   ContentKitProvider,
   useContentFilters,
@@ -161,6 +162,33 @@ describe("discovery against the real ContentKit", () => {
     });
     expect(result.current.items[0]!.counts.favorites).toBe(1);
     expect(result.current.items[0]!.viewer?.favorited).toBe(true);
+  });
+
+  it("ContentRail: a featured group's members in its order and windows, any list, no continue watching without the signal plane", async () => {
+    const r = run();
+    const t = await tag(`rails-${r}`);
+    const [rail] = await staff.groups.create([{ kind: "rail", slug: `featured-${r}`, names: [{ language: "en", kind: "name", name: `Featured ${r}` }] }]);
+    const [one, two, later] = await seedContents(
+      staff,
+      ["One", "Two", "Later"].map((n) => ({ kind: "comic", titles: { en: `${n} ${r}` }, groups: [t.id], versions: [{ languages: ["en"] }] })),
+    );
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+    await staff.groups.addMembers(rail!.id, [{ content_id: two!.id }, { content_id: one!.id, active_until: tomorrow }, { content_id: later!.id, active_from: tomorrow }]);
+    const reader = await h.user();
+    render(
+      <>
+        <ContentRail title="Featured" group={rail!.id} />
+        <ContentRail title="Newest" list={{ kind: "comic", groups: [t.id], sort: "title" }} />
+        <ContentRail title="Continue watching" history={{ status: "in_progress" }} />
+      </>,
+      { wrapper: wrap(client(h, cfg, reader), { viewer: reader.id, language: "en" }) },
+    );
+    const titles = (surface: string) => [...document.querySelectorAll(`[data-ckui=content-rail][data-surface=${surface}] [data-ckui=card-title]`)].map((x) => x.textContent);
+    await waitFor(() => expect(titles("featured")).toEqual([`Two ${r}`, `One ${r}`]), wait);
+    await waitFor(() => expect(titles("list")).toEqual([`Later ${r}`, `One ${r}`, `Two ${r}`]), wait);
+    expect(screen.getByRole("heading", { name: "Featured" })).toBeTruthy();
+    await waitFor(() => expect(document.querySelectorAll("[data-ckui=content-rail]")).toHaveLength(2), wait);
+    expect(screen.queryByRole("heading", { name: "Continue watching" })).toBeNull();
   });
 
   it("without the signal plane: rails leave themselves out, history says so, beacons turn off", async () => {

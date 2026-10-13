@@ -2,7 +2,7 @@
 // a host's own pages would, and waits for the worker's outputs.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createContentKitClient, type FileInfo, type RefBody } from "@openrails/contentkit-ui/client";
+import { createContentKitClient, type FileInfo, type RefBody, type Rule } from "@openrails/contentkit-ui/client";
 import { mediaRef, type Harness, type Item, type TestUser } from "./harness.ts";
 
 const fixtures = path.resolve(import.meta.dirname, "..", "fixtures");
@@ -159,10 +159,17 @@ export async function seedPolls(h: Harness) {
 /** A published content made through the catalog's routes: titles by language, its versions, its groups. */
 export async function seedContent(
   ck: ReturnType<typeof contentKit>,
-  o: { kind: string; titles: Record<string, string>; versions: { languages: string[]; traits?: string[] }[]; groups?: string[] },
+  o: {
+    kind: string;
+    titles: Record<string, string>;
+    versions: { languages: string[]; traits?: string[]; access?: Rule }[];
+    groups?: string[];
+    access?: Rule;
+    attributes?: Record<string, unknown>;
+  },
 ) {
   const text = Object.fromEntries(Object.entries(o.titles).map(([l, title]) => [l, { title }]));
-  const c = await ck.contents.create({ kind: o.kind, text, versions: o.versions });
+  const c = await ck.contents.create({ kind: o.kind, text, versions: o.versions, access: o.access, attributes: o.attributes });
   if (o.groups?.length) await ck.groups.setOfContent(c.id, { memberships: o.groups.map((group_id) => ({ group_id })) });
   return ck.contents.publish(c.id);
 }
