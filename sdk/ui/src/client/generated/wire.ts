@@ -206,6 +206,7 @@ export interface CommentInput {
 
 export interface CommentStanding {
   can_comment: boolean;
+  comments: string;
   ban?: BanNotice;
   anonymous: boolean;
   max_length: number;
@@ -249,6 +250,7 @@ export interface Content {
   cover?: CatalogCover;
   state: ContentState;
   listing: Listing;
+  comments: string;
   publish_at?: string;
   published_at?: string;
   live: boolean;
@@ -303,6 +305,7 @@ export interface ContentInput {
   kind: string;
   text?: Record<string, CatalogText>;
   listing?: Listing;
+  comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
@@ -332,6 +335,7 @@ export interface ContentPage {
 
 export interface ContentPatch {
   listing?: Listing;
+  comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;

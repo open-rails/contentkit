@@ -9996,6 +9996,9 @@
           "can_comment": {
             "type": "boolean"
           },
+          "comments": {
+            "type": "string"
+          },
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
           },
@@ -10024,6 +10027,7 @@
         },
         "required": [
           "can_comment",
+          "comments",
           "anonymous",
           "max_length",
           "moderate",
@@ -10140,6 +10144,9 @@
           "listing": {
             "$ref": "#/components/schemas/Listing"
           },
+          "comments": {
+            "type": "string"
+          },
           "publish_at": {
             "type": "string",
             "format": "date-time"
@@ -10228,6 +10235,7 @@
           "title",
           "state",
           "listing",
+          "comments",
           "live",
           "access",
           "restrictions",
@@ -10353,6 +10361,9 @@
           "listing": {
             "$ref": "#/components/schemas/Listing"
           },
+          "comments": {
+            "type": "string"
+          },
           "access": {
             "$ref": "#/components/schemas/Rule"
           },
@@ -10472,6 +10483,9 @@
         "properties": {
           "listing": {
             "$ref": "#/components/schemas/Listing"
+          },
+          "comments": {
+            "type": "string"
           },
           "access": {
             "$ref": "#/components/schemas/Rule"
@@ -14183,6 +14197,7 @@
           "checksum_mismatch",
           "comment_banned",
           "comment_too_long",
+          "comments_closed",
           "conflict",
           "forbidden",
           "gone",
@@ -14406,6 +14421,10 @@
     "comment_too_long": {
       "status": 422,
       "meaning": "The comment is longer than the site allows; `details.max` is the limit in characters."
+    },
+    "comments_closed": {
+      "status": 403,
+      "meaning": "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused."
     },
     "conflict": {
       "status": 409,

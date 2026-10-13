@@ -1,7 +1,6 @@
 package content
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -75,16 +74,13 @@ func (rt *Runtime) target(req *http.Request, typ TargetType) (contentref.Content
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
-	if _, ok := rt.cfg.Kinds[kind]; typ == TargetContent && !ok {
-		return contentref.ContentRef{}, ErrNotFound
-	}
-	if _, ok := rt.cfg.GroupKinds[kind]; typ == TargetGroup && !ok {
+	if t, ok := rt.targetType(kind); !ok || t != typ {
 		return contentref.ContentRef{}, ErrNotFound
 	}
 	return contentref.NewVersion(rt.tenant, kind, id, version), nil
 }
 
-// targetKinds names each stored target kind's type.
+// targetType is the type of targets of kind.
 func (rt *Runtime) targetType(kind string) (TargetType, bool) {
 	if _, ok := rt.cfg.Kinds[kind]; ok {
 		return TargetContent, true
@@ -105,15 +101,4 @@ func (rt *Runtime) targetHandler(typ TargetType, h func(http.ResponseWriter, *ht
 		}
 		h(w, req, ref)
 	}
-}
-
-// checkTarget validates a target a Go caller names.
-func (rt *Runtime) checkTarget(ctx context.Context, ref contentref.ContentRef) error {
-	if err := rt.checkRef(ref); err != nil {
-		return err
-	}
-	if !rt.isRegistered(ref.ContentKind) {
-		return ErrNotFound
-	}
-	return nil
 }

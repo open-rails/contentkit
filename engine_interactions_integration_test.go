@@ -136,38 +136,43 @@ func TestEngineInteractions(t *testing.T) {
 
 	// The reader's reactions and favorites, as cards.
 	var page discovery.InteractionPage
-	s.call(http.StatusOK, u1, "GET", v+"/me/reactions?target=groups&kind=tag", nil, &page)
+	mine := func(a access.Actor, path string) {
+		t.Helper()
+		page = discovery.InteractionPage{}
+		s.call(http.StatusOK, a, "GET", v+path, nil, &page)
+	}
+	mine(u1, "/me/reactions?target=groups&kind=tag")
 	if len(page.Items) != 1 || page.Items[0].Group == nil || page.Items[0].Group.Name != "Moonlit" || page.Items[0].Value != 1 {
 		t.Fatalf("tag reactions %+v", page)
 	}
-	s.call(http.StatusOK, u2, "GET", v+"/me/reactions?target=groups&value=like", nil, &page)
+	mine(u2, "/me/reactions?target=groups&value=like")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("u2's tag likes %+v", page)
 	}
-	s.call(http.StatusOK, u1, "GET", v+"/me/reactions?value=like", nil, &page)
+	mine(u1, "/me/reactions?value=like")
 	if len(page.Items) != 1 || page.Items[0].Content == nil || page.Items[0].Content.ID != harbor.ID {
 		t.Fatalf("u1's content likes %+v", page)
 	}
-	s.call(http.StatusOK, u2, "GET", v+"/me/reactions?value=dislike", nil, &page)
+	mine(u2, "/me/reactions?value=dislike")
 	if len(page.Items) != 1 || page.Items[0].Value != -1 || page.Items[0].Content.Title != "Harbor" {
 		t.Fatalf("u2's dislikes %+v", page)
 	}
 	s.call(http.StatusBadRequest, u1, "GET", v+"/me/reactions?value=meh", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "GET", v+"/me/favorites", nil, nil)
-	s.call(http.StatusOK, u1, "GET", v+"/me/favorites?limit=1", nil, &page)
+	mine(u1, "/me/favorites?limit=1")
 	if len(page.Items) != 1 || page.Items[0].Content.ID != third.ID || page.NextCursor == "" {
 		t.Fatalf("favorites page 1 %+v", page)
 	}
-	s.call(http.StatusOK, u1, "GET", v+"/me/favorites?limit=1&cursor="+url.QueryEscape(page.NextCursor), nil, &page)
+	mine(u1, "/me/favorites?limit=1&cursor="+url.QueryEscape(page.NextCursor))
 	if len(page.Items) != 1 || page.Items[0].Content.ID != harbor.ID || page.NextCursor != "" {
 		t.Fatalf("favorites page 2 %+v", page)
 	}
-	s.call(http.StatusOK, u1, "GET", v+"/me/favorites?target=groups", nil, &page)
+	mine(u1, "/me/favorites?target=groups")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("group favorites %+v", page)
 	}
 	s.call(http.StatusOK, staff, "POST", v+"/contents/"+third.ID+"/unpublish", nil, nil)
-	s.call(http.StatusOK, u1, "GET", v+"/me/favorites", nil, &page)
+	mine(u1, "/me/favorites")
 	if len(page.Items) != 1 || page.Items[0].Content.ID != harbor.ID {
 		t.Fatalf("an unpublished favorite still lists: %+v", page)
 	}
@@ -252,7 +257,7 @@ func TestEngineInteractions(t *testing.T) {
 	if rows("u1") != 0 || rows(session) != 0 {
 		t.Fatalf("searches after erasure: u1 %d, session %d", rows("u1"), rows(session))
 	}
-	s.call(http.StatusOK, u1, "GET", v+"/me/reactions", nil, &page)
+	mine(u1, "/me/reactions")
 	if len(page.Items) != 0 {
 		t.Fatalf("an erased reader's reactions %+v", page)
 	}

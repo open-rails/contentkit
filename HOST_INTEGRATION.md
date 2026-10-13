@@ -395,10 +395,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{kind}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|groups}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
-| `reaction` | `POST /{kind}/{id}/like\|dislike`, `DELETE /{kind}/{id}/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{kind}/{id}/favorite` | 20 per minute |
+| `reaction` | `POST /{contents\|groups}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|groups}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -1155,8 +1155,7 @@ reactions and comment threads never do.
 
 - **Reference**: the reaction row, the counts rollup and the export all use
   the resolver's canonical reference (`Resolution.Ref`); comment reactions
-  never export. `MyReactions`/`IsFavorited` read under it; `Counts` reads
-  exactly the reference given.
+  never export. `Counts` reads exactly the reference given.
 - **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
   order as one `signal` event per subject × reference × axis (`Type` = axis,
   `EventID` = `"current"`, `Revision`, `OccurredAt` =
