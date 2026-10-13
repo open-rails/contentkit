@@ -101,22 +101,28 @@ func (r *routeStore) AbortMultipart(ctx context.Context, key, uploadID string) e
 }
 
 // Capabilities are the weakest common to every bucket.
-func (r *routeStore) Capabilities() Capabilities {
-	c := r.own.Capabilities()
+func (r *routeStore) Capabilities(ctx context.Context) (Capabilities, error) {
+	c, err := r.own.Capabilities(ctx)
+	if err != nil {
+		return c, err
+	}
 	for _, s := range r.bound {
-		b := s.Capabilities()
+		b, err := s.Capabilities(ctx)
+		if err != nil {
+			return Capabilities{}, err
+		}
 		c.ConditionalPut = c.ConditionalPut && b.ConditionalPut
 		c.ChecksumSHA256 = c.ChecksumSHA256 && b.ChecksumSHA256
 	}
-	return c
+	return c, nil
 }
 
-func (r *routeStore) Check(ctx context.Context, prefix string) error {
-	if err := r.own.Check(ctx, prefix); err != nil {
+func (r *routeStore) Check(ctx context.Context) error {
+	if err := r.own.Check(ctx); err != nil {
 		return err
 	}
-	for ns, s := range r.bound {
-		if err := s.Check(ctx, ns+"/_probe/"); err != nil {
+	for _, s := range r.bound {
+		if err := s.Check(ctx); err != nil {
 			return err
 		}
 	}

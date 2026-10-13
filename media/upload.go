@@ -166,8 +166,8 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err != nil {
 		return Presigned{}, err
 	}
-	if !u.o.Store.Capabilities().ConditionalPut {
-		return Presigned{}, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+		return Presigned{}, err
 	}
 	out := Presigned{Path: path, ProcessOnUpload: u.o.ProcessOnUpload}
 	// An identical current allocation needs no upload. Unreferenced objects
@@ -350,6 +350,10 @@ func (u *Uploads) Complete(ctx context.Context, actor access.Actor, sealed strin
 		}
 		return UploadedBlob{}, err
 	}
+	caps, err := u.o.Store.Capabilities(ctx)
+	if err != nil {
+		return UploadedBlob{}, err
+	}
 	var total int64
 	for i, p := range parts {
 		last := i == len(parts)-1
@@ -358,7 +362,7 @@ func (u *Uploads) Complete(ctx context.Context, actor access.Actor, sealed strin
 			return UploadedBlob{}, uploadErr(CodeIncomplete, "part %d is missing", i+1)
 		case p.Size > MaxPartSize || (!last && p.Size < MinPartSize):
 			return UploadedBlob{}, u.abort(ctx, t, key, uploadErr(CodeInvalid, "part %d is %d bytes; parts are %d-%d bytes, the last may be smaller", p.Number, p.Size, MinPartSize, MaxPartSize))
-		case u.o.Store.Capabilities().ChecksumSHA256 && len(p.SHA256) != sha256.Size:
+		case caps.ChecksumSHA256 && len(p.SHA256) != sha256.Size:
 			return UploadedBlob{}, u.abort(ctx, t, key, uploadErr(CodeChecksum, "part %d has no SHA-256", p.Number))
 		}
 		total += p.Size
@@ -436,8 +440,8 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	if !u.o.Store.Capabilities().ConditionalPut {
-		return nil, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+		return nil, err
 	}
 	if !grant.Exempt {
 		if slices.ContainsFunc(ops, func(op Op) bool { return op.Op == OpRegenerate && op.Force }) {

@@ -21,8 +21,8 @@ import (
 // empty root has no coupled quota, queue or cleanup effects. Its conditional
 // PUT cannot overwrite a tombstone or a concurrently initialized lifetime.
 func (m *Manifests) deletionIncarnation(ctx context.Context, item Item) (*Manifest, error) {
-	if !m.store.Capabilities().ConditionalPut {
-		return nil, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, m.store); err != nil {
+		return nil, err
 	}
 	for range m.retries {
 		cur, _, err := m.get(ctx, item.ManifestKey())

@@ -33,7 +33,7 @@ func SnoozeUnavailable(ctx context.Context, store Store, job *rivertype.JobRow, 
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, unavailableCheck)
 	defer cancel()
-	if store.Check(checkCtx, "_media-worker/") == nil {
+	if store.Check(checkCtx) == nil {
 		return err
 	}
 	return river.JobSnooze(UnavailableSnooze)

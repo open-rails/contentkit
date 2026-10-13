@@ -121,10 +121,12 @@ type Store interface {
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []Part) (Object, error)
 	AbortMultipart(ctx context.Context, key, uploadID string) error
 
-	Capabilities() Capabilities
-	// Check reports whether the backend answers. The first success also
-	// establishes Capabilities (Probe under prefix) when they were not given.
-	Check(ctx context.Context, prefix string) error
+	// Capabilities are the backend's, probed on first use when not given; an
+	// error (ErrUnavailable) means they are not known yet.
+	Capabilities(ctx context.Context) (Capabilities, error)
+	// Check reports whether the backend answers, establishing Capabilities
+	// while they are unknown.
+	Check(ctx context.Context) error
 }
 
 // Probe measures the backend's capabilities with scratch objects under prefix,

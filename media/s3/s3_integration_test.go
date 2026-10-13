@@ -69,7 +69,7 @@ func TestPresignedPutIsBoundToTypeLengthAndChecksum(t *testing.T) {
 	wrongBody := slices.Clone(body)
 	wrongBody[0] ^= 0xff
 	if r := send(t, p, wrongBody, nil); r.StatusCode < 400 {
-		if env.Store.Capabilities().ChecksumSHA256 {
+		if env.Caps().ChecksumSHA256 {
 			t.Fatalf("wrong body accepted: %d", r.StatusCode)
 		}
 		t.Logf("backend accepted a body not matching the signed checksum (%d): the commit re-hash fallback applies", r.StatusCode)
@@ -90,7 +90,7 @@ func TestPresignedPutIsBoundToTypeLengthAndChecksum(t *testing.T) {
 	if obj.Size != int64(len(body)) || obj.ContentType != "image/png" {
 		t.Fatalf("head %+v", obj)
 	}
-	if env.Store.Capabilities().ChecksumSHA256 && !bytes.Equal(obj.ChecksumSHA256, sum[:]) {
+	if env.Caps().ChecksumSHA256 && !bytes.Equal(obj.ChecksumSHA256, sum[:]) {
 		t.Fatalf("stored checksum %x, want %x", obj.ChecksumSHA256, sum)
 	}
 }
@@ -150,7 +150,7 @@ func TestPresignedGetReadsRangesFromInternalEndpoint(t *testing.T) {
 
 func TestConditionalWritesAndReads(t *testing.T) {
 	env := s3test.Open(t)
-	caps := env.Store.Capabilities()
+	caps := env.Caps()
 	ctx := context.Background()
 	key := env.Tenant + "/post/" + cid(1) + "/manifest.json"
 	put := func(body string, o media.PutOptions) (media.Object, error) {
@@ -222,7 +222,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 	key := prefix + layout.SHA256Name(sum[:])
 	wrong := sha256.Sum256([]byte("other"))
 	_, err := env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ChecksumSHA256: wrong[:]})
-	if env.Store.Capabilities().ChecksumSHA256 && err == nil {
+	if env.Caps().ChecksumSHA256 && err == nil {
 		t.Fatal("put with wrong checksum accepted")
 	}
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)),
@@ -300,7 +300,7 @@ func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 	}
 	wrong := sha256.Sum256([]byte("wrong"))
 	if r := upload(key, id, 1, parts[0], wrong[:]); r.StatusCode < 400 {
-		if env.Store.Capabilities().ChecksumSHA256 {
+		if env.Caps().ChecksumSHA256 {
 			t.Fatalf("part with wrong checksum accepted: %d", r.StatusCode)
 		}
 		t.Logf("backend accepted a part not matching its checksum (%d)", r.StatusCode)

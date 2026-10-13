@@ -64,7 +64,7 @@ func run(log *slog.Logger) error {
 	sup := deps.New(deps.WithLogger(log))
 	sup.AddPostgres("postgres", cfg.Pool.Config().ConnConfig)
 	store := cfg.Store
-	sup.Add("s3", deps.Optional, func(ctx context.Context) error { return store.Check(ctx, "_media-worker/") }, nil, deps.ProbeTimeout(5*time.Second))
+	sup.Add("s3", deps.Optional, func(ctx context.Context) error { return store.Check(ctx) }, nil, deps.ProbeTimeout(5*time.Second))
 	sup.Start(ctx)
 
 	addr := os.Getenv("MEDIA_METRICS_ADDR")
