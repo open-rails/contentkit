@@ -8,6 +8,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
+	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -20,6 +21,7 @@ func TestOwnerGroupFeedIntegration(t *testing.T) {
 	ctx := t.Context()
 	member, stranger := s.customer(), s.customer()
 	studio, other := s.channel("studio", "Studio", "owner"), s.channel("other", "Other", "owner")
+	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	none := []catalog.Creator{}
 	post := func(owner string, rule access.Rule, title string) string {
 		return s.post(catalog.ContentInput{Access: &rule, OwnerGroupID: owner, Creators: &none, Text: map[string]catalog.Text{"en": {Title: title}}})
