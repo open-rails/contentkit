@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/importer"
@@ -163,5 +166,81 @@ func TestImportStagesBucketCopies(t *testing.T) {
 		Ops: []media.Op{{Op: media.OpPut, Path: staged.Files[0].Path, Blob: staged.Files[0].Blob}}}, &done)
 	if len(done.Files) != 1 || done.Files[0].Path != "originals/0001.png" {
 		t.Fatalf("committed %+v", done.Files)
+	}
+}
+
+// An importer's legacy identifiers resolve over the API as codes do,
+// following merges: hidden content is not_found, removed content gone. The
+// imported comments setting holds, and the legacy view counts show on cards
+// and order most_viewed.
+func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	_, user := w.person(iam.Role{})
+	f := serve(t, w.engine(nil))
+	t0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	gallery := func(n int, state, comments string, views int64) importer.ContentRecord {
+		ext := fmt.Sprintf("gallery:%d", n)
+		return importer.ContentRecord{ExternalID: ext, Kind: "gallery", State: state, PublishedAt: &t0, Comments: comments, ViewBaseline: views,
+			Text:     map[string]catalog.Text{"en": {Title: fmt.Sprintf("Legacy %d", n)}},
+			Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, Languages: []string{"en"}, PublishedAt: &t0}}}
+	}
+	to := func(ext string) importer.TargetRef {
+		return importer.TargetRef{Content: &importer.Ref{ExternalID: ext}}
+	}
+	tag := func(ext string) importer.TargetRef { return importer.TargetRef{Group: &importer.Ref{ExternalID: ext}} }
+	var res importer.Result
+	f.want(http.StatusOK, staff, "POST", "/import", importer.Batch{Source: "hentai0-legacy",
+		Groups: []importer.GroupRecord{
+			{ExternalID: "tag:1", Kind: "tag", Slug: "colour", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Colour"}}},
+			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}},
+		Contents: []importer.ContentRecord{gallery(1, "published", "closed", 5000), gallery(2, "published", "", 50), gallery(3, "draft", "", 0),
+			gallery(4, "deleted", "", 0)},
+		Aliases: []importer.AliasRecord{{Kind: "video", Key: "101", Target: to("gallery:1")}, {Kind: "video", Key: "101/page", Locator: "3", Target: to("gallery:1")},
+			{Kind: "video", Key: "103", Target: to("gallery:3")}, {Kind: "video", Key: "104", Target: to("gallery:4")},
+			{Kind: "tag-name", Key: "Colour", Target: tag("tag:1")}}}, &res)
+	if len(res.Failed) > 0 {
+		t.Fatalf("import %+v", res.Failed)
+	}
+	g1, g2 := res.IDs["content"]["gallery:1"], res.IDs["content"]["gallery:2"]
+	var color groups.GroupDetail
+	f.want(http.StatusOK, staff, "POST", "/groups/"+res.IDs["group"]["tag:1"]+"/merge", groups.MergeInput{Into: groups.GroupID(res.IDs["group"]["tag:2"])}, nil)
+	f.want(http.StatusOK, "", "GET", "/groups/"+res.IDs["group"]["tag:2"], nil, &color)
+
+	key := func(kind, k string) contenturl.AliasKey {
+		return contenturl.AliasKey{Source: "hentai0-legacy", Kind: kind, Key: k}
+	}
+	lookup := contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("video", "101"), key("video", "101/page"), key("video", "103"),
+		key("video", "104"), key("video", "999"), key("tag-name", "Colour")}}
+	var got contenturl.AliasResults
+	f.want(http.StatusOK, "", "POST", "/codes/aliases?lang=en", lookup, &got)
+	var item catalog.Content
+	f.want(http.StatusOK, "", "GET", "/contents/"+g1, nil, &item)
+	page := "/en/g/" + item.Code + "/legacy-1"
+	for i, want := range []struct{ status, id, path, locator string }{
+		{contenturl.AliasFound, g1, page, ""}, {contenturl.AliasFound, g1, page, "3"}, {contenturl.AliasNotFound, "", "", ""},
+		{contenturl.AliasGone, "", "", ""}, {contenturl.AliasNotFound, "", "", ""}, {contenturl.AliasFound, string(color.ID), "/en/tags/" + color.Code + "/color", ""},
+	} {
+		a := got.Aliases[i]
+		var id, path string
+		if a.Resolved != nil {
+			id, path = a.Resolved.ContentID, a.Resolved.Path
+		}
+		if a.AliasKey != lookup.Aliases[i] || a.Status != want.status || id != want.id || path != want.path || a.Locator != want.locator {
+			t.Errorf("alias %s = %+v %q, want %+v", lookup.Aliases[i].Key, a, path, want)
+		}
+	}
+	f.want(http.StatusBadRequest, "", "POST", "/codes/aliases", contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("Video", "1")}}, nil)
+
+	if item.Comments != content.CommentsClosed {
+		t.Fatalf("comments %q", item.Comments)
+	}
+	f.want(http.StatusForbidden, user, "POST", "/contents/"+g1+"/comments", content.CommentInput{Body: "late"}, nil)
+	f.want(http.StatusCreated, user, "POST", "/contents/"+g2+"/comments", content.CommentInput{Body: "open"}, nil)
+
+	var cards discovery.ContentPage
+	f.want(http.StatusOK, "", "GET", "/contents?kind=gallery&sort=most_viewed", nil, &cards)
+	if len(cards.Contents) != 2 || cards.Contents[0].ID != g1 || cards.Contents[0].Counts.Views != 5000 || cards.Contents[1].Counts.Views != 50 {
+		t.Fatalf("most viewed %+v", cards.Contents)
 	}
 }

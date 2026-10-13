@@ -133,7 +133,9 @@ func TestRouterCanonicalizes(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	key := func(source, kind, k string) contenturl.AliasKey { return contenturl.AliasKey{Source: source, Kind: kind, Key: k} }
+	key := func(source, kind, k string) contenturl.AliasKey {
+		return contenturl.AliasKey{Source: source, Kind: kind, Key: k}
+	}
 	lookup := contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("hentai0-legacy", "video", "346791971"), key("doujins-legacy", "object-token", "ab12cd34"),
 		key("hentai0-legacy", "video", "5"), key("hentai0-legacy", "video", "2"), key("hentai0-legacy", "video", "404")}}
 	post := func(target string, body any) (*httptest.ResponseRecorder, contenturl.AliasResults) {

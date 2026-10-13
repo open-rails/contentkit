@@ -29,7 +29,7 @@ func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 48 * time.Hour, rule: `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`,
 			favorites: 9, popularity: `{"score":{"7d":9}}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 24 * time.Hour, restrictions: []string{"restricted"}, favorites: 1,
-			attrs: map[string]any{"format": "doujin"}, popularity: `{"score":{"7d":4}}`, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
+			attrs: map[string]any{"format": "doujin"}, popularity: `{"score":{"7d":4}}`, viewBaseline: 100, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
 		item{n: 4, titles: map[string]string{"en": "Delta"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
 		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
@@ -52,6 +52,9 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	}
 	if !alpha.Access.Allowed || alpha.Counts.Favorites != 5 || alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
 		t.Fatalf("card access and counts: %+v", alpha)
+	}
+	if views := page.Contents[0].Counts.Views; views != 100 {
+		t.Fatalf("an imported view baseline counts as views: %d", views)
 	}
 	if alpha.Attributes["format"] != "manga" || alpha.PublishedAt == nil || alpha.Viewer != nil {
 		t.Fatalf("card attributes and anonymous state: %+v", alpha)
@@ -99,7 +102,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		for _, bad := range []string{
 			q("/contents", "kind", "comic"), q("/contents", "kind", "gallery", "traits", "dubbed"), q("/contents", "attribute", "format:manga"),
 			q("/contents", "kind", "gallery", "attribute", "format:novel"), q("/contents", "released_on", "yesterday"), q("/contents", "sort", "loudest"),
-			q("/contents", "sort", "newest:7d"), q("/contents", "sort", "popular:2d"), q("/contents", "sort", "position"), q("/contents", "mode", "peek"),
+			q("/contents", "sort", "newest:7d"), q("/contents", "sort", "most_viewed:7d"), q("/contents", "sort", "popular:2d"), q("/contents", "sort", "position"), q("/contents", "mode", "peek"),
 			q("/contents", "language", "fr"), q("/contents", "view_status", "unseen"), q("/contents", "cursor", "nope"),
 		} {
 			if status, code := f.call(http.MethodGet, host, "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
@@ -124,7 +127,8 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			"title":          {f.cid(1), f.cid(3)},
 			"most_favorited": {f.cid(1), f.cid(3)},
 			"popular:7d":     {f.cid(3), f.cid(1)},
-			"popular":        {f.cid(1), f.cid(3)},
+			"popular":        {f.cid(1), f.cid(3)}, // a view baseline is no popularity
+			"most_viewed":    {f.cid(3), f.cid(1)},
 			"top_rated":      {f.cid(3), f.cid(1)},
 		}
 		for sort, want := range cases {
@@ -137,7 +141,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 	})
 	t.Run("cursor pages every sort exactly once", func(t *testing.T) {
-		for _, sort := range []string{"newest", "oldest", "title", "popular:7d", "most_favorited", "random", "top_rated:30d"} {
+		for _, sort := range []string{"newest", "oldest", "title", "popular:7d", "most_favorited", "most_viewed", "random", "top_rated:30d"} {
 			var seen []string
 			path := q("/contents", "sort", sort, "limit", "1")
 			for range 5 {

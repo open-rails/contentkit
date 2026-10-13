@@ -248,10 +248,10 @@ type AliasResults struct {
 	Aliases []AliasResult `json:"aliases"`
 }
 
-// ResolveAliases resolves legacy identifiers for req's visitor, as the
+// resolveAliases resolves legacy identifiers for req's visitor, as the
 // codes route resolves a code: hidden content is not_found, removed content
 // gone. language picks the paths' prefix and slug.
-func (r *Router) ResolveAliases(req *http.Request, keys []AliasKey, language string) (AliasResults, error) {
+func (r *Router) resolveAliases(req *http.Request, keys []AliasKey, language string) (AliasResults, error) {
 	matches, err := r.store.ResolveAliases(req.Context(), keys)
 	if err != nil {
 		return AliasResults{}, err
@@ -364,7 +364,7 @@ func (r *Router) aliases(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: fmt.Sprintf("at most %d aliases", MaxAliases), Code: "invalid_request"})
 		return
 	}
-	out, err := r.ResolveAliases(req, in.Aliases, lang)
+	out, err := r.resolveAliases(req, in.Aliases, lang)
 	switch {
 	case errors.Is(err, ErrInvalid):
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error(), Code: "invalid_request"})

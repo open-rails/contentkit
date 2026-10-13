@@ -203,10 +203,10 @@ byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
 ```go
 router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
 	Routes: cfg.Routes(), Languages: []string{"en", "es"}, BaseURL: "https://hentai0.com",
-	Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) { /* drafts, removals */ },
+	Visibility: func(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) { /* drafts, removals, per link */ },
 })
 mux.Handle("/", router.Middleware(spa))
-// the engine's codes route group serves GET /v1/codes/{code}[?lang=], routed by Config.Content's kinds
+// the engine's codes route group serves GET /v1/codes/{code}[?lang=] and POST /v1/codes/aliases, routed by Config.Content's kinds
 ```
 
 - **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
@@ -215,9 +215,11 @@ mux.Handle("/", router.Middleware(spa))
   `("hentai0-legacy", "video", "346791971")` or
   `("doujins-legacy", "tag-name", "netorare")`. An alias is written once:
   repeating it is a no-op and re-pointing it is a conflict. The host keeps
-  its legacy URL-shape rules. It calls `DecideAlias` and answers a 301 to
-  `Path` (Matched), a 410 (Gone) or a 404 (neither), in one hop and before
-  language negotiation.
+  its legacy URL-shape rules. It calls `POST /v1/codes/aliases?lang=`
+  (`Client.PostCodesAliases`, up to 100 per call) and answers a 301 to
+  `resolved.path` (`found`, with `locator` for a position such as a page),
+  a 410 (`gone`) or a 404 (`not_found`), in one hop and before language
+  negotiation.
 - **Routes are reserved.** A content route serves only content pages: under
   it, any 9-character segment with a letter is read as a code, and a third
   segment as a slug. So `/watch/{CODE}/comments` redirects to the page. Put
@@ -558,6 +560,7 @@ that fits the reader (`display_language` first, then position).
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
   `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `most_viewed` (all-time viewers plus an imported `view_baseline`),
   `position` in the first of `groups`, `random`), `cursor`, `limit`.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
   signed-in reader, or any list sort of the best 1000 matches), `GET

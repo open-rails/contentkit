@@ -22,6 +22,14 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   Versions not listed stay. `memberships` replace a content item's
   memberships in the group `kinds` they name.
 - Content `code` and group `code` keep an existing content code.
+- `aliases` record the old site's identifiers; hosts 301 old URLs through
+  `POST /v1/codes/aliases` (`Client.PostCodesAliases`), which answers each
+  `(source, kind, key)` with `found` (link, canonical path, locator),
+  `not_found` (unknown or hidden) or `gone` (removed), following merges.
+- `view_baseline` is a content item's legacy all-time view count (the old
+  site's per-item total; raw view rows are never imported). Cards' `views`
+  and the `most_viewed` sort add it to the viewers the signal plane counts;
+  `popular` and `top_rated` never see it.
 - Imported content is trusted: not screened, approved. Reactions and
   favorites take fresh preference revisions; `preference_floor` first raises
   the sequence past a retained signal plane (also the restore step).
@@ -74,7 +82,7 @@ from the media jobs.
 | Section | Record | Keys |
 |---|---|---|
 | `groups` | `GroupRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
-| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `access`, `restrictions`, `attributes`, `owner_group`, `cover`, `creators`, `text`, `versions`, `code`, times |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `view_baseline`, `access`, `restrictions`, `attributes`, `owner_group`, `cover`, `creators`, `text`, `versions`, `code`, times |
 | | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `text`, `segments` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
 | `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
