@@ -571,7 +571,7 @@ export interface Group {
 
 export interface GroupAccess {
   key: string;
-  offer?: Terms;
+  offer?: Sale;
   member: boolean;
   unknown?: boolean;
 }

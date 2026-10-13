@@ -23,9 +23,9 @@ type Sale struct {
 }
 
 // Sales answers, by key string, the purchasable offers selling keys (an
-// access.Decision's Sell): active offers OpenRails sells on their current
-// terms, a paid one with its price. Tier keys and keys sold on terms not yet
-// synced have none.
+// access.Decision's Sell): active offers, a paid one once OpenRails sells it
+// on its current terms, with its price; a free group's at once (joining
+// syncs it). Tier keys have none.
 func (s *Service) Sales(ctx context.Context, keys []string) (map[string]Sale, error) {
 	var parsed []access.Key
 	for _, raw := range keys {
@@ -39,11 +39,20 @@ func (s *Service) Sales(ctx context.Context, keys []string) (map[string]Sale, er
 	}
 	out := map[string]Sale{}
 	for k, o := range live {
-		if o.Synced && (o.PriceID != "" || o.Terms.Amount == 0) {
-			out[k] = Sale{Key: o.Key, Target: o.Target, Terms: o.Terms, PriceID: o.PriceID}
+		if sale, ok := saleOf(o); ok {
+			out[k] = sale
 		}
 	}
 	return out, nil
+}
+
+// saleOf is an active offer as paywalls show it; ok is false for none, or a
+// paid one OpenRails does not sell on its terms yet.
+func saleOf(o Offer) (Sale, bool) {
+	if o.State != Active || o.Terms.Amount > 0 && (!o.Synced || o.PriceID == "") {
+		return Sale{}, false
+	}
+	return Sale{Key: o.Key, Target: o.Target, Terms: o.Terms, PriceID: o.PriceID}, true
 }
 
 // Current answers, per target in order, its latest offer (active, else the

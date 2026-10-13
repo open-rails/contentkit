@@ -651,7 +651,7 @@ function Membership({ group, onError, client }: { group: GroupDetail; onError?: 
   return (
     <Section title={t("groupEditor.membershipPrice")} ckui="group-offer">
       <OfferFields
-        offer={current ? { terms: current } : undefined}
+        offer={current}
         pending={offer.pending}
         onSell={(terms) => void offer.run(() => ck.offers.sellGroup(group.id, terms))}
         onWithdraw={() => void offer.run(() => ck.offers.withdrawGroup(group.id))}

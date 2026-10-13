@@ -10173,7 +10173,7 @@
             "type": "string"
           },
           "offer": {
-            "$ref": "#/components/schemas/Terms"
+            "$ref": "#/components/schemas/Sale"
           },
           "member": {
             "type": "boolean"
