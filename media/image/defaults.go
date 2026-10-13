@@ -26,8 +26,8 @@ type DefaultPublication struct {
 // each other's defaults. The gateway needs no mutable pointer or manifest read.
 func PublishDefaults(ctx context.Context, store media.Store, reg *media.Registry) (DefaultPublication, error) {
 	var result DefaultPublication
-	if !store.Capabilities().ConditionalPut {
-		return result, media.ErrConditionalPutRequired
+	if err := media.RequireConditionalPut(ctx, store); err != nil {
+		return result, err
 	}
 	if err := start(); err != nil {
 		return result, fmt.Errorf("media/image: libvips: %w", err)

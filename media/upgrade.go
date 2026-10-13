@@ -290,8 +290,8 @@ func (m *Manifests) upgradeItem(ctx context.Context, ref contentref.ContentRef) 
 	if err != nil {
 		return upgradeNone, err
 	}
-	if !m.store.Capabilities().ConditionalPut {
-		return upgradeNone, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, m.store); err != nil {
+		return upgradeNone, err
 	}
 	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
 	if err != nil {

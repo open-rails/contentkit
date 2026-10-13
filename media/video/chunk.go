@@ -264,7 +264,11 @@ func (e *Encoder) putChunk(ctx context.Context, item media.Item, runID string, o
 		return "", err
 	}
 	opts := media.PutOptions{ContentType: "video/mp4", ChecksumSHA256: sum}
-	if e.store.Capabilities().ConditionalPut {
+	caps, err := e.store.Capabilities(ctx)
+	if err != nil {
+		return "", err
+	}
+	if caps.ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
 	_, err = e.store.Put(ctx, key, io.NewSectionReader(f, 0, size), size, opts)

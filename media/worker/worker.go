@@ -270,7 +270,7 @@ const checkTimeout = 10 * time.Second
 func (w *Worker) Run(ctx context.Context) error {
 	for attempt := 0; ; attempt++ {
 		checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
-		err := w.c.Store.Check(checkCtx, "_media-worker/")
+		err := w.c.Store.Check(checkCtx)
 		cancel()
 		if err == nil {
 			break

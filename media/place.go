@@ -169,7 +169,11 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 	dst, _ := item.Blob(blob)
 	if body != nil {
 		opts := PutOptions{ContentType: obj.ContentType, ChecksumSHA256: sum}
-		if m.store.Capabilities().ConditionalPut {
+		var caps Capabilities
+		if caps, err = m.store.Capabilities(ctx); err != nil {
+			return "", err
+		}
+		if caps.ConditionalPut {
 			opts.IfNoneMatch = "*"
 		}
 		_, err = m.store.Put(ctx, dst, bytes.NewReader(body), size, opts)
