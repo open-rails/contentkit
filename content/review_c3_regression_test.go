@@ -1,7 +1,6 @@
 package content
 
 import (
-	"context"
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
@@ -9,8 +8,8 @@ import (
 
 func TestReviewC3FreshSequenceStrictlyExceedsFloor(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	floor, err := rt.SeedPreferenceRevisionFloor(context.Background(), 1)
-	if err != nil {
+	floor := int64(1)
+	if err := raiseFloor(rt, floor); err != nil {
 		t.Fatal(err)
 	}
 	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)

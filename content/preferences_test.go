@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
@@ -281,25 +282,31 @@ func TestPreferences_FailedSyncKeepsTheWatermark(t *testing.T) {
 // only ever advances, and fails closed outside the safe range.
 func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
 	floor := int64(1) << 40
-	got, err := rt.SeedPreferenceRevisionFloor(ctx, floor)
-	if err != nil || got < floor {
-		t.Fatalf("seed floor = %d err=%v, want >= %d", got, err, floor)
+	if err := raiseFloor(rt, floor); err != nil {
+		t.Fatal(err)
 	}
 	mustReact(t, rt, actor, "gallery", localeID(42, "en"), -1)
 	_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
 	if rev <= floor {
 		t.Fatalf("revision %d does not exceed the floor %d", rev, floor)
 	}
-	if again, err := rt.SeedPreferenceRevisionFloor(ctx, floor-1_000_000); err != nil || again < rev {
-		t.Fatalf("re-seeding lowered the floor to %d err=%v", again, err)
+	if err := raiseFloor(rt, floor-1_000_000); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := rt.SeedPreferenceRevisionFloor(ctx, maxPreferenceRevisionFloor+1); err == nil {
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	if _, again, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42)); again <= rev {
+		t.Fatalf("a lower floor moved the sequence back: %d after %d", again, rev)
+	}
+	if err := raiseFloor(rt, maxPreferenceRevisionFloor+1); err == nil {
 		t.Fatal("an unsafe floor was accepted")
 	}
+}
+
+func raiseFloor(rt *Runtime, floor int64) error {
+	return pgx.BeginFunc(context.Background(), rt.store.pool, func(tx pgx.Tx) error { return rt.RaisePreferenceFloor(context.Background(), tx, floor) })
 }
 
 // A sync holds no connection across send, so a sender writing through the

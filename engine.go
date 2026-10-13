@@ -39,6 +39,7 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -80,6 +81,7 @@ type Engine struct {
 	catalog  *catalog.Store
 	offers   *offers.Service
 	discover *discovery.Service
+	importer *importer.Service
 	media    *engineMedia
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
@@ -481,6 +483,13 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	if err := e.mountDiscovery(deps); err != nil {
+		return err
+	}
+	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Groups: e.groups,
+		Content: e.content, Offers: e.offers, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
+		return err
+	}
+	if e.modules[httpapi.Import], err = e.importer.Handler(e.auth); err != nil {
 		return err
 	}
 	if e.offers != nil {

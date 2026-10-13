@@ -1,6 +1,7 @@
 package media
 
 import (
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -13,40 +14,40 @@ var refQuery = []httpapi.Param{httpapi.Text("kind", "the item's kind"), httpapi.
 	httpapi.Text("version", "a Versions kind's version id; absent for its content-level item")}
 
 var uploadRoutes = []httpapi.Route[uploadHandler]{
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/presign", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/presign", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket.",
 		Request:   PresignBody{},
 		Responses: []httpapi.Reply{httpapi.OK(PresignReply{})},
 		Errors:    []string{CodeConflict, CodeForbidden, CodeNotFound, CodeQuota, CodeRate, CodeTooLarge, CodeTooManyFiles, CodeType}},
 		Serve: httpapi.H(uploadHandler.presign)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/parts", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/parts", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "Presigns multipart parts, each bound to its SHA-256.",
 		Request:   PartsBody{},
 		Responses: []httpapi.Reply{httpapi.OK(PartsReply{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H(uploadHandler.parts)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/parts/list", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/parts/list", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "The parts of a multipart upload that landed, to resume it.",
 		Request:   TicketBody{},
 		Responses: []httpapi.Reply{httpapi.OK(PartsReply{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H(uploadHandler.listParts)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/complete", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/complete", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "Assembles a multipart upload; blob is its staged name.",
 		Request:   TicketBody{},
 		Responses: []httpapi.Reply{httpapi.OK(CompleteReply{})}, Errors: []string{CodeChecksum, CodeForbidden, CodeIncomplete, CodeNotFound}},
 		Serve: httpapi.H(uploadHandler.complete)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/abort", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/abort", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "Abandons a multipart upload.",
 		Request:   TicketBody{},
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H(uploadHandler.abort)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/commit", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/commit", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc:       "Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them.",
 		Request:   CommitBody{},
 		Responses: []httpapi.Reply{httpapi.OK(CommitReply{})},
 		Errors: []string{CodeConflict, CodeForbidden, CodeImageTooSmall, CodeNotFound, CodeNotUploaded, CodeQuota, CodeRate,
 			CodeTooLarge, CodeTooManyFiles, CodeType}},
 		Serve: httpapi.H(uploadHandler.commit)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/frame", Resource: "uploads", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/frame", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc: "A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).",
 		Query: append(append([]httpapi.Param(nil), refQuery...), httpapi.Text("path", "the video upload's path"),
 			httpapi.Number("t", "seconds into the video"), httpapi.Int("w", "the still's width in pixels")),

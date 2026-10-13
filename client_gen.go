@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -790,40 +791,40 @@ func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid s
 	return out, err
 }
 
-// PostMediaUploadPresign is POST /v1/media/upload/presign (user). Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket.
+// PostMediaUploadPresign is POST /v1/media/upload/presign (editor). Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket.
 func (c *Client) PostMediaUploadPresign(ctx context.Context, body media.PresignBody) (media.PresignReply, error) {
 	var out media.PresignReply
 	err := c.call(ctx, http.MethodPost, "/v1/media/upload/presign", nil, body, &out)
 	return out, err
 }
 
-// PostMediaUploadParts is POST /v1/media/upload/parts (user). Presigns multipart parts, each bound to its SHA-256.
+// PostMediaUploadParts is POST /v1/media/upload/parts (editor). Presigns multipart parts, each bound to its SHA-256.
 func (c *Client) PostMediaUploadParts(ctx context.Context, body media.PartsBody) (media.PartsReply, error) {
 	var out media.PartsReply
 	err := c.call(ctx, http.MethodPost, "/v1/media/upload/parts", nil, body, &out)
 	return out, err
 }
 
-// PostMediaUploadPartsList is POST /v1/media/upload/parts/list (user). The parts of a multipart upload that landed, to resume it.
+// PostMediaUploadPartsList is POST /v1/media/upload/parts/list (editor). The parts of a multipart upload that landed, to resume it.
 func (c *Client) PostMediaUploadPartsList(ctx context.Context, body media.TicketBody) (media.PartsReply, error) {
 	var out media.PartsReply
 	err := c.call(ctx, http.MethodPost, "/v1/media/upload/parts/list", nil, body, &out)
 	return out, err
 }
 
-// PostMediaUploadComplete is POST /v1/media/upload/complete (user). Assembles a multipart upload; blob is its staged name.
+// PostMediaUploadComplete is POST /v1/media/upload/complete (editor). Assembles a multipart upload; blob is its staged name.
 func (c *Client) PostMediaUploadComplete(ctx context.Context, body media.TicketBody) (media.CompleteReply, error) {
 	var out media.CompleteReply
 	err := c.call(ctx, http.MethodPost, "/v1/media/upload/complete", nil, body, &out)
 	return out, err
 }
 
-// PostMediaUploadAbort is POST /v1/media/upload/abort (user). Abandons a multipart upload.
+// PostMediaUploadAbort is POST /v1/media/upload/abort (editor). Abandons a multipart upload.
 func (c *Client) PostMediaUploadAbort(ctx context.Context, body media.TicketBody) error {
 	return c.call(ctx, http.MethodPost, "/v1/media/upload/abort", nil, body, nil)
 }
 
-// PostMediaUploadCommit is POST /v1/media/upload/commit (user). Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them.
+// PostMediaUploadCommit is POST /v1/media/upload/commit (editor). Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them.
 func (c *Client) PostMediaUploadCommit(ctx context.Context, body media.CommitBody) (media.CommitReply, error) {
 	var out media.CommitReply
 	err := c.call(ctx, http.MethodPost, "/v1/media/upload/commit", nil, body, &out)
@@ -869,7 +870,7 @@ func (q GetMediaUploadFrameQuery) values() url.Values {
 	return v
 }
 
-// GetMediaUploadFrame is GET /v1/media/upload/frame (user). A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).
+// GetMediaUploadFrame is GET /v1/media/upload/frame (editor). A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).
 func (c *Client) GetMediaUploadFrame(ctx context.Context, q GetMediaUploadFrameQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, "/v1/media/upload/frame", q.values(), nil)
 }
@@ -2174,4 +2175,11 @@ func (c *Client) PostSignals(ctx context.Context, body discovery.Signals) error 
 // PostExposures is POST /v1/exposures (public). Records result lists a client served, rendered or showed, for click attribution.
 func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) error {
 	return c.call(ctx, http.MethodPost, "/v1/exposures", nil, body, nil)
+}
+
+// PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.
+func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.Result, error) {
+	var out importer.Result
+	err := c.call(ctx, http.MethodPost, "/v1/import", nil, body, &out)
+	return out, err
 }

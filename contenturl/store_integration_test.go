@@ -12,12 +12,14 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/migratekit"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/migrations"
 )
@@ -197,57 +199,27 @@ CREATE OR REPLACE FUNCTION %[1]s.contentkit_content_code() RETURNS text LANGUAGE
 }
 
 func TestConcurrentPutsAgreeOnOneCode(t *testing.T) {
-	ctx, pool, _, s := setup(t)
+	ctx, _, _, s := setup(t)
 	const n = 8
 	var wg sync.WaitGroup
-	codes := make([]contenturl.Code, n)
+	got := make([]contenturl.Code, n)
 	errs := make([]error, n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer tx.Rollback(ctx)
-			links, err := s.WithTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: fmt.Sprint("t", i)})
+			links, err := s.Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: fmt.Sprint("t", i)})
 			if err == nil {
-				codes[i] = links[0].Code
-				err = tx.Commit(ctx)
+				got[i] = links[0].Code
 			}
 			errs[i] = err
 		}(i)
 	}
 	wg.Wait()
-	for i := range codes {
-		if errs[i] != nil || codes[i] != codes[0] {
-			t.Fatalf("put %d: %q %v (first %q)", i, codes[i], errs[i], codes[0])
+	for i := range got {
+		if errs[i] != nil || got[i] != got[0] {
+			t.Fatalf("put %d: %q %v (first %q)", i, got[i], errs[i], got[0])
 		}
-	}
-}
-
-func TestSQLTransactionRollsBack(t *testing.T) {
-	ctx, pool, _, s := setup(t)
-	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	link, err := s.WithSQLTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: "draft", Titles: map[string]string{"es": "borrador"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.WithSQLTx(tx).Resolve(ctx, link[0].Code); err != nil || got.Slugs["es"] != "borrador" {
-		t.Fatalf("in-tx resolve %+v %v", got, err)
-	}
-	if err := tx.Rollback(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Resolve(ctx, link[0].Code); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("rolled-back code resolves: %v", err)
 	}
 }
 
@@ -288,20 +260,38 @@ func TestMergeRedirectsOneHop(t *testing.T) {
 	}
 }
 
-func TestAliases(t *testing.T) {
-	ctx, pool, _, s := setup(t)
-	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
-	aliases := []contenturl.Alias{
-		{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "folder-token", Key: "ab12cd34", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "object-token", Key: "zz99yy88", Locator: "7", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "tag-name", Key: "Mother X Son", ContentRef: ref("gallery", 2)},
+// putAliases writes aliases as the bulk import does, committing even on a
+// refusal, which writes nothing.
+func putAliases(ctx context.Context, pool *pgxpool.Pool, schema string, aliases ...codes.Alias) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	if err := s.PutAliases(ctx, aliases...); err != nil {
+	err = codes.PutAliases(ctx, codes.Pgx(tx), pgx.Identifier{schema}.Sanitize(), tenant, aliases)
+	if cerr := tx.Commit(ctx); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func alias(source, kind, key, locator string, r contentref.ContentRef) codes.Alias {
+	return codes.Alias{Source: source, Kind: kind, Key: key, Locator: locator, Target: codes.Key{Kind: r.ContentKind, ID: r.ContentID}}
+}
+
+func TestAliases(t *testing.T) {
+	ctx, pool, schema, s := setup(t)
+	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
+	aliases := []codes.Alias{
+		alias("doujins-legacy", "folder", "12345", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder-token", "ab12cd34", "", ref("gallery", 1)),
+		alias("doujins-legacy", "object-token", "zz99yy88", "7", ref("gallery", 1)),
+		alias("doujins-legacy", "tag-name", "Mother X Son", "", ref("gallery", 2)),
+	}
+	if err := putAliases(ctx, pool, schema, aliases...); err != nil {
 		t.Fatal(err)
 	}
 	// An import re-run repeats its aliases: a no-op.
-	if err := s.PutAliases(ctx, aliases...); err != nil {
+	if err := putAliases(ctx, pool, schema, aliases...); err != nil {
 		t.Fatalf("idempotent re-run: %v", err)
 	}
 	if got, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "12345"); err != nil || got.Code != links[0].Code || got.Locator != "" {
@@ -315,12 +305,12 @@ func TestAliases(t *testing.T) {
 	}
 	// An alias never moves: other content, another locator, or a batch that
 	// disagrees with itself is ErrConflict and writes nothing.
-	for _, batch := range [][]contenturl.Alias{
-		{{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 2)}},
-		{{Source: "doujins-legacy", LegacyKind: "object-token", Key: "zz99yy88", Locator: "8", ContentRef: ref("gallery", 1)}},
-		{{Source: "doujins-legacy", LegacyKind: "folder", Key: "777", ContentRef: ref("gallery", 1)}, {Source: "doujins-legacy", LegacyKind: "folder", Key: "777", ContentRef: ref("gallery", 2)}},
+	for _, batch := range [][]codes.Alias{
+		{alias("doujins-legacy", "folder", "12345", "", ref("gallery", 2))},
+		{alias("doujins-legacy", "object-token", "zz99yy88", "8", ref("gallery", 1))},
+		{alias("doujins-legacy", "folder", "777", "", ref("gallery", 1)), alias("doujins-legacy", "folder", "777", "", ref("gallery", 2))},
 	} {
-		if err := s.PutAliases(ctx, batch...); !errors.Is(err, contenturl.ErrConflict) {
+		if err := putAliases(ctx, pool, schema, batch...); !errors.Is(err, contenturl.ErrConflict) {
 			t.Fatalf("PutAliases(%+v) = %v, want ErrConflict", batch, err)
 		}
 	}
@@ -328,25 +318,18 @@ func TestAliases(t *testing.T) {
 		t.Fatalf("conflicting batch left alias 777: %v", err)
 	}
 	// The refusal precedes any write, so even a caller that commits anyway keeps nothing.
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WithTx(tx).PutAliases(ctx,
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "776", ContentRef: ref("gallery", 1)},
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 2)},
+	if err := putAliases(ctx, pool, schema,
+		alias("doujins-legacy", "folder", "776", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder", "12345", "", ref("gallery", 2)),
 	); !errors.Is(err, contenturl.ErrConflict) {
 		t.Fatalf("in-tx conflict: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "776"); !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("refused batch wrote alias 776: %v", err)
 	}
-	err = s.PutAliases(ctx,
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "778", ContentRef: ref("gallery", 1)},
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "779", ContentRef: ref("gallery", 9)},
+	err := putAliases(ctx, pool, schema,
+		alias("doujins-legacy", "folder", "778", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder", "779", "", ref("gallery", 9)),
 	)
 	if !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("unregistered alias target: %v", err)
@@ -360,11 +343,8 @@ func TestAliases(t *testing.T) {
 	if got, _ := s.ResolveAlias(ctx, "doujins-legacy", "tag-name", "Mother X Son"); got.Code != links[0].Code {
 		t.Fatalf("alias does not follow the merge: %+v", got)
 	}
-	for _, bad := range []contenturl.Alias{
-		{Source: "legacy", LegacyKind: "Legacy", Key: "1", ContentRef: ref("gallery", 1)},
-		{Source: "legacy", LegacyKind: "legacy", Key: "", ContentRef: ref("gallery", 1)},
-	} {
-		if err := s.PutAliases(ctx, bad); !errors.Is(err, contenturl.ErrInvalid) {
+	for _, bad := range []codes.Alias{alias("legacy", "Legacy", "1", "", ref("gallery", 1)), alias("legacy", "legacy", "", "", ref("gallery", 1))} {
+		if err := putAliases(ctx, pool, schema, bad); !errors.Is(err, contenturl.ErrInvalid) {
 			t.Errorf("PutAliases(%+v) = %v", bad, err)
 		}
 	}
