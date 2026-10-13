@@ -34,6 +34,8 @@ export interface ContentKitMounts {
   offers?: string;
   /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
   discovery?: string;
+  /** Staff bulk import. Default `{baseUrl}/v1`. */
+  import?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
