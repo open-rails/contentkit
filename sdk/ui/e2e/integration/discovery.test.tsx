@@ -10,6 +10,7 @@ import {
   useContentFilters,
   useContents,
   useHistory,
+  useRecentSearches,
   useRecommendations,
   useReleaseDates,
   useSearch,
@@ -114,6 +115,30 @@ describe("discovery against the real ContentKit", () => {
     const { result: ta } = renderHook(({ q }: { q: string }) => useTypeahead(q, { debounce: 10 }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: word.slice(0, 6) } });
     await waitFor(() => expect([ta.current.contents.map((x) => x.id), ta.current.groups.map((g) => g.id)]).toEqual([[one!.id], [t.id]]), wait);
     expect(ta.current.query).toBe(word.slice(0, 6));
+  });
+
+  it("useRecentSearches: what a reader searched, newest first, one or all cleared; signed out, by session", async () => {
+    const r = run();
+    for (const [who, c] of [
+      ["signed in", client(h, cfg, await h.user())],
+      ["signed out", client(h, cfg, null)],
+    ] as const) {
+      await c.discovery.search({ q: `first ${r}` });
+      await c.discovery.search({ q: `second ${r}` });
+      const { result } = renderHook(() => useRecentSearches({ limit: 5 }), { wrapper: wrap(c) });
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`second ${r}`, `first ${r}`]), wait);
+      await act(() => result.current.clear(`second ${r}`));
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`first ${r}`]), wait);
+      // A search made through the client shows at once.
+      await act(async () => {
+        await c.discovery.search({ q: `third ${r}` });
+      });
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`third ${r}`, `first ${r}`]), wait);
+      await act(() => result.current.clear());
+      await waitFor(() => expect(result.current.searches, who).toEqual([]), wait);
+    }
+    // Another session keeps its own.
+    expect((await client(h, cfg, null).discovery.recentSearches({ session: `other-${r}` })).searches).toEqual([]);
   });
 
   it("useReleaseDates: per day, how many contents and how many are free", async () => {

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { contentKit, seedContent } from "../support/seed.ts";
-import { harness, page as demo, screenshots as dir } from "./pages.ts";
+import { admin, harness, page as demo, screenshots as dir } from "./pages.ts";
 
 // Content pages in demo/content.tsx (listing, rails, search, a content's page)
 // against the real ContentKit.
@@ -133,4 +133,25 @@ test("search page: suggestions while typing, results on Enter", async ({ page })
   await box.getByRole("combobox").press("Enter");
   await expect(page).toHaveURL(new RegExp(`q=${word}`));
   await expect(page.locator("[data-ckui=content-grid] [data-ckui=card-title]")).toHaveText([`Kiwi ${word}`], { timeout: 30_000 });
+
+  // The empty box offers this tab's recent searches, each removable.
+  await box.getByRole("combobox").fill("");
+  const recent = box.locator("[data-ckui=suggestion][data-type=recent]");
+  await expect(recent).toHaveText([word]);
+  await box.getByRole("button", { name: `Remove “${word}”` }).click();
+  await expect(recent).toHaveCount(0);
+});
+
+test("content editor: comments open, closed or hidden", async ({ page }) => {
+  const editor = await h.user({ role: "editor" });
+  const ck = contentKit(h, editor);
+  const c = await ck.contents.create({ kind: "blog", text: { en: { title: `Comments ${run()}` } } });
+  expect(c.comments).toBe("open");
+  await page.goto(admin(`/admin/posts/${c.id}`, editor, { mode: "alone" }));
+  const details = page.locator("[data-ckui=content-details]");
+  await details.getByRole("combobox", { name: "Comments" }).click({ timeout: 30_000 });
+  await page.getByRole("option", { name: "Hidden" }).click();
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(details.getByText("Saved.")).toBeVisible();
+  expect((await ck.contents.get(c.id)).comments).toBe("hidden");
 });

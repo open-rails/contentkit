@@ -135,7 +135,7 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
 }
 
 /** A rule's form: level, tiers, group, preview and when it turns free. */
-function RuleFields({ value, onChange, model, labels }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; labels?: Labels }) {
+function RuleFields({ value, onChange, model, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; labels?: Labels; client?: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
   const tiers = model?.tiers ?? [];
@@ -143,7 +143,7 @@ function RuleFields({ value, onChange, model, labels }: { value: Rule; onChange:
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
   const [groupKind, setGroupKind] = useState(groupKinds[0] ?? "");
-  const named = useGroupNames(value.group_id ? [value.group_id] : []);
+  const named = useGroupNames(value.group_id ? [value.group_id] : [], { client });
   const group = value.group_id ? named.get(value.group_id) : undefined;
   const set = (patch: Partial<Rule>) => onChange({ ...value, ...patch });
   return (
@@ -199,7 +199,7 @@ function RuleFields({ value, onChange, model, labels }: { value: Rule; onChange:
               </SelectContent>
             </Select>
           )}
-          {groupKind && <GroupPicker key={groupKind} kind={groupKind} label={t("contentEditor.group")} onPick={(g) => set({ group_id: g.id })} />}
+          {groupKind && <GroupPicker key={groupKind} kind={groupKind} label={t("contentEditor.group")} onPick={(g) => set({ group_id: g.id })} client={client} />}
         </div>
       )}
       {value.level !== "public" && (
@@ -268,7 +268,7 @@ export function AccessEditor({ content, ...p }: Common & { content: Content }) {
           void save.run(() => client.contents.update(content.id, { access: cleanRule(rule), revision: content.revision })).then((d) => d && setSaved(true));
         }}
       >
-        <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} />
+        <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} client={p.client} />
         <ErrorLine error={save.error} />
         <div className="flex items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending}>
@@ -467,7 +467,7 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
           <Switch size="sm" checked={own} onCheckedChange={setOwn} />
           {t("contentEditor.ownAccess")}
         </label>
-        {own && <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} />}
+        {own && <RuleFields value={rule} onChange={setRule} model={model} labels={p.labels} client={p.client} />}
         <ErrorLine error={save.error} />
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
