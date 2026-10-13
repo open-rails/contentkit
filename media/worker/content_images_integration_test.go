@@ -319,9 +319,10 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		}
 	}
 	regenerated := resolved("the regenerated images", published.Images)
-	eventually(t, "the first generation's retirement", 2*time.Minute, func() bool {
-		return !exists(published.Images[a]) && !exists(published.Images[b]) && !exists(published.Images[cover])
+	eventually(t, "the body images' first generation's retirement", 2*time.Minute, func() bool {
+		return !exists(published.Images[a]) && !exists(published.Images[b])
 	})
+	eventually(t, "the cover's first generation's retirement", 2*time.Minute, func() bool { return !exists(published.Images[cover]) })
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
 	must(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
