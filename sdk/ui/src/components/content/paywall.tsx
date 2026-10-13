@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useContext, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
+import type { ContentKitClient } from "../../client/client.js";
 import type { Decision, Terms, Version } from "../../client/generated/wire.js";
 import type { DecisionOffer } from "../../client/offers.js";
 import { useMessages } from "../../i18n/context.js";
@@ -48,14 +49,15 @@ export interface PaywallProps {
   children?: ReactNode;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  client?: ContentKitClient;
 }
 
 /** Why content is locked and how to open it: its offers, the tiers that include it, previews and when it turns free. */
-export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, children, className, appearance }: PaywallProps) {
+export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, children, className, appearance, client }: PaywallProps) {
   const m = useMessages();
   const { t } = m;
   const ctx = useContext(ContentKitContext);
-  const { kinds } = useKinds();
+  const { kinds } = useKinds({ client });
   if (decision.allowed) return null;
   const signIn = onSignIn ?? ctx?.onSignIn;
   const offers = offersOf(decision);
