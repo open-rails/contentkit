@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { Content, Decision, Offer, Version } from "../client/generated/wire.js";
-import type { DecisionOffer } from "../client/offers.js";
+import type { Content, Decision, Version } from "../client/generated/wire.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 /** A content's live versions, first first. */
@@ -14,16 +13,6 @@ export function liveVersions(c: Content | null | undefined): Version[] {
 export function defaultVersion(c: Content | null | undefined, language?: string): Version | null {
   const live = liveVersions(c);
   return (language ? live.find((v) => v.languages.includes(language)) : undefined) ?? live[0] ?? null;
-}
-
-/** The offers a decision makes: each sold key with an active offer. */
-export function offersOf(d: Decision | null | undefined): DecisionOffer[] {
-  return (d as (Decision & { offers?: DecisionOffer[] }) | null | undefined)?.offers ?? [];
-}
-
-/** The current offer on a content or version, for its editors. */
-export function offerOf(x: Content | Version | null | undefined): Offer | undefined {
-  return (x as { offer?: Offer } | null | undefined)?.offer;
 }
 
 export interface UseContentDetail {
@@ -58,7 +47,7 @@ export function useContentDetail(id: string | null | undefined, o: { language?: 
       content,
       versions,
       version,
-      decision: version?.decision ?? null,
+      decision: version?.decision ?? content?.decision ?? null,
       languages: [...new Set(versions.flatMap((v) => v.languages))],
       loading: !!key && (r.loading || !r.loaded),
       error: r.error,

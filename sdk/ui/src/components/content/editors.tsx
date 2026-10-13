@@ -5,7 +5,6 @@ import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/grou
 import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
-import { offerOf } from "../../react/detail.js";
 import { useKinds } from "../../react/groups.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
@@ -260,7 +259,7 @@ export function AccessEditor({ content, ...p }: Common & { content: Content }) {
         </div>
       </form>
       <OfferFields
-        offer={offerOf(content)}
+        offer={content.offer}
         pending={offer.pending}
         onSell={(terms) => void offer.run(() => client.offers.sell({ content: content.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id }))}
@@ -463,7 +462,7 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
         <ErrorLine error={remove.error} />
       </form>
       <OfferFields
-        offer={offerOf(v)}
+        offer={v.offer}
         pending={offer.pending}
         onSell={(terms) => void offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}

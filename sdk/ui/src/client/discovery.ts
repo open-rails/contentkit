@@ -26,6 +26,8 @@ export interface ContentFilterQuery {
   groups?: readonly string[];
   /** Group ids no listed version is in. */
   exclude_groups?: readonly string[];
+  /** Only contents this group owns: a channel's feed. */
+  owner_group?: string;
   /** Version traits every listed version has. */
   traits?: readonly string[];
   /** "name:value" of the kind's filterable attributes. */

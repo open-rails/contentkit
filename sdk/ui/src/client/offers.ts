@@ -1,15 +1,6 @@
-import type { GroupJoin, LibraryPage, Offer, OfferPage, Target, Terms } from "./generated/wire.js";
+import type { GroupJoin, LibraryPage, Offer, OfferPage, Terms } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
-
-/** A sold key with its active offer, as decisions carry it: what a paywall offers to buy. */
-export interface DecisionOffer {
-  key: string;
-  target: Target;
-  terms: Terms;
-  /** The OpenRails price an order for it names. */
-  price_id?: string;
-}
 
 /**
  * Offers: content, versions and groups put on sale (their creators, owner

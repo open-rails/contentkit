@@ -56,7 +56,7 @@ export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { useContent, useManagedContents, type ManageFilter, type UseContent } from "./contents.js";
-export { defaultVersion, liveVersions, offerOf, offersOf, useContentDetail, type UseContentDetail } from "./detail.js";
+export { defaultVersion, liveVersions, useContentDetail, type UseContentDetail } from "./detail.js";
 export {
   memberId,
   useContentGroups,

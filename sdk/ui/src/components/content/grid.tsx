@@ -79,6 +79,8 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
                   chips={p.chips}
                   tiers={tiers}
                   labels={p.labels}
+                  owner={p.owner}
+                  ownerHref={p.ownerHref}
                   onOpen={() => exposure.click(card.id, i + 1)}
                 />
               )}
@@ -137,7 +139,17 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
         renderCard={
           p.renderCard ??
           ((card) => (
-            <ContentCard card={card} href={p.href} shape={p.shape} groupKinds={p.groupKinds} chips={p.chips} tiers={p.tiers} labels={p.labels}>
+            <ContentCard
+              card={card}
+              href={p.href}
+              shape={p.shape}
+              groupKinds={p.groupKinds}
+              chips={p.chips}
+              tiers={p.tiers}
+              labels={p.labels}
+              owner={p.owner}
+              ownerHref={p.ownerHref}
+            >
               <Button size="xs" variant="ghost" className="justify-self-start" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
                 {t("contents.removeFromHistory")}
               </Button>
@@ -219,6 +231,8 @@ export function ContentRail({ title, similar, recommendations, history, group, l
                 chips={p.chips}
                 tiers={p.tiers ?? kinds?.tiers}
                 labels={p.labels}
+                owner={p.owner}
+                ownerHref={p.ownerHref}
                 onOpen={() => exposure.click(card.id, i + 1)}
               />
             )}

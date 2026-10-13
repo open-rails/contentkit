@@ -9,8 +9,7 @@ import { ContentKitContext } from "../../react/context.js";
 import { Badge } from "#ckui/ui/badge";
 import { RenditionImg } from "../rendition-img.js";
 import { formatDate, RelativeTime } from "../social/parts.js";
-import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
-import { offersOf } from "../../react/detail.js";
+import { GroupAvatar, GroupLink, labelOf, useLanguageName, type GroupLike, type Labels } from "../groups/parts.js";
 import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {
@@ -29,6 +28,10 @@ export interface ContentCardProps {
   tiers?: readonly string[];
   /** Display names of kinds, traits and tiers by identifier. */
   labels?: Labels;
+  /** Show the owner group (a channel) when the card has one; default true, false on that group's own feed. */
+  owner?: boolean;
+  /** The owner group's link; default its canonical path. */
+  ownerHref?: (g: GroupLike) => string | undefined;
   /** Below the meta line: the host's own. */
   children?: ReactNode;
   className?: string;
@@ -40,7 +43,7 @@ const compact = (n: number, language?: string) => new Intl.NumberFormat(language
 export function lockLabel(m: Translator, a: CardAccess, tiers: readonly string[] = [], labels?: Labels): string | null {
   if (a.allowed) return null;
   if (a.unknown) return m.t("contents.unknownAccess");
-  const offer = offersOf(a)[0];
+  const offer = a.offers?.[0];
   if (offer) return priceLabel(m, offer.terms);
   const tier = a.sell?.find((k) => tiers.includes(k));
   if (tier) return labelOf(labels, tier);
@@ -64,7 +67,7 @@ function useLink(url: string | undefined, before?: () => void) {
 }
 
 /** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked. */
-export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, children, className }: ContentCardProps) {
+export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, children, className }: ContentCardProps) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
@@ -113,6 +116,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
           {title}
           {lock && <span className="sr-only"> ({lock})</span>}
         </a>
+        {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} />}
         {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
         {card.viewer?.completed && (
           <Badge variant="secondary" className="justify-self-start">
@@ -149,6 +153,18 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
   );
 }
 
+/** The group that owns a content (a channel): its avatar and name, linking to its page. */
+export function OwnerChip({ group, href, className }: { group: GroupLike; href?: (g: GroupLike) => string | undefined; className?: string }) {
+  return (
+    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={group.id}>
+      <GroupLink group={group} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
+        <GroupAvatar group={group} className="size-5 shrink-0 text-[0.625rem]" />
+        <span className="truncate">{group.name || group.slug}</span>
+      </GroupLink>
+    </span>
+  );
+}
+
 function Chip({ url, name }: { url?: string; name: string }) {
   const onClick = useLink(url);
   const cls = "inline-block rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground";
@@ -162,12 +178,12 @@ function Chip({ url, name }: { url?: string; name: string }) {
 }
 
 export interface PostCardProps extends Omit<ContentCardProps, "shape" | "chips" | "groupKinds"> {
-  /** Above the title: the post's channel or author, from the host. */
+  /** Above the title: the post's channel or author; default its owner group's chip. */
   byline?: ReactNode;
 }
 
 /** A post in a feed: a wide cover, its title, when it was published and what unlocking it costs. */
-export function PostCard({ card, href, onOpen, tiers, labels, byline, children, className }: PostCardProps) {
+export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, children, className }: PostCardProps) {
   const m = useMessages();
   const url = href ? href(card) : card.path;
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
@@ -176,7 +192,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, children, 
   const title = card.title || card.code;
   return (
     <article className={cn("grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      {byline}
+      {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} className="text-sm" />)}
       <a href={url} onClick={onClick} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}
