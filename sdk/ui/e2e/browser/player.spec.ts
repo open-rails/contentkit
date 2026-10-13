@@ -1,14 +1,14 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { shared } from "../support/fixtures.ts";
 import { mediaClient } from "../support/seed.ts";
-import { harness, page as at, screenshots as dir } from "./pages.ts";
+import { mediaRef, itemParam, harness, page as at, screenshots as dir } from "./pages.ts";
 
 // The watch demo (demo/gallery.tsx WatchDemo) over the worker's ladder of
 // a 24 s source with English and Japanese audio, English and Spanish
 // subtitle uploads and a seek sprite, through media-gateway in byte ranges.
 const f = shared();
 const h = harness();
-const ref = { kind: f.watch.kind, id: f.watch.id };
+const ref = mediaRef(f.watch);
 
 type Logged = { name: string; reason?: string; type?: string; time: number; played?: number; duration?: number; [k: string]: unknown };
 type Cue = { start: number; end: number; url: string; x: number; y: number };
@@ -40,7 +40,7 @@ test.beforeAll(async () => {
 });
 
 async function open(page: Page, query: Record<string, string> = {}) {
-  await page.goto(at("gallery.html", f.viewer, { page: "watch", watch: f.watch.id, ...query }));
+  await page.goto(at("gallery.html", f.viewer, { page: "watch", watch: itemParam(f.watch), ...query }));
   return page.locator("[data-demo=watch] [data-ckui=video-player]");
 }
 

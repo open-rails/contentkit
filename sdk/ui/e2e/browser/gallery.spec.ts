@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { shared } from "../support/fixtures.ts";
-import { harness, page as at, screenshots as dir } from "./pages.ts";
+import { itemParam, harness, page as at, screenshots as dir } from "./pages.ts";
 
 const shot = (page: Page, name: string, full = false) => page.screenshot({ path: `${dir}/${name}.png`, fullPage: full });
 const f = shared();
@@ -10,7 +10,7 @@ for (const theme of ["light", "dark"] as const) {
   test(`media gallery: carousel, grid, lightbox (${theme})`, async ({ page }, info) => {
     const tag = `${theme}-${info.project.name}`;
     // Album order: the four photos (4:3, 4:5, 16:9, 1:1), then the landscape and the portrait clip.
-    await page.goto(at("gallery.html", f.viewer, { theme, post: f.post.id, locked: f.locked.id, single: f.single.id }));
+    await page.goto(at("gallery.html", f.viewer, { theme, post: itemParam(f.post), locked: itemParam(f.locked), single: itemParam(f.single) }));
     const post = page.locator("[data-demo=post]");
     const gallery = post.locator("[data-ckui=media-gallery]");
     await expect(gallery).toHaveAttribute("data-view", "carousel");
@@ -116,7 +116,7 @@ test("player fails fast with a specific reason", async ({ page }, info) => {
   ]);
   const warnings: string[] = [];
   page.on("console", (m) => m.type() === "warning" && warnings.push(m.text()));
-  await page.goto(at("gallery.html", f.viewer, { page: "player", ...Object.fromEntries(Object.entries(p).map(([k, it]) => [k, it.id])) }));
+  await page.goto(at("gallery.html", f.viewer, { page: "player", ...Object.fromEntries(Object.entries(p).map(([k, it]) => [k, itemParam(it)])) }));
   const player = (demo: string) => page.locator(`[data-demo=${demo}] [data-ckui=video-player]`);
 
   const started = Date.now();

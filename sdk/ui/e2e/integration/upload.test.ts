@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, inject, it, vi } from "vitest";
 import { ItemUploadQueue, createContentKitClient, fetchTransport, type Op, type QueueSnapshot, type RefBody, type Transport, type UploadState } from "../../src/client/index.js";
 import { bytes, png } from "../support/bytes.js";
 import { Harness, type Config, type TestUser } from "../support/harness.js";
+import { content, itemFolder, item as itemOf } from "./setup.js";
 
 const MiB = 1 << 20;
 const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -34,10 +35,7 @@ describe("uploads and reads against the real ContentKit", () => {
       fetch: media.fetch,
       media: { retryDelay: () => 200, ...media },
     }).media;
-  const item = async (kind: string, owner = alice): Promise<RefBody> => {
-    const it = await h.item({ kind, owner: owner.id });
-    return { kind: it.kind, id: it.id };
-  };
+  const item = (kind: string, owner = alice): Promise<RefBody> => itemOf(h, kind, owner);
   const wait = { interval: 200, timeout: 60_000 };
 
   async function publicNames(ref: RefBody, preset: string) {
@@ -68,7 +66,7 @@ describe("uploads and reads against the real ContentKit", () => {
     const read = await client({ user: reader }).read(ref);
     expect(read).toMatchObject({ access: "full", total: 1 });
     expect(read.files).toEqual([
-      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/gallery/${ref.id}/private/sha256-[0-9a-f]{64}-[0-9a-f-]{36}\\?t=`)) }),
+      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/sha256-[0-9a-f]{64}-[0-9a-f-]{36}\\?t=`)) }),
     ]);
     const served = await fetch(read.files[0]!.url!);
     expect([served.status, served.headers.get("content-type")]).toEqual([200, "image/webp"]);
@@ -78,8 +76,8 @@ describe("uploads and reads against the real ContentKit", () => {
 
     const refused = await c.upload(file(body, "a.gif", "image/gif"), { ref, path: "originals/002.gif" }).catch((e) => e);
     expect([refused.code, refused.status]).toEqual(["type_not_allowed", 415]);
-    expect((await client({ user: reader }).upload(page, { ref, path: "cover" }).catch((e) => e)).code).toBe("forbidden");
-    expect((await client({ user: null }).upload(page, { ref, path: "cover" }).catch((e) => e)).status).toBe(401);
+    expect((await client({ user: reader }).upload(page, { ref: content(ref), path: "cover" }).catch((e) => e)).code).toBe("forbidden");
+    expect((await client({ user: null }).upload(page, { ref: content(ref), path: "cover" }).catch((e) => e)).status).toBe(401);
   });
 
   it("names an inline upload on the server and publishes it", async () => {
@@ -140,7 +138,7 @@ describe("uploads and reads against the real ContentKit", () => {
 
   it("crops a cover: puts it with an edit, re-edits it from its editor view, and removes it with its public files", async () => {
     // 360×240; the cover is 3:1, so a 360-wide crop is 120 high.
-    const ref = await item("gallery");
+    const ref = content(await item("gallery"));
     const puts: string[] = [];
     const counting: Transport = async (req, blob, o) => {
       puts.push(req.url);

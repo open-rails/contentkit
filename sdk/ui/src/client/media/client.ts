@@ -116,6 +116,8 @@ export interface NamedOptions {
   wait?: boolean;
   /** How long to wait, ms. */
   timeout?: number;
+  /** A crop or rotation the file is committed with. */
+  edit?: Edit;
 }
 
 /** An upload to a Named path, committed. */
@@ -378,7 +380,7 @@ export class MediaClient {
    * routes take: a poll or option image, a post cover.
    */
   async uploadNamed(ref: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload> {
-    const f = await this.put(file, { ref, path: o.path ?? (file.name || "image"), signal: o.signal, onProgress: o.onProgress, wait: o.wait, timeout: o.timeout });
+    const f = await this.put(file, { ref, path: o.path ?? (file.name || "image"), signal: o.signal, onProgress: o.onProgress, wait: o.wait, timeout: o.timeout, edit: o.edit });
     const name = stem(f.path.slice(f.path.lastIndexOf("/") + 1));
     if (!named.test(name)) throw new ContentKitError("invalid_request", `${f.path} is not a server-named upload path of ${ref.kind}`);
     return { name, path: f.path, file: f };

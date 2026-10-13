@@ -57,6 +57,7 @@ func (h *harness) routes(static string) http.Handler {
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
+	mux.HandleFunc("POST /__test/recount", h.recount)
 	mux.HandleFunc("GET /__test/outbox", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, h.outbox.Messages("", r.URL.Query().Get("to")))
 	})
@@ -176,6 +177,9 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it.ID = c.ID
+	if len(c.Versions) > 0 {
+		it.Version = c.Versions[0].ID
+	}
 	if in.Title != "" {
 		it.Code, it.Path = c.Code, c.Path
 	}
@@ -259,7 +263,7 @@ func (h *harness) addFaults(w http.ResponseWriter, r *http.Request) {
 // of the stored bytes; 404 when absent.
 func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ref, err := h.ref(q.Get("kind"), q.Get("id"))
+	ref, err := h.reg.VersionRef(q.Get("kind"), q.Get("id"), q.Get("version"))
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return

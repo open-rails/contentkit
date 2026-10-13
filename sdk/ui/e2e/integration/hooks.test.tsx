@@ -6,12 +6,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitClient, Op } from "../../src/client/index.js";
 import { ContentKitProvider, useMediaFolder, useMediaRead, usePublicImage } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
-import { Accounts, client, fixture, harness, item, png, wait, NodeFile } from "./setup.js";
+import { Accounts, client, fixture, harness, item, png, wait, NodeFile, content } from "./setup.js";
 
 describe("media hooks against the real ContentKit", () => {
   const h = harness();
-  // The client sends a ref as given: only kind and id.
-  const bare = ({ kind, id }: { kind: string; id: string }) => ({ kind, id });
   const accounts = new Accounts(h);
   let cfg: Config;
 
@@ -27,7 +25,7 @@ describe("media hooks against the real ContentKit", () => {
     };
 
   it("useMediaRead polls an editor read until the worker is done, and merges a viewer's windows", async () => {
-    const ref = bare(await item(h, "gallery", accounts.get("alice")));
+    const ref = await item(h, "gallery", accounts.get("alice"));
     const c = as();
     const ops: Op[] = [];
     for (const n of [1, 2, 3]) {
@@ -46,7 +44,7 @@ describe("media hooks against the real ContentKit", () => {
   });
 
   it("useMediaFolder uploads files, adds them in queue order, moves, renames and removes them", async () => {
-    const ref = bare(await item(h, "gallery", accounts.get("alice")));
+    const ref = await item(h, "gallery", accounts.get("alice"));
     const c = as();
     const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}"] }), { wrapper: provider(c) });
     await waitFor(() => expect(result.current.read.read).not.toBeNull(), wait);
@@ -76,7 +74,7 @@ describe("media hooks against the real ContentKit", () => {
 
   it("useMediaFolder screens files by the kind's rules from the editor read before anything uploads", async () => {
     // note: originals/{name} takes at most two PNGs of up to 1 MiB (its inline/{name} is server-named, not a folder path).
-    const ref = bare(await item(h, "note", accounts.get("alice")));
+    const ref = await item(h, "note", accounts.get("alice"));
     const { result } = renderHook(() => useMediaFolder(ref), { wrapper: provider(as()) });
     await waitFor(() => expect(result.current.groups.map((g) => g.path)).toEqual(["originals/{name}"]), wait);
     expect(result.current.groups[0]!.rule).toMatchObject({ types: ["image/png"], max_bytes: 1 << 20, max: 2 });
@@ -93,7 +91,7 @@ describe("media hooks against the real ContentKit", () => {
 
   it("useMediaFolder holds files added before the editor read and routes them by its rules", async () => {
     // note: originals/{name} takes at most two PNGs; inline/{name} (server-named) takes JPEGs too.
-    const ref = bare(await item(h, "note", accounts.get("alice")));
+    const ref = await item(h, "note", accounts.get("alice"));
     const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}", "inline/{name}"] }), { wrapper: provider(as()) });
     expect(result.current.read.read).toBeNull();
     act(() => result.current.add([png("1.png", 31), png("2.png", 32), png("3.png", 33), fixture("avatar.jpg", "image/jpeg", "a.jpg")]));
@@ -114,7 +112,7 @@ describe("media hooks against the real ContentKit", () => {
   });
 
   it("useMediaFolder refuses files waiting when the editor read states no rules (a reader's)", async () => {
-    const ref = bare(await item(h, "note", accounts.get("alice")));
+    const ref = await item(h, "note", accounts.get("alice"));
     const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}"] }), { wrapper: provider(as("reader")) });
     act(() => result.current.add([png("1.png", 41)]));
     expect(result.current.waiting).toHaveLength(1);
@@ -127,7 +125,7 @@ describe("media hooks against the real ContentKit", () => {
 
   it("usePublicImage shows an item's published image from its read, else the kind's default", async () => {
     const c = as();
-    const ref = bare(await item(h, "gallery", accounts.get("alice")));
+    const ref = content(await item(h, "gallery", accounts.get("alice")));
     await c.media.put(fixture("small.png", "image/png", "cover.png"), { ref, path: "cover" });
     await c.media.waitFor(ref, "cover", wait);
     expect(await c.media.presets()).toContainEqual(expect.objectContaining({ kind: "gallery", name: "cover", from: "cover", namespace: cfg.namespace }));
@@ -142,7 +140,7 @@ describe("media hooks against the real ContentKit", () => {
 
     // An item without a cover shows the kind's default (the preset declares one).
     expect(result.current.rule?.default).toBe(true);
-    const empty = bare(await item(h, "gallery", accounts.get("alice")));
+    const empty = content(await item(h, "gallery", accounts.get("alice")));
     const other = renderHook(() => usePublicImage("gallery", empty.id, "cover"), { wrapper: provider(c) });
     await waitFor(() => expect(other.result.current.isDefault).toBe(true), wait);
     expect(other.result.current.image!.renditions.map((r) => r.url)).toEqual([230, 460].map((w) => `${cfg.media}/v1/${cfg.namespace}/gallery/${empty.id}/public/cover-${w}.webp`));

@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { shared } from "../support/fixtures.ts";
 import { mediaClient } from "../support/seed.ts";
-import { harness, page as at, screenshots as dir } from "./pages.ts";
+import { mediaRef, itemParam, harness, page as at, screenshots as dir } from "./pages.ts";
 
 // The worker's 2160–480 ladder of a 20 s 4K source (e2e/support/fixtures.ts).
 const f = shared();
 const h = harness();
-const ref = { kind: f.abr.kind, id: f.abr.id };
+const ref = mediaRef(f.abr);
 let ladder: { blobs: Map<string, number>; average: Map<number, number> };
 
 test.beforeAll(async () => {
@@ -34,7 +34,7 @@ function rungs(page: Page) {
 
 // Rungs count from the click: on touch an inline preview may already be playing the lowest.
 async function play(page: Page, seen?: number[]) {
-  await page.goto(at("gallery.html", f.viewer, { page: "abr", abr: f.abr.id }));
+  await page.goto(at("gallery.html", f.viewer, { page: "abr", abr: itemParam(f.abr) }));
   const player = page.locator("[data-demo=abr] [data-ckui=video-player]");
   if (seen) seen.length = 0;
   await player.getByRole("button", { name: "Play video" }).click();

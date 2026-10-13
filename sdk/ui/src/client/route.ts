@@ -19,6 +19,8 @@ export interface CallOptions<M extends Method, P extends string> {
   query?: RouteQuery<M, P>;
   body?: unknown;
   signal?: AbortSignal;
+  /** Outlives the page (a beacon sent as it closes). */
+  keepalive?: boolean;
 }
 
 const index = new Map<string, AnyRoute>(CONTENTKIT_ROUTES.map((r) => [`${r.method} ${r.path}`, r]));
@@ -35,7 +37,7 @@ export function routeURL<M extends Method, P extends RoutePath<M>>(http: Http, m
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function call<M extends Method, P extends RoutePath<M>, T = any>(http: Http, method: M, path: P, o: CallOptions<M, P> = {}): Promise<T> {
   const url = build(http, method, path, o.params as Record<string, string> | undefined, o.query as Record<string, QueryValue> | undefined);
-  return http.request<T>(url, { method, body: o.body, signal: o.signal });
+  return http.request<T>(url, { method, body: o.body, signal: o.signal, keepalive: o.keepalive });
 }
 
 function build(http: Http, method: string, path: string, params: Record<string, string> = {}, query: Record<string, QueryValue> = {}): string {

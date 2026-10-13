@@ -31,6 +31,8 @@ export interface UseContent {
   error?: ContentKitError;
   /** Writes in flight. */
   saving: boolean;
+  /** Reads the item again. */
+  reload: () => void;
   /** Creates the item as a draft; the hook then edits it. */
   create: (input: ContentInput) => Promise<Content>;
   update: (patch: ContentPatch) => Promise<Content>;
@@ -219,6 +221,7 @@ export function useContent(id: string | null | undefined, kind: string, language
   );
   return {
     content,
+    reload: r.reload,
     loading: !!key && (r.loading || (!r.loaded && o.initial === undefined)),
     error: r.error,
     saving: inflight > 0,

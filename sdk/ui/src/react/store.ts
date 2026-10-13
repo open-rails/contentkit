@@ -1,4 +1,5 @@
 import type { ContentKitClient } from "../client/client.js";
+import { sameItem } from "../client/media/ref.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import type { ContentKitChange } from "../client/http.js";
@@ -47,7 +48,7 @@ const IDLE: ReadEntry = { read: null, loading: false, loaded: false };
 const RATE_LIMIT_RETRIES = 3;
 
 export function readKey(ref: RefBody, o: ReadOptions = {}): string {
-  return JSON.stringify([ref.kind, ref.id, o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor]);
+  return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor]);
 }
 
 /** The read with the upload at path replaced by file in place (appended when new, removed when null). */
@@ -164,7 +165,7 @@ export class ReadStore {
   // Uploads finished processing: the item's viewer reads list new files and URLs.
   private reloadViewers(ref: RefBody): void {
     for (const [key, s] of this.slots) {
-      if (!s.options.editor && s.ref.kind === ref.kind && s.ref.id === ref.id && (s.entry.loaded || s.ctl)) this.load(key, "reload");
+      if (!s.options.editor && sameItem(s.ref, ref) && (s.entry.loaded || s.ctl)) this.load(key, "reload");
     }
   }
 
@@ -172,7 +173,7 @@ export class ReadStore {
     if (change.type !== "media.committed" && change.type !== "media.processed") return;
     const { ref } = change;
     for (const [key, s] of this.slots) {
-      if (s.ref.kind !== ref.kind || s.ref.id !== ref.id) continue;
+      if (!sameItem(s.ref, ref)) continue;
       if (change.type === "media.committed") {
         if (s.entry.loaded || s.ctl) this.load(key, "reload");
         continue;
