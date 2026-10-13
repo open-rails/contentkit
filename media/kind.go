@@ -339,7 +339,8 @@ func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 }
 
 // PublicKept protects every owned generation: the current files, legacy
-// ones included, and an active reservation. An unowned name is permanently
+// ones included, and an active reservation, plus a Stable preset's logical
+// names while one is current. Any other generation's name is permanently
 // retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
 	var out []string
@@ -354,7 +355,45 @@ func (k *Kind) PublicKept(m *Manifest) []string {
 			for _, pub := range f.Public {
 				if pub.Preset == p.Name && k.owned(m, f, p, pub) {
 					out = append(out, pub.NamesOnDisk()...)
+					if p.Stable && pub.Ready() && pub.Generation != "" {
+						out = append(out, pub.Names...)
+					}
 				}
+			}
+		}
+	}
+	return out
+}
+
+// Mirror copies a Stable preset's current file to its logical name.
+type Mirror struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// mirrors are the copies an edit from cur to next makes: each Stable
+// preset's current generation that next newly makes current, to its logical
+// names. Cleanup (PublicKept) removes them once none is current.
+func (k *Kind) mirrors(item Item, cur, next *Manifest) []Mirror {
+	var out []Mirror
+	for _, f := range next.Files {
+		if !f.IsUpload() {
+			continue
+		}
+		for _, p := range k.PublicFor(f.Path) {
+			pub, ok := k.Current(next, f, p)
+			if !p.Stable || !ok || pub.Generation == "" {
+				continue
+			}
+			if was, ok := cur.Get(f.Path); ok {
+				if prev, ok := k.Current(cur, was, p); ok && prev.Generation == pub.Generation {
+					continue
+				}
+			}
+			for i, name := range pub.NamesOnDisk() {
+				from, _ := item.Public(name)
+				to, _ := item.Public(pub.Names[i])
+				out = append(out, Mirror{From: from, To: to})
 			}
 		}
 	}
@@ -591,6 +630,9 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 		slices.Contains(vars, "w") != (len(p.Widths) > 0) || slices.Contains(vars, "n") != (p.First > 0) ||
 		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1", "n": "1"})) {
 		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set and {n} exactly with First)", p.To)
+	}
+	if p.Stable && (slices.Contains(vars, "name") || p.First > 0) {
+		return errors.New("Stable needs one image per item: no {name} in To, no First")
 	}
 	if p.Default != "" && k.Defaults != nil {
 		if _, err := fs.Stat(k.Defaults, p.Default); err != nil {

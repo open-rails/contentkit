@@ -50,9 +50,6 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
 	for _, k := range j.cfg.Registry.all {
-		if j.cfg.Journal.Bound(k.ns) {
-			continue // its owner sweeps it
-		}
 		for ref, err := range j.itemFolders(ctx, k) {
 			if err != nil {
 				return errors.Join(append(errs, err)...)
@@ -263,9 +260,6 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 	k, err := j.cfg.Registry.Kind(s.Kind)
 	if err != nil || s.Exists == nil {
 		return rep, errors.Join(err, errors.New("media: SweepOrphans needs a kind and an Exists check"))
-	}
-	if j.cfg.Journal.Bound(k.ns) {
-		return rep, fmt.Errorf("media: kind %q lives in namespace %q, which its owner sweeps", k.Name, k.ns)
 	}
 	if s.Grace <= 0 {
 		s.Grace = j.cfg.Grace

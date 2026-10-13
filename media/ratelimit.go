@@ -237,3 +237,22 @@ func fnv32(s string) uint32 {
 	}
 	return h
 }
+
+// CommitLimiter is the commit limit (UploadOptions.Commits) for commits a
+// host forwards to another site's ContentKit, which exempts the forwarder:
+// each person's allowance is taken before forwarding.
+type CommitLimiter struct{ l rateLimiter }
+
+// NewCommitLimiter is l with the commit defaults for its zero fields.
+func NewCommitLimiter(l RateLimit) CommitLimiter {
+	return CommitLimiter{newRateLimiter(l, commitLimit, "forwarded commit", time.Now, slog.Default())}
+}
+
+// Allow takes one commit from uploader's allowance, or reports how long
+// until one is available.
+func (c CommitLimiter) Allow(ctx context.Context, uploader string) (bool, time.Duration) {
+	if c.l == nil {
+		return true, 0
+	}
+	return c.l.allow(ctx, uploader)
+}

@@ -23,7 +23,7 @@ import (
 	"github.com/open-rails/helpers/notify"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
 func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
 	var out kindsroute.ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)

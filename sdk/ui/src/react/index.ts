@@ -20,7 +20,7 @@ export {
 export { useMediaRead, type MediaReadOptions, type ReadWindow, type UseMediaRead } from "./read.js";
 export { nameIn, thumbnailOf, useMediaFolder, type FolderGroup, type MediaFolderOptions, type UseMediaFolder } from "./folder.js";
 export { useEditorCrop, type EditorCropOptions, type EditorCropState, type UseEditorCrop } from "./crop.js";
-export { usePresets, usePublicImage, type PublicImageOptions, type UsePresets, type UsePublicImage } from "./public.js";
+export { useAvatar, usePresets, usePublicImage, type PublicImageOptions, type UsePresets, type UsePublicImage } from "./public.js";
 export { useCanonicalContent, type CanonicalContent, type CanonicalContentOptions } from "./canonical.js";
 export { useNearViewport, type NearViewportOptions } from "./viewport.js";
 export {

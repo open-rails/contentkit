@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // ErrCommitPending means recovery must fence and settle an earlier write first.
@@ -40,7 +39,6 @@ type PGJournal struct {
 	upgradeFails string
 	limiter      *PGLimiter
 	queue        TransactionalProcessQueue
-	bound        map[string]*PGJournal // namespace -> owning app's journal
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
@@ -60,32 +58,6 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 		limiter:      limiter, queue: queue}, nil
 }
 
-// Bind gives namespace ns, a shared one another app owns, that app's journal
-// (same database): every app writing ns then shares one commit ledger,
-// projection and processing queue. The owner sweeps, upgrades and processes
-// it. Bind before use.
-func (j *PGJournal) Bind(ns string, owner *PGJournal) error {
-	if !layout.ValidSegment(ns) || owner == nil || owner == j || len(owner.bound) > 0 {
-		return fmt.Errorf("media: invalid journal binding for namespace %q", ns)
-	}
-	if j.bound == nil {
-		j.bound = map[string]*PGJournal{}
-	}
-	j.bound[ns] = owner
-	return nil
-}
-
-// Bound reports whether another app's journal owns namespace ns.
-func (j *PGJournal) Bound(ns string) bool { return j.bound[ns] != nil }
-
-// at is namespace ns's journal: its owner's when bound.
-func (j *PGJournal) at(ns string) *PGJournal {
-	if o := j.bound[ns]; o != nil {
-		return o
-	}
-	return j
-}
-
 type journalEffects struct {
 	Deletion    bool        `json:"deletion,omitempty"`    // explicit purge may fence an unreadable root without decoding it
 	Cleanup     bool        `json:"cleanup,omitempty"`     // allocation retirement, no manifest PUT
@@ -96,6 +68,7 @@ type journalEffects struct {
 	Cancel      bool        `json:"cancel,omitempty"`
 	Process     *ProcessJob `json:"process,omitempty"`
 	Public      []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
+	Mirror      []Mirror    `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
 	Private     []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
 	Notify      bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
 }
@@ -104,9 +77,6 @@ type journalEffects struct {
 // the folder. A cleaner that lost its lease cannot delete from an old snapshot.
 // The projection, without what this cleanup retires, commits with them.
 func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects, proj *projection) error {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.prepareCleanup(ctx, c, effects, proj)
-	}
 	effects.Cleanup = true
 	body, err := json.Marshal(effects)
 	if err != nil {
@@ -163,9 +133,6 @@ type manifestCommit struct {
 func (c manifestCommit) terminal() bool { return c.State == "applied" || c.State == "absent" }
 
 func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit, error) {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.begin(ctx, c)
-	}
 	lease := uuid.New()
 	effects, err := json.Marshal(c.Effects)
 	if err != nil {
@@ -213,9 +180,6 @@ WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease)
 
 // existing verifies identity before a retry can copy bytes or reserve quota.
 func (j *PGJournal) existing(ctx context.Context, c manifestCommit) (*manifestCommit, error) {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.existing(ctx, c)
-	}
 	var out *manifestCommit
 	err := pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
@@ -259,9 +223,6 @@ WHERE tenant_id = $1 AND operation_id = $2 FOR UPDATE`, tenant, id).Scan(
 // prepare records an attempt and its growth charge together, before S3 PUT.
 // A frozen caller cannot refresh its expected ETag and start another attempt.
 func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects journalEffects, quota int64) error {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.prepare(ctx, c, effects, quota)
-	}
 	if effects.Settlement.Tenant != "" && effects.Settlement.Tenant != c.Ref.TenantID ||
 		effects.Process != nil && !effects.Process.Ref.Equal(c.Ref) {
 		return ErrCommitIdentity
@@ -310,9 +271,6 @@ WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, attempt, c.ET
 // freeze takes recovery ownership under the same row lock as prepare. It does
 // not yet prove whether a PUT landed; only a subsequent S3 CAS can do that.
 func (j *PGJournal) freeze(ctx context.Context, tenant, folder string, operation *uuid.UUID) (*manifestCommit, error) {
-	if o := j.at(tenant); o != j {
-		return o.freeze(ctx, tenant, folder, operation)
-	}
 	var c *manifestCommit
 	err := pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		var id uuid.UUID
@@ -339,9 +297,6 @@ WHERE tenant_id = $1 AND operation_id = $2`, tenant, id, found.Lease)
 }
 
 func (j *PGJournal) outcome(ctx context.Context, c manifestCommit) (string, error) {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.outcome(ctx, c)
-	}
 	var state string
 	err := j.pool.QueryRow(ctx, `SELECT state FROM `+j.table+`
 WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID).Scan(&state)
@@ -352,9 +307,6 @@ WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID).Scan(&state)
 // completed receipt can remain in S3 until the next write; an unknown receipt
 // must never be erased just because this schema has no pending row.
 func (j *PGJournal) checkReceipt(ctx context.Context, item Item, r *CommitReceipt) error {
-	if o := j.at(item.Ref().TenantID); o != j {
-		return o.checkReceipt(ctx, item, r)
-	}
 	if r == nil {
 		return nil
 	}
@@ -409,9 +361,6 @@ SELECT (SELECT count(*) FROM a) = (SELECT count(*) FROM k)`, c.Ref.TenantID, c.F
 // together, so a crash or failed enqueue leaves the original receipt pending.
 // proj, the authoritative manifest's publications, is written with them.
 func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, proj *projection) error {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.finish(ctx, c, applied, proj)
-	}
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {
@@ -461,9 +410,6 @@ WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state
 
 // pending also discovers attempts that crashed before the first manifest PUT.
 func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int, notifications bool) ([]manifestCommit, error) {
-	if o := j.at(tenant); o != j {
-		return o.pending(ctx, tenant, kinds, limit, notifications)
-	}
 	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, content_version_id, folder_prefix FROM `+j.table+`
 WHERE tenant_id = $1 AND content_kind = ANY($2)
 AND (state IN ('open', 'prepared', 'frozen') OR ($4 AND state = 'applied' AND effects->>'notify' = 'true'))
@@ -484,9 +430,6 @@ ORDER BY CASE WHEN state = 'applied' THEN 1 ELSE 0 END, updated_at, operation_id
 }
 
 func (j *PGJournal) notification(ctx context.Context, c manifestCommit) (bool, error) {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.notification(ctx, c)
-	}
 	var pending bool
 	// Rotate a failed delivery behind other due notifications. Notification
 	// outages must not starve either newer callbacks or unfinished S3 attempts.
@@ -501,9 +444,6 @@ AND state = 'applied' AND effects->>'notify' = 'true' RETURNING true`,
 }
 
 func (j *PGJournal) acknowledgeNotification(ctx context.Context, c manifestCommit) error {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.acknowledgeNotification(ctx, c)
-	}
 	_, err := j.pool.Exec(ctx, `UPDATE `+j.table+` SET effects = jsonb_set(effects, '{notify}', 'false'), updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND content_version_id IS NOT DISTINCT FROM $5::text AND state = 'applied'`,
 		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Ref.ContentVersionID)

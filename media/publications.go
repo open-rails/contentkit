@@ -36,8 +36,7 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 	if len(qs) == 0 {
 		return out, nil
 	}
-	// One read per journal: a bound namespace's projection is its owner's.
-	groups := map[*PGJournal][]int{}
+	at := make([]int, len(qs))
 	for i, q := range qs {
 		item, err := m.reg.Item(q.Ref)
 		if err != nil {
@@ -46,15 +45,9 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 		if q.Preset != "" && item.Kind().public(q.Preset) == nil {
 			return nil, fmt.Errorf("media: kind %q has no public preset %q", item.Kind().Name, q.Preset)
 		}
-		j := m.journal.at(q.Ref.TenantID)
-		groups[j] = append(groups[j], i)
+		at[i] = i
 	}
-	for j, at := range groups {
-		if err := m.images(ctx, j, qs, at, out); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
+	return out, m.images(ctx, m.journal, qs, at, out)
 }
 
 // images fills out[at[n]] from j's projection.
@@ -142,35 +135,23 @@ func (m *Manifests) PresetImages(ctx context.Context, preset string, refs ...con
 	return out, nil
 }
 
-// Avatars returns, per id in order, the person's avatar (Config.Avatars):
-// their account item's current image of the preset, else the preset's
-// default, else one without renditions; none at all without Config.Avatars.
-// One query for the whole list.
-func (m *Manifests) Avatars(ctx context.Context, ids ...string) ([]PublicImage, error) {
-	a := m.reg.cfg.Avatars
-	if a == (Avatars{}) || len(ids) == 0 {
-		return nil, nil
+// Avatars returns, per id in order, the person's avatar (Config.Avatars) at
+// its Stable preset's logical names: their current image, else the
+// gateway's default. Built from the ids, never looked up; none without
+// Config.Avatars or for an invalid id.
+func (r *Registry) Avatars(ids ...string) []PublicImage {
+	a := r.cfg.Avatars
+	if a == (Avatars{}) {
+		return nil
 	}
 	out := make([]PublicImage, len(ids))
-	var refs []contentref.ContentRef
-	var at []int
 	for i, id := range ids {
 		out[i] = PublicImage{Preset: a.Preset}
-		if ref, err := m.reg.Ref(a.Kind, id); err == nil {
-			refs, at = append(refs, ref), append(at, i)
+		if ref, err := r.Ref(a.Kind, id); err == nil {
+			out[i], _ = r.logicalImage(ref, a.Preset)
 		}
 	}
-	if len(refs) == 0 {
-		return out, nil
-	}
-	images, err := m.PresetImages(ctx, a.Preset, refs...)
-	if err != nil {
-		return nil, err
-	}
-	for j, i := range at {
-		out[i] = images[j]
-	}
-	return out, nil
+	return out
 }
 
 // DefaultImage is preset's default image for ref, which the media gateway
@@ -181,9 +162,22 @@ func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (Publi
 	if err != nil {
 		return PublicImage{}, false
 	}
-	p := item.Kind().public(preset)
-	if p == nil || !p.hasDefault() {
+	if p := item.Kind().public(preset); p == nil || !p.hasDefault() {
 		return PublicImage{}, false
+	}
+	return r.logicalImage(ref, preset)
+}
+
+// logicalImage is preset's image of ref at its logical names, heights
+// following the preset's aspect (0 without one).
+func (r *Registry) logicalImage(ref contentref.ContentRef, preset string) (PublicImage, bool) {
+	item, err := r.Item(ref)
+	if err != nil {
+		return PublicImage{Preset: preset}, false
+	}
+	p := item.Kind().public(preset)
+	if p == nil {
+		return PublicImage{Preset: preset}, false
 	}
 	image := PublicImage{Preset: preset}
 	names := item.Kind().PublicNames(nil, p, "")
@@ -291,11 +285,6 @@ func (p *projection) without(item Item, retired []string) *projection {
 
 // project writes p in its own transaction.
 func (j *PGJournal) project(ctx context.Context, p *projection) error {
-	if p != nil {
-		if o := j.at(p.ref.TenantID); o != j {
-			return o.project(ctx, p)
-		}
-	}
 	if p == nil {
 		return nil
 	}
@@ -305,11 +294,6 @@ func (j *PGJournal) project(ctx context.Context, p *projection) error {
 // projectTx replaces the item's projected publications in tx, leaving
 // unchanged rows untouched.
 func (j *PGJournal) projectTx(ctx context.Context, tx pgx.Tx, p *projection) error {
-	if p != nil {
-		if o := j.at(p.ref.TenantID); o != j {
-			return o.projectTx(ctx, tx, p)
-		}
-	}
 	if p == nil {
 		return nil
 	}

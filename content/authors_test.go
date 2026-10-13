@@ -8,9 +8,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/avatar"
 )
 
 // countingDirectory counts Get calls and can fail them.
@@ -28,42 +31,41 @@ func (d *countingDirectory) Get(ctx context.Context, ids []string) (map[string]u
 	return d.commentsDirectory.Get(ctx, ids)
 }
 
-// A listing shows its authors with one directory read and one avatar query:
-// names and usernames from the directory, never its email; the avatar from
-// media; an account the directory no longer holds without an author. An
-// outage leaves bare ids and never fails the listing.
-func TestAuthorsResolveInTwoCalls(t *testing.T) {
+// A listing shows its authors with one directory read and no avatar
+// lookup: names and usernames from the directory, never its email; every
+// person's avatar at its stable URL (the gateway serves the default there
+// until one is uploaded); an account the directory no longer holds without
+// an author. An outage leaves bare ids and never fails the listing.
+func TestAuthorsResolveInOneCall(t *testing.T) {
 	dir := &countingDirectory{}
-	rt, m := newMediaTest(t, Options{UserInfo: dir, Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery")})
-	m.publish("avatar-alice")
-	for _, who := range []string{"alice", "bob", "gone", "alice"} {
+	avatars, err := media.NewRegistry(media.Config{Namespace: "site", BaseURL: "https://media.test", Kinds: []media.Kind{avatar.User()},
+		Avatars: media.Avatars{Kind: "user", Preset: "avatar"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := newMediaTest(t, Options{UserInfo: dir, Avatars: avatars, Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery")})
+	alice, bob := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
+	for _, who := range []string{alice, bob, "gone", alice} {
 		mustComment(t, rt, access.Actor{ID: who, Kind: "user"}, "gallery", cid(1), CommentInput{Body: "from " + who})
 	}
 	dir.gets.Store(0)
-	m.mu.Lock()
-	m.avatarLookups = 0
-	m.mu.Unlock()
 
 	var list []Comment
 	if code := send(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "GET", "/contents/"+cid(1)+"/comments?sort=newest", nil, &list); code != http.StatusOK || len(list) != 4 {
 		t.Fatalf("list: %d %d", code, len(list))
 	}
-	m.mu.Lock()
-	avatars := m.avatarLookups
-	m.mu.Unlock()
-	if dir.gets.Load() != 1 || avatars != 1 {
-		t.Fatalf("%d directory reads, %d avatar queries; want one each", dir.gets.Load(), avatars)
+	if dir.gets.Load() != 1 {
+		t.Fatalf("%d directory reads; want one", dir.gets.Load())
 	}
 	by := map[string]*PublicUser{}
 	for _, c := range list {
 		by[c.UserID] = c.Author
 	}
-	a := by["alice"]
-	if a == nil || a.Name != "Name alice" || a.Username != "name-alice" || !strings.HasSuffix(a.Avatar, "-64.webp") || !strings.Contains(a.AvatarSrcSet, "-128.webp 128w") {
-		t.Fatalf("alice %+v", a)
-	}
-	if b := by["bob"]; b == nil || b.Username != "name-bob" || b.Avatar != "" || b.AvatarSrcSet != "" {
-		t.Fatalf("bob %+v", b)
+	for _, id := range []string{alice, bob} {
+		u, base := by[id], "https://media.test/v1/accounts/user/"+id+"/public/"
+		if u == nil || u.Name != "Name "+id || u.Username != "name-"+id || u.Avatar != base+"avatar-64.webp" || !strings.Contains(u.AvatarSrcSet, base+"avatar-128.webp 128w") {
+			t.Fatalf("%s %+v", id, u)
+		}
 	}
 	if g := by["gone"]; g != nil {
 		t.Fatalf("an account the directory does not hold: %+v", g)

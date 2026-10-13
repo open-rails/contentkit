@@ -3,9 +3,10 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { ReadResult, RefBody } from "../client/generated/wire.js";
 import type { PresetRule } from "../client/generated/wire.js";
-import { defaultImage, isPattern, ruleDir } from "../client/media/rules.js";
+import { defaultImage, isPattern, ruleDir, stableImage } from "../client/media/rules.js";
 import type { PublicPreset } from "../client/public.js";
 import { useOptionalContentKitClient } from "./context.js";
+import { useKinds } from "./groups.js";
 import { useMediaRead } from "./read.js";
 
 export interface UsePresets {
@@ -86,4 +87,15 @@ export function usePublicImage(item: RefBody, preset: string, o: PublicImageOpti
     return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
   }, [listed, o.image, r.read, preset, rule, id]);
   return { ...image, rule, loading: !loaded || r.loading, error: r.error, reload: r.reload };
+}
+
+/**
+ * A person's avatar (the content model's `avatars`, a Stable preset): URLs
+ * built from their id on this site's media host, showing their image or
+ * the default. null while the model loads or when the site shows none.
+ */
+export function useAvatar(userId: string | null | undefined, o: { client?: ContentKitClient } = {}): PublicPreset | null {
+  const { kinds } = useKinds(o);
+  const rule = kinds?.avatars;
+  return useMemo(() => (rule && userId ? stableImage(rule, userId) : null), [rule, userId]);
 }

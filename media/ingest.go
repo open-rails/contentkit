@@ -146,12 +146,12 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, err
 	}
 	if limited {
-		if err := u.limiter(req.Ref.TenantID).Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
+		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {
 			return IngestResult{}, err
 		}
 		defer func() {
-			_ = u.limiter(req.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}})
+			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}})
 		}()
 	}
 	var res IngestResult
@@ -186,7 +186,7 @@ func (u *Uploads) ingestCopy(ctx context.Context, actor access.Actor, item Item,
 		}
 		if u.o.Limiter != nil && !grant.Exempt {
 			key, _ := item.Staged(s.Blob)
-			_ = u.limiter(req.Ref.TenantID).Settle(ctx, Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
+			_ = u.o.Limiter.Settle(ctx, Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
 		}
 	}()
 	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(s.Blob, "u-"), []Op{{Op: OpPut, Path: s.Path, Blob: s.Blob, Meta: req.Meta}})
@@ -278,7 +278,7 @@ func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, 
 	tenant := item.Ref().TenantID
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited {
-		if err := u.limiter(tenant).Reserve(ctx, Reservation{Tenant: tenant, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: src.Size}); err != nil {
+		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: tenant, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: src.Size}); err != nil {
 			return StagedCopy{}, err
 		}
 	}
@@ -292,7 +292,7 @@ func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, 
 		err = fmt.Errorf("media: copy %s: %w", r.From, err)
 	}
 	if limited {
-		_ = u.limiter(tenant).Settle(context.WithoutCancel(ctx), Settlement{Tenant: tenant, Keys: []string{key}})
+		_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: tenant, Keys: []string{key}})
 	}
 	return StagedCopy{}, err
 }

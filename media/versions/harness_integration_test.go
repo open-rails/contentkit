@@ -96,7 +96,7 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 				}},
 			{Name: "user", KeepOriginals: true,
 				Uploads: []media.Upload{{Path: "avatar", Types: pngs, MaxBytes: 1 << 20}},
-				Public:  []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{32}}}},
+				Public:  []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{32}, Stable: true}}},
 		}}
 }
 

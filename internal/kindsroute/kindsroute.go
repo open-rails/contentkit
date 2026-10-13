@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media"
 )
 
 // ContentModel is the public part of kinds.Config.
@@ -23,11 +24,16 @@ type ContentModel struct {
 	// that is down comes back (history, similar and recommendations answer
 	// unavailable meanwhile), one never configured answers not_configured.
 	Signals bool `json:"signals"`
+	// Avatars is people's avatar preset (Stable): an avatar's URLs are its
+	// names at {base}/v1/{namespace}/{kind}/{user id}/public/, and its
+	// uploads target {kind, user id}. Absent: people have none.
+	Avatars *media.PresetRule `json:"avatars,omitempty"`
 }
 
 // Public is c's public part, with empty lists and maps rather than null.
-func Public(c kinds.Config, signals bool) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: c.Kinds, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters, Signals: signals}
+func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
+	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: c.Kinds, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters, Signals: signals,
+		Avatars: avatars}
 	if m.Languages == nil {
 		m.Languages = []string{}
 	}
@@ -51,12 +57,12 @@ type server struct {
 	signals func() bool
 }
 
-// Handler serves GET /kinds from c, rendered once, and whether signals are
-// recorded, asked per request.
-func Handler(c kinds.Config, signals func() bool) (http.Handler, error) {
+// Handler serves GET /kinds from c and the avatar preset, rendered once,
+// and whether signals are recorded, asked per request.
+func Handler(c kinds.Config, signals func() bool, avatars *media.PresetRule) (http.Handler, error) {
 	srv := &server{signals: signals}
 	for i, on := range []bool{false, true} {
-		body, err := json.Marshal(Public(c, on))
+		body, err := json.Marshal(Public(c, on, avatars))
 		if err != nil {
 			return nil, err
 		}
@@ -71,7 +77,7 @@ func init() { httpapi.Register(httpapi.Kinds, routes) }
 
 var routes = []httpapi.Route[*server]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute.",
+		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
 }
 

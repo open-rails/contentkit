@@ -71,6 +71,7 @@ export { ItemUploadQueue, type ItemStatus, type QueueItem, type QueueOptions, ty
 export {
   acceptOf,
   defaultImage,
+  stableImage,
   filesFor,
   isPattern,
   ratioLabel,

@@ -142,8 +142,21 @@ export function presetFor(presets: readonly PresetRule[], kind: string, path: st
  * current file). null when the preset has no default (`rule.default`).
  */
 export function defaultImage(rule: PresetRule, id: string): PublicPreset | null {
-  const r = ratio(rule.aspect);
   if (!rule.default || rule.first || rule.to.includes(NAME)) return null;
+  return logicalImage(rule, id);
+}
+
+/**
+ * A Stable preset's image of an item (`rule.stable`, e.g. the content
+ * model's `avatars`): URLs built from the id that show its current image,
+ * else the default. null for any other preset.
+ */
+export function stableImage(rule: PresetRule, id: string): PublicPreset | null {
+  return rule.stable ? logicalImage(rule, id) : null;
+}
+
+function logicalImage(rule: PresetRule, id: string): PublicPreset {
+  const r = ratio(rule.aspect);
   return {
     preset: rule.name,
     aspect: rule.aspect,

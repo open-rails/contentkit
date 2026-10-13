@@ -458,6 +458,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		}
 	}
 	next.cleanup = nil
+	mutation.effects.Mirror = item.kind.mirrors(item, cur, next)
 	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, nil
 	}
@@ -701,6 +702,14 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
 			return err
 		}
+		purged := slices.Clone(commit.Effects.Public)
+		for _, c := range commit.Effects.Mirror {
+			// A source already retired had a successor, which mirrors itself.
+			if _, err := m.store.Copy(ctx, c.From, c.To, CopyOptions{}); err != nil && !errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("media: commit mirror: %w", err)
+			}
+			purged = append(purged, c.To)
+		}
 		g, deleteCtx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 		for _, key := range append(slices.Clone(commit.Effects.Public), commit.Effects.Private...) {
@@ -714,9 +723,9 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		if err := g.Wait(); err != nil {
 			return fmt.Errorf("media: commit cleanup: %w", err)
 		}
-		if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(commit.Effects.Public) > 0 {
-			urls := make([]string, len(commit.Effects.Public))
-			for i, key := range commit.Effects.Public {
+		if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(purged) > 0 {
+			urls := make([]string, len(purged))
+			for i, key := range purged {
 				urls[i] = strings.TrimRight(m.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
 			}
 			purge(ctx, urls)
@@ -733,9 +742,6 @@ func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
 	}
 	var errs []error
 	for _, tenant := range m.reg.Namespaces() {
-		if m.journal.Bound(tenant) {
-			continue // its owner recovers it
-		}
 		var kinds []string
 		for _, kind := range m.reg.all {
 			if kind.ns == tenant {

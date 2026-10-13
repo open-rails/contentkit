@@ -277,13 +277,12 @@ Ports (in `content` unless qualified):
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
-`name` and `username` from `UserInfo.Get` (never the email), the avatar from
-ContentKit media (the registry's `Avatars`: that kind's current image of its
-preset, else the preset's default), with one `Get` and one projection query
-per response, never per author. An id the directory does not hold (a
-deleted account) has no author; a directory or media failure is logged and
-leaves bare ids, never failing the response. The avatar needs
-`content.Options.Media`; without `UserInfo` authors are bare ids.
+`name` and `username` from `UserInfo.Get` (never the email), with one `Get`
+per response, never per author, and the avatar at its stable URL, built
+from the id (`Config.Avatars`, Avatars below). An id the directory does not
+hold (a deleted account) has no author; a directory failure is logged and
+leaves bare ids, never failing the response. Without `UserInfo` authors are
+bare ids.
 
 **Content and poll images.** A content item's cover is its content-level
 media item's (`{tenant}/{kind}/{id}/`, uploads marked `Content`); its body
@@ -488,8 +487,8 @@ old assignment until the new revision is classified; late old results cannot win
 
 `ck.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
-ContentKit interaction data and data retained by
-moderator/classifier providers. A
+ContentKit interaction data, avatars (on the avatar primary; see Avatars)
+and data retained by moderator/classifier providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -709,25 +708,17 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   Doujins' translation requests' covers. In the engine anyone reads its
   public files (`GET /v1/media/{kind}/{id}`) and holders of
   `root:content:write` or `root:import:write` upload them.
-- **Account avatars.** Import `github.com/open-rails/contentkit/media/avatar`
-  and register `avatar.User()` for the standard shared user-avatar kind. It
-  accepts JPEG, PNG and WebP up to 10 MiB, renders square WebP images at
-  64, 128, 256 and 512 pixels, and includes a default silhouette. Publish it
-  with the other registry defaults through `media/image.PublishDefaults`.
-  `Avatars` names the kind whose item ids are the auth's
-  subjects (the shared `accounts` kind `user`) and the public preset people
-  are shown with; `Manifests.Avatars(ctx, ids...)` answers a list in one
-  query. Authorize the kind's uploads in `CanUpload` from the actor: a person
-  their own (their quota), staff anyone's (exempt):
-
-  ```go
-  case "user":
-  	if a.Person() && a.ID == t.Ref.ContentID {
-  		return media.UploadGrant{Allowed: true, Owner: a.ID}, nil
-  	}
-  	ok, err := a.Can(ctx, staff, editMedia.String())
-  	return media.UploadGrant{Allowed: ok, Exempt: ok}, err
-  ```
+- **Account avatars** are the engine's `Config.Avatars` (Avatars below).
+  `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
+  standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
+  256 and 512 pixels, a default silhouette (publish it with the other
+  defaults through `media/image.PublishDefaults`). Its preset is `Stable`:
+  besides its generations, the current image is kept at the logical names
+  (`avatar-128.webp`), so its URL is built from the person's id and the
+  gateway serves the default there until one is uploaded.
+  `Registry.Avatars(ids...)` builds them without a lookup. A host building
+  its own media without the engine authorizes the kind in `CanUpload`: a
+  person their own, staff anyone's (exempt).
 
 - **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
   a file's path adds its extension (`cover.png`), and a put to the same stem
@@ -772,19 +763,52 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   images its public presets name in `Public.Default`; `NewRegistry` checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
-  `accounts/{kind}/{id}/` and is served on every importing site's media host
+  `accounts/{kind}/{id}/` and is served on every site's media host
   (account avatars). An app's own namespace is never a shared one. One app
-  owns a shared namespace: it lives in that app's bucket and journal, and its
-  worker processes it. Every other importing app binds it,
-  `journal.Bind("accounts", ownerJournal)` with
-  `media.RouteStore(own, map[string]media.Store{"accounts": ownerStore})`, so
-  all writers share one commit ledger and the owner alone sweeps, upgrades
-  and regenerates it. Apps sharing a namespace use one Postgres database:
-  `PGLocker` takes advisory locks, which are per database, and Ceph RGW has
-  no conditional PUT to fall back on.
+  holds a shared namespace, in its bucket and journal, processed by its
+  worker; other sites reach it through its API (Avatars below) and serve
+  its files from their media hosts (`MEDIA_GATEWAY_BUCKETS`).
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
   and hooks are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
+
+### Avatars
+
+```go
+// The primary (Doujins): its media holds every avatar.
+cfg.Avatars = &contentkit.AvatarsConfig{} // avatar.User(), preset "avatar"
+
+// Another site sharing its people (Hentai0): keeps none.
+cfg.Avatars = &contentkit.AvatarsConfig{
+	Primary: "https://doujins.dev/api/v1/contentkit", // the primary's routes
+	Key:     os.Getenv("CONTENTKIT_AVATARS_KEY"),     // the primary's API key: root:avatars:write
+}
+```
+
+- Every author and the content model's `avatars` (`GET /v1/kinds`, a
+  `Stable` preset rule) name avatars at the site's own media host,
+  `{media}/v1/accounts/user/{id}/public/avatar-{w}.webp`: nothing is looked
+  up. The gateway's resource policy is same-site, so each site's host
+  serves them: `MEDIA_GATEWAY_HOSTS` gives every media host `accounts` and
+  `MEDIA_GATEWAY_BUCKETS` maps `accounts` to the primary's bucket.
+- On the other site, a person's avatar presigns, commits and editor reads
+  (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
+  its own routes, which forward them to the primary's with `Key`: only
+  their own avatar, within `Media.CommitLimit`. Their token never leaves
+  their site and its AuthKit; the browser's one cross-site request is the
+  presigned PUT to the primary's bucket (the bucket's CORS lists every
+  site). Read URLs come back on the site's media host. The site keeps no
+  avatar row, object or worker job; a primary that is down answers 503.
+- The primary authorizes a person's own avatar, and anyone's to holders of
+  `root:avatars:write` (`access.AvatarsWrite`): staff, and the other sites'
+  keys (AuthKit API keys in the root group, a role with that permission
+  alone), which it answers with token URLs rather than cookies.
+- contentkit-ui's `AvatarUpload` defaults to the viewer's avatar from the
+  content model, `useAvatar(id)` builds an image, and both work unchanged
+  on either site.
+- `EraseSubjects` erases avatars on the primary only; people are shared, so
+  the primary's erasure (the account deletion every site shares) removes
+  them.
 
 ### Uploads and commit ops
 
@@ -1049,9 +1073,8 @@ gates (Auth). No compatibility: the old ports are gone.
   (`access.Permissions()`, full `root:<resource>:<action>` names), held in
   the Authenticator's root scope. Declare them in the auth's roles from the
   constants (Auth); there is no permission or scope setting.
-- `adapters/authkit` is deleted: authors are ContentKit's (declare
-  `media.Config.Avatars`), and account uploads are a few lines of
-  `CanUpload` (Account avatars).
+- `adapters/authkit` is deleted: authors are ContentKit's (`Config.Avatars`),
+  and account uploads are a few lines of `CanUpload` (Account avatars).
 - `media.HandlerOptions.Identity` and `UploadHandlerOptions.Actor` are `Auth`;
   `media.Identity`, `content.Identity`, `content.Authorizer`,
   `content.UserEnricher` and `content.Runtime.Guard` are gone.
@@ -1110,8 +1133,8 @@ the host's periodic jobs. The worker migrates its schema itself.
   without access get none.
 - **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
   namespaces it serves (`media.<domain>=<tenant>,accounts`) and
-  `MEDIA_GATEWAY_BUCKETS` each namespace's bucket (a shared one is in its
-  owner's); URLs are
+  `MEDIA_GATEWAY_BUCKETS` each namespace's bucket (`accounts` is in the avatar
+  primary's); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
   `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);

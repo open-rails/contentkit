@@ -58,13 +58,15 @@ type world struct {
 	// permission (access.GroupPermissions); channelWriter only
 	// channel:content:write, channelModerator channel:comments:moderate.
 	channelEditor, channelWriter, channelModerator iam.Role
-	pool                                           *pgxpool.Pool
-	schema                                         string
-	tenant                                         string // the media namespace too
-	env                                            *mediatest.Env
-	reg                                            *media.Registry
-	jobs                                           *media.Jobs
-	queue                                          *workqueue.Queue
+	// avatars holds root:avatars:write alone: another site's forwarding key.
+	avatars iam.Role
+	pool    *pgxpool.Pool
+	schema  string
+	tenant  string // the media namespace too
+	env     *mediatest.Env
+	reg     *media.Registry
+	jobs    *media.Jobs
+	queue   *workqueue.Queue
 }
 
 func newWorld(t *testing.T) *world {
@@ -75,10 +77,12 @@ func newWorld(t *testing.T) *world {
 	// ContentKit names its staff permissions; the host declares them and
 	// builds its roles from them, beside its own.
 	var grants []iam.Grant
-	for _, p := range rbac.Root.Declare(access.Names(access.Permissions()...)...) {
+	declared := rbac.Root.Declare(access.Names(access.Permissions()...)...)
+	for _, p := range declared {
 		grants = append(grants, p)
 	}
 	w.staff = rbac.Root.Role("staff", grants...)
+	w.avatars = rbac.Root.Role("avatars", declared[slices.Index(access.Permissions(), access.AvatarsWrite)])
 	channel := rbac.Persona("channel")
 	var editing []iam.Grant
 	perms := channel.Declare(access.GroupPermissions("channel")...)
@@ -111,8 +115,8 @@ func newWorld(t *testing.T) *world {
 }
 
 // mediaConfig is the site's media registry: albums' content-level files,
-// books' versions, blog images, accounts' avatars, poll images and the
-// covers of a record the host keeps (request).
+// books' versions, blog images, poll images and the covers of a record the
+// host keeps (request).
 func (w *world) mediaConfig() media.Config {
 	images := []string{"image/png"}
 	folder := func(name string) media.Kind {
@@ -135,15 +139,18 @@ func (w *world) mediaConfig() media.Config {
 				Uploads: []media.Upload{{Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
 				Private: []media.Private{{Name: "read", From: "pages/{name}", To: "read/{name}.webp", Image: &media.Image{Width: 64}},
 					{Name: "zip", To: "download/pages.zip", Zip: "read/", HostOnly: true}}},
-			{Name: "user", Namespace: "accounts", KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 1 << 20}},
-				Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
-					Image: media.Image{Aspect: media.Square}, Default: "avatar.png"}}},
 			blog, folder("poll"),
 			{Name: "request", KeepOriginals: true, Uploads: []media.Upload{{Path: "cover", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}}}},
-		},
-		Avatars: media.Avatars{Kind: "user", Preset: "avatar"}}
+		}}
+}
+
+// avatarKind is accounts' avatars, as avatar.User() but PNG only.
+func avatarKind() *media.Kind {
+	return &media.Kind{Name: "user", Namespace: "accounts", KeepOriginals: true,
+		Uploads: []media.Upload{{Path: "avatar", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
+		Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
+			Image: media.Image{Aspect: media.Square}, Default: "avatar.png", Stable: true}}}
 }
 
 // config is the host's ContentKit configuration.
@@ -159,6 +166,7 @@ func (w *world) config() contentkit.Config {
 			},
 			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
+		Avatars:      &contentkit.AvatarsConfig{Kind: avatarKind()},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}},
@@ -234,11 +242,10 @@ func (w *world) engine(edit func(*contentkit.Config, *contentkit.Deps)) *content
 		w.t.Fatal(err)
 	}
 	// The fixtures' own view of the registry, as the media worker has one.
-	mc, err := media.ForContent(cfg.Media.Config, cfg.Content)
+	mc, err := cfg.MediaKinds()
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	mc.Namespace = w.tenant
 	if w.reg, err = media.NewRegistry(mc); err != nil {
 		w.t.Fatal(err)
 	}

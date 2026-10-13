@@ -93,8 +93,8 @@ func NewRegistry(c Config) (*Registry, error) {
 	}
 	if a := c.Avatars; a != (Avatars{}) {
 		k, ok := r.kinds[a.Kind]
-		if !ok || k.public(a.Preset) == nil {
-			return nil, fmt.Errorf("media: Avatars: kind %q has no public preset %q", a.Kind, a.Preset)
+		if !ok || k.public(a.Preset) == nil || !k.public(a.Preset).Stable {
+			return nil, fmt.Errorf("media: Avatars: kind %q has no Stable public preset %q", a.Kind, a.Preset)
 		}
 	}
 	return r, nil
@@ -258,7 +258,7 @@ func (r *Registry) PresetRules() []PresetRule {
 		for _, p := range k.Public {
 			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
 				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
-				Default: p.hasDefault()})
+				Default: p.hasDefault(), Stable: p.Stable})
 		}
 	}
 	return out

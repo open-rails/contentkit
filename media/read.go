@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/authkit/auth"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -207,7 +209,7 @@ func (g *Grant) Allowed(f File) bool {
 
 // Cookie is the item cookie for a viewer with access in cookie mode, else nil.
 func (g *Grant) Cookie() *http.Cookie {
-	if g.item == "" || g.r.o.Delivery.Mode != DeliverCookie {
+	if g.item == "" || !g.cookie() {
 		return nil
 	}
 	return &http.Cookie{
@@ -223,7 +225,13 @@ func (g *Grant) URL(f File, dl bool) (string, error) {
 	if !g.Allowed(f) {
 		return "", ErrNotAllowed
 	}
-	return g.url(f.Blob, f.Download, dl, g.r.o.Delivery.Mode == DeliverCookie)
+	return g.url(f.Blob, f.Download, dl, g.cookie())
+}
+
+// cookie reports cookie delivery. An application has no browser to hold the
+// cookie (a site forwarding its people's reads): its URLs carry the token.
+func (g *Grant) cookie() bool {
+	return g.r.o.Delivery.Mode == DeliverCookie && g.actor.Kind != auth.SubjectApplication
 }
 
 // HostURL is the URL of a HostOnly preset's file for a viewer with access,
@@ -475,7 +483,7 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 		e.missing = true
 		return "", nil
 	}
-	return e.g.url(name, "", false, e.g.r.o.Delivery.Mode == DeliverCookie)
+	return e.g.url(name, "", false, e.g.cookie())
 }
 
 // addProgress fills Progress on pending video and audio uploads. A failed

@@ -251,4 +251,7 @@ type PresetRule struct {
 	// Default: the gateway serves the kind's default image at the template's
 	// names while an item has no publication (Registry.DefaultImage).
 	Default bool `json:"default"`
+	// Stable: the template's names are also the current image's
+	// (Public.Stable), so clients build its URLs from an item's id.
+	Stable bool `json:"stable,omitempty"`
 }

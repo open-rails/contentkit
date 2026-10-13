@@ -15,8 +15,8 @@ import (
 )
 
 // PublicUser is how an author is shown: its name and username from the
-// host's directory (Options.UserInfo) and its avatar from ContentKit media
-// (media.Config.Avatars). Never its email.
+// host's directory (Options.UserInfo) and its avatar (Options.Avatars).
+// Never its email.
 type PublicUser struct {
 	ID           string `json:"id"`
 	Name         string `json:"name,omitempty"`

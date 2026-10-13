@@ -119,7 +119,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		if o.Owner == "" {
 			return nil, errors.New("media: restore needs a quota owner")
 		}
-		mutation.quota, err = j.cfg.Limiter.over(j.cfg.Journal.at(snap.Ref.TenantID).limiter).Quota(ctx, snap.Ref.TenantID, o.Owner)
+		mutation.quota, err = j.cfg.Limiter.Quota(ctx, snap.Ref.TenantID, o.Owner)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +142,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		if err != nil {
 			return err
 		}
-		mutation.effects = journalEffects{Deletion: true, Private: keys, Cancel: j.cfg.Journal.at(item.Ref().TenantID).queue != nil,
+		mutation.effects = journalEffects{Deletion: true, Private: keys, Cancel: j.cfg.Journal.queue != nil,
 			Notify: j.cfg.Registry.cfg.Hooks.ItemCommitted != nil}
 		for obj, err := range j.cfg.Store.List(ctx, item.Prefix()) {
 			if err != nil {
@@ -225,7 +225,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 			mutation.effects.Settlement = Settlement{Tenant: snap.Ref.TenantID, Owner: o.Owner,
 				Delta: next.uploadBytes() - before, Enforce: true}
 		}
-		if j.cfg.Journal.at(snap.Ref.TenantID).queue != nil {
+		if j.cfg.Journal.queue != nil {
 			mutation.effects.Process = &ProcessJob{Ref: snap.Ref, Place: len(next.StagedNames()) > 0}
 		}
 		*cur = *next
@@ -240,9 +240,6 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 // Ownership precedes historical copies. Recovery may invalidate this open lease
 // while bytes are in flight; final prepare then refuses to publish their root.
 func (j *PGJournal) allocateRestore(ctx context.Context, c manifestCommit, incarnation string, keys []string) error {
-	if o := j.at(c.Ref.TenantID); o != j {
-		return o.allocateRestore(ctx, c, incarnation, keys)
-	}
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {

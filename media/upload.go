@@ -201,20 +201,20 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	res := Reservation{Tenant: r.Ref.TenantID, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: r.Size}
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited {
-		if err := u.limiter(r.Ref.TenantID).Reserve(ctx, res); err != nil {
+		if err := u.o.Limiter.Reserve(ctx, res); err != nil {
 			return Presigned{}, err
 		}
 	}
 	if err := u.o.Manifests.allocate(ctx, item, key); err != nil {
 		if limited {
-			_ = u.limiter(r.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
+			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 		}
 		return Presigned{}, err
 	}
 	if err := u.presign(ctx, item, key, res.Uploader, r, &out); err != nil {
 		_ = u.o.Manifests.retireAllocations(context.WithoutCancel(ctx), item, []string{key})
 		if limited {
-			_ = u.limiter(r.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
+			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 		}
 		return Presigned{}, err
 	}
@@ -384,17 +384,11 @@ func (u *Uploads) Abort(ctx context.Context, actor access.Actor, sealed string) 
 	return u.abort(ctx, t, key, nil)
 }
 
-// limiter is namespace ns's limiter: the host's limits over the owner's
-// tables when ns is bound to another app's journal.
-func (u *Uploads) limiter(ns string) *PGLimiter {
-	return u.o.Limiter.over(u.o.Manifests.journal.at(ns).limiter)
-}
-
 func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) error {
 	ctx = context.WithoutCancel(ctx)
 	err := u.o.Store.AbortMultipart(ctx, key, t.UploadID)
 	if u.o.Limiter != nil {
-		err = errors.Join(err, u.limiter(t.Ref.TenantID).Settle(ctx, Settlement{Tenant: t.Ref.TenantID, Keys: []string{key}}))
+		err = errors.Join(err, u.o.Limiter.Settle(ctx, Settlement{Tenant: t.Ref.TenantID, Keys: []string{key}}))
 	}
 	if cause != nil {
 		return cause
@@ -557,7 +551,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			if mutation.effects.Settlement.Delta > 0 && !grant.Exempt {
 				// Resolve host policy before the journal opens its transaction.
 				// Shrinks and ordering edits must not depend on quota availability.
-				mutation.quota, err = u.limiter(ref.TenantID).Quota(editCtx, ref.TenantID, grant.Owner)
+				mutation.quota, err = u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
 				if err != nil {
 					return err
 				}
@@ -820,7 +814,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		// charges (outputs are not charged).
 		if limited && len(todo) > 0 {
 			key, _ := item.Blob(copiedNames[from.PrivatePrefix()+todo[0]])
-			if err := u.limiter(item.Ref().TenantID).Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
+			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
 				Owner: grant.Owner, Key: key, Size: files[0].Size}); err != nil {
 				return nil, nil, err
 			}
