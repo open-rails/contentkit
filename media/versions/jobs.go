@@ -139,7 +139,8 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	return outcome(w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
 }
 
-// publish brings v's pages publication, previews and playback to its media.
+// publish brings v's pages publication, previews, its content's automatic
+// cover and playback to its media.
 func (s *Service) publish(ctx context.Context, t Target) error {
 	v, err := s.one(ctx, t)
 	if err != nil {
@@ -157,6 +158,9 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 		return ErrNotReady
 	}
 	if err := s.applyPreviews(ctx, k, t); err != nil {
+		return err
+	}
+	if err := s.applyCover(ctx, v.Kind, t.Content); err != nil {
 		return err
 	}
 	if k.Publish.Playback == "" {
