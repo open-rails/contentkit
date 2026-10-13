@@ -494,3 +494,47 @@ func TestCopyInOneRequestOrInParts(t *testing.T) {
 		}
 	}
 }
+
+// A bucket opened on a store's backend shares its credentials and its
+// capabilities: probing either establishes them for both, and a bucket that
+// does not exist fails its own check only.
+func TestOpenBucketSharesTheBackend(t *testing.T) {
+	owner, other := s3test.Open(t), s3test.Open(t)
+	ctx := t.Context()
+	cfg := other.Config
+	cfg.Capabilities = nil
+	own, err := mediaS3.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := own.OpenBucket(owner.Config.Bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Check(ctx, owner.Tenant+"/"); err != nil {
+		t.Fatal(err)
+	}
+	if own.Capabilities() != owner.Store.Capabilities() || opened.Capabilities() != own.Capabilities() {
+		t.Fatalf("capabilities: own %+v, opened %+v, backend %+v", own.Capabilities(), opened.Capabilities(), owner.Store.Capabilities())
+	}
+	key := owner.Tenant + "/opened"
+	if _, err := opened.Put(ctx, key, strings.NewReader("x"), 1, media.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Store.Head(ctx, key); err != nil {
+		t.Fatalf("the opened bucket's object: %v", err)
+	}
+	if _, err := other.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("the object reached the opening store's bucket: %v", err)
+	}
+	missing, err := own.OpenBucket("ck-missing-" + uuid.NewString()[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := missing.Check(ctx, "_probe/"); err == nil {
+		t.Fatal("a missing bucket answered its check")
+	}
+	if err := own.Check(ctx, other.Tenant+"/"); err != nil {
+		t.Fatal(err)
+	}
+}

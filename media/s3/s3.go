@@ -59,12 +59,15 @@ type Store struct {
 	internal *url.URL
 	public   *url.URL
 	pathSty  bool
-	caps     atomic.Pointer[media.Capabilities]
-	probed   atomic.Bool
+	caps     *atomic.Pointer[media.Capabilities] // the backend's: shared with OpenBucket's stores
+	probed   *atomic.Bool
 	part     int64
 }
 
-var _ media.Store = (*Store)(nil)
+var (
+	_ media.Store        = (*Store)(nil)
+	_ media.BucketOpener = (*Store)(nil)
+)
 
 // MaxPresignTTL is the SigV4 validity cap.
 const MaxPresignTTL = 7 * 24 * time.Hour
@@ -102,7 +105,8 @@ func New(cfg Config) (*Store, error) {
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 	st := &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
-		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize}
+		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize,
+		caps: &atomic.Pointer[media.Capabilities]{}, probed: &atomic.Bool{}}
 	caps := media.Capabilities{}
 	if cfg.Capabilities != nil {
 		caps = *cfg.Capabilities
@@ -132,6 +136,17 @@ func (s *Store) Check(ctx context.Context, prefix string) error {
 	s.caps.Store(&caps)
 	s.probed.Store(true)
 	return nil
+}
+
+// OpenBucket is bucket on s's backend, with its credentials and its
+// capabilities, which a Check of either establishes for both.
+func (s *Store) OpenBucket(bucket string) (media.Store, error) {
+	if bucket == "" {
+		return nil, errors.New("s3: OpenBucket needs a bucket")
+	}
+	b := *s
+	b.bucket = bucket
+	return &b, nil
 }
 
 // Client exposes the SDK client for bucket administration and tests.

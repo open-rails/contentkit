@@ -112,6 +112,24 @@ type MediaConfig struct {
 	// Downloads are the version download quotas (anonymous, user, tiers);
 	// Deps.Redis shares them.
 	Downloads versions.Downloads `yaml:"downloads" json:"downloads"`
+	// Bind maps shared namespaces (a media.Kind's Namespace, such as
+	// avatars' "accounts") to the engine that owns them in the same
+	// database: this engine writes, reads and erases their items through the
+	// owner's journal, worker queue and bucket, and leaves their sweeps,
+	// recovery, upgrades and processing to the owner.
+	Bind map[string]NamespaceOwner `yaml:"bind" json:"bind"`
+}
+
+// NamespaceOwner is the engine owning a bound namespace (MediaConfig.Bind).
+type NamespaceOwner struct {
+	// Schema is the owner's Database.Schema, which holds its media journal.
+	Schema string `yaml:"schema" json:"schema"`
+	// WorkerSchema is the owner's Media.WorkerSchema; empty is Schema plus
+	// "_media_worker".
+	WorkerSchema string `yaml:"worker_schema" json:"worker_schema"`
+	// Bucket is the owner's bucket, opened on Deps.Store's backend with its
+	// credentials (media.BucketOpener).
+	Bucket string `yaml:"bucket" json:"bucket"`
 }
 
 // MediaKinds is the media registry Config.Media serves, in the tenant's

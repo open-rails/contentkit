@@ -82,6 +82,7 @@ type Engine struct {
 	discover *discovery.Service
 	importer *importer.Service
 	media    *engineMedia
+	bound    []binding // Config.Media.Bind, validated
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
 	probes   []Probe
@@ -102,13 +103,12 @@ type engineMedia struct {
 	polls    bool // the registry declares the poll kind
 	versions *versions.Service
 	reg      *media.Registry
-	store    media.Store
+	store    media.Store // this engine's bucket (Deps.Store)
 	jobs     *media.Jobs
 	uploads  *media.Uploads
 	reader   *media.Reader
 	limit    media.RateLimit
 	queue    *workqueue.Queue
-	progress media.ProgressSource
 }
 
 // New runs ContentKit in this process. Before anything else touches the
@@ -154,6 +154,7 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		if e.media, err = e.newMedia(ctx, deps, now); err != nil {
 			return nil, err
 		}
+		e.checkBindings(ctx)
 		if err := e.catalog.BindMedia(catalog.Media{Images: e.media.jobs.Manifests(), Reader: e.media.reader, Versions: e.media.versions}); err != nil {
 			return nil, err
 		}
@@ -210,7 +211,8 @@ func (e *Engine) validate(deps Deps) error {
 	if cfg.Media != nil {
 		mc := *cfg.Media
 		cfg.Media = &mc
-		if _, err := cfg.MediaKinds(); err != nil {
+		mk, err := cfg.MediaKinds()
+		if err != nil {
 			return err
 		}
 		h := cfg.Media.Hooks
@@ -219,6 +221,9 @@ func (e *Engine) validate(deps Deps) error {
 		}
 		if deps.Store == nil {
 			return errors.New("contentkit: Config.Media needs Deps.Store")
+		}
+		if e.bound, err = e.bindings(mk, deps); err != nil {
+			return err
 		}
 	}
 	if (deps.ClickHouse != nil || cfg.ClickHouse.Addr != "") && strings.TrimSpace(cfg.ClickHouse.Database) == "" {
@@ -363,12 +368,20 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
+	progress, err := workqueue.NewProgressSource(e.pool, mc.WorkerSchema)
+	if err != nil {
+		return nil, err
+	}
+	store, processes, progress, err := e.bindMedia(m, journal, deps.Store, progress)
+	if err != nil {
+		return nil, err
+	}
 	limiter, err := e.groupLimiter()
 	if err != nil {
 		return nil, err
 	}
-	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
+	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
+		Processes: processes, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery
@@ -389,7 +402,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	var frames media.FrameGrabber
-	if f, err := video.NewFrames(deps.Store); err == nil {
+	if f, err := video.NewFrames(store); err == nil {
 		frames = f
 	} else {
 		e.log.Warn("contentkit: no frame picker", "err", err) // it needs ffmpeg on PATH
@@ -397,18 +410,15 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	rate := func(r RateLimitConfig) media.RateLimit {
 		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
-	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring, Frames: frames,
+	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: store, Manifests: m.jobs.Manifests(), Tickets: &ring, Frames: frames,
 		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
-		return nil, err
-	}
-	if m.progress, err = workqueue.NewProgressSource(e.pool, mc.WorkerSchema); err != nil {
 		return nil, err
 	}
 	mode := media.DeliverURL
 	if d.Mode != "" {
 		mode = media.DeliveryMode(d.Mode)
 	}
-	if m.reader, err = media.NewReader(media.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: m.queue, Progress: m.progress,
+	if m.reader, err = media.NewReader(media.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: processes, Progress: progress,
 		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, SigningKey: signing, TTL: d.TTL, Window: d.Window},
 		Issuance: media.Issuance{PerHour: mc.Issuance.PerHour, AnonymousPerHour: mc.Issuance.AnonymousPerHour, Disabled: mc.Issuance.Disabled, Redis: deps.Redis},
 		Now:      now}); err != nil {
@@ -654,15 +664,17 @@ func (e *Engine) Ready(ctx context.Context) error {
 // Probe checks one optional dependency.
 type Probe struct {
 	// Name is stable for dashboards: contentkit_clickhouse,
-	// contentkit_media_store, contentkit_redis, contentkit_moderator.
+	// contentkit_media_store, contentkit_media_owner_{namespace} (each
+	// Config.Media.Bind), contentkit_redis, contentkit_moderator.
 	Name string
 	// Check returns nil while the dependency is usable; it honors ctx.
 	Check func(context.Context) error
 }
 
 // Probes lists the optional dependencies the engine degrades without, for the
-// host's dependency supervisor: the signal plane, the media bucket, Redis and
-// the moderator (failing while its breaker holds writes for review).
+// host's dependency supervisor: the signal plane, the media bucket, each
+// bound namespace's owner, Redis and the moderator (failing while its
+// breaker holds writes for review).
 func (e *Engine) Probes() []Probe { return slices.Clone(e.probes) }
 
 func (e *Engine) newProbes(deps Deps) []Probe {
@@ -681,6 +693,9 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 		out = append(out, Probe{Name: "contentkit_media_store", Check: func(ctx context.Context) error {
 			return store.Check(ctx, "_contentkit/")
 		}})
+		for _, b := range e.bound {
+			out = append(out, Probe{Name: "contentkit_media_owner_" + b.ns, Check: b.check})
+		}
 	}
 	if deps.Redis != nil {
 		r := deps.Redis
@@ -693,7 +708,8 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 }
 
 // EraseSubjects erases subjects from every plane: signals, interaction data,
-// recent searches, inboxes, people's avatars (media.Config.Avatars) and data
+// recent searches, inboxes, people's avatars (media.Config.Avatars; in a
+// bound namespace through its owner, so either engine erases them) and data
 // retained by moderation and classifier providers; approved authored content
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish

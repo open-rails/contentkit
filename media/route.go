@@ -8,36 +8,56 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// RouteStore serves each bound namespace's keys from its owner's bucket and
-// every other key from own: pair it with PGJournal.Bind.
-func RouteStore(own Store, bound map[string]Store) (Store, error) {
-	if own == nil {
-		return nil, fmt.Errorf("media: RouteStore needs its own store")
-	}
-	routes := make(map[string]Store, len(bound))
-	for ns, s := range bound {
-		if !layout.ValidSegment(ns) || s == nil {
-			return nil, fmt.Errorf("media: invalid store route for namespace %q", ns)
-		}
-		routes[ns] = s
-	}
-	return &routeStore{own: own, bound: routes}, nil
+// Route* serve a namespace bound to its owner's journal (PGJournal.Bind)
+// from the owner's bucket, worker queue and encode progress, and every other
+// namespace from the app's own.
+
+// routes is own plus each bound namespace's owner.
+type routes[T comparable] struct {
+	own   T
+	bound map[string]T
 }
 
-type routeStore struct {
-	own   Store
-	bound map[string]Store
+func newRoutes[T comparable](what string, own T, bound map[string]T) (routes[T], error) {
+	var none T
+	if own == none {
+		return routes[T]{}, fmt.Errorf("media: routing needs its own %s", what)
+	}
+	r := routes[T]{own: own, bound: make(map[string]T, len(bound))}
+	for ns, v := range bound {
+		if !layout.ValidSegment(ns) || v == none {
+			return routes[T]{}, fmt.Errorf("media: invalid %s route for namespace %q", what, ns)
+		}
+		r.bound[ns] = v
+	}
+	return r, nil
 }
+
+func (r routes[T]) at(ns string) T {
+	if v, ok := r.bound[ns]; ok {
+		return v
+	}
+	return r.own
+}
+
+// RouteStore serves each bound namespace's keys from its owner's bucket.
+func RouteStore(own Store, bound map[string]Store) (Store, error) {
+	r, err := newRoutes("store", own, bound)
+	if err != nil {
+		return nil, err
+	}
+	return &routeStore{r}, nil
+}
+
+type routeStore struct{ routes[Store] }
 
 func (r *routeStore) at(key string) Store {
 	ns, _, _ := strings.Cut(key, "/")
-	if s := r.bound[ns]; s != nil {
-		return s
-	}
-	return r.own
+	return r.routes.at(ns)
 }
 
 func (r *routeStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts PutOptions) (Object, error) {
@@ -121,4 +141,36 @@ func (r *routeStore) Check(ctx context.Context, prefix string) error {
 		}
 	}
 	return nil
+}
+
+// RouteQueue enqueues each bound namespace's processing in its owner's
+// worker queue.
+func RouteQueue(own ProcessQueue, bound map[string]ProcessQueue) (ProcessQueue, error) {
+	r, err := newRoutes("queue", own, bound)
+	if err != nil {
+		return nil, err
+	}
+	return routeQueue{r}, nil
+}
+
+type routeQueue struct{ routes[ProcessQueue] }
+
+func (r routeQueue) Enqueue(ctx context.Context, job ProcessJob) error {
+	return r.at(job.Ref.TenantID).Enqueue(ctx, job)
+}
+
+// RouteProgress reads each bound namespace's encode progress from its
+// owner's worker.
+func RouteProgress(own ProgressSource, bound map[string]ProgressSource) (ProgressSource, error) {
+	r, err := newRoutes("progress source", own, bound)
+	if err != nil {
+		return nil, err
+	}
+	return routeProgress{r}, nil
+}
+
+type routeProgress struct{ routes[ProgressSource] }
+
+func (r routeProgress) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (EncodeStatus, error) {
+	return r.at(ref.TenantID).EncodeProgress(ctx, ref)
 }

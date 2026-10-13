@@ -769,18 +769,49 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
   `accounts/{kind}/{id}/` and is served on every importing site's media host
-  (account avatars). An app's own namespace is never a shared one. One app
-  owns a shared namespace: it lives in that app's bucket and journal, and its
-  worker processes it. Every other importing app binds it,
-  `journal.Bind("accounts", ownerJournal)` with
-  `media.RouteStore(own, map[string]media.Store{"accounts": ownerStore})`, so
-  all writers share one commit ledger and the owner alone sweeps, upgrades
-  and regenerates it. Apps sharing a namespace use one Postgres database:
-  `PGLocker` takes advisory locks, which are per database, and Ceph RGW has
-  no conditional PUT to fall back on.
+  (account avatars). An app's own namespace is never a shared one. One engine
+  owns a shared namespace: it lives in that engine's journal and bucket, and
+  its worker processes it. Every other engine importing the kind binds it to
+  the owner (`Config.Media.Bind`, below), so all writers share one commit
+  ledger and the owner alone sweeps, recovers, upgrades and regenerates it.
+  Engines sharing a namespace use one Postgres database: `PGLocker` takes
+  advisory locks, which are per database, and Ceph RGW has no conditional
+  PUT to fall back on.
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
   and hooks are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
+
+### Binding a shared namespace
+
+```yaml
+media:
+  bind:
+    accounts:                             # a shared namespace another engine owns
+      schema: doujins_contentkit          # the owner's database.schema (its journal)
+      worker_schema: doujins_media_worker # the owner's media.worker_schema
+      bucket: dev-doujins                 # the owner's bucket
+```
+
+- The engine presigns, commits, reads and erases the namespace's items
+  through the owner: commits in the owner's journal, objects in its bucket
+  (opened on `Deps.Store`'s backend with its credentials:
+  `media.BucketOpener`, which `media/s3.Store` is), processing on its worker
+  queue, encode progress from it. Pass the engine's own bucket as
+  `Deps.Store`.
+- The owner's media worker processes the namespace, so the owner's registry
+  declares its kinds; the binding engine's worker never sees them. Its own
+  sweeps, recovery, upgrades and `Regenerate` skip the namespace.
+- `EraseSubjects` on either engine erases a person's avatar: the deletion
+  commits in the owner's journal and bucket.
+- The gateway serves the namespace from the owner's bucket
+  (`MEDIA_GATEWAY_BUCKETS`: `accounts=<owner's bucket>`).
+- `New` refuses a binding it can't read: a namespace no kind lives in, no
+  bucket, schemas that aren't identifiers or are the engine's own, or a
+  `Deps.Store` that can't open buckets. An owner that isn't there yet (its
+  schemas not migrated, its bucket not answering) only degrades the
+  namespace: `New` warns, its reads and writes fail until the owner answers,
+  nothing falls back to the engine's own journal or bucket, and the probe
+  `contentkit_media_owner_{namespace}` fails meanwhile.
 
 ### Uploads and commit ops
 

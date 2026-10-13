@@ -127,6 +127,12 @@ type Store interface {
 	Check(ctx context.Context, prefix string) error
 }
 
+// BucketOpener is a Store that opens another bucket on its backend, with its
+// credentials and capabilities (media/s3.Store): a bound namespace's owner's.
+type BucketOpener interface {
+	OpenBucket(bucket string) (Store, error)
+}
+
 // Probe measures the backend's capabilities with scratch objects under prefix,
 // which it removes. Results depend on the backend release (RGW vs MinIO).
 // Every step must succeed or be refused cleanly (412, a checksum mismatch,

@@ -115,7 +115,8 @@ for _, r := range routes {
   in-process transport (for example `PublishNotifications`,
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
-  (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
+  (ClickHouse, the bucket, a bound namespace's owner, Redis);
+  `EraseSubjects` is account erasure.
 
 `server/` runs the same engine standalone: a YAML config file, secrets from
 the environment, an AuthKit resource server, OpenRails' remote client and
@@ -273,7 +274,9 @@ public names carry a generation. Every URL is
 
 `Config.Media` is the registry (`media.Config`, without hooks) and how it is
 served; the engine builds the uploads, reads, journal, worker queue and jobs
-from it and `Deps.Store`. `Deps.PurgePublic` hears of overwritten public URLs
+from it and `Deps.Store`; `Config.Media.Bind` binds a shared namespace
+(avatars' `accounts`) to the engine owning it (HOST_INTEGRATION "Binding a
+shared namespace"). `Deps.PurgePublic` hears of overwritten public URLs
 for a CDN purge. Every media item is ContentKit's: content kinds' through
 the catalog's resolver, groups', avatars' and, when the registry declares
 the `poll` kind, poll images.
