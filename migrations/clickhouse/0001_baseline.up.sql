@@ -1,5 +1,7 @@
--- parent: root
--- Canonical signal plane; the host selects its ClickHouse database.
+-- ContentKit's signal plane: a fresh baseline (#117; pre-launch, no upgrade
+-- path). The host selects its ClickHouse database. content_version_id '' is
+-- the work itself, as NULL is in Postgres: it stays out of Nullable because
+-- it is in every sorting key.
 
 CREATE TABLE IF NOT EXISTS signals {{ON_CLUSTER}} (
     `tenant` LowCardinality(String),
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS subject_content_state {{ON_CLUSTER}} (
     `last_score` Int16,
     `net_value` Float64,
     `feedback` UInt32,
-    `version` DateTime64(6, 'UTC')
+    `version` UInt256
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)
 ORDER BY (tenant, subject_kind, subject, content_kind, content_id, content_version_id)
@@ -72,7 +74,7 @@ CREATE TABLE IF NOT EXISTS subject_content_daily {{ON_CLUSTER}} (
     `score_sum` Int64,
     `value_sum` Float64,
     `type_counts` Map(LowCardinality(String), UInt32),
-    `version` DateTime64(6, 'UTC'),
+    `version` UInt256,
     INDEX idx_subject_content_daily_subject (subject_kind, subject) TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)
