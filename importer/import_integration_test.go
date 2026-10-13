@@ -261,7 +261,7 @@ func TestImportConverges(t *testing.T) {
 		`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`:                     id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0",
 		`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`:                                     "2",
 		`SELECT code FROM $s.content_codes WHERE content_id = $1`:                                                                                                                           "GAZ000001",
-		`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id IS NULL`:                  "2/1/1/1",
+		`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id IS NULL`:               "2/1/1/1",
 		`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`: "6",
 	} {
 		if got := f.scalar(t, sql, g1); got != want {

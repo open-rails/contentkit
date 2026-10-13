@@ -194,8 +194,8 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 		return nil, err
 	}
 	type row struct {
-		Kind    string `json:"content_kind"`
-		ID      string `json:"content_id"`
+		Kind    string  `json:"content_kind"`
+		ID      string  `json:"content_id"`
 		Version *string `json:"content_version_id"`
 	}
 	rows := make([]row, 0, len(candidates))

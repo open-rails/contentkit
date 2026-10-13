@@ -17,9 +17,9 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // Moderation states stored in content_comments.moderation and

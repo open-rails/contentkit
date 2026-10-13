@@ -215,8 +215,8 @@ type queueRow struct {
 	ContentKind      string  `json:"content_kind"`
 	ContentID        string  `json:"content_id"`
 	ContentVersionID *string `json:"content_version_id"`
-	Language         string `json:"language"`
-	Revision         int64  `json:"revision"`
+	Language         string  `json:"language"`
+	Revision         int64   `json:"revision"`
 }
 
 type invalidDocumentRow struct {
