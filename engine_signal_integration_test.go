@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
@@ -56,7 +57,7 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	if err := e.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	routes, err := e.Routes(Routes{Prefix: "/ck", Groups: ContentRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/ck", Groups: ContentRoutes | DiscoveryRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +92,30 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 			t.Fatalf("preferences never reached the signal plane: %+v", states)
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+
+	// Content detail carries the reader's standing to resume from: the item's
+	// and each version's.
+	vid := c.Versions[0].ID
+	s.call(http.StatusNoContent, u1, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, VersionID: vid,
+		Type: discovery.TypeView, EventID: "resume-1", OccurredAt: time.Now().UTC().Add(-time.Minute), Progress: 7, Resume: "page:7", DurationS: 60}}}, nil)
+	var detail catalog.Content
+	s.call(http.StatusOK, u1, "GET", "/ck/v1/contents/"+c.ID, nil, &detail)
+	if v := detail.Viewer; v == nil || !v.Favorited || !v.Seen || v.Progress != 7 || v.Resume != "page:7" || v.LastViewAt == nil {
+		t.Fatalf("detail standing %+v", v)
+	}
+	if v := detail.Versions[0].Viewer; v == nil || v.Favorited || v.Progress != 7 || v.Resume != "page:7" {
+		t.Fatalf("version standing %+v", v)
+	}
+	var version catalog.Version
+	s.call(http.StatusOK, u1, "GET", "/ck/v1/contents/"+c.ID+"/versions/"+vid, nil, &version)
+	if v := version.Viewer; v == nil || v.Resume != "page:7" {
+		t.Fatalf("version route standing %+v", v)
+	}
+	var other catalog.Content
+	s.call(http.StatusOK, staff, "GET", "/ck/v1/contents/"+c.ID, nil, &other)
+	if v := other.Viewer; v == nil || v.Seen || v.Favorited {
+		t.Fatalf("another reader's standing %+v", v)
 	}
 
 	report, err := e.EraseSubjects(ctx, []signal.Subject{user})

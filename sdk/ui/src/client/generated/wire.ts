@@ -20,6 +20,17 @@ export type VersionState = "draft" | "published";
 export type Listing = "listed" | "members" | "unlisted";
 export type AliasStatus = "found" | "not_found" | "gone";
 
+export interface Activity {
+  days: ActivityDay[];
+}
+
+export interface ActivityDay {
+  date: string;
+  views: number;
+  viewers: number;
+  users: number;
+}
+
 export interface AdminComment {
   id: string;
   reply_to_id?: string;
@@ -162,6 +173,7 @@ export interface Batch {
   votes?: VoteRecord[];
   answers?: AnswerRecord[];
   signals?: SignalRecord[];
+  deletes?: DeleteRecord[];
 }
 
 export interface Card {
@@ -338,6 +350,7 @@ export interface Content {
   groups: GroupSummary[];
   versions: Version[];
   views: number;
+  viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
   moderation?: ModerationState;
@@ -520,6 +533,11 @@ export interface Decision {
   preview?: Preview;
   free_after?: string;
   offers?: Sale[];
+}
+
+export interface DeleteRecord {
+  entity: string;
+  external_id: string;
 }
 
 export interface Edge {
@@ -838,6 +856,8 @@ export interface GroupSummary {
   kind: string;
   slug: string;
   name: string;
+  code?: string;
+  path?: string;
 }
 
 export interface GroupUpdate {
@@ -1070,6 +1090,13 @@ export interface MyGroup {
 export interface MyGroupPage {
   groups: MyGroup[];
   next_cursor?: string;
+}
+
+export interface MyStats {
+  completed: Record<string, number>;
+  comments: number;
+  comment_likes: number;
+  comment_dislikes: number;
 }
 
 export interface Name {
@@ -1371,6 +1398,13 @@ export interface Published {
   items: Item[];
 }
 
+export interface RankedContent {
+  id: string;
+  title: string;
+  path?: string;
+  value: number;
+}
+
 export interface ReactionCounts {
   likes: number;
   dislikes: number;
@@ -1570,6 +1604,24 @@ export interface Signals {
   signals: SignalInput[];
 }
 
+export interface SitemapAlias {
+  language: string;
+  path: string;
+}
+
+export interface SitemapEntry {
+  id: string;
+  code: string;
+  path: string;
+  lastmod: string;
+  languages: SitemapAlias[];
+}
+
+export interface SitemapPage {
+  entries: SitemapEntry[];
+  next_cursor?: string;
+}
+
 export interface StagedCopy {
   path: string;
   blob: string;
@@ -1598,6 +1650,10 @@ export interface Terms {
 
 export interface TicketBody {
   ticket: string;
+}
+
+export interface TopContents {
+  contents: RankedContent[];
 }
 
 export interface Total {
@@ -1659,6 +1715,7 @@ export interface Version {
   decision: Decision;
   text?: Record<string, VersionText>;
   offer?: Offer;
+  viewer?: ViewerState;
 }
 
 export interface VersionFork {

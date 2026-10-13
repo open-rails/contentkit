@@ -69,6 +69,38 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		t.Fatalf("popular:all = %v %+v", got, page.Contents)
 	}
 
+	// Staff stats: views per day and the most viewed, in the site's scope.
+	var activity Activity
+	if status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity); status != http.StatusOK ||
+		len(activity.Days) != 1 || activity.Days[0] != (ActivityDay{Date: at.Format(time.DateOnly), Views: 7, Viewers: 4, Users: 1}) {
+		t.Fatalf("activity: %d %s %+v", status, code, activity)
+	}
+	for _, c := range []struct {
+		host, path string
+		want       []string
+	}{
+		{host, q("/stats/top", "kind", "gallery", "period", "7d"), []string{f.cid(1) + "=4", f.cid(3) + "=3"}},
+		{"clean.test", q("/stats/top", "kind", "gallery", "period", "all"), []string{f.cid(1) + "=4"}},
+		{host, q("/stats/top", "kind", "gallery", "tiers", "premium"), []string{}},
+	} {
+		var top TopContents
+		status, code := f.call(http.MethodGet, c.host, "staff", c.path, nil, &top)
+		got := []string{}
+		for _, r := range top.Contents {
+			got = append(got, fmt.Sprintf("%s=%d", r.ID, r.Value))
+		}
+		if status != http.StatusOK || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s on %s: %d %s %v, want %v", c.path, c.host, status, code, got, c.want)
+		}
+		if len(top.Contents) > 0 && (top.Contents[0].Title != "Alpha" || top.Contents[0].Path != "/g/"+f.codes[1]+"/alpha") {
+			t.Errorf("ranked names %+v", top.Contents[0])
+		}
+	}
+	var mine MyStats
+	if status, code := f.call(http.MethodGet, host, "u1", "/me/stats", nil, &mine); status != http.StatusOK || mine.Completed["gallery"] != 1 {
+		t.Fatalf("u1's stats: %d %s %+v", status, code, mine)
+	}
+
 	exposure := Exposures{Exposures: []ExposureInput{{RenderID: "r1", Stage: "rendered", Surface: "home", Shown: []Placement{{ContentID: f.cid(1), Position: 1}, {ContentID: f.cid(3), Position: 2}}}}}
 	if status, code := f.call(http.MethodPost, host, "u1", "/exposures", exposure, nil); status != http.StatusNoContent {
 		t.Fatalf("exposures: %d %s", status, code)

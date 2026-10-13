@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -840,4 +841,78 @@ func (s *Store) resyncSold(ctx context.Context, tx pgx.Tx, retitled map[string]b
 		return err
 	}
 	return s.offers.Resync(ctx, tx, targets)
+}
+
+// ImportDeletes deletes content items and versions in tx as Delete and
+// DeleteVersions do: holders of a deleted item's key still read it, and one
+// never sold is erased after the retention. Deleted ones stay as they are; a
+// kind's one hidden version goes only with its item.
+func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions []string) error {
+	var events []Event
+	touched := map[string]bool{}
+	if len(contents) > 0 {
+		rows, err := tx.Query(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp()
+ WHERE tenant_id = $1 AND id = ANY($2) AND state <> 'deleted' RETURNING id, kind`, s.tenant, contents)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var e Event
+			if err := rows.Scan(&e.ContentID, &e.Kind); err != nil {
+				rows.Close()
+				return err
+			}
+			e.Type, touched[e.ContentID] = EventContentDeleted, true
+			events = append(events, e)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	if len(versions) > 0 {
+		var hidden string
+		if err := tx.QueryRow(ctx, `SELECT coalesce(min(v.id), '') FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+ WHERE v.tenant_id = $1 AND v.id = ANY($2) AND v.state <> 'deleted' AND c.state <> 'deleted' AND c.kind = ANY($3)`, s.tenant, versions, s.hiddenKinds()).Scan(&hidden); err != nil {
+			return err
+		}
+		if hidden != "" {
+			return invalid("version %s is its item's one hidden version: delete the item", hidden)
+		}
+		rows, err := tx.Query(ctx, `UPDATE `+s.t.versions+` v SET state = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp(), revision = v.revision + 1
+ FROM `+s.t.items+` c WHERE v.tenant_id = $1 AND v.id = ANY($2) AND v.state <> 'deleted' AND c.tenant_id = v.tenant_id AND c.id = v.content_id
+ RETURNING v.content_id, v.id, c.kind`, s.tenant, versions)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			e := Event{Type: EventVersionDeleted}
+			if err := rows.Scan(&e.ContentID, &e.VersionID, &e.Kind); err != nil {
+				rows.Close()
+				return err
+			}
+			touched[e.ContentID] = true
+			events = append(events, e)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+	ids := slices.Sorted(maps.Keys(touched))
+	return s.apply(ctx, tx, ids, effects{events: events, expose: true})
+}
+
+// hiddenKinds are the kinds whose one version is hidden.
+func (s *Store) hiddenKinds() []string {
+	out := []string{}
+	for name, k := range s.cfg.Kinds {
+		if k.Versions.Hidden {
+			out = append(out, name)
+		}
+	}
+	return out
 }

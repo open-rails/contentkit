@@ -271,6 +271,21 @@ func (v *Viewer) Listed(alias string) (string, pgx.NamedArgs) {
 	return "(" + public + " OR " + held + " OR " + privileged + ")", args
 }
 
+// Indexable is a boolean SQL predicate over the content_facets row aliased
+// alias: the versions a site lists to anyone, as its sitemaps name them:
+// live, not deleted, listed and in the viewer's site scope. Access, the
+// language and a reader's content filters do not apply. Args are pgx named
+// args prefixed ci_.
+func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
+	f := func(col string) string { return alias + "." + col }
+	if v.requireMissing {
+		return "false", pgx.NamedArgs{}
+	}
+	return "(NOT " + f("deleted") + " AND " + f("live_from") + " <= @ci_now::timestamptz AND " + f("listing") + " = 'listed' AND NOT (" +
+			f("restrictions") + " && @ci_exclude::text[]) AND " + f("group_ids") + " @> @ci_require::text[])",
+		pgx.NamedArgs{"ci_now": v.now, "ci_exclude": v.exclude, "ci_require": v.require}
+}
+
 // facetRow is one version as the visibility rule reads it.
 type facetRow struct {
 	contentID, versionID, kind string

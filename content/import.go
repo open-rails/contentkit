@@ -809,3 +809,61 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
  WHERE $1::bigint > (SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM `+s.revisionSeq+`)`, floor)
 	return err
 }
+
+// ImportDeletes deletes comments and polls in tx as their delete routes do:
+// a comment is tombstoned and its reference's and thread's counts follow; a
+// poll is flagged deleted and its media folder goes. Deleted ones stay as
+// they are.
+func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
+	s := rt.store
+	if len(comments) > 0 {
+		rows, err := tx.Query(ctx, `UPDATE `+s.t.comments+` SET deleted_at = now(), updated_at = now()
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+ RETURNING coalesce(reply_to_id::text, ''), content_kind, content_id, coalesce(content_version_id, '')`, rt.tenant, comments)
+		if err != nil {
+			return err
+		}
+		keys, threads := map[keyRow]bool{}, map[string]bool{}
+		for rows.Next() {
+			var thread string
+			var k keyRow
+			if err := rows.Scan(&thread, &k.Kind, &k.ID, &k.Version); err != nil {
+				rows.Close()
+				return err
+			}
+			if thread == "" {
+				keys[k] = true
+			} else {
+				threads[thread] = true
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rt.recount(ctx, tx, keys); err != nil {
+			return err
+		}
+		if err := rt.recountReplies(ctx, tx, threads); err != nil {
+			return err
+		}
+	}
+	if len(polls) == 0 {
+		return nil
+	}
+	rows, err := tx.Query(ctx, `UPDATE `+s.t.pollQuestions+` SET deleted_at = now(), updated_at = now()
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL RETURNING id::text`, rt.tenant, polls)
+	if err != nil {
+		return err
+	}
+	gone, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range gone {
+		if err := rt.deleteMediaTx(ctx, tx, pollFolder, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}

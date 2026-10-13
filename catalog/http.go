@@ -296,6 +296,12 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, status int, id s
 	if status == http.StatusOK && got[0].Moderation == content.ModerationHeld && r.Method != http.MethodGet {
 		status = http.StatusAccepted
 	}
+	if r.Method == http.MethodGet {
+		if err := s.fillStanding(r.Context(), v.actor, got); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 	writeJSON(w, status, got[0])
 }
 
@@ -350,7 +356,12 @@ func (s *Store) handleGetVersion(w http.ResponseWriter, r *http.Request) {
 	if got[0] != nil {
 		for _, ver := range got[0].Versions {
 			if ver.ID == r.PathValue("vid") {
-				writeJSON(w, http.StatusOK, ver)
+				got[0].Versions = []Version{ver}
+				if err := s.fillStanding(r.Context(), v.actor, got); err != nil {
+					writeErr(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, got[0].Versions[0])
 				return
 			}
 		}

@@ -34,6 +34,8 @@ func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 	httpapi.Mount(mux, g.Guard, handler{s}, routes)
 	httpapi.Mount(mux, g.Guard, handler{s}, mineRoutes)
 	httpapi.Mount(mux, g.Guard, handler{s}, searchRoutes)
+	httpapi.Mount(mux, g.Guard, handler{s}, sitemapRoutes)
+	httpapi.Mount(mux, g.Guard, handler{s}, statsRoutes)
 	return mux, nil
 }
 
@@ -41,6 +43,8 @@ func init() {
 	httpapi.Register(httpapi.Discovery, routes)
 	httpapi.Register(httpapi.Discovery, mineRoutes)
 	httpapi.Register(httpapi.Discovery, searchRoutes)
+	httpapi.Register(httpapi.Discovery, sitemapRoutes)
+	httpapi.Register(httpapi.Discovery, statsRoutes)
 }
 
 type handler struct{ s *Service }
@@ -56,6 +60,9 @@ var (
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
 		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
+		httpapi.List("creators", "user ids: only content one of them is credited on"),
+		httpapi.List("access", "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them"),
+		httpapi.List("tiers", "configured tiers: only content locked behind one of them"),
 		httpapi.List("traits", "version traits every listed version has"),
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
@@ -162,7 +169,7 @@ func filterOf(r *http.Request) Filter {
 	q := r.URL.Query()
 	return Filter{Kind: q.Get("kind"), Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
 		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
-		OwnerGroups: list(q.Get("owner_group"))}
+		OwnerGroups: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {

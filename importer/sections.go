@@ -54,6 +54,7 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
 				return s.o.Signals.ImportSignals(ctx, in)
 			})},
+		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes)},
 	}
 	if s.o.Offers == nil {
 		out[3].skip = "no billing"
@@ -61,7 +62,7 @@ func (run *batchRun) sections() []section {
 		out[3].write = typed(s.o.Offers.PutTx)
 	}
 	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
-		out[len(out)-1].skip = "no signal plane"
+		out[len(out)-2].skip = "no signal plane"
 	}
 	return out
 }
@@ -281,4 +282,43 @@ func (run *batchRun) signal(r *resolver, i int) (any, string, error) {
 	}
 	return discovery.ImportSignal{ContentID: t.content, VersionID: t.version, Subject: signal.Subject{UserID: x.UserID, AnonKey: x.AnonKey}, Type: x.Type,
 		EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt, DurationS: x.DurationS, Progress: x.Progress, Resume: x.Resume}, x.EventID, nil
+}
+
+// deletion is one record to delete, resolved to its id.
+type deletion struct {
+	entity, id string
+}
+
+func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
+	d := run.b.Deletes[i]
+	switch d.Entity {
+	case EntityContent, EntityVersion, EntityGroup, EntityComment, EntityPoll:
+	default:
+		return nil, d.ExternalID, fmt.Errorf("%w: entity %q is content, version, group, comment or poll", errInvalid, d.Entity)
+	}
+	if d.ExternalID == "" {
+		return nil, "", fmt.Errorf("%w: a delete names an external_id", errInvalid)
+	}
+	id, err := r.ref(d.Entity, Ref{ExternalID: d.ExternalID})
+	return deletion{entity: d.Entity, id: id}, d.ExternalID, err
+}
+
+// deletes deletes what the records name: content and versions, then groups,
+// then comments and polls.
+func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
+	by := map[string][]string{}
+	for _, d := range in {
+		by[d.entity] = append(by[d.entity], d.id)
+	}
+	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[EntityContent], by[EntityVersion]); err != nil {
+		return err
+	}
+	gs := make([]groups.GroupID, len(by[EntityGroup]))
+	for i, id := range by[EntityGroup] {
+		gs[i] = groups.GroupID(id)
+	}
+	if err := s.o.Groups.ImportDeletes(ctx, tx, gs); err != nil {
+		return err
+	}
+	return s.o.Content.ImportDeletes(ctx, tx, by[EntityComment], by[EntityPoll])
 }

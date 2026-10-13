@@ -635,3 +635,59 @@ func TestImportSignals(t *testing.T) {
 		t.Fatalf("signals %d %v: a version view counts for its content too", n, err)
 	}
 }
+
+// Records gone from the source are deleted by external id, as their delete
+// routes would, never by absence; re-sending the deletes changes nothing.
+func TestImportDeletes(t *testing.T) {
+	f := newEngine(t)
+	if res := f.importBatch(t, catalogBatch()); len(res.Failed) > 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: catalogBatch().Contents[:1]}); f.scalar(t,
+		`SELECT state FROM $s.content_items WHERE id = $1`, id("gallery", 3)) != "published" || len(res.Failed) > 0 {
+		t.Fatalf("a batch without a record deletes nothing: %+v", res)
+	}
+	del := func(entity, external string) importer.DeleteRecord {
+		return importer.DeleteRecord{Entity: entity, ExternalID: external}
+	}
+	b := importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
+		del("content", "gallery:3"), del("version", "version:2"), del("group", "tag:2"), del("comment", "comment:2"), del("poll", "poll:2"),
+		del("content", "gallery:2"), del("content", "gallery:99"), del("poll_option", "answer:1"),
+	}}
+	res := f.importBatch(t, b)
+	if res.Written["deletes"] != 6 || len(res.Failed) != 2 || res.Failed[0].ExternalID != "gallery:99" || res.Failed[0].Code != importer.CodeNotFound ||
+		res.Failed[1].Code != importer.CodeInvalid {
+		t.Fatalf("deletes: %+v", res)
+	}
+	g1 := id("gallery", 1)
+	for _, c := range [][2]string{
+		{`SELECT state || ' ' || (deleted_at IS NOT NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "deleted true"},
+		{`SELECT bool_and(deleted)::text FROM $s.content_facets WHERE content_id = '` + id("gallery", 3) + `' AND $1 <> ''`, "true"},
+		{`SELECT state FROM $s.content_versions WHERE id = '` + id("version", 2) + `' AND $1 <> ''`, "deleted"},
+		{`SELECT state FROM $s.content_items WHERE id = $1`, "published"},
+		{`SELECT state FROM $s.content_groups WHERE id = (SELECT id FROM $s.content_external_ids WHERE external_id = 'tag:2') AND $1 <> ''`, "deleted"},
+		{`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = '` + id("version", 1) + `'`, "5"},
+		{`SELECT (deleted_at IS NOT NULL)::text FROM $s.content_comments WHERE id = '` + id("comment", 2) + `'::uuid AND $1 <> ''`, "true"},
+		{`SELECT reply_count::text FROM $s.content_comments WHERE id = '` + id("comment", 1) + `'::uuid AND $1 <> ''`, "1"},
+		{`SELECT (deleted_at IS NOT NULL)::text FROM $s.content_poll_questions WHERE question = 'Why?' AND $1 <> ''`, "true"},
+		{`SELECT (deleted_at IS NULL)::text FROM $s.content_poll_questions WHERE question = 'Best?' AND $1 <> ''`, "true"},
+		{`SELECT count(*)::text FROM $s.content_events WHERE type = 'content.deleted' AND entity_id = '` + id("gallery", 3) + `' AND $1 <> ''`, "1"},
+	} {
+		if got := f.scalar(t, c[0], g1); got != c[1] {
+			t.Errorf("%s\n got %q\nwant %q", c[0], got, c[1])
+		}
+	}
+	before := f.fingerprint(t)
+	if again := f.importBatch(t, b); again.Written["deletes"] != 6 || len(again.Failed) != 2 {
+		t.Fatalf("re-sent deletes: %+v", again)
+	}
+	after := f.fingerprint(t)
+	for table, fp := range before {
+		if after[table] != fp {
+			t.Errorf("re-sent deletes changed %s", table)
+		}
+	}
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{del("version", id("version", 9))}}); len(res.Failed) != 1 {
+		t.Errorf("a delete names an external id: %+v", res)
+	}
+}

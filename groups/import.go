@@ -496,3 +496,26 @@ func (s *Store) sameMemberships(f facts, set ContentGroups, stored []Membership)
 }
 
 func sameTime(a, b *time.Time) bool { return (a == nil) == (b == nil) && (a == nil || a.Equal(*b)) }
+
+// ImportDeletes deletes the active groups among ids in q, as DeleteGroups
+// does; deleted and merged ones stay as they are.
+func (s *Store) ImportDeletes(ctx context.Context, q pgx.Tx, ids []GroupID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	list, err := uniqueIDs(ids)
+	if err != nil {
+		return err
+	}
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND id = ANY($2::text[]) AND state = 'active' ORDER BY id`,
+		s.table("content_groups")), s.tenant, list)
+	if err != nil {
+		return err
+	}
+	active, err := pgx.CollectRows(rows, pgx.RowTo[GroupID])
+	if err != nil || len(active) == 0 {
+		return err
+	}
+	_, err = s.bound(q).DeleteGroups(ctx, active)
+	return err
+}

@@ -59,6 +59,14 @@ type Filter struct {
 	// OwnerGroups keeps content one of these groups owns (a channel's feed);
 	// owning is not membership and opens nothing.
 	OwnerGroups []string
+	// Creators keeps content one of these users is credited on.
+	Creators []string
+	// Access keeps content at one of these levels: public is what anyone
+	// opens now (free_after included), the others what stays locked at that
+	// level.
+	Access []string
+	// Tiers keeps content locked behind one of these tiers.
+	Tiers []string
 }
 
 // View statuses.
@@ -151,6 +159,15 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	if len(owners) > 0 {
 		q.and("f.owner_group_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
 	}
+	if cs, err := uniqueIDs("creators", f.Creators); err != nil {
+		return nil, err
+	} else if len(cs) > 0 {
+		q.and(`EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id
+ AND cc.user_id = ANY(@d_creators::text[]))`, pgx.NamedArgs{"d_creators": cs})
+	}
+	if err := s.accessFilter(q, f.Access, f.Tiers); err != nil {
+		return nil, err
+	}
 	if ts, err := uniqueIDs("traits", f.Traits); err != nil {
 		return nil, err
 	} else if len(ts) > 0 {
@@ -181,6 +198,37 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		}
 	}
 	return q, nil
+}
+
+// accessFilter keeps content anyone opens now (public), content locked at
+// the other levels named, and content locked behind the tiers named.
+func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
+	levels, err := uniqueIDs("access", levels)
+	if err != nil {
+		return err
+	}
+	if tiers, err = uniqueIDs("tiers", tiers); err != nil {
+		return err
+	}
+	for _, l := range levels {
+		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV}, access.Level(l)) {
+			return fmt.Errorf("%w: access %q is public, tier, group, ppv or group_ppv", ErrInvalid, l)
+		}
+	}
+	for _, t := range tiers {
+		if !slices.Contains(s.o.Kinds.Tiers, t) {
+			return fmt.Errorf("%w: tier %q is not configured", ErrInvalid, t)
+		}
+	}
+	const free = "(f.access_level = 'public' OR coalesce(f.access_free_after <= now(), false))"
+	if len(levels) > 0 {
+		q.and("(("+free+" AND 'public' = ANY(@d_levels::text[])) OR (NOT "+free+" AND f.access_level = ANY(@d_levels::text[])))",
+			pgx.NamedArgs{"d_levels": levels})
+	}
+	if len(tiers) > 0 {
+		q.and("(NOT "+free+" AND f.access_level = 'tier' AND f.access_tiers && @d_tiers::text[])", pgx.NamedArgs{"d_tiers": tiers})
+	}
+	return nil
 }
 
 // uniqueIDs trims and dedupes a filter's ids, at most 50.

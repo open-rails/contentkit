@@ -451,6 +451,15 @@ func (h *Hub) States(ctx context.Context, subject signal.Subject, refs []Content
 	return store.States(ctx, h.tenant, subject, refs)
 }
 
+// Activity is a content kind's view activity per day of window.
+func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Window) ([]signal.DayActivity, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Activity(ctx, h.tenant, contentKind, window)
+}
+
 func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
 	store, err := h.requireStore()
 	if err != nil {

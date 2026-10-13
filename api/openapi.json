@@ -4294,6 +4294,45 @@
             }
           },
           {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -8403,6 +8442,45 @@
             }
           },
           {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -8726,6 +8804,45 @@
             }
           },
           {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -8900,6 +9017,45 @@
             "name": "owner_group",
             "in": "query",
             "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
             "style": "form",
             "explode": false,
             "schema": {
@@ -9090,6 +9246,45 @@
             "name": "owner_group",
             "in": "query",
             "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
             "style": "form",
             "explode": false,
             "schema": {
@@ -9889,6 +10084,323 @@
         ]
       }
     },
+    "/v1/sitemap/contents": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Pages through the site's public content pages of one kind, by id, for host sitemaps: live, listed and in the request's site scope, each with every language it serves.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the content kind; required",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 1000 by default, at most 10000",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitemapPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "request"
+        ]
+      }
+    },
+    "/v1/sitemap/groups": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the group kind; required",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 1000 by default, at most 10000",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SitemapPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "request"
+        ]
+      }
+    },
+    "/v1/stats/activity": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the content kind; required",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "description": "the last days, today included: 7 by default, at most 90",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Activity"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:content:view-restricted",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/stats/top": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the content kind; required",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "description": "views (the default) or comments",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "7d, 30d (the default), 90d, 365d or all",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public, tier, group, ppv or group_ppv, as lists filter",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers, as lists filter",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of titles and paths; the site's first by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "10 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopContents"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:content:view-restricted",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/stats": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyStats"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth"
+        ]
+      }
+    },
     "/v1/import": {
       "post": {
         "tags": [
@@ -9939,6 +10451,43 @@
   },
   "components": {
     "schemas": {
+      "Activity": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityDay"
+            }
+          }
+        },
+        "required": [
+          "days"
+        ]
+      },
+      "ActivityDay": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "views": {
+            "type": "integer"
+          },
+          "viewers": {
+            "type": "integer"
+          },
+          "users": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "views",
+          "viewers",
+          "users"
+        ]
+      },
       "AdminComment": {
         "type": "object",
         "properties": {
@@ -10419,6 +10968,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SignalRecord"
+            }
+          },
+          "deletes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeleteRecord"
             }
           }
         }
@@ -11017,6 +11572,9 @@
           },
           "views": {
             "type": "integer"
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerState"
           },
           "editor": {
             "type": "boolean"
@@ -11664,6 +12222,17 @@
         "required": [
           "allowed"
         ]
+      },
+      "DeleteRecord": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          }
+        }
       },
       "Edge": {
         "type": "object",
@@ -12682,6 +13251,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
           }
         },
         "required": [
@@ -13479,6 +14054,32 @@
         },
         "required": [
           "groups"
+        ]
+      },
+      "MyStats": {
+        "type": "object",
+        "properties": {
+          "completed": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "comments": {
+            "type": "integer"
+          },
+          "comment_likes": {
+            "type": "integer"
+          },
+          "comment_dislikes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "completed",
+          "comments",
+          "comment_likes",
+          "comment_dislikes"
         ]
       },
       "Name": {
@@ -14454,6 +15055,28 @@
           "items"
         ]
       },
+      "RankedContent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "value": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "value"
+        ]
+      },
       "ReactionCounts": {
         "type": "object",
         "properties": {
@@ -15128,6 +15751,69 @@
           }
         }
       },
+      "SitemapAlias": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "path"
+        ]
+      },
+      "SitemapEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "lastmod": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SitemapAlias"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "path",
+          "lastmod",
+          "languages"
+        ]
+      },
+      "SitemapPage": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SitemapEntry"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
       "StagedCopy": {
         "type": "object",
         "properties": {
@@ -15215,6 +15901,20 @@
             "type": "string"
           }
         }
+      },
+      "TopContents": {
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RankedContent"
+            }
+          }
+        },
+        "required": [
+          "contents"
+        ]
       },
       "Total": {
         "type": "object",
@@ -15422,6 +16122,9 @@
           },
           "offer": {
             "$ref": "#/components/schemas/Offer"
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerState"
           }
         },
         "required": [

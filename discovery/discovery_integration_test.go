@@ -1,9 +1,11 @@
 package discovery
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -336,4 +338,200 @@ func sorted(s []string) []string {
 	out := slices.Clone(s)
 	slices.Sort(out)
 	return out
+}
+
+// Lists filter by access (what anyone opens, what stays locked at a level or
+// behind a tier) and by credited creator; search shares the filters.
+func TestListFiltersByAccessAndCreator(t *testing.T) {
+	f := newFixture(t, nil, "")
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	f.seed(
+		item{n: 1, titles: map[string]string{"en": "Free"}, age: 4 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Premium"}, age: 3 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Released"}, age: 2 * time.Hour, rule: `{"level":"ppv","free_after":"` + past + `"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, titles: map[string]string{"en": "Sold"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+	)
+	f.exec(`INSERT INTO {s}.content_creators (tenant_id, content_id, user_id, role) VALUES ($1, $2, 'alice', 'author'), ($1, $3, 'alice', 'artist'), ($1, $3, 'bob', 'author')`,
+		tenant, f.cid(2), f.cid(4))
+	const host = "main.test"
+	for path, want := range map[string][]string{
+		q("/contents", "access", "public"):                     {f.cid(3), f.cid(1)},
+		q("/contents", "access", "tier"):                       {f.cid(2)},
+		q("/contents", "access", "ppv"):                        {f.cid(4)},
+		q("/contents", "access", "public,ppv"):                 {f.cid(4), f.cid(3), f.cid(1)},
+		q("/contents", "tiers", "premium"):                     {f.cid(2)},
+		q("/contents", "access", "public", "tiers", "premium"): {},
+		q("/contents", "creators", "alice"):                    {f.cid(4), f.cid(2)},
+		q("/contents", "creators", "bob,carol"):                {f.cid(4)},
+		q("/contents", "creators", "alice", "access", "tier"):  {f.cid(2)},
+		q("/release-dates", "tiers", "premium"):                nil,
+	} {
+		if strings.HasPrefix(path, "/release-dates") {
+			var out ReleaseDates
+			if status, code := f.call(http.MethodGet, host, "", path, nil, &out); status != http.StatusOK || len(out.Dates) != 1 || out.Dates[0].Count != 1 {
+				t.Errorf("%s: %d %s %+v", path, status, code, out)
+			}
+			continue
+		}
+		if got, _ := f.list(host, "", path); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	for _, bad := range []string{q("/contents", "access", "vip"), q("/contents", "tiers", "gold"), q("/search", "q", "x", "tiers", "gold")} {
+		if status, code := f.call(http.MethodGet, host, "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
+			t.Errorf("%s: %d %s", bad, status, code)
+		}
+	}
+}
+
+// The sitemap feed pages a site's public pages: live, listed content in its
+// scope (content filters, a reader's taste, don't apply), and the groups
+// holding it, each with the languages served.
+func TestSitemapFeed(t *testing.T) {
+	f := seeded(t)
+	feed := func(host, path string) SitemapPage {
+		t.Helper()
+		var page SitemapPage
+		if status, code := f.call(http.MethodGet, host, "", path, nil, &page); status != http.StatusOK {
+			t.Fatalf("GET %s on %s: %d %s", path, host, status, code)
+		}
+		return page
+	}
+	ids := func(p SitemapPage) []string {
+		out := []string{}
+		for _, e := range p.Entries {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	page := feed("main.test", q("/sitemap/contents", "kind", "gallery"))
+	if got, want := ids(page), []string{f.cid(1), f.cid(2), f.cid(3)}; !reflect.DeepEqual(got, want) || page.NextCursor != "" {
+		t.Fatalf("gallery sitemap = %v, want %v", got, want)
+	}
+	alpha, charlie := page.Entries[0], page.Entries[2]
+	if alpha.Code != f.codes[1] || alpha.Path != "/g/"+f.codes[1]+"/alpha" || alpha.LastMod.IsZero() || len(alpha.Languages) != 2 ||
+		alpha.Languages[0] != (SitemapAlias{Language: "en", Path: alpha.Path}) || alpha.Languages[1].Language != "ja" ||
+		!strings.HasPrefix(alpha.Languages[1].Path, "/ja/g/"+f.codes[1]) {
+		t.Fatalf("alpha %+v", alpha)
+	}
+	if len(charlie.Languages) != 1 || charlie.Path != charlie.Languages[0].Path || !strings.HasPrefix(charlie.Path, "/ja/g/"+f.codes[3]) {
+		t.Fatalf("a page only in a second language %+v", charlie)
+	}
+	if got := ids(feed("clean.test", q("/sitemap/contents", "kind", "gallery"))); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(2)}) {
+		t.Errorf("a site excluding restricted = %v", got)
+	}
+	if got := ids(feed("gay.test", q("/sitemap/contents", "kind", "gallery"))); !reflect.DeepEqual(got, []string{f.cid(3)}) {
+		t.Errorf("a site requiring yaoi = %v", got)
+	}
+	first := feed("main.test", q("/sitemap/contents", "kind", "gallery", "limit", "2"))
+	rest := feed("main.test", q("/sitemap/contents", "kind", "gallery", "limit", "2", "cursor", first.NextCursor))
+	if got := append(ids(first), ids(rest)...); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(2), f.cid(3)}) || first.NextCursor == "" || rest.NextCursor != "" {
+		t.Errorf("paged = %v (%q, %q)", got, first.NextCursor, rest.NextCursor)
+	}
+
+	tags := feed("main.test", q("/sitemap/groups", "kind", "tag"))
+	if got := ids(tags); !slices.IsSorted(got) || !reflect.DeepEqual(sorted(got), sorted([]string{f.ids["romance"], f.ids["big-breasts"], f.ids["yaoi"]})) {
+		t.Fatalf("tag sitemap = %v", got)
+	}
+	byID := map[string]SitemapEntry{}
+	for _, e := range tags.Entries {
+		byID[e.ID] = e
+	}
+	if romance := byID[f.ids["romance"]]; romance.Code == "" || romance.Path != "/tags/"+romance.Code+"/romance" || len(romance.Languages) != 2 {
+		t.Fatalf("romance %+v", romance)
+	}
+	if yaoi := byID[f.ids["yaoi"]]; len(yaoi.Languages) != 1 || yaoi.Languages[0].Language != "ja" || yaoi.Path != "/ja/tags/"+yaoi.Code+"/yaoi" {
+		t.Fatalf("yaoi %+v", yaoi)
+	}
+	if got := ids(feed("clean.test", q("/sitemap/groups", "kind", "series"))); !reflect.DeepEqual(got, []string{f.ids["saga"]}) {
+		t.Errorf("series on a scoped site = %v", got)
+	}
+	if got := ids(feed("main.test", q("/sitemap/groups", "kind", "artist"))); !reflect.DeepEqual(got, []string{f.ids["alice"]}) {
+		t.Errorf("artists = %v", got)
+	}
+	for _, bad := range []string{q("/sitemap/contents"), q("/sitemap/contents", "kind", "comic"), q("/sitemap/groups", "kind", "rail"),
+		q("/sitemap/groups", "kind", "tag", "cursor", "!"), q("/sitemap/contents", "kind", "gallery", "limit", "0")} {
+		if status, code := f.call(http.MethodGet, "main.test", "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
+			t.Errorf("%s: %d %s", bad, status, code)
+		}
+	}
+}
+
+// Staff rank a kind's live, listed content by published comments over a
+// period, filtered by access as lists are; readers read their own account
+// statistics. View rankings and activity need the signal plane.
+func TestStats(t *testing.T) {
+	f := newFixture(t, nil, "")
+	f.seed(
+		item{n: 1, titles: map[string]string{"en": "Free"}, age: 4 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Premium"}, age: 3 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Hidden"}, age: 2 * time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, kind: "video", titles: map[string]string{"en": "Clip"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
+	)
+	comment := func(n int, user string, age time.Duration, likes int, extra string) {
+		kind := "gallery"
+		if n == 4 {
+			kind = "video"
+		}
+		f.exec(`INSERT INTO {s}.content_comments (tenant_id, content_kind, content_id, user_id, body, likes, created_at, deleted_at, moderation)
+ VALUES ($1, $2, $3, $4, 'hi', $5, now() - $6::interval, CASE WHEN $7 = 'deleted' THEN now() END, CASE WHEN $7 = 'held' THEN 'held' ELSE 'approved' END)`,
+			tenant, kind, f.cid(n), user, likes, fmt.Sprintf("%d seconds", int(age.Seconds())), extra)
+	}
+	for range 3 {
+		comment(2, "ann", time.Hour, 0, "")
+	}
+	comment(1, "ann", 40*24*time.Hour, 2, "")
+	comment(1, "bob", time.Hour, 1, "")
+	comment(1, "bob", time.Hour, 0, "deleted")
+	comment(1, "bob", time.Hour, 0, "held")
+	for range 5 {
+		comment(3, "bob", time.Hour, 0, "")
+	}
+	comment(4, "ann", time.Hour, 0, "")
+	const host = "main.test"
+	top := func(path string) []RankedContent {
+		t.Helper()
+		var out TopContents
+		if status, code := f.call(http.MethodGet, host, "staff", path, nil, &out); status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, code)
+		}
+		return out.Contents
+	}
+	got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "all"))
+	if want := []RankedContent{{ID: f.cid(2), Title: "Premium", Path: "/g/" + f.codes[2] + "/premium", Value: 3}, {ID: f.cid(1), Title: "Free",
+		Path: "/g/" + f.codes[1] + "/free", Value: 2}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("most commented = %+v, want %+v (unlisted, deleted and held left out)", got, want)
+	}
+	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "30d", "access", "public")); len(got) != 1 || got[0].ID != f.cid(1) || got[0].Value != 1 {
+		t.Errorf("free, last 30 days = %+v", got)
+	}
+	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "tiers", "premium", "limit", "1", "language", "ja")); len(got) != 1 ||
+		got[0].ID != f.cid(2) || got[0].Path != "/ja/g/"+f.codes[2]+"/premium" {
+		t.Errorf("premium = %+v", got)
+	}
+	for path, want := range map[string]int{
+		q("/stats/top", "kind", "gallery", "metric", "comments"):                 http.StatusForbidden,
+		q("/stats/top", "kind", "comic", "metric", "comments"):                   http.StatusBadRequest,
+		q("/stats/top", "kind", "gallery", "metric", "likes"):                    http.StatusBadRequest,
+		q("/stats/top", "kind", "gallery", "metric", "comments", "period", "2d"): http.StatusBadRequest,
+		q("/stats/top", "kind", "gallery"):                                       http.StatusNotImplemented,
+		q("/stats/activity", "kind", "gallery"):                                  http.StatusNotImplemented,
+		q("/stats/activity", "kind", "gallery", "days", "91"):                    http.StatusBadRequest,
+	} {
+		user := "staff"
+		if want == http.StatusForbidden {
+			user = "reader"
+		}
+		if status, _ := f.call(http.MethodGet, host, user, path, nil, nil); status != want {
+			t.Errorf("%s as %s: %d, want %d", path, user, status, want)
+		}
+	}
+	var mine MyStats
+	if status, code := f.call(http.MethodGet, host, "bob", "/me/stats", nil, &mine); status != http.StatusOK || mine.Comments != 6 || mine.CommentLikes != 1 ||
+		mine.CommentDislikes != 0 || len(mine.Completed) != 0 {
+		t.Fatalf("bob's stats: %d %s %+v", status, code, mine)
+	}
+	if status, _ := f.call(http.MethodGet, host, "", "/me/stats", nil, nil); status != http.StatusUnauthorized {
+		t.Errorf("anonymous stats: %d", status)
+	}
 }

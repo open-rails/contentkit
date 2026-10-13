@@ -36,11 +36,17 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 - A group of an `auth_scope` kind names its `auth_scope`, or the batch sets
   `provision_scopes` and ContentKit's scope job creates it.
 - Records of erased subjects fail (`erased`).
+- A record gone from the source is deleted only by a `deletes` record
+  (`entity`: content, version, group, comment or poll; `external_id`), never
+  by its absence from a batch. It deletes as the delete route does; one
+  already deleted (or since erased) stays as it is, so re-sending converges.
+  An external id never imported fails `not_found`.
 
 ## Order and failures
 
 Sections are written in order: groups, contents, memberships, offers,
-aliases, comments, reactions, favorites, polls, votes, answers, signals; a
+aliases, comments, reactions, favorites, polls, votes, answers, signals,
+deletes; a
 record may name what an earlier section or call wrote. Each section runs in
 transactions of up to 1000 records: all at once, else each in its own
 savepoint, so the result lists only the records that failed
@@ -94,3 +100,4 @@ from the media jobs.
 | `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
 | `answers` | `AnswerRecord` | `poll`, `user_id`, `text` |
 | `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (view, click), `event_id`, `occurred_at`, `progress`, `duration_s` |
+| `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |

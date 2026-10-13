@@ -8,6 +8,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
@@ -15,28 +16,67 @@ import (
 // pollFolder is the media kind of poll images (content.Media's default).
 const pollFolder = "poll"
 
-// pollMedia is versions.Others: poll images, the one media kind neither the
-// catalog nor groups own, through the content module.
-type pollMedia struct{ e *Engine }
+// siteMedia is versions.Others: the media kinds neither the catalog nor
+// groups own. Poll images go through the content module. Any other kind of
+// the site's namespace holds site images, such as a cover of a record the
+// host keeps (Doujins' translation requests): anyone sees their public
+// files; root:content:write and root:import:write holders upload them.
+type siteMedia struct{ e *Engine }
 
-func (p pollMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
-	var polls []contentref.ContentRef
+func (m siteMedia) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	var polls, site []contentref.ContentRef
 	for _, ref := range refs {
-		if ref.ContentKind == pollFolder && p.e.media.polls {
+		switch {
+		case ref.ContentKind == pollFolder && m.e.media.polls:
 			polls = append(polls, ref)
+		case m.site(ref):
+			site = append(site, ref)
 		}
 	}
-	if len(polls) == 0 {
-		return map[contentref.ContentKey]resolve.Resolution{}, nil
+	out := map[contentref.ContentKey]resolve.Resolution{}
+	if len(polls) > 0 {
+		var err error
+		if out, err = m.e.content.MediaResolver().Resolve(ctx, polls, actor); err != nil {
+			return nil, err
+		}
 	}
-	return p.e.content.MediaResolver().Resolve(ctx, polls, actor)
+	if len(site) == 0 {
+		return out, nil
+	}
+	editor, err := m.writer(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range site {
+		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: editor}
+	}
+	return out, nil
 }
 
-func (p pollMedia) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	if t.Ref.ContentKind != pollFolder || !p.e.media.polls {
+func (m siteMedia) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	switch {
+	case t.Ref.ContentKind == pollFolder && m.e.media.polls:
+		return m.e.content.CanUpload(ctx, actor, t)
+	case !m.site(t.Ref):
 		return media.UploadGrant{}, nil
 	}
-	return p.e.content.CanUpload(ctx, actor, t)
+	ok, err := m.writer(ctx, actor)
+	return media.UploadGrant{Allowed: ok}, err
+}
+
+// site reports a site image item: one id, no version, in the site's own
+// namespace.
+func (m siteMedia) site(ref contentref.ContentRef) bool {
+	return ref.ContentKind != pollFolder && ref.ContentVersionID == nil && ref.TenantID == m.e.media.reg.Namespace()
+}
+
+func (m siteMedia) writer(ctx context.Context, actor access.Actor) (bool, error) {
+	for _, perm := range []access.Permission{access.ContentWrite, access.ImportWrite} {
+		if ok, err := gate.Can(ctx, m.e.auth, actor, string(perm)); ok || err != nil {
+			return ok, err
+		}
+	}
+	return false, nil
 }
 
 // groupCovers resolves group covers through media, which is built after
