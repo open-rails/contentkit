@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 
 	contentkit "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
@@ -77,4 +79,62 @@ func TestOwnerChip(t *testing.T) {
 	var detail catalog.Content
 	f.want(http.StatusOK, "", "GET", "/contents/"+owned.ID+"?language=en", nil, &detail)
 	chip("detail", detail.Owner)
+}
+
+// A channel's editors (channel:content:write, not the author) open its
+// members-only posts: editor and the body on the page, open cards, its
+// drafts in its feed. A non-member who edits nothing stays locked out.
+func TestOwnerGroupEditors(t *testing.T) {
+	w := newWorld(t)
+	_, creatorToken := w.person(iam.Role{})
+	writer, writerToken := w.person(iam.Role{})
+	_, strangerToken := w.person(iam.Role{})
+	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
+		c.Content.GroupKinds["channel"] = channel
+		d.Scopes = ckauthkit.Scopes(w.ak)
+	}))
+	var made []groups.Group
+	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio",
+		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
+	ch := string(made[0].ID)
+	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
+	var members, draft catalog.Content
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
+		Access: &access.Rule{Level: access.GroupLevel, Group: ch},
+		Text:   map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}, &members)
+	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
+		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
+
+	var d catalog.Content
+	f.want(http.StatusOK, writerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
+	if !d.Editor || !d.Decision.Allowed || d.Body != "Members words" {
+		t.Fatalf("the channel's writer reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
+	}
+	d = catalog.Content{}
+	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
+	if d.Editor || d.Decision.Allowed || d.Body != "" {
+		t.Fatalf("a stranger reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
+	}
+
+	cards := func(token, path string) map[string]bool {
+		t.Helper()
+		var page discovery.ContentPage
+		f.want(http.StatusOK, token, "GET", path, nil, &page)
+		out := map[string]bool{}
+		for _, c := range page.Contents {
+			out[c.ID] = c.Access.Allowed
+		}
+		return out
+	}
+	feed := "/contents?kind=blog&language=en&owner_group=" + ch
+	if got := cards(writerToken, feed); len(got) != 2 || !got[members.ID] || !got[draft.ID] {
+		t.Fatalf("the writer's feed %v", got)
+	}
+	if got := cards(strangerToken, feed); len(got) != 1 || got[members.ID] {
+		t.Fatalf("a stranger's feed %v", got)
+	}
+	if got := cards(writerToken, "/contents?kind=blog&language=en"); len(got) != 1 || !got[members.ID] {
+		t.Fatalf("the writer's list %v", got)
+	}
 }

@@ -53,6 +53,8 @@ type Viewer struct {
 	hidden         []string
 	includeDeleted bool
 	editorGroups   []string
+	// asked are owner groups whose editorship this request already checked.
+	asked map[string]bool
 }
 
 // Viewer resolves o once per request: the site, staff rights, entitlements
@@ -136,8 +138,10 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	slices.Sort(v.hidden)
 	v.editorGroups = []string{}
 	if len(o.EditorGroups) > 0 && !v.staff {
-		for g, ok := range s.readEditors(ctx, o.Actor, o.EditorGroups) {
-			if ok {
+		got := s.readEditors(ctx, o.Actor, o.EditorGroups)
+		v.asked = map[string]bool{}
+		for _, g := range o.EditorGroups {
+			if v.asked[g] = got[g]; got[g] {
 				v.editorGroups = append(v.editorGroups, g)
 			}
 		}
@@ -176,6 +180,42 @@ func (s *Store) groupIDs(ctx context.Context, refs []kinds.GroupRef) (map[kinds.
 // editable reports an owner group the request already knows the viewer
 // edits (ViewerOptions.EditorGroups).
 func (v *Viewer) editable(group string) bool { return slices.Contains(v.editorGroups, group) }
+
+// Editors reports, per owner group, whether the viewer edits its content and
+// so opens it: staff edit every group's; anyone else is asked once per group
+// per request, and a failed check reads as not an editor.
+func (v *Viewer) Editors(ctx context.Context, groups []string) map[string]bool {
+	out := map[string]bool{}
+	var ask []string
+	for _, g := range groups {
+		switch {
+		case g == "":
+		case v.staff || v.editable(g):
+			out[g] = true
+		case v.asked != nil && v.asked[g]:
+			out[g] = true
+		case v.asked != nil && hasKey(v.asked, g):
+		case !slices.Contains(ask, g):
+			ask = append(ask, g)
+		}
+	}
+	if len(ask) == 0 || v.actor.Anonymous || v.actor.ID == "" {
+		return out
+	}
+	got := v.s.readEditors(ctx, v.actor, ask)
+	if v.asked == nil {
+		v.asked = map[string]bool{}
+	}
+	for _, g := range ask {
+		v.asked[g], out[g] = got[g], got[g]
+	}
+	return out
+}
+
+func hasKey(m map[string]bool, k string) bool {
+	_, ok := m[k]
+	return ok
+}
 
 // Staff reports a viewer holding root:content:view-restricted or
 // root:content:write: they see everything.
@@ -277,8 +317,10 @@ type itemView struct {
 // creator, owner-group editor) sees everything; anyone else sees the live
 // versions of live content in the site's scope, and a deleted one that was
 // live if they hold its content or version key. Listing and content filters
-// do not apply to direct reads.
-func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView, error) {
+// do not apply to direct reads. With every, each item's owner group is asked
+// for editorship (a detail page); else only those of items the rule does not
+// show whole or open.
+func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[string]*itemView, error) {
 	s := v.s
 	out := map[string]*itemView{}
 	if len(ids) == 0 {
@@ -355,24 +397,20 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 		decisions[r.versionID] = decision(ds[i])
 		opens[r.contentID] = opens[r.contentID] || ds[i].Allowed
 	}
-	// Owner-group editorship is asked only of items the rule does not show
-	// whole (drafts, scheduled, deleted, held, out of the site's scope) or
-	// does not open, once per owner group: an open published page asks
-	// AuthKit nothing.
+	// Owner-group editorship is asked once per owner group: unless every,
+	// only of items the rule does not show whole (drafts, scheduled, deleted,
+	// held, out of the site's scope) or does not open.
 	var groups []string
 	for id, rs := range byID {
 		g := rs[0].ownerGroup
 		if g == "" || known(id) || slices.Contains(groups, g) {
 			continue
 		}
-		if !opens[id] || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+		if every || !opens[id] || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
 			groups = append(groups, g)
 		}
 	}
-	editors := map[string]bool{}
-	if len(groups) > 0 && !v.actor.Anonymous {
-		editors = s.readEditors(ctx, v.actor, groups)
-	}
+	editors := v.Editors(ctx, groups)
 	for id, rs := range byID {
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
@@ -435,7 +473,7 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 		return nil, err
 	}
 	v.exclude, v.require, v.requireMissing = nil, nil, false
-	return v.decide(ctx, ids)
+	return v.decide(ctx, ids, false)
 }
 
 // Resolver is the access.ContentResolver of content items for media

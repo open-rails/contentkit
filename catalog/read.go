@@ -20,7 +20,7 @@ import (
 // moderation state.
 func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Content, error) {
 	out := make([]*Content, len(ids))
-	views, err := v.decide(ctx, ids)
+	views, err := v.decide(ctx, ids, true)
 	if err != nil {
 		return nil, err
 	}
