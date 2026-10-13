@@ -41,6 +41,11 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   by its absence from a batch. It deletes as the delete route does; one
   already deleted (or since erased) stays as it is, so re-sending converges.
   An external id never imported fails `not_found`.
+- A persistent sync finds those deletes with `POST /v1/import/external-ids`
+  (`{source, lists: [{entity, cursor, limit}]}`): per entity, the external ids
+  the source's imports hold with their ids and `deleted`, in external id
+  order, up to 10,000 a page. Send a delete for each one not deleted that the
+  source no longer has.
 
 ## Order and failures
 
