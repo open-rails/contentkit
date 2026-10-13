@@ -156,6 +156,25 @@ func (e *Engine) rebuild(ctx context.Context, signals bool) error {
 	return err
 }
 
+// syncDocuments queues a search sync in the transaction that queued
+// documents (q, or after it when q is none), at most one a second, so they
+// follow writes at once; the periodic sync stays the backstop.
+func (e *Engine) syncDocuments(ctx context.Context, q any) error {
+	c := e.jobs.bound()
+	if c == nil {
+		return nil
+	}
+	opts := &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3,
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: time.Second, ByState: media.PendingOnce.ByState}}
+	var err error
+	if tx, ok := q.(pgx.Tx); ok {
+		_, err = c.InsertTx(ctx, tx, searchSyncArgs{}, opts)
+	} else {
+		_, err = c.Insert(ctx, searchSyncArgs{}, opts)
+	}
+	return err
+}
+
 type searchSyncArgs struct{}
 
 func (searchSyncArgs) Kind() string { return "contentkit_search_sync" }

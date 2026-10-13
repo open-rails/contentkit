@@ -143,7 +143,10 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return search.MarkDirty(ctx, q, s.schema, marks)
+	if err := search.MarkDirty(ctx, q, s.schema, marks); err != nil || len(marks) == 0 || s.documents == nil {
+		return err
+	}
+	return s.documents(ctx, q)
 }
 
 // ContentChanged is groups.Options.ContentChanged: after the groups module

@@ -3,12 +3,16 @@ package e2e
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
 
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/importer"
 )
 
@@ -101,5 +105,31 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	f.want(http.StatusOK, user, "GET", "/me/searches", nil, &recent)
 	if len(recent.Searches) != 0 {
 		t.Fatalf("after clearing %+v", recent)
+	}
+}
+
+// A group shows in the typeahead a moment after it is made, well before the
+// next periodic sync: the write queues its documents' sync.
+func TestTypeaheadFollowsGroupWrites(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	f := serve(t, w.engine(nil))
+	shows := func(within time.Duration) bool {
+		name := "Nebula " + uuid.NewString()[:8]
+		var made []groups.Group
+		f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: strings.ReplaceAll(strings.ToLower(name), " ", "-"),
+			Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}}, &made)
+		for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+			var got discovery.Typeahead
+			f.want(http.StatusOK, "", "GET", "/typeahead?group_kinds=tag&q="+url.QueryEscape(name), nil, &got)
+			if len(got.Groups) == 1 && got.Groups[0].ID == made[0].ID {
+				return true
+			}
+		}
+		return false
+	}
+	// The first may wait for the sync the engine runs on start.
+	if !shows(time.Minute) || !shows(5*time.Second) {
+		t.Fatal("a new group is not in the typeahead")
 	}
 }
