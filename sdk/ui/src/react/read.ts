@@ -86,7 +86,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [offsets.join(","), window ? chunk : limit],
   );
-  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, offset: w.offset, limit: w.limit })), [scope, windows, ref.kind, ref.id, prefix, download, editor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, offset: w.offset, limit: w.limit })), [scope, windows, ref.kind, ref.id, ref.version, prefix, download, editor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A supplied read is shown until reload() asks the server or set() replaces it.
   const [requested, setRequested] = useState<{ base: string; given?: ReadResult | null } | null>(null);

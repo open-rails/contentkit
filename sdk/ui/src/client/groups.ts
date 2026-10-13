@@ -12,20 +12,30 @@ import type {
   MemberRef,
   Membership,
   MergeReport,
+  MyGroupPage,
   Name,
+  RefBody,
   Written,
 } from "./generated/wire.js";
 import type { Http } from "./http.js";
+import type { MediaClient, NamedOptions } from "./media/client.js";
 import { call, type RouteQuery } from "./route.js";
 
 /** GET /groups filters, as the route names them. */
 export type GroupQuery = RouteQuery<"GET", "/groups">;
+/** GET /me/groups filters. */
+export type MyGroupQuery = RouteQuery<"GET", "/me/groups">;
+/** A group's image slots: every kind's cover, a user-owned kind's avatar. */
+export type GroupImageSlot = "cover" | "avatar";
 /** GET /groups/{id}/members paging. */
 export type MemberQuery = RouteQuery<"GET", "/groups/{id}/members">;
 
 /** Groups: public listings and pages; writes for staff (root:groups:write). */
 export class GroupsClient {
-  constructor(private readonly http: Http) {}
+  constructor(
+    private readonly http: Http,
+    private readonly media: MediaClient,
+  ) {}
 
   list(q: GroupQuery = {}, signal?: AbortSignal): Promise<GroupPage> {
     return call(this.http, "GET", "/groups", { query: q, signal });
@@ -52,6 +62,22 @@ export class GroupsClient {
   /** Adds or removes edges from the group; resolves with every edge touching it. */
   edges(id: string, op: "add" | "remove", edges: EdgeInput[]): Promise<Edge[]> {
     return this.write(call(this.http, op === "add" ? "POST" : "DELETE", "/groups/{id}/edges", { params: { id }, body: edges }));
+  }
+  /** The group's media folder: the media kind named after its group kind. */
+  folder(group: { kind: string; id: string }): RefBody {
+    return { kind: group.kind, id: group.id };
+  }
+  /**
+   * Uploads an image to the folder's server-named `{slot}/{name}` and
+   * selects it as the group's cover or avatar (a user-owned kind's).
+   */
+  async uploadImage(group: { kind: string; id: string }, slot: GroupImageSlot, file: Blob & { name?: string }, o: Omit<NamedOptions, "path"> = {}): Promise<Group> {
+    const up = await this.media.uploadNamed(this.folder(group), file, { ...o, path: `${slot}/${file.name || slot}` });
+    return this.update(group.id, { [slot]: { image: up.name } });
+  }
+  /** Groups the signed-in person owns, edits or belongs to. */
+  mine(q: MyGroupQuery = {}, signal?: AbortSignal): Promise<MyGroupPage> {
+    return call(this.http, "GET", "/me/groups", { query: q, signal });
   }
   merge(id: string, into: string): Promise<MergeReport> {
     return this.write(call(this.http, "POST", "/groups/{id}/merge", { params: { id }, body: { into } }));

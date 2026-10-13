@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { fixture, mediaClient, seedVideo } from "../support/seed.ts";
-import { admin, harness, inheritsHostTheme, screenshots as dir } from "./pages.ts";
+import { mediaRef, admin, harness, inheritsHostTheme, screenshots as dir } from "./pages.ts";
 
 // MediaItemPanel in demo/admin.tsx over the real media worker: a video's
 // state, source, subtitles, poster and regenerate.
@@ -68,10 +68,10 @@ for (const mode of ["alone", "router"] as const) {
   test(`media item panel: a failed encode shows why, and regenerate retries it (${mode})`, async ({ page }) => {
     const owner = await h.user();
     const it = await h.item({ kind: "video", owner: owner.id });
-    const ref = { kind: it.kind, id: it.id };
+    const ref = mediaRef(it);
     // Not a video: the worker's probe fails it.
     await mediaClient(h, owner).put(new File([fixture("small.png")], "broken.mp4", { type: "video/mp4" }), { ref, path: "source", wait: false });
-    await page.goto(admin(`/admin/media/video/${it.id}`, owner, { mode }));
+    await page.goto(admin(`/admin/media/video/${it.id}/${it.version}`, owner, { mode }));
     const panel = page.locator("[data-ckui=media-item-panel]");
     await expect(state(page)).toHaveAttribute("data-state", "failed", { timeout: 120_000 });
     await expect(panel.locator("[data-ckui=media-failure]")).toContainText("source");
@@ -91,6 +91,6 @@ for (const mode of ["alone", "router"] as const) {
 test("someone who can't edit the item is told so", async ({ page }) => {
   const owner = await h.user();
   const it = await h.item({ kind: "video", owner: owner.id });
-  await page.goto(admin(`/admin/media/video/${it.id}`, await h.user(), { mode: "alone" }));
+  await page.goto(admin(`/admin/media/video/${it.id}/${it.version}`, await h.user(), { mode: "alone" }));
   await expect(page.locator("[data-ckui=media-item-panel] [data-ckui=no-access]")).toContainText("You can't edit this item's media.", { timeout: 30_000 });
 });

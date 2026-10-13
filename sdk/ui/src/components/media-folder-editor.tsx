@@ -13,6 +13,7 @@ import {
   Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { itemKey } from "../client/media/ref.js";
 import { cn } from "cn";
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref } from "react";
 import type { ContentKitUiAppearance } from "../appearance.js";
@@ -129,10 +130,10 @@ export function MediaFolderEditor(p: MediaFolderEditorProps) {
   // Editor state (selection, crop, rename) belongs to one item.
   if (p.folder) {
     const { folder, ...view } = p;
-    return <FolderView key={folder.ref ? `${folder.ref.kind}/${folder.ref.id}` : ""} folder={folder} {...view} />;
+    return <FolderView key={folder.ref ? itemKey(folder.ref) : ""} folder={folder} {...view} />;
   }
   // The queue belongs to one item: another item gets a fresh editor.
-  return <OwnFolder key={`${p.item.kind}/${p.item.id}`} {...p} />;
+  return <OwnFolder key={itemKey(p.item)} {...p} />;
 }
 
 function OwnFolder(p: MediaFolderEditorViewProps & MediaFolderOptions & { item: RefBody }) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { itemKey } from "../client/media/ref.js";
 import { ratio, type AspectRatio } from "../client/aspect.js";
 import type { ContentKitClient } from "../client/client.js";
 import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "../client/crop.js";
@@ -33,7 +34,7 @@ export interface UploadQueueOptions extends QueueOptions {
  */
 export function useUploadQueue({ client: own, ...options }: UploadQueueOptions): UseUploadQueue {
   const client = useContentKitClient(own);
-  const key = `${options.ref.kind}/${options.ref.id}`;
+  const key = itemKey(options.ref);
   const open = () => ({ key, queue: new ItemUploadQueue(client.media, { ...options, autoStart: false }) });
   const [current, setCurrent] = useState(open);
   if (current.key !== key) setCurrent(open());

@@ -4,11 +4,11 @@ import type { ContentKitError } from "../client/errors.js";
 import { ContentKitContext, useContentKitClient, useReadScope } from "./context.js";
 import { resourcesFor, type Fetcher, type Page, type Resource, type ResourceStore, type Tag } from "./resources.js";
 
-/** The client, its shared store, and the provider's viewer and sign-in. */
+/** The client, its shared store, and the provider's viewer, language and sign-in. */
 export function useContentScope(own?: ContentKitClient | null) {
   const ctx = useContext(ContentKitContext);
   const client = useContentKitClient(own);
-  return { client, store: resourcesFor(client), scope: useReadScope(), viewer: ctx?.viewer, onSignIn: ctx?.onSignIn };
+  return { client, store: resourcesFor(client), scope: useReadScope(), viewer: ctx?.viewer, language: ctx?.language, onSignIn: ctx?.onSignIn };
 }
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };

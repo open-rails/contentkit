@@ -5,7 +5,7 @@ import { imageRefs } from "../../client/contents.js";
 import type { Content } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
-import { useErrorReporter } from "../../react/context.js";
+import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
@@ -18,12 +18,14 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
+import { ContentSections } from "../content/editors.js";
+import type { Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
 
 /** What ContentManager hands its body editor. */
-export interface ContentEditorProps {
+export interface BodyEditorProps {
   /** The body as HTML, its images at URLs that show them now. */
   value: string;
   onChange: (html: string) => void;
@@ -35,7 +37,7 @@ export interface ContentEditorProps {
 }
 
 export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
-  /** The content kind managed, a kind with one hidden version (a blog post). */
+  /** The content kind managed. */
   kind: string;
   /** Languages to write in: codes, or codes with labels; the first is a new item's. */
   languages?: readonly Choice[];
@@ -43,9 +45,11 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
    * The body editor: `richTextEditor` from `@openrails/contentkit-ui/editor`,
    * or the host's own. Without it, the body is a plain HTML field.
    */
-  renderEditor?: (props: ContentEditorProps) => ReactNode;
+  renderEditor?: (props: BodyEditorProps) => ReactNode;
   /** A link to a live item's page. */
   contentHref?: (content: Content) => string | undefined;
+  /** Display names of kinds, traits, tiers, attributes and values by identifier. */
+  labels?: Labels;
   pageSize?: number;
 }
 
@@ -70,11 +74,14 @@ const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destru
 const states = ["draft", "scheduled", "published"] as const;
 
 /**
- * Content items of one kind: every one the caller manages, by state and
- * text, deleted ones on their own to restore; create and edit title, slug,
- * description, schedule, cover and body with inline images per language,
- * publish or keep a draft, and delete. The list is at basePath, a new item at
- * basePath/new and each item at basePath/{id}, filters in the query.
+ * Content items of one kind for their creators and staff: every one the
+ * caller manages, by state and text, deleted ones on their own to restore;
+ * create and edit title, slug, description, schedule, cover and body with
+ * inline images per language, publish or keep a draft, and delete; then its
+ * listing and attributes, access rule and price, versions (order, languages,
+ * traits, schedule, access override, price, segments, media) and groups. The
+ * list is at basePath, a new item at basePath/new and each item at
+ * basePath/{id}, filters in the query.
  */
 export function ContentManager({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: ContentManagerProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
@@ -99,7 +106,13 @@ function Contents({ basePath, navigation, ...p }: Inner) {
       <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go("")}>
         {t("contentManager.back")}
       </Button>
-      <ContentForm key={loc.view} {...p} loc={loc} id={loc.view === "new" ? null : loc.view} />
+      <ContentEditor
+        key={loc.view}
+        {...p}
+        id={loc.view === "new" ? null : loc.view}
+        onCreated={(c) => loc.go(c.id, undefined, { replace: true })}
+        onDeleted={() => loc.go("", undefined, { replace: true })}
+      />
     </>
   );
 }
@@ -249,7 +262,33 @@ interface Form {
 
 const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
 
-function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, contentHref, onError }: Inner & { id: string | null; loc: AdminLocation }) {
+export interface ContentEditorProps {
+  /** The item edited; null creates one of kind. */
+  id: string | null;
+  kind: string;
+  /** Languages to write in: codes, or codes with labels; the first is a new item's. */
+  languages?: readonly Choice[];
+  /** The body editor; without it, a plain HTML field. */
+  renderEditor?: (props: BodyEditorProps) => ReactNode;
+  /** A link to a live item's page. */
+  contentHref?: (content: Content) => string | undefined;
+  labels?: Labels;
+  /** A new item's owner group: a channel its editors write for. */
+  ownerGroup?: string;
+  /** After create: show the new item (the editor goes on editing it). */
+  onCreated?: (content: Content) => void;
+  onDeleted?: (content: Content) => void;
+  client?: ContentKitClient;
+  onError?: ContentKitErrorHandler;
+}
+
+/**
+ * One content item for its creators and staff: title, slug, description,
+ * schedule, cover and body per language, publish, unpublish and delete;
+ * then listing and attributes, access rule and price, versions and groups.
+ */
+export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError }: ContentEditorProps) {
+  const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -278,7 +317,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     [form?.body, imageSrc],
   );
   if (id && !form) {
-    if (ed.error) return <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={() => loc.go(id, undefined, { replace: true })} />;
+    if (ed.error) return <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={ed.reload} />;
     return (
       <div className="grid gap-3" aria-busy>
         <Skeleton className="h-9 w-full" />
@@ -300,8 +339,8 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() } });
-        loc.go(created.id, undefined, { replace: true });
+        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerGroup });
+        onCreated?.(created);
         return;
       }
       const saved = await ed.putText(text());
@@ -326,14 +365,14 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     if (!item || !(await confirm({ title: t("contentManager.deleteTitle", { title: item.title }), description: t("contentManager.deleteBody"), confirm: t("contentManager.delete") }))) return;
     try {
       await ed.remove();
-      loc.go("", undefined, { replace: true });
+      onDeleted?.(item);
     } catch (e) {
       fail(e);
     }
   };
   const s = item ? contentStatus(item) : "draft";
   const href = item && s === "published" ? contentHref?.(item) : undefined;
-  const editor: ContentEditorProps = {
+  const editor: BodyEditorProps = {
     value: shown,
     onChange: (html) => set({ body: ed.storedBody(html) }),
     uploadImage: item ? (file) => ed.uploadImage(file) : undefined,
@@ -342,6 +381,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     "aria-label": t("contentManager.body"),
   };
   return (
+    <>
     <form
       className="grid gap-4"
       data-ckui="content-form"
@@ -443,6 +483,8 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
       </div>
       {dialog}
     </form>
+    {item && <ContentSections content={item} client={client} onError={onError} labels={labels} />}
+    </>
   );
 }
 

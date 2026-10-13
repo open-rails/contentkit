@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
 import { seedChannel, seedVideo } from "../support/seed.ts";
-import { harness, page as at, screenshots as dir } from "./pages.ts";
+import { itemParam, harness, page as at, screenshots as dir } from "./pages.ts";
 
 // Saves encode in the page and the real worker renders; slow shared runners need the headroom.
 test.describe.configure({ timeout: 120_000 });
@@ -115,7 +115,7 @@ for (const theme of ["light", "dark"] as const) {
     const tag = `${theme}-${info.project.name}`;
     const owner = await h.user();
     const video = await seedVideo(h, owner);
-    await page.goto(at("", owner, { theme, video: video.id }));
+    await page.goto(at("", owner, { theme, video: itemParam(video) }));
     const card = page.locator("[data-demo=video]");
     const poster = card.locator("[data-ckui=video-poster]");
     await expect(poster.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 20_000 });
