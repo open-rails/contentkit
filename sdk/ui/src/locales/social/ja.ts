@@ -38,6 +38,7 @@ export const social: typeof en = {
     reply: "返信",
     replyingTo: "{name} さんへの返信",
     empty: "まだコメントはありません。最初のコメントを書きましょう！",
+    unlock: "ロックを解除してコメントを見る",
     loadMore: "コメントをさらに表示",
     loading: "コメントを読み込み中…",
     loadFailed: "コメントを読み込めませんでした。",
@@ -224,6 +225,8 @@ export const social: typeof en = {
     unauthorized: "セッションの有効期限が切れました。もう一度ログインしてください。",
     not_found: "これは利用できなくなりました。",
     conflict: "ほかの場所で変更されました。再読み込みしてもう一度お試しください。",
+    comments_locked: "コメントを見たり書いたりするにはロックを解除してください。",
+    not_joinable: "現在このグループには参加できません。",
     rate_limited: "リクエストが多すぎます。{seconds} 秒後にもう一度お試しください。",
   },
 };

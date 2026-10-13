@@ -120,12 +120,18 @@ func TestComments_AccessGating(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(901), true, false)
 	res.set("gallery", cid(902), false, false)
+	res.put("gallery", cid(904), resolve.Resolution{Visible: true, Editor: true})
 	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
 	author := access.Actor{ID: "author"}
 
-	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(901)), CommentInput{Body: "x"}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("premium-locked: want ErrForbidden, got %v", err)
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(901)), CommentInput{Body: "x"}); !errors.Is(err, ErrCommentsLocked) {
+		t.Fatalf("premium-locked: want ErrCommentsLocked, got %v", err)
+	}
+	// Its editors open locked content, and its comments.
+	mustComment(t, rt, author, "gallery", cid(904), CommentInput{Body: "editor"})
+	if list, err := rt.comments.list(ctx, author, rt.Ref("gallery", cid(904)), "", "", 10, 0); err != nil || len(list) != 1 {
+		t.Fatalf("an editor's read of locked content's comments: %v %v", list, err)
 	}
 	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(902)), CommentInput{Body: "x"}); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("hidden: want ErrNotVisible, got %v", err)
@@ -178,12 +184,17 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("hidden stored version: %d %s, want 404", rec.Code, rec.Body.String())
 	}
-	res.versions["en"] = resolve.Resolution{}
-	res.versions["ja"] = resolve.Resolution{Visible: true} // Locked content still permits reading replies.
+	res.versions["en"] = resolve.Resolution{Visible: true, Accessible: true}
+	res.versions["ja"] = resolve.Resolution{Visible: true} // the stored version's access, not the item's
 	rec := doJSON(t, h, actor, "GET", path, nil)
 	var replies []Comment
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 0 {
+		t.Fatalf("locked stored version: %d %s, want the replies withheld", rec.Code, rec.Body.String())
+	}
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
+	rec = doJSON(t, h, actor, "GET", path, nil)
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 1 || replies[0].ID != reply.ID {
-		t.Fatalf("visible stored version: %d %s, want the Japanese reply", rec.Code, rec.Body.String())
+		t.Fatalf("open stored version: %d %s, want the Japanese reply", rec.Code, rec.Body.String())
 	}
 	delete(res.versions, "ja")
 	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
@@ -213,7 +224,7 @@ func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
 	for _, version := range []string{"en", "ja"} {
 		res.versions["en"] = resolve.Resolution{}
 		res.versions["ja"] = resolve.Resolution{}
-		res.versions[version] = resolve.Resolution{Visible: true}
+		res.versions[version] = resolve.Resolution{Visible: true, Accessible: true}
 		rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
 		var feed []FeedItem
 		wantID := en.ID
@@ -223,6 +234,13 @@ func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &feed) != nil || len(feed) != 1 || feed[0].ID != wantID || feed[0].ContentRef.Version() != version {
 			t.Fatalf("visible version %s: %d %s, want only %s", version, rec.Code, rec.Body.String(), wantID)
 		}
+	}
+	// A version the actor can't open withholds its comments from the feed.
+	res.versions["en"], res.versions["ja"] = resolve.Resolution{Visible: true}, resolve.Resolution{Visible: true, Editor: true}
+	rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
+	var feed []FeedItem
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &feed) != nil || len(feed) != 1 || feed[0].ID != ja.ID {
+		t.Fatalf("locked version: %d %s, want only the edited version's comment", rec.Code, rec.Body.String())
 	}
 }
 
@@ -273,14 +291,22 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 	}
 	res.err = nil
 	res.versions["en"] = resolve.Resolution{}
-	res.versions["ja"] = resolve.Resolution{Visible: true} // Comment reactions do not consume locked media.
+	res.versions["ja"] = resolve.Resolution{Visible: true} // the comment's version is locked to the actor
+	for _, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+		method, suffix, _ := strings.Cut(action, " ")
+		if rec := doJSON(t, h, actor, method, path+suffix, nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"comments_locked"`) {
+			t.Fatalf("locked target %s: %d %s, want 403 comments_locked", action, rec.Code, rec.Body.String())
+		}
+	}
+	assertStored(t, 0, 0, 0)
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
 	for i, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
 		method, suffix, _ := strings.Cut(action, " ")
 		rec := doJSON(t, h, actor, method, path+suffix, nil)
 		var counts ReactionCounts
 		want := []ReactionCounts{{Likes: 1, Mine: 1}, {Dislikes: 1, Mine: -1}, {}}[i]
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || counts != want {
-			t.Fatalf("visible locked target %s: %d %s, want %+v", action, rec.Code, rec.Body.String(), want)
+			t.Fatalf("open target %s: %d %s, want %+v", action, rec.Code, rec.Body.String(), want)
 		}
 	}
 	assertStored(t, 0, 0, 1)

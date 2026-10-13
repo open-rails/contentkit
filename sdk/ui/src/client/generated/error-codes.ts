@@ -8,6 +8,7 @@ export type ErrorCode =
   | "comment_banned"
   | "comment_too_long"
   | "comments_closed"
+  | "comments_locked"
   | "conflict"
   | "forbidden"
   | "gone"
@@ -21,6 +22,7 @@ export type ErrorCode =
   | "moderation_rejected"
   | "not_configured"
   | "not_found"
+  | "not_joinable"
   | "not_uploaded"
   | "quota_exceeded"
   | "rate_limited"
@@ -47,6 +49,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   comment_banned: { status: 403, meaning: "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends." },
   comment_too_long: { status: 422, meaning: "The comment is longer than the site allows; `details.max` is the limit in characters." },
   comments_closed: { status: 403, meaning: "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused." },
+  comments_locked: { status: 403, meaning: "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },
@@ -60,6 +63,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   moderation_rejected: { status: 422, meaning: "The moderator refused the text; `error` says why." },
   not_configured: { status: 501, meaning: "The capability needs a port the host did not configure; retrying does not help." },
   not_found: { status: 404, meaning: "Nothing by that name, or nothing the actor may see." },
+  not_joinable: { status: 409, meaning: "The group has no free offer to join: it sells its membership, or nothing." },
   not_uploaded: { status: 409, meaning: "A commit names an upload that has not landed; `blobs` lists the ones to upload again." },
   quota_exceeded: { status: 413, meaning: "The uploader's storage quota is used up." },
   rate_limited: { status: 429, meaning: "Too many requests; retry after `retry_after` seconds (also the Retry-After header)." },

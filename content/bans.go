@@ -373,8 +373,11 @@ type CommentStanding struct {
 	// where Anonymous says so.
 	CanComment bool `json:"can_comment"`
 	// Comments is the target's comments setting: open, closed or hidden.
-	Comments string     `json:"comments"`
-	Ban      *BanNotice `json:"ban,omitempty"`
+	Comments string `json:"comments"`
+	// Locked: the caller can't open the content (or the version), so its
+	// comments are withheld from them and take none of their writes.
+	Locked bool       `json:"locked"`
+	Ban    *BanNotice `json:"ban,omitempty"`
 	// Anonymous: signed-out visitors may comment here, under a name
 	// (Options.Anonymous.Comments); otherwise they are asked to sign in.
 	Anonymous bool `json:"anonymous"`
@@ -391,8 +394,8 @@ type CommentStanding struct {
 }
 
 // handleCanComment answers whether the caller may comment on a visible target
-// (it must be accessible to them, signed in unless anonymous comments are on,
-// and no ban may apply) and what it may do to the comments there.
+// (it must open it, be signed in unless anonymous comments are on, and no ban
+// may apply) and what it may do to the comments there.
 func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
@@ -403,7 +406,8 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, ta
 	}
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{},
 		Comments: cmp.Or(res.Comments, CommentsOpen)}
-	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
+	out.Locked = !opensComments(res)
+	out.CanComment = !out.Locked && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
 	err = rt.checkCommentBan(ctx, viewerID(actor), res)
 	if err == nil {
 		err = rt.checkIPBan(ctx, actor)

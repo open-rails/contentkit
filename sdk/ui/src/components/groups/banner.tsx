@@ -29,7 +29,7 @@ export interface MembershipBoxProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** A group's membership for the reader: member, join free, or join for its price. */
+/** A group's membership for the reader: member, join free, or join for its price; nothing to join while it sells no membership. */
 export function MembershipBox({ group, onCheckout, onSignIn, client: own, onError, className, appearance }: MembershipBoxProps) {
   const m = useMessages();
   const { t } = m;
@@ -37,7 +37,7 @@ export function MembershipBox({ group, onCheckout, onSignIn, client: own, onErro
   const ctx = useContext(ContentKitContext);
   const join = useAction("membership.join", onError);
   const a = group.access;
-  if (!a || a.editor) return null;
+  if (!a || a.editor || (!a.offer && !a.member && !a.unknown)) return null;
   const signedOut = ctx?.viewer === null;
   const signIn = onSignIn ?? ctx?.onSignIn;
   const offer: Sale | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;

@@ -38,8 +38,11 @@ type Config struct {
 	// Media is the media registry and how it is served; nil runs without
 	// media (no upload or media route groups, no post and poll images).
 	Media *MediaConfig `yaml:"media" json:"media"`
-	// ClickHouse is the signal plane: signals, preferences, popularity and
-	// discovery. Without it they are off.
+	// ClickHouse is the signal plane: signals, exposures, history,
+	// preferences, popularity and recommendations from signals. Unset, or
+	// unavailable when New runs, they are off: the content model says so
+	// (signals: false), lists sort on what Postgres holds and the
+	// contentkit_clickhouse probe fails while a configured one is down.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
 	// Offers prices what creators and staff put on sale (needs Deps.Billing).
 	Offers offers.Config `yaml:"offers" json:"offers"`

@@ -102,11 +102,16 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/text/ja", catalog.Text{Title: "アルバム"}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+book.ID+"/text/ja", nil, nil)
 
-	// Codes resolve the item's code; its URL is gone once it is deleted.
+	// Codes resolve the item's code, the default language unprefixed; its URL
+	// is gone once it is deleted.
 	var resolved contenturl.Resolved
 	f.want(http.StatusOK, anon, "GET", "/codes/"+strings.ToLower(post.Code)+"?lang=en", nil, &resolved)
-	if resolved.ContentID != post.ID || resolved.Path != "/en/blog/"+post.Code+"/hello" {
+	if resolved.ContentID != post.ID || resolved.Path != "/blog/"+post.Code+"/hello" {
 		t.Fatalf("resolved %+v", resolved)
+	}
+	f.want(http.StatusOK, anon, "GET", "/codes/"+post.Code+"?lang=ja", nil, &resolved)
+	if resolved.Path != "/ja/blog/"+post.Code+"/hello" {
+		t.Fatalf("resolved in Japanese %+v", resolved)
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/codes/not-a-code", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/codes/ZZZZZZZZ9", nil, nil)

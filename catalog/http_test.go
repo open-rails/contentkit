@@ -86,6 +86,13 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id+"/versions/"+id, nil, nil)
 	f.want(http.StatusBadRequest, anon, "GET", "/v1/contents/"+id+"?language=xx", nil, nil)
+	// The site's default language is unprefixed however it is asked for.
+	var en Content
+	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+id+"?language=en", nil, &en)
+	r = f.doWith(anon, "GET", "/v1/contents/"+id, map[string]string{"Accept-Language": "en"})
+	if json.Unmarshal(r.Body.Bytes(), &accept) != nil || en.Path != "/g/"+en.Code+"/hello-world" || accept.Path != en.Path {
+		t.Fatalf("default language paths %q, Accept-Language %q", en.Path, accept.Path)
+	}
 
 	// Edits: listing, creators, a stale revision.
 	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingUnlisted)}, &c)

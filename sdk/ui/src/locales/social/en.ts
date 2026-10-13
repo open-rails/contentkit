@@ -37,6 +37,7 @@ export const social = {
     reply: "Reply",
     replyingTo: "Replying to {name}",
     empty: "No comments yet. Be the first to comment!",
+    unlock: "Unlock to see comments",
     loadMore: "Show more comments",
     loading: "Loading comments…",
     loadFailed: "Comments couldn't be loaded.",
@@ -224,6 +225,8 @@ export const social = {
     unauthorized: "Your session expired. Sign in again.",
     not_found: "This is no longer available.",
     conflict: "This changed elsewhere. Reload and try again.",
+    comments_locked: "Unlock this to see and write comments.",
+    not_joinable: "This group isn't open to join right now.",
     rate_limited: "Too many requests. Try again in {seconds} s.",
   },
 };

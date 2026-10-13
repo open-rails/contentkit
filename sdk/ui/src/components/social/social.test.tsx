@@ -54,7 +54,7 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, comments: "open", anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, comments: "open", locked: false, anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
 const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {
@@ -83,6 +83,44 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   expect(await screen.findByText("hello there")).toBeInTheDocument();
   expect(box).toHaveValue("");
   expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
+});
+
+it("Comments: on content the reader can't open, an unlock note instead of the thread; access arriving loads it", async () => {
+  let open = false;
+  const s = server({
+    "GET /contents/v1/comments": () => (open ? [comment("c1")] : []),
+    "GET /contents/v1/can-comment": () => standing({ locked: !open, can_comment: open }),
+  });
+  const view = (revision: number) => (
+    <ContentKitProvider client={s.client} viewer="alice" accessRevision={revision}>
+      <Comments item={item} count={4} />
+    </ContentKitProvider>
+  );
+  const { rerender } = render(view(1));
+  expect(await screen.findByText("Unlock to see comments")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "4 comments" })).toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Add a comment…" })).toBeNull();
+  expect(screen.queryByText("No comments yet. Be the first to comment!")).toBeNull();
+
+  open = true;
+  rerender(view(2));
+  expect(await screen.findByText("body c1")).toBeInTheDocument();
+  expect(screen.queryByText("Unlock to see comments")).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Add a comment…" })).toBeInTheDocument();
+});
+
+it("Comments: a write refused as locked says so and shows the unlock note", async () => {
+  let locked = false;
+  const s = server({
+    "GET /contents/v1/comments": () => [],
+    "GET /contents/v1/can-comment": () => standing({ locked, can_comment: !locked }),
+    "POST /contents/v1/comments": () => ((locked = true), refusal(403, "comments_locked")),
+  });
+  const user = userEvent.setup();
+  render(<Comments item={item} />, { wrapper: wrap(s.client, { viewer: "alice" }) });
+  await user.type(await screen.findByRole("textbox", { name: "Add a comment…" }), "hello");
+  await user.click(screen.getByRole("button", { name: "Post" }));
+  expect(await screen.findByText("Unlock to see comments")).toBeInTheDocument();
 });
 
 it("Comments: a refused like rolls back; a ban or a rate limit is explained", async () => {

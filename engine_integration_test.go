@@ -27,6 +27,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/kindsroute"
@@ -252,7 +253,7 @@ func TestEngineIntegration(t *testing.T) {
 	// The public content model, without server-only parts.
 	var model kindsroute.ContentModel
 	rec := s.call(http.StatusOK, anon, "GET", "/api/ck/v1/kinds", nil, &model)
-	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil ||
+	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil || model.Signals ||
 		rec.Header().Get("Cache-Control") != "public, max-age=300" || strings.Contains(rec.Body.String(), "restrictions") {
 		t.Fatalf("kinds %d %s", rec.Code, rec.Body)
 	}
@@ -319,6 +320,88 @@ func TestEngineIntegration(t *testing.T) {
 	}
 	if err := e.Ready(ctx); err == nil {
 		t.Fatal("Ready after Close")
+	}
+}
+
+// Without ClickHouse, or with one New can't reach, the engine runs on
+// Postgres alone: its content model says signals are off, lists (popular
+// too), details and search serve, signals, exposures and history answer
+// not_configured, and a configured plane that is down fails its probe.
+func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	for name, ch := range map[string]ClickHouseConfig{"none": {}, "unreachable": {Addr: "127.0.0.1:1", Database: "signals"}} {
+		t.Run(name, func(t *testing.T) {
+			cfg := siteConfig(engineSchema(t, pool))
+			cfg.ClickHouse = ch
+			e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = e.Close(context.Background()) })
+			probes := e.Probes()
+			if down := ch.Addr != ""; down != (len(probes) == 1) || down && (probes[0].Name != "contentkit_clickhouse" || probes[0].Check(ctx) == nil) {
+				t.Fatalf("probes %+v", probes)
+			}
+			if err := e.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			routes, err := e.Routes(Routes{Prefix: "/ck", Groups: ContentRoutes | DiscoveryRoutes})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := serve(t, routes)
+			staff, user, anon := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "u1", Kind: "user"}, access.Actor{Anonymous: true}
+
+			var model kindsroute.ContentModel
+			if s.call(http.StatusOK, anon, "GET", "/ck/v1/kinds", nil, &model); model.Signals {
+				t.Fatal("the content model says signals are recorded")
+			}
+			var c catalog.Content
+			s.call(http.StatusCreated, staff, "POST", "/ck/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Harbor Lights"}},
+				Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
+			s.call(http.StatusOK, staff, "POST", "/ck/v1/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
+			var detail catalog.Content
+			if s.call(http.StatusOK, anon, "GET", "/ck/v1/contents/"+c.ID, nil, &detail); detail.Title != "Harbor Lights" || !detail.Live {
+				t.Fatalf("detail %+v", detail)
+			}
+			for _, sort := range []string{"newest", "popular"} {
+				var page struct {
+					Contents []struct{ ID string } `json:"contents"`
+				}
+				if s.call(http.StatusOK, anon, "GET", "/ck/v1/contents?kind=gallery&sort="+sort, nil, &page); len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
+					t.Fatalf("%s list %+v", sort, page)
+				}
+			}
+			for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(300 * time.Millisecond) {
+				var found struct {
+					Contents []struct{ ID string } `json:"contents"`
+				}
+				if s.call(http.StatusOK, anon, "GET", "/ck/v1/search?q=harbor&language=en", nil, &found); len(found.Contents) == 1 && found.Contents[0].ID == c.ID {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("search never found the gallery")
+				}
+			}
+			off := func(rec *httptest.ResponseRecorder) {
+				t.Helper()
+				if !strings.Contains(rec.Body.String(), `"not_configured"`) {
+					t.Fatalf("%s, want not_configured", rec.Body)
+				}
+			}
+			now := time.Now().UTC()
+			off(s.call(http.StatusNotImplemented, user, "POST", "/ck/v1/exposures", discovery.Exposures{Exposures: []discovery.ExposureInput{{RenderID: "r1", Stage: "rendered",
+				OccurredAt: &now, Shown: []discovery.Placement{{ContentID: c.ID, Position: 1}}}}}, nil))
+			off(s.call(http.StatusNotImplemented, user, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, Type: "click",
+				EventID: uuid.NewString(), OccurredAt: now}}}, nil))
+			off(s.call(http.StatusNotImplemented, user, "GET", "/ck/v1/me/history", nil, nil))
+			// Signals New could not reach may still hold the subject's: erasure stays pending.
+			report, err := e.EraseSubjects(ctx, []signal.Subject{{UserID: "u1"}})
+			if down := ch.Addr != ""; down == (err == nil) || down == report.Complete() || down != (report.Remaining["signal_plane"] == 1) {
+				t.Fatalf("erasure %+v %v", report, err)
+			}
+		})
 	}
 }
 

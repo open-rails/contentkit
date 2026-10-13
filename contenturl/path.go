@@ -65,6 +65,16 @@ func (r Routes) has(route string) bool {
 	return false
 }
 
+// Prefix is the path prefix of pages in language on a site of languages, its
+// default first: none for the default language, which pages serve
+// unprefixed, and the language for the others.
+func Prefix(languages []string, language string) string {
+	if len(languages) > 0 && language == languages[0] {
+		return ""
+	}
+	return language
+}
+
 // Path joins [/{language}]/{route}/{code}[/{slug}].
 func Path(language, route string, code Code, slug string) string {
 	var b strings.Builder

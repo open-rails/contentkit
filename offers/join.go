@@ -17,7 +17,7 @@ type GroupJoin struct {
 
 // Join grants actor each group's key free, through Billing: a sellable group
 // whose active offer is free (amount 0). A viewer already holding the key
-// costs no grant. A group without a free offer is ErrConflict.
+// costs no grant. A group without a free offer is ErrNotJoinable.
 func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
 	targets, err := s.groupTargets(ctx, actor, groups)
 	if err != nil {
@@ -25,7 +25,7 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 	}
 	offers, err := s.active(ctx, targets)
 	if errors.Is(err, ErrNotFound) {
-		return nil, fmt.Errorf("%w: a group is not free to join: %v", ErrConflict, err)
+		return nil, fmt.Errorf("%w: %v", ErrNotJoinable, err)
 	}
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 	var unsynced []Target
 	for _, o := range offers {
 		if o.Terms.Amount != 0 {
-			return nil, fmt.Errorf("%w: group %s is not free to join", ErrConflict, o.Target.ID)
+			return nil, fmt.Errorf("%w: group %s", ErrNotJoinable, o.Target.ID)
 		}
 		if !o.Synced || o.ProductID == "" {
 			unsynced = append(unsynced, o.Target)

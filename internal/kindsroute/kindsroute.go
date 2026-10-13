@@ -18,11 +18,14 @@ type ContentModel struct {
 	Kinds          map[string]kinds.Kind      `json:"kinds"`
 	GroupKinds     map[string]kinds.GroupKind `json:"group_kinds"`
 	ContentFilters []kinds.ContentFilter      `json:"content_filters"`
+	// Signals: the site records signals and exposures. Without, clients send
+	// none, and history, similar and recommendations answer not_configured.
+	Signals bool `json:"signals"`
 }
 
 // Public is c's public part, with empty lists and maps rather than null.
-func Public(c kinds.Config) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: c.Kinds, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters}
+func Public(c kinds.Config, signals bool) ContentModel {
+	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: c.Kinds, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters, Signals: signals}
 	if m.Languages == nil {
 		m.Languages = []string{}
 	}
@@ -43,9 +46,10 @@ func Public(c kinds.Config) ContentModel {
 
 type server struct{ body []byte }
 
-// Handler serves GET /kinds from c, rendered once.
-func Handler(c kinds.Config) (http.Handler, error) {
-	body, err := json.Marshal(Public(c))
+// Handler serves GET /kinds from c and whether signals are recorded,
+// rendered once.
+func Handler(c kinds.Config, signals bool) (http.Handler, error) {
+	body, err := json.Marshal(Public(c, signals))
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +62,7 @@ func init() { httpapi.Register(httpapi.Kinds, routes) }
 
 var routes = []httpapi.Route[*server]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes.",
+		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
 }
 

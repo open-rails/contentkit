@@ -280,6 +280,7 @@ export interface CommentRecord {
 export interface CommentStanding {
   can_comment: boolean;
   comments: string;
+  locked: boolean;
   ban?: BanNotice;
   anonymous: boolean;
   max_length: number;
@@ -403,6 +404,7 @@ export interface ContentModel {
   kinds: Record<string, Kind>;
   group_kinds: Record<string, GroupKind>;
   content_filters: ContentFilter[];
+  signals: boolean;
 }
 
 export interface ContentPage {
@@ -759,6 +761,7 @@ export interface GroupDetail {
   edges: Edge[];
   counts: Count[];
   access?: GroupAccess;
+  offer?: Offer;
 }
 
 export interface GroupInput {

@@ -241,7 +241,7 @@ const beacons = new WeakMap<ContentKitClient, Beacons>();
 /** The client's signal and exposure batcher: one per client. */
 export function beaconsFor(client: ContentKitClient, o?: BeaconOptions): Beacons {
   let b = beacons.get(client);
-  if (!b) beacons.set(client, (b = new Beacons(client.discovery, o)));
+  if (!b) beacons.set(client, (b = new Beacons(client, o)));
   return b;
 }
 

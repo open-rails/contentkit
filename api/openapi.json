@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes.",
+        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes.",
         "responses": {
           "200": {
             "description": "OK",
@@ -75,7 +75,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones.",
+        "summary": "The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Withheld (empty) where the caller can't open the content; the standing says so.",
         "parameters": [
           {
             "name": "id",
@@ -231,6 +231,7 @@
           "comment_banned",
           "comment_too_long",
           "comments_closed",
+          "comments_locked",
           "forbidden",
           "moderation_rejected",
           "not_found",
@@ -389,6 +390,7 @@
           "comment_banned",
           "comment_too_long",
           "comments_closed",
+          "comments_locked",
           "forbidden",
           "moderation_rejected",
           "not_found",
@@ -596,7 +598,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "A comment's replies, oldest first.",
+        "summary": "A comment's replies, oldest first; withheld (empty) where the caller can't open the content.",
         "parameters": [
           {
             "name": "cid",
@@ -722,6 +724,7 @@
           "comment_banned",
           "comment_too_long",
           "comments_closed",
+          "comments_locked",
           "conflict",
           "forbidden",
           "moderation_rejected",
@@ -815,6 +818,7 @@
         "x-contentkit-module": "content",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
+          "comments_locked",
           "forbidden",
           "invalid_request",
           "not_found",
@@ -868,6 +872,7 @@
         "x-contentkit-module": "content",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
+          "comments_locked",
           "forbidden",
           "invalid_request",
           "not_found",
@@ -921,6 +926,7 @@
         "x-contentkit-module": "content",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
+          "comments_locked",
           "forbidden",
           "invalid_request",
           "not_found",
@@ -8145,7 +8151,7 @@
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [
           "not_found",
-          "conflict"
+          "not_joinable"
         ],
         "x-contentkit-error-sets": [
           "module:offers",
@@ -10806,6 +10812,9 @@
           "comments": {
             "type": "string"
           },
+          "locked": {
+            "type": "boolean"
+          },
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
           },
@@ -10835,6 +10844,7 @@
         "required": [
           "can_comment",
           "comments",
+          "locked",
           "anonymous",
           "max_length",
           "moderate",
@@ -11272,6 +11282,9 @@
             "items": {
               "$ref": "#/components/schemas/ContentFilter"
             }
+          },
+          "signals": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -11279,7 +11292,8 @@
           "tiers",
           "kinds",
           "group_kinds",
-          "content_filters"
+          "content_filters",
+          "signals"
         ]
       },
       "ContentPage": {
@@ -12409,6 +12423,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/GroupAccess"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
           }
         },
         "required": [
@@ -15683,6 +15700,7 @@
           "comment_banned",
           "comment_too_long",
           "comments_closed",
+          "comments_locked",
           "conflict",
           "forbidden",
           "gone",
@@ -15696,6 +15714,7 @@
           "moderation_rejected",
           "not_configured",
           "not_found",
+          "not_joinable",
           "not_uploaded",
           "quota_exceeded",
           "rate_limited",
@@ -15924,6 +15943,10 @@
       "status": 403,
       "meaning": "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused."
     },
+    "comments_locked": {
+      "status": 403,
+      "meaning": "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them."
+    },
     "conflict": {
       "status": 409,
       "meaning": "A concurrent change, a path or slug already taken, or an operation id already used for another commit."
@@ -15975,6 +15998,10 @@
     "not_found": {
       "status": 404,
       "meaning": "Nothing by that name, or nothing the actor may see."
+    },
+    "not_joinable": {
+      "status": 409,
+      "meaning": "The group has no free offer to join: it sells its membership, or nothing."
     },
     "not_uploaded": {
       "status": 409,

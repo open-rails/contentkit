@@ -38,6 +38,7 @@ export const social: typeof en = {
     reply: "回复",
     replyingTo: "回复 {name}",
     empty: "还没有评论。来发表第一条吧！",
+    unlock: "解锁以查看评论",
     loadMore: "显示更多评论",
     loading: "正在加载评论…",
     loadFailed: "无法加载评论。",
@@ -224,6 +225,8 @@ export const social: typeof en = {
     unauthorized: "会话已过期。请重新登录。",
     not_found: "此内容已不可用。",
     conflict: "此内容已在别处更改。请刷新后重试。",
+    comments_locked: "解锁后即可查看和发表评论。",
+    not_joinable: "目前无法加入此群组。",
     rate_limited: "请求过多。请在 {seconds} 秒后重试。",
   },
 };

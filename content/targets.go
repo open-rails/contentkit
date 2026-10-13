@@ -29,6 +29,19 @@ const (
 	CommentsHidden = "hidden" // comments neither show nor take writes
 )
 
+// opensComments reports whether the actor reads and writes the target's
+// comments: it opens the content (for a version's comments, the version), or
+// edits it. Groups' comments are open to all.
+func opensComments(res resolve.Resolution) bool { return res.Accessible || res.Editor }
+
+// commentsLocked refuses comment writes on content the actor can't open.
+func commentsLocked(res resolve.Resolution) error {
+	if !opensComments(res) {
+		return ErrCommentsLocked
+	}
+	return nil
+}
+
 // commentsOpen refuses comment writes where comments are closed or hidden.
 func commentsOpen(res resolve.Resolution) error {
 	if res.Comments == CommentsClosed || res.Comments == CommentsHidden {

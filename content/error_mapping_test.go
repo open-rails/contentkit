@@ -142,7 +142,7 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 		{"unknown target", "GET", "/contents/" + cid(77) + "/comments", "", http.StatusNotFound, CodeNotFound},
 		{"unregistered kind", "GET", "/contents/" + cid(78) + "/comments", "", http.StatusNotFound, CodeNotFound},
 		{"not visible", "GET", "/contents/" + cid(902) + "/comments", "", http.StatusNotFound, CodeNotFound},
-		{"not accessible", "POST", "/contents/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
+		{"not accessible", "POST", "/contents/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeCommentsLocked},
 		{"invalid body", "POST", "/contents/" + cid(1) + "/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
 		{"denied perm", "POST", "/polls", `{"question":"q"}`, http.StatusForbidden, CodeForbidden},
 	}

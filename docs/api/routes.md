@@ -12,21 +12,21 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes. |
+| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes. |
 
 ## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | GET | `/v1/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
-| GET | `/v1/contents/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Query: `version`, `language`, `sort`, `limit`, `offset`. |
+| GET | `/v1/contents/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Withheld (empty) where the caller can't open the content; the standing says so. Query: `version`, `language`, `sort`, `limit`, `offset`. |
 | POST | `/v1/contents/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a content item or one of its versions in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. Query: `version`. |
 | GET | `/v1/groups/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones. Query: `language`, `sort`, `limit`, `offset`. |
 | POST | `/v1/groups/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/v1/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `language`, `limit`, `offset`. |
 | GET | `/v1/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
 | POST | `/v1/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
-| GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
+| GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first; withheld (empty) where the caller can't open the content. Query: `limit`, `offset`. |
 | PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
 | DELETE | `/v1/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
 | POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
@@ -235,6 +235,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
 | `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
+| `comments_locked` | 403 | The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |
@@ -248,6 +249,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `moderation_rejected` | 422 | The moderator refused the text; `error` says why. |
 | `not_configured` | 501 | The capability needs a port the host did not configure; retrying does not help. |
 | `not_found` | 404 | Nothing by that name, or nothing the actor may see. |
+| `not_joinable` | 409 | The group has no free offer to join: it sells its membership, or nothing. |
 | `not_uploaded` | 409 | A commit names an upload that has not landed; `blobs` lists the ones to upload again. |
 | `quota_exceeded` | 413 | The uploader's storage quota is used up. |
 | `rate_limited` | 429 | Too many requests; retry after `retry_after` seconds (also the Retry-After header). |

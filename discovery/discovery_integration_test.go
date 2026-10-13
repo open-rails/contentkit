@@ -85,6 +85,10 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		if alpha.Version.ID != f.vid(1, 1) || alpha.Title != "アルファ" || alpha.Language != "ja" || alpha.Path != "/ja/g/"+f.codes[1]+"/alpha" {
 			t.Fatalf("ja card: %+v", alpha)
 		}
+		_, page = f.list(host, "", q("/contents", "kind", "gallery", "display_language", "en"))
+		if p := page.Contents[1].Path; p != "/g/"+f.codes[1]+"/alpha" {
+			t.Fatalf("the default language is unprefixed: %s", p)
+		}
 	})
 	t.Run("filters", func(t *testing.T) {
 		cases := []struct {

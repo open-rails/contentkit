@@ -647,11 +647,11 @@ function Membership({ group, onError, client }: { group: GroupDetail; onError?: 
   const { t } = useMessages();
   const ck = useContentKitClient(client);
   const offer = useAction("offer.save", onError);
-  const current = group.access?.offer;
   return (
     <Section title={t("groupEditor.membershipPrice")} ckui="group-offer">
       <OfferFields
-        offer={current}
+        key={group.offer?.revision}
+        offer={group.offer}
         pending={offer.pending}
         onSell={(terms) => void offer.run(() => ck.offers.sellGroup(group.id, terms))}
         onWithdraw={() => void offer.run(() => ck.offers.withdrawGroup(group.id))}
