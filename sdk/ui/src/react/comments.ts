@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { BanScope, Decision, HeldKind, Reaction, Sort, Target } from "../client/content/types.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { AdminComment, BanInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, ReactionCounts } from "../client/generated/wire.js";
+import type { AdminComment, BanInput, BannedWord, BannedWordInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, IPBan, IPBanInput, ReactionCounts } from "../client/generated/wire.js";
 import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -173,6 +173,48 @@ export function useCommentBans(o: { scope?: BanScope; pageSize?: number; enabled
   const ban = useCallback((user: string, input?: BanInput) => client.bans.ban(scope, user, input), [client, scope]);
   const lift = useCallback((user: string) => client.bans.lift(scope, user), [client, scope]);
   return { ...list, ban, lift };
+}
+
+export interface UseBannedWords {
+  words: BannedWord[];
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+  /** Bans words, or changes what banned ones do. */
+  ban: (words: BannedWordInput[]) => Promise<BannedWord[]>;
+  unban: (words: string[]) => Promise<void>;
+}
+
+/** Staff: the banned words every comment and answer meets (root:comments:moderate). */
+export function useBannedWords(o: { enabled?: boolean; client?: ContentKitClient } = {}): UseBannedWords {
+  const { client, store, scope } = useContentScope(o.client);
+  const r = useResource<BannedWord[]>(store, o.enabled === false ? null : keyOf("moderation-rules", scope, "words"), { type: "moderation-rules", scope: "words" }, (signal) =>
+    client.moderation.bannedWords(signal),
+  );
+  const ban = useCallback((words: BannedWordInput[]) => client.moderation.banWords(words), [client]);
+  const unban = useCallback((words: string[]) => client.moderation.unbanWords(words), [client]);
+  return { words: r.data ?? [], loading: o.enabled !== false && (r.loading || !r.loaded), error: r.error, reload: r.reload, ban, unban };
+}
+
+export interface UseIPBans {
+  bans: IPBan[];
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+  /** Bans addresses or networks, or replaces their bans. */
+  ban: (bans: IPBanInput[]) => Promise<IPBan[]>;
+  lift: (networks: string[]) => Promise<void>;
+}
+
+/** Staff: the IP bans on commenting and answering, newest first (root:comments:moderate). */
+export function useIPBans(o: { enabled?: boolean; client?: ContentKitClient } = {}): UseIPBans {
+  const { client, store, scope } = useContentScope(o.client);
+  const r = useResource<IPBan[]>(store, o.enabled === false ? null : keyOf("moderation-rules", scope, "ips"), { type: "moderation-rules", scope: "ips" }, (signal) =>
+    client.moderation.ipBans(signal),
+  );
+  const ban = useCallback((bans: IPBanInput[]) => client.moderation.banIPs(bans), [client]);
+  const lift = useCallback((networks: string[]) => client.moderation.liftIPBans(networks), [client]);
+  return { bans: r.data ?? [], loading: o.enabled !== false && (r.loading || !r.loaded), error: r.error, reload: r.reload, ban, lift };
 }
 
 export interface UseGlobalCommentBan {

@@ -21,7 +21,7 @@ export { FavoritesClient, type MineQuery } from "./content/favorites.js";
 export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from "./content/polls.js";
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
-export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort, type Target } from "./content/types.js";
+export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type RuleSet, type Sort, type Target } from "./content/types.js";
 export { GroupsClient, type GroupImageSlot, type GroupQuery, type MemberQuery, type MyGroupQuery } from "./groups.js";
 export {
   DiscoveryClient,
@@ -40,6 +40,7 @@ export {
   type TypeaheadQuery,
 } from "./discovery.js";
 export { VersionsClient, isPending } from "./versions.js";
+export { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "./reader-meta.js";
 export { OffersClient } from "./offers.js";
 export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";

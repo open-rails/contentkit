@@ -12,6 +12,7 @@ import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
+import { ReaderManifestEditor } from "../admin/reader-manifest.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
@@ -519,6 +520,7 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
       <ErrorLine error={offer.error} />
       {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
       {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: v.id }} label={t("contentEditor.media")} />}
+      {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
     </div>
   );
 }

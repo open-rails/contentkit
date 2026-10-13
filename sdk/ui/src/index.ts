@@ -48,6 +48,7 @@ export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } f
 export { ContentEditor, ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
 export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./components/admin/group-manager.js";
 export { MediaItemPanel, type MediaItemPanelProps } from "./components/admin/media-item-panel.js";
+export { ReaderManifestEditor, type ReaderManifestEditorProps } from "./components/admin/reader-manifest.js";
 export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";
 export type { AdminNavigation, ContentKitAuth, StaffAccess, StaffArea } from "./react/admin.js";

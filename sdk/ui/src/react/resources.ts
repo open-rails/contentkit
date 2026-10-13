@@ -296,6 +296,12 @@ export class ResourceStore {
       case "searches.changed":
         this.invalidate((t) => t.type === "searches");
         break;
+      case "rules.changed":
+        this.invalidate((t) => t.type === "moderation-rules" && t.scope === c.rules);
+        break;
+      case "reader.changed":
+        this.invalidate((t) => t.type === "reader-plan" && t.id === c.version);
+        break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
         if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));

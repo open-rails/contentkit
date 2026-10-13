@@ -42,6 +42,8 @@ export type SocialOperation =
   | "content.save"
   | "moderation.load"
   | "moderation.resolve"
+  | "rules.save"
+  | "reader.save"
   | "media.save"
   | "notifications.load"
   | "notifications.read"

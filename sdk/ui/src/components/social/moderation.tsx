@@ -18,9 +18,10 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { AdminRoot, NoAccess, Pager, Rows, pageOf, useGuarded, type AdminFlowProps, type AdminRouteProps } from "../admin/shell.js";
 import { CommentBanDialog, CommentBans } from "./bans.js";
+import { BannedWords, IPBans } from "./rules.js";
 import { contentError, ErrorLine, RelativeTime, UserAvatar, UserName } from "./parts.js";
 
-export type ModerationSection = "comments" | "queue" | "bans";
+export type ModerationSection = "comments" | "queue" | "bans" | "words" | "ips";
 
 export interface CommentModerationProps extends AdminFlowProps, AdminRouteProps {
   /** Content kinds offered as a filter of the comment list: codes, or codes with labels. */
@@ -33,9 +34,9 @@ export interface CommentModerationProps extends AdminFlowProps, AdminRouteProps 
   pageSize?: number;
 }
 
-const ALL_SECTIONS: readonly ModerationSection[] = ["comments", "queue", "bans"];
+const ALL_SECTIONS: readonly ModerationSection[] = ["comments", "queue", "bans", "words", "ips"];
 
-/** Which moderation sections the caller may use: every comment, the review queue, the site's bans. */
+/** Which moderation sections the caller may use: every comment, the review queue, the site's bans, banned words and IP bans. */
 export function useCommentModerationAccess(o: FlowClientOptions = {}): StaffAccess<ModerationSection> {
   return useStaffAccess(ALL_SECTIONS, o);
 }
@@ -43,8 +44,9 @@ export function useCommentModerationAccess(o: FlowClientOptions = {}): StaffAcce
 /**
  * Staff: every comment (deleted, held and rejected ones with their text) to
  * delete, restore or ban its author, by content kind or author; the review
- * queue of held comments and content to approve or reject; and the site's
- * comment bans. Sections, filters and pages live in the URL under basePath;
+ * queue of held comments and content to approve or reject; the site's
+ * comment bans; and the rules every comment and answer meets (banned words,
+ * IP bans). Sections, filters and pages live in the URL under basePath;
  * the caller sees only the sections its permissions allow.
  */
 export function CommentModeration({ client: own, baseUrl, auth, guard, appearance, className, language, messages, sections = ALL_SECTIONS, ...p }: CommentModerationProps) {
@@ -65,7 +67,13 @@ function Moderation({ sections, basePath, navigation, ...p }: Rest & { sections:
   const loc = useAdminLocation(basePath, navigation);
   const access = useCommentModerationAccess({ client: p.client });
   const allowed = sections.filter((s) => access.allowed[s]);
-  const label: Record<ModerationSection, string> = { comments: t("moderation.all"), queue: t("moderation.queue"), bans: t("moderation.bans") };
+  const label: Record<ModerationSection, string> = {
+    comments: t("moderation.all"),
+    queue: t("moderation.queue"),
+    bans: t("moderation.bans"),
+    words: t("moderationRules.words"),
+    ips: t("moderationRules.ips"),
+  };
   const title = <h2 className="text-base font-semibold">{t("moderation.title")}</h2>;
   if (access.loading)
     return (
@@ -112,6 +120,8 @@ function Moderation({ sections, basePath, navigation, ...p }: Rest & { sections:
               onError={p.onError}
             />
           )}
+          {section === "words" && <BannedWords client={p.client} onError={p.onError} />}
+          {section === "ips" && <IPBans client={p.client} onError={p.onError} />}
         </TabsContent>
       </Tabs>
     </>

@@ -477,9 +477,11 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 
 - **`CommentModeration`**: every comment (deleted, held and rejected ones with
   their text) by content kind or author, to delete, restore or ban its author;
-  the review queue; the site's bans. Sections at `basePath`, `/queue`,
-  `/bans`; `?kind`, `?author`, `?page`. Props: `contentKinds`, `itemHref`,
-  `userHref`, `sections`, `pageSize`. `useCommentModerationAccess()`.
+  the review queue; the site's bans; banned words (mask or refuse) and IP
+  bans. Sections at `basePath`, `/queue`, `/bans`, `/words`, `/ips`; `?kind`,
+  `?author`, `?page`. Props: `contentKinds`, `itemHref`, `userHref`,
+  `sections`, `pageSize`. `useCommentModerationAccess()`. The rule sections
+  alone: `BannedWords`, `IPBans` (`useBannedWords`, `useIPBans`).
 
   ```tsx
   <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "blog"]} />
@@ -511,6 +513,12 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
+
+- **`ReaderManifestEditor`**: a reader version's manifest over its published
+  pages and audio: scroll anchors, audio cues (matched to pages or anchors by
+  file name in one step), background tracks and auto-advance. Page order is
+  the version's media order. `ContentManager` shows it under each version of
+  a `reader` kind. Props: `content`, `version`.
 
 - **`MediaItemPanel`**: one video item for its editors: encode state and
   progress, failures with their reason, replace the source, subtitle
