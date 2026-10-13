@@ -160,6 +160,7 @@ CREATE INDEX content_facets_list_idx ON content_facets (tenant_id, kind, publish
 CREATE INDEX content_facets_content_idx ON content_facets (tenant_id, content_id);
 CREATE INDEX content_facets_groups_idx ON content_facets USING gin (group_ids);
 CREATE INDEX content_facets_languages_idx ON content_facets USING gin (languages);
+CREATE INDEX content_facets_owner_idx ON content_facets (tenant_id, owner_group_id, published_at DESC) WHERE (owner_group_id IS NOT NULL);
 
 CREATE TABLE content_offers (
     tenant_id text NOT NULL,

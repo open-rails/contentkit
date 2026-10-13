@@ -63,15 +63,19 @@ type Product struct {
 	Key          string
 	DisplayName  string
 	Entitlements []string
-	Archived     bool
-	Prices       []Price // its live prices
+	// RequiredEntitlements are the keys a buyer must already hold: OpenRails
+	// refuses anyone else's order (entitlement_required).
+	RequiredEntitlements []string
+	Archived             bool
+	Prices               []Price // its live prices
 }
 
 // NewProduct creates a product.
 type NewProduct struct {
-	Key          string
-	DisplayName  string
-	Entitlements []string
+	Key                  string
+	DisplayName          string
+	Entitlements         []string
+	RequiredEntitlements []string
 }
 
 // ProductUpdate changes a product's set fields.
@@ -79,6 +83,8 @@ type ProductUpdate struct {
 	ID          string
 	DisplayName *string
 	Archived    *bool
+	// RequiredEntitlements replaces them; an empty list clears them.
+	RequiredEntitlements *[]string
 }
 
 // Price is one way to buy a product: Amount micros of Currency.

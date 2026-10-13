@@ -137,6 +137,7 @@ export interface Card {
   cover: PublicRendition[];
   version: CardVersion;
   groups: Record<string, Chip[]>;
+  owner?: GroupCard;
   counts: Counts;
   access: CardAccess;
   viewer?: ViewerState;
@@ -151,6 +152,7 @@ export interface CardAccess {
   requires?: string;
   preview?: Preview;
   free_after?: string;
+  offers?: Sale[];
 }
 
 export interface CardVersion {
@@ -277,6 +279,7 @@ export interface Content {
   slug?: string;
   description?: string;
   body?: string;
+  decision: Decision;
   images?: Record<string, string>;
   cover?: CatalogCover;
   state: ContentState;
@@ -288,6 +291,7 @@ export interface Content {
   restrictions: string[];
   attributes: Record<string, unknown>;
   owner_group_id?: string;
+  owner?: GroupCard;
   creators: Creator[];
   groups: GroupSummary[];
   versions: Version[];
@@ -296,6 +300,7 @@ export interface Content {
   moderation?: ModerationState;
   moderation_reason?: string;
   ever_sold?: boolean;
+  offer?: Offer;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -449,6 +454,7 @@ export interface Decision {
   requires?: string;
   preview?: Preview;
   free_after?: string;
+  offers?: Sale[];
 }
 
 export interface Edge {
@@ -645,7 +651,7 @@ export interface Group {
 
 export interface GroupAccess {
   key: string;
-  offer?: Terms;
+  offer?: Sale;
   member: boolean;
   unknown?: boolean;
 }
@@ -1411,6 +1417,13 @@ export interface Rule {
   free_after?: string;
 }
 
+export interface Sale {
+  key: string;
+  target: Target;
+  terms: Terms;
+  price_id?: string;
+}
+
 export interface Segment {
   position: number;
   title?: string;
@@ -1539,6 +1552,7 @@ export interface Version {
   segments: Segment[];
   decision: Decision;
   text?: Record<string, VersionText>;
+  offer?: Offer;
 }
 
 export interface VersionFork {

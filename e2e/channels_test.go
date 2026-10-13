@@ -129,7 +129,7 @@ func TestChannels(t *testing.T) {
 		card.Avatar.Renditions[0].URL != published.Renditions[0].URL {
 		t.Fatalf("card avatar %+v, published %+v", card.Avatar, published)
 	}
-	if a := card.Access; a == nil || a.Member || a.Offer == nil || a.Offer.Amount != 0 || a.Key.Group() != string(ch.ID) {
+	if a := card.Access; a == nil || a.Member || a.Offer == nil || a.Offer.Terms.Amount != 0 || a.Key.Group() != string(ch.ID) {
 		t.Fatalf("card access %+v", a)
 	}
 	f.want(http.StatusOK, viewerToken, "POST", path+"/join", nil, nil)

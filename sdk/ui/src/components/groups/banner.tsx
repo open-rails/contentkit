@@ -41,7 +41,7 @@ export function MembershipBox({ group, onCheckout, onSignIn, client: own, onErro
   if (!a) return null;
   const signedOut = ctx?.viewer === null;
   const signIn = onSignIn ?? ctx?.onSignIn;
-  const offer: DecisionOffer | undefined = a.offer ? { key: a.key, target: { kind: "group", id: group.id }, terms: a.offer } : undefined;
+  const offer: DecisionOffer | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-2 rounded-lg border border-border p-3 text-sm", className)} data-ckui="membership-box" data-member={a.member}>
       {a.unknown ? (
