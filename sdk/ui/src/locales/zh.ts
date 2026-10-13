@@ -273,6 +273,7 @@ export const zh: ContentKitUiMessageBundle = {
     comment_too_long: "评论太长了。",
     commentTooLongBy: "评论最多 {maxChars} 个字符。",
     not_configured: "此网站未提供该功能。",
+    no_membership: "仅限会员的内容需要一个可加入或购买的群组。请先为该群组添加报价。",
     tenant_mismatch: "我们这边出了点问题，请重试。",
     gone: "此内容已不可用。",
   },

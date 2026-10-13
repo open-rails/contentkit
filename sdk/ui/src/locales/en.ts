@@ -272,6 +272,7 @@ export const en = {
     comment_too_long: "This comment is too long.",
     commentTooLongBy: "A comment is at most {maxChars} characters.",
     not_configured: "This feature isn't available on this site.",
+    no_membership: "Members-only content needs a group that people can join or buy. Add an offer to the group first.",
     tenant_mismatch: "Something went wrong on our end. Please try again.",
     gone: "This content is no longer available.",
   },

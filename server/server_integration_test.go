@@ -94,14 +94,14 @@ drain_delay: 200ms
 		time.Sleep(100 * time.Millisecond)
 	}
 	for path, want := range map[string]int{
-		"/livez": 200, "/statusz": 200, "/api/contentkit/v1/config": 200, "/api/contentkit/v1/posts": 200,
-		"/api/contentkit/v1/posts/admin": 401, "/api/contentkit/v1/notifications/inbox": 401, "/api/contentkit/v1/codes/ZZZZZZZZ9": 404,
+		"/livez": 200, "/statusz": 200, "/api/contentkit/v1/config": 200, "/api/contentkit/v1/contents": 200,
+		"/api/contentkit/v1/comments/admin": 401, "/api/contentkit/v1/notifications/inbox": 401, "/api/contentkit/v1/codes/ZZZZZZZZ9": 404,
 	} {
 		if got := get(path, ""); got != want {
 			t.Errorf("GET %s: %d, want %d", path, got, want)
 		}
 	}
-	if got := get("/api/contentkit/v1/posts", "not-a-token"); got != http.StatusUnauthorized {
+	if got := get("/api/contentkit/v1/contents", "not-a-token"); got != http.StatusUnauthorized {
 		t.Errorf("a bad token: %d", got)
 	}
 

@@ -273,6 +273,7 @@ export const ko: ContentKitUiMessageBundle = {
     comment_too_long: "댓글이 너무 깁니다.",
     commentTooLongBy: "댓글은 최대 {maxChars}자까지 쓸 수 있습니다.",
     not_configured: "이 사이트에서는 사용할 수 없는 기능입니다.",
+    no_membership: "회원 전용 콘텐츠에는 가입하거나 구매할 수 있는 그룹이 필요합니다. 먼저 그룹에 오퍼를 추가하세요.",
     tenant_mismatch: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
     gone: "이 콘텐츠는 더 이상 사용할 수 없습니다.",
   },
