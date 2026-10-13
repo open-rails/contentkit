@@ -64,8 +64,10 @@ func channelBilling(w *world) *openrails.Client {
 // neither; cards carry the avatar, the offer and the viewer's membership;
 // the viewer joins it free and finds it among their groups; uploads are rate
 // limited and capped per channel; the host's Go client reads and writes it;
-// a holder of channel:content:write writes its posts; deleting it retires
-// its scope, its posts and its media.
+// a holder of channel:content:write writes its posts; renaming it renames
+// its OpenRails product; deleting it retires its scope, its posts and hides
+// its media; restoring it brings back its scope, media and the posts its
+// deletion took, not one deleted before.
 func TestChannels(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -192,8 +194,27 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
 	f.want(http.StatusForbidden, writerToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Mine"}}}, nil)
 
-	// Deleting retires the scope, deletes the channel's posts and queues its
-	// media folder's deletion.
+	// Renaming the channel renames its product on OpenRails.
+	f.want(http.StatusOK, editorToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio Two"}}}, nil)
+	bill := ckopenrails.Billing(merchant)
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		products, err := bill.Products(ctx, []string{card.Access.Key.String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, ok := products[card.Access.Key.String()]; ok && p.DisplayName == "Studio Two" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the product keeps its name: %+v", products)
+		}
+	}
+
+	// Deleting retires the scope, deletes the channel's posts and hides its
+	// media, keeping its folder for a restore.
+	var earlier catalog.Content
+	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &earlier)
+	f.want(http.StatusNoContent, writerToken, "DELETE", "/contents/"+earlier.ID, nil, nil)
 	var deleted groups.Group
 	f.want(http.StatusOK, creatorToken, "DELETE", path, nil, &deleted)
 	if deleted.State != groups.StateDeleted || deleted.AuthScope != "" {
@@ -202,14 +223,57 @@ func TestChannels(t *testing.T) {
 	if g, err := w.ak.Group(ctx, iam.GroupByID(string(ch.ID))); err != nil || g.DeletedAt == nil {
 		t.Fatalf("the scope after delete %+v %v", g, err)
 	}
-	var state string
-	if err := w.pool.QueryRow(ctx, `SELECT state FROM `+pgx.Identifier{w.schema, "content_items"}.Sanitize()+` WHERE id = $1`, made2.ID).Scan(&state); err != nil || state != "deleted" {
-		t.Fatalf("the channel's post after delete: %q %v", state, err)
+	items := pgx.Identifier{w.schema, "content_items"}.Sanitize()
+	stateOf := func(id string) (state, cause string) {
+		t.Helper()
+		if err := w.pool.QueryRow(ctx, `SELECT state, coalesce(deleted_with_group, '') FROM `+items+` WHERE id = $1`, id).Scan(&state, &cause); err != nil {
+			t.Fatal(err)
+		}
+		return state, cause
 	}
-	var queued int
-	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+
-		` WHERE kind = 'contentkit_media_delete_folder' AND args->>'prefix' LIKE '%' || $1 || '%'`, string(ch.ID)).Scan(&queued); err != nil || queued == 0 {
-		t.Fatalf("the media folder's deletion: %d queued, %v", queued, err)
+	if state, cause := stateOf(made2.ID); state != "deleted" || cause != string(ch.ID) {
+		t.Fatalf("the channel's post after delete: %q by %q", state, cause)
+	}
+	if state, cause := stateOf(earlier.ID); state != "deleted" || cause != "" {
+		t.Fatalf("the post deleted before: %q by %q", state, cause)
+	}
+	jobs := func(kind string) int {
+		t.Helper()
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+
+			` WHERE kind = $1 AND args::text LIKE '%' || $2 || '%'`, kind, string(ch.ID)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := jobs("contentkit_media_delete_folder"); n != 0 {
+		t.Fatalf("the media folder's deletion was queued %d times on delete", n)
+	}
+	hides := jobs("contentkit_media_expose")
+	if hides == 0 {
+		t.Fatal("deleting queued no hiding of the channel's media")
+	}
+
+	// Restoring brings back the scope, the media and the post its deletion
+	// took; the one deleted before stays deleted.
+	var back groups.Group
+	f.want(http.StatusOK, creatorToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, &back)
+	if back.State != groups.StateActive || back.AuthScope != string(ch.ID) {
+		t.Fatalf("restored %+v", back)
+	}
+	if state, cause := stateOf(made2.ID); state != "draft" || cause != "" {
+		t.Fatalf("the channel's post after restore: %q by %q", state, cause)
+	}
+	if state, _ := stateOf(earlier.ID); state != "deleted" {
+		t.Fatalf("the post deleted before the channel: %q after restore", state)
+	}
+	if n := jobs("contentkit_media_expose"); n <= hides {
+		t.Fatalf("restoring queued no showing of the channel's media (%d exposes)", n)
+	}
+	var restored catalog.Content
+	f.want(http.StatusOK, creatorToken, "GET", "/contents/"+made2.ID, nil, &restored)
+	if !restored.Editor || restored.State != catalog.StateDraft {
+		t.Fatalf("the restored post as its channel's owner sees it: %+v", restored)
 	}
 }
 
