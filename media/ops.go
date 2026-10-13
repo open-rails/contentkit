@@ -36,7 +36,7 @@ type Op struct {
 	Blob       string         `json:"blob,omitempty"`      // put: the staged upload (u-{uuid}) or a blob in the folder
 	CreateID   string         `json:"create_id,omitempty"` // put: create-only UUID; repeat the same ID to retry
 	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload
-	Meta       map[string]any `json:"meta,omitempty"`      // put: the upload's meta; attach: merged into it; meta: the item's
+	Meta       map[string]any `json:"meta,omitempty"`      // put, copy: the upload's meta (copy: default the source's); attach: merged into it; meta: the item's
 	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`
 	To         string         `json:"to,omitempty"`   // rename, copy (default the source's path)
@@ -461,6 +461,9 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	f := src[0]
 	f.Public = nil // copied originals never transfer another item's allocation
+	if op.Meta != nil {
+		f.Meta = maps.Clone(op.Meta)
+	}
 	to := op.To
 	if to == "" {
 		to = f.Path
