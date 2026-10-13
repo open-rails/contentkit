@@ -273,6 +273,7 @@ export const ja: ContentKitUiMessageBundle = {
     comment_too_long: "コメントが長すぎます。",
     commentTooLongBy: "コメントは {maxChars} 文字までです。",
     not_configured: "この機能はこのサイトでは利用できません。",
+    no_membership: "メンバー限定コンテンツには、参加または購入できるグループが必要です。先にグループにオファーを追加してください。",
     tenant_mismatch: "サーバー側で問題が発生しました。もう一度お試しください。",
     gone: "このコンテンツはもう利用できません。",
   },

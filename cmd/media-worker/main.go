@@ -5,7 +5,7 @@
 //
 // Environment: worker.FromEnv and Config.TuningFromEnv, plus
 //
-//	MEDIA_KINDS_FILE    the host's registry as JSON (media.Registry's MarshalJSON)
+//	MEDIA_KINDS_FILE    the registry as JSON: an engine's from `contentkit media-config`
 //	MEDIA_METRICS_ADDR  ops listen address (default :9090): /metrics, /livez, /readyz, /statusz
 //
 // The process never exits for a missing dependency: it waits for Postgres and

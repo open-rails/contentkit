@@ -47,12 +47,28 @@ func (g groupCovers) Covers(ctx context.Context, covers []groups.CoverOf) ([][]g
 	return g.e.media.versions.GroupCovers().Covers(ctx, covers)
 }
 
-// groupFolders deletes group media folders through media, built after
-// groups.
+// groupFolders hides, shows and deletes group media folders through media,
+// built after groups.
 type groupFolders struct{ e *Engine }
+
+func (g groupFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
+	return g.e.media.versions.GroupFolders().ExposeTx(ctx, tx, refs)
+}
 
 func (g groupFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []groups.Ref) error {
 	return g.e.media.versions.GroupFolders().DeleteTx(ctx, tx, refs)
+}
+
+// ownedContent deletes and restores user-owned groups' content through the
+// catalog, built after groups.
+type ownedContent struct{ e *Engine }
+
+func (o ownedContent) DeleteOwned(ctx context.Context, groups []string) error {
+	return o.e.catalog.DeleteOwned(ctx, groups)
+}
+
+func (o ownedContent) RestoreOwned(ctx context.Context, groups []string) error {
+	return o.e.catalog.RestoreOwned(ctx, groups)
 }
 
 // interactionTargets resolves what interactions target: content items and
@@ -115,7 +131,11 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 		if g.State != groups.StateActive {
 			continue
 		}
-		out[ref.Key()] = resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
+		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
+		if cfg.GroupKinds[g.Kind].Owner == "user" {
+			res.OwnerGroup = &resolve.OwnerGroup{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
+		}
+		out[ref.Key()] = res
 	}
 	return out, nil
 }

@@ -143,7 +143,7 @@ describe("content hooks against the real ContentKit", () => {
     const signedOut = client();
     const out = renderHook(() => useFavorite(ref), { wrapper: wrap(signedOut, null) });
     await waitFor(() => expect(out.result.current).toMatchObject({ favorited: false, count: 0, loading: false }), wait);
-    expect(requests).toEqual([`GET /video/${ref.id}/favorite`]);
+    expect(requests).toEqual([`GET /contents/${ref.id}/favorite`]);
     // Not known to be signed out: the read runs, and a refused write rolls back.
     const unknown = renderHook(() => useFavorite(ref), { wrapper: wrap(client()) });
     await waitFor(() => expect(unknown.result.current.loading).toBe(false), wait);
@@ -254,7 +254,8 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => void (await writer.result.current.setCover(png())));
     await waitFor(() => expect(writer.result.current.content?.cover?.image).toMatch(/^i-/), wait);
     expect(writer.result.current.content?.cover?.url).toBeUndefined();
-    expect(writer.result.current.content?.images).toBeUndefined();
+    // A draft's body images reach its editors signed, never as public files.
+    for (const [n, u] of Object.entries(writer.result.current.content?.images ?? {})) expect([n, u.includes("?t=") && !u.includes("/public/")]).toEqual([name, true]);
     writer.unmount();
 
     // Reopened, the draft's images show through the editor read once their editor views render.
@@ -281,7 +282,7 @@ describe("content hooks against the real ContentKit", () => {
       await waitFor(async () => {
         const p = await client().contents.get(id, "en");
         url = p.images?.[name] ?? "";
-        expect(url).toMatch(new RegExp(`/blog/${id}/public/${name}-[0-9a-f-]{36}\\.webp$`));
+        expect(url).toMatch(new RegExp(`/blog\\.body/${id}/public/${name}-[0-9a-f-]{36}\\.webp$`));
         expect(url).not.toBe(not);
         expect(p.body).toBe(page(url, " More."));
         expect(p.cover?.url).toMatch(/\/public\/i-/);
@@ -298,7 +299,7 @@ describe("content hooks against the real ContentKit", () => {
 
     // Unpublished and published again, the image publishes a new generation and the old file goes; the body follows.
     await act(async () => void (await result.current.unpublish()));
-    await waitFor(async () => expect((await client("editor").contents.get(id)).images).toBeUndefined(), slow);
+    await waitFor(async () => expect(Object.values((await client("editor").contents.get(id)).images ?? {}).some((u) => u.includes("/public/"))).toBe(false), slow);
     await act(async () => void (await result.current.publish()));
     await readerSees(first);
     await waitFor(async () => expect((await fetch(first)).status).toBe(404), slow);

@@ -18,6 +18,10 @@ var (
 	ErrNotFound  = errors.New("catalog: not found")
 	ErrForbidden = errors.New("catalog: forbidden")
 	ErrConflict  = errors.New("catalog: conflict")
+	// ErrNoMembership refuses making content members-only (group or
+	// group_ppv) on a group without an active offer, paid or free to join:
+	// nobody could become its member.
+	ErrNoMembership = errors.New("catalog: the group sells no membership")
 )
 
 // Content states and listings.

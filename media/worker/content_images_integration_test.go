@@ -74,8 +74,8 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 320}}}}
 	}
-	// The blog's images are its content-level item's; its hidden version
-	// takes attachments.
+	// The blog's named content images make its body kind (blog.body) and
+	// hold its cover; its hidden version takes attachments.
 	blog := folder("blog")
 	blog.Uploads[0].Content = true
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: pngs, MaxBytes: 10 << 20})
@@ -153,7 +153,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt, err := content.New(ctx, content.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth,
-		Resolver: cat.Resolver(), ContentKinds: []string{"blog", "gallery"}, Limits: content.Limits{Disabled: true},
+		Resolver: cat.Resolver(), Kinds: site, Limits: content.Limits{Disabled: true},
 		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs, Reader: reader}})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,8 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	var created catalog.Content
 	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Pictures", Body: "soon"}}}, &created)
 	id := created.ID
-	a, b := upload("blog", id, 3), upload("blog", id, 9)
+	// Body images live in the post's body item; its cover in its own folder.
+	a, b, cover := upload("blog"+media.BodySuffix, id, 3), upload("blog"+media.BodySuffix, id, 9), upload("blog", id, 7)
 	var inline catalog.InlineImage
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
 	if inline.Ref != catalog.ImageRef(a) {
@@ -256,18 +257,23 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	}
 	body := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, inline.Ref, catalog.ImageRef(b))
 	must(http.StatusOK, staff, "PUT", "/v1/contents/"+id+"/text/en", catalog.Text{Title: "Pictures", Body: body}, nil)
-	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &b}, nil)
+	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &cover}, nil)
 
 	// A draft: its editors read references and see the images through
-	// signed editor views; no one else sees the item or its folder.
+	// signed files; no one else sees the item or its folder.
 	for _, actor := range []access.Actor{anon, reader1} {
 		must(http.StatusNotFound, actor, "GET", "/v1/contents/"+id, nil, nil)
 		must(http.StatusNotFound, actor, "GET", "/media/blog/"+id+"?editor", nil, nil)
 	}
 	var draft catalog.Content
 	must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &draft)
-	if draft.Body != body || draft.Images != nil || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != b {
+	if draft.Text["en"].Body != body || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != cover {
 		t.Fatalf("draft %+v", draft)
+	}
+	for name, u := range draft.Images {
+		if (name != a && name != b) || !strings.Contains(u, "?t=") || strings.Contains(u, "/public/") {
+			t.Fatalf("draft image %s at %s, want its editors' signed file", name, u)
+		}
 	}
 	eventually(t, "the editor preview", time.Minute, func() bool {
 		must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
@@ -281,7 +287,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		var c catalog.Content
 		eventually(t, what, 2*time.Minute, func() bool {
 			c = catalog.Content{}
-			if call(anon, "GET", "/v1/contents/"+id, nil, &c) != http.StatusOK || strings.Contains(c.Body, catalog.ImageScheme) || len(c.Images) != 2 {
+			if call(anon, "GET", "/v1/contents/"+id, nil, &c) != http.StatusOK || strings.Contains(c.Body, catalog.ImageScheme) || len(c.Images) != 3 {
 				return false
 			}
 			for name, u := range c.Images {
@@ -291,7 +297,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			}
 			return true
 		})
-		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want || c.Cover == nil || c.Cover.URL == nil || *c.Cover.URL != c.Images[b] {
+		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want || c.Cover == nil || c.Cover.URL == nil || *c.Cover.URL != c.Images[cover] {
 			t.Fatalf("%s: %+v", what, c)
 		}
 		var stored string
@@ -303,24 +309,32 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	published := resolved("the published images", nil)
 
-	ref, err := reg.Ref("blog", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := queue.Enqueue(ctx, media.ProcessJob{Ref: ref, Preset: "inline", Force: true}); err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{"blog", "blog" + media.BodySuffix} {
+		ref, err := reg.Ref(kind, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := queue.Enqueue(ctx, media.ProcessJob{Ref: ref, Preset: "inline", Force: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	regenerated := resolved("the regenerated images", published.Images)
-	eventually(t, "the first generation's retirement", 2*time.Minute, func() bool {
+	eventually(t, "the body images' first generation's retirement", 2*time.Minute, func() bool {
 		return !exists(published.Images[a]) && !exists(published.Images[b])
 	})
+	eventually(t, "the cover's first generation's retirement", 2*time.Minute, func() bool { return !exists(published.Images[cover]) })
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
 	must(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
 	eventually(t, "the unpublished item's references", time.Minute, func() bool {
 		var hidden catalog.Content
 		must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &hidden)
-		return hidden.Body == body && hidden.Images == nil && hidden.Cover != nil && hidden.Cover.URL == nil
+		for _, u := range hidden.Images {
+			if strings.Contains(u, "/public/") {
+				return false
+			}
+		}
+		return hidden.Text["en"].Body == body && hidden.Cover != nil && hidden.Cover.URL == nil
 	})
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	resolved("the images shown again", regenerated.Images)

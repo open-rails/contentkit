@@ -117,7 +117,7 @@ describe("media hooks against the real ContentKit", () => {
     act(() => result.current.add([png("1.png", 41)]));
     expect(result.current.waiting).toHaveLength(1);
     await waitFor(() => expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([["1.png", "forbidden"]]), wait);
-    expect(result.current.read.read).toMatchObject({ access: "full" });
+    expect(result.current.read.read).toMatchObject({ access: "none" });
     expect(result.current.read.read?.uploads).toBeUndefined();
     expect(result.current).toMatchObject({ busy: false, fileCount: 0, waiting: [] });
     expect(result.current.queue.items).toEqual([]);
@@ -129,7 +129,7 @@ describe("media hooks against the real ContentKit", () => {
     await c.media.put(fixture("small.png", "image/png", "cover.png"), { ref, path: "cover" });
     await c.media.waitFor(ref, "cover", wait);
     expect(await c.media.presets()).toContainEqual(expect.objectContaining({ kind: "gallery", name: "cover", from: "cover", namespace: cfg.namespace }));
-    const { result } = renderHook(() => usePublicImage("gallery", ref.id, "cover"), { wrapper: provider(c) });
+    const { result } = renderHook(() => usePublicImage({ kind: "gallery", id: ref.id }, "cover"), { wrapper: provider(c) });
     await waitFor(() => expect(result.current).toMatchObject({ loading: false, isDefault: false, image: expect.anything() }), wait);
     expect(result.current.rule).toMatchObject({ kind: "gallery", name: "cover", from: "cover", widths: [230, 460], aspect: "3:1" });
     expect(result.current.image).toMatchObject({ preset: "cover", aspect: "3:1" });
@@ -141,7 +141,7 @@ describe("media hooks against the real ContentKit", () => {
     // An item without a cover shows the kind's default (the preset declares one).
     expect(result.current.rule?.default).toBe(true);
     const empty = content(await item(h, "gallery", accounts.get("alice")));
-    const other = renderHook(() => usePublicImage("gallery", empty.id, "cover"), { wrapper: provider(c) });
+    const other = renderHook(() => usePublicImage({ kind: "gallery", id: empty.id }, "cover"), { wrapper: provider(c) });
     await waitFor(() => expect(other.result.current.isDefault).toBe(true), wait);
     expect(other.result.current.image!.renditions.map((r) => r.url)).toEqual([230, 460].map((w) => `${cfg.media}/v1/${cfg.namespace}/gallery/${empty.id}/public/cover-${w}.webp`));
   });

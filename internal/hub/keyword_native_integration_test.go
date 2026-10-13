@@ -191,7 +191,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
-	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'','zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
+	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),NULL,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
 		t.Fatal(err)
 	}
 	var trgm string

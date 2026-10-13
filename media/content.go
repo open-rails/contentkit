@@ -27,12 +27,10 @@ func BodyOf(kind string) (string, bool) { return strings.CutSuffix(kind, BodySuf
 // ForContent derives c from the site's one kinds list: a media kind named
 // after a content kind is that kind's, of Versions, in the app's namespace;
 // every group kind without one declared gets GroupKind's. No other kind has
-// versions. A content kind with named content images (Upload.Named and
-// Content, with a public preset) gets its body kind (BodySuffix).
+// versions. NewRegistry adds the content kinds' body kinds.
 func ForContent(c Config, k kinds.Config) (Config, error) {
 	out := c
 	out.Kinds = slices.Clone(c.Kinds)
-	var bodies []Kind
 	for i := range out.Kinds {
 		mk := &out.Kinds[i]
 		_, content := k.Kinds[mk.Name]
@@ -41,15 +39,9 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 			return Config{}, fmt.Errorf("media: content kind %q lives in the app's namespace", mk.Name)
 		case !content && mk.Versions:
 			return Config{}, fmt.Errorf("media: kind %q has Versions but is no content kind", mk.Name)
-		case strings.HasSuffix(mk.Name, BodySuffix):
-			return Config{}, fmt.Errorf("media: kind %q: %s names a content kind's body kind", mk.Name, BodySuffix)
 		}
 		mk.Versions = content
-		if body, ok := bodyKind(*mk); content && ok {
-			bodies = append(bodies, body)
-		}
 	}
-	out.Kinds = append(out.Kinds, bodies...)
 	for _, name := range slices.Sorted(maps.Keys(k.GroupKinds)) {
 		if !slices.ContainsFunc(out.Kinds, func(mk Kind) bool { return mk.Name == name }) {
 			out.Kinds = append(out.Kinds, GroupKind(name, k.GroupKinds[name]))
@@ -76,7 +68,8 @@ func GroupKind(name string, gk kinds.GroupKind) Kind {
 	return k
 }
 
-// bodyKind is a content kind's body kind: its named content images, their
+// bodyKind is a content kind's body kind (Upload.Named and Content images
+// with a public preset): its named content images, their
 // public presets, and for each a private image the item token serves to a
 // viewer who opened the content while it has no public files.
 func bodyKind(k Kind) (Kind, bool) {

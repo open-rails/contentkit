@@ -37,7 +37,7 @@ export function MembershipBox({ group, onCheckout, onSignIn, client: own, onErro
   const ctx = useContext(ContentKitContext);
   const join = useAction("membership.join", onError);
   const a = group.access;
-  if (!a) return null;
+  if (!a || a.editor) return null;
   const signedOut = ctx?.viewer === null;
   const signIn = onSignIn ?? ctx?.onSignIn;
   const offer: Sale | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;

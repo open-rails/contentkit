@@ -2,26 +2,20 @@ package contenturl_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
-	"testing/fstest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/open-rails/migratekit"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/pgtest"
-	"github.com/open-rails/contentkit/migrations"
 )
 
 const tenant = "doujins"
@@ -347,118 +341,5 @@ func TestAliases(t *testing.T) {
 		if err := putAliases(ctx, pool, schema, bad); !errors.Is(err, contenturl.ErrInvalid) {
 			t.Errorf("PutAliases(%+v) = %v", bad, err)
 		}
-	}
-}
-
-func TestMigrationRefusesMergeCycles(t *testing.T) {
-	ctx := context.Background()
-	pool := pgtest.Pool(t, nil)
-	schema, db := migrateBefore0010(t, ctx, pool)
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
- ('doujins', '%[2]s', 'tag', 'a', 'merged'), ('doujins', '%[3]s', 'tag', 'b', 'merged');
-INSERT INTO %[1]s.content_edges (tenant_id, from_taxonomy_id, relation, to_taxonomy_id) VALUES
- ('doujins', '%[2]s', 'alias_of', '%[3]s'), ('doujins', '%[3]s', 'alias_of', '%[2]s')`, schema, id(1), id(2))); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.ApplyPostgres(ctx, db, schema); err == nil || !strings.Contains(err.Error(), "cycle") {
-		t.Fatalf("cyclic merges migrated: %v", err)
-	}
-}
-
-// migrateBefore0010 applies the chain up to 0009 the way a host's migrate
-// step does.
-func migrateBefore0010(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, *sql.DB) {
-	t.Helper()
-	schema := pgtest.EmptySchema(t, ctx, pool)
-	pgtest.EnsureExtensions(t, ctx, pool)
-	db := stdlib.OpenDBFromPool(pool)
-	t.Cleanup(func() { _ = db.Close() })
-	old := fstest.MapFS{}
-	entries, err := fs.ReadDir(migrations.Postgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Name() >= "0010" {
-			continue
-		}
-		b, err := fs.ReadFile(migrations.Postgres, e.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		old[e.Name()] = &fstest.MapFile{Data: b}
-	}
-	steps, err := migratekit.Load(old, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
-		t.Fatal(err)
-	}
-	return schema, db
-}
-
-// The migration backfills ContentKit's own records through the production
-// migratekit path: nodes slugged from their names (English first), merged
-// nodes redirected to their survivor, live posts.
-func TestMigrationBackfillsOwnRecords(t *testing.T) {
-	ctx := context.Background()
-	pool := pgtest.Pool(t, nil)
-	schema, db := migrateBefore0010(t, ctx, pool)
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`SET search_path TO %[1]s;
-INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
- ('doujins', '%[2]s', 'artist', 'a1', 'active'),
- ('doujins', '%[3]s', 'artist', 'a2', 'merged'),
- ('doujins', '%[4]s', 'tag', 't', 'active'),
- ('hentai0', '%[2]s', 'tag', 'h', 'active');
-INSERT INTO %[1]s.content_node_names (tenant_id, taxonomy_id, language, kind, name) VALUES
- ('doujins', '%[2]s', 'en', 'name', 'Café Ölmüller'),
- ('doujins', '%[2]s', 'de', 'name', 'Kaffee Ölmüller'),
- ('doujins', '%[2]s', 'en', 'alias', 'Coffee'),
- ('doujins', '%[3]s', 'en', 'name', 'Dup'),
- ('hentai0', '%[2]s', 'ja', 'name', 'タグ');
-INSERT INTO %[1]s.content_edges (tenant_id, from_taxonomy_id, relation, to_taxonomy_id) VALUES ('doujins', '%[3]s', 'alias_of', '%[2]s');
-INSERT INTO %[1]s.content_posts (id, tenant_id, author_id, title, slug, body) VALUES
- ('%[5]s', 'doujins', 'u', 'Hello World', NULL, 'b'),
- ('%[6]s', 'doujins', 'u', 'Ignored', 'My Custom Slug', 'b');
-INSERT INTO %[1]s.content_posts (id, tenant_id, author_id, title, body, deleted_at) VALUES ('%[7]s', 'doujins', 'u', 'Deleted', 'b', now());
-RESET search_path`, schema, id(1), id(2), id(3), id(4), id(5), id(6))); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
-		t.Fatal(err)
-	}
-
-	s := newStore(t, pool, schema, tenant)
-	links, err := s.Links(ctx, []contentref.ContentRef{ref("artist", 1), ref("artist", 2), ref("tag", 3), ref("post", 4), ref("post", 5), ref("post", 6)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a1 := links[ref("artist", 1).Key()]
-	if a1.Slug != "cafe-olmuller" || a1.Slugs["de"] != "kaffee-olmuller" || len(a1.Slugs) != 2 {
-		t.Fatalf("artist %+v", a1)
-	}
-	if a2 := links[ref("artist", 2).Key()]; a2.Code != a1.Code {
-		t.Fatalf("merged artist resolves to %+v, want %s", a2, a1.Code)
-	}
-	if tag := links[ref("tag", 3).Key()]; tag.Code == "" || tag.Slug != "" {
-		t.Fatalf("nameless tag %+v", tag)
-	}
-	if p := links[ref("post", 4).Key()]; p.Slug != "hello-world" {
-		t.Fatalf("post %+v", p)
-	}
-	if p := links[ref("post", 5).Key()]; p.Slug != "my-custom-slug" {
-		t.Fatalf("post with slug %+v", p)
-	}
-	if _, ok := links[ref("post", 6).Key()]; ok || len(links) != 5 {
-		t.Fatalf("deleted post registered or links missing: %+v", links)
-	}
-	h, err := newStore(t, pool, schema, "hentai0").Links(ctx, []contentref.ContentRef{contentref.New("hentai0", "tag", id(1))})
-	if err != nil || len(h) != 1 {
-		t.Fatalf("hentai0 tag %+v %v", h, err)
-	}
-	// New records after the backfill keep drawing codes from the same generator.
-	if got := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 7), Title: "new"})[0]; !codeRE.MatchString(string(got.Code)) {
-		t.Fatalf("post-migration code %q", got.Code)
 	}
 }

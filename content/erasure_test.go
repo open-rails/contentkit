@@ -179,10 +179,10 @@ func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Privileged restore loads old source/counters but retains the permanent fence.
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`',NULL,'gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`',NULL,'gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.counts+` SET likes=likes+1 WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='`+cid(42)+`'`, rt.tenant); err != nil {

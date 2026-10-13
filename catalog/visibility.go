@@ -390,25 +390,28 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	shown := map[string][]facetRow{}
 	decisions := map[string]Decision{}
-	opens := map[string]bool{}
+	locked := map[string]bool{}
 	for i, r := range slices.Concat(live, held) {
+		if !ds[i].Allowed {
+			locked[r.contentID] = true
+		}
 		if i >= len(live) && !ds[i].Allowed {
 			continue
 		}
 		shown[r.contentID] = append(shown[r.contentID], r)
 		decisions[r.versionID] = decision(ds[i])
-		opens[r.contentID] = opens[r.contentID] || ds[i].Allowed
 	}
 	// Owner-group editorship is asked once per owner group: unless every,
 	// only of items the rule does not show whole (drafts, scheduled, deleted,
-	// held, out of the site's scope) or does not open.
+	// held, out of the site's scope) or leaves a version locked, so an editor
+	// is never offered a version of their group's.
 	var groups []string
 	for id, rs := range byID {
 		g := rs[0].ownerGroup
 		if g == "" || known(id) || slices.Contains(groups, g) {
 			continue
 		}
-		if every || !opens[id] || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+		if every || locked[id] || len(shown[id]) == 0 || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
 			groups = append(groups, g)
 		}
 	}
@@ -511,7 +514,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerGroup: o.group}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -525,12 +528,18 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	return out, nil
 }
 
-// ownership is a content item's first creator and comments setting.
-type ownership struct{ creator, comments string }
+// ownership is a content item's first creator, comments setting and active
+// user-owned owner group.
+type ownership struct {
+	creator, comments string
+	group             *resolve.OwnerGroup
+}
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
- AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), '') FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
+ AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+ FROM `+s.t.items+` c LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
+ WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -539,8 +548,12 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 	for rows.Next() {
 		var id string
 		var o ownership
-		if err := rows.Scan(&id, &o.comments, &o.creator); err != nil {
+		var g resolve.OwnerGroup
+		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
+		}
+		if g.ID != "" && s.cfg.GroupKinds[g.Kind].Owner == "user" {
+			o.group = &g
 		}
 		out[id] = o
 	}

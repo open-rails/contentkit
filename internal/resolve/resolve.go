@@ -34,6 +34,16 @@ type Resolution struct {
 	// Comments is the item's comments setting: open (also ""), closed or
 	// hidden.
 	Comments string
+	// OwnerGroup is the user-owned group whose comment moderators
+	// (access.GroupCommentsModerate in its scope, and its owner) moderate the
+	// item's comments: a content item's owner group, or the group itself;
+	// nil when none.
+	OwnerGroup *OwnerGroup
+}
+
+// OwnerGroup names a user-owned group with what its permission checks need.
+type OwnerGroup struct {
+	Kind, ID, Owner, Scope string
 }
 
 // Full reports access to the item: everything private is served.

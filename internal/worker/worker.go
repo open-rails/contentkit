@@ -188,9 +188,9 @@ func (w syncer) readDirty(ctx context.Context) ([]dirtyRow, error) {
 		FROM %s.content_search_dirty d
 		LEFT JOIN %s.content_search_invalid i
 		  ON i.tenant_id=d.tenant_id AND i.content_kind=d.content_kind AND i.content_id=d.content_id
-		 AND i.content_version_id=d.content_version_id AND i.language=d.language AND i.revision=d.revision
+		 AND i.content_version_id IS NOT DISTINCT FROM d.content_version_id AND i.language=d.language AND i.revision=d.revision
 		WHERE d.tenant_id = $1 AND i.tenant_id IS NULL
-		ORDER BY d.updated_at ASC, d.content_kind, d.content_id, d.content_version_id, d.language
+		ORDER BY d.updated_at ASC, d.content_kind, d.content_id, d.content_version_id NULLS FIRST, d.language
 		LIMIT $2
 	`, w.qs, w.qs), w.cfg.Tenant, w.cfg.DirtyBatchSize)
 	if err != nil {
@@ -199,25 +199,24 @@ func (w syncer) readDirty(ctx context.Context) ([]dirtyRow, error) {
 	defer rows.Close()
 	var batch []dirtyRow
 	for rows.Next() {
-		var (
-			r       dirtyRow
-			version string
-		)
+		var r dirtyRow
+		var version *string
 		if err := rows.Scan(&r.ContentKind, &r.ContentID, &version, &r.Language, &r.IsDeleted, &r.Reason, &r.Revision); err != nil {
 			return nil, err
 		}
-		r.ContentRef = contentref.NewVersion(w.cfg.Tenant, r.ContentKind, r.ContentID, version)
+		r.ContentRef = contentref.New(w.cfg.Tenant, r.ContentKind, r.ContentID)
+		r.ContentRef.ContentVersionID = version
 		batch = append(batch, r)
 	}
 	return batch, rows.Err()
 }
 
 type queueRow struct {
-	ContentKind      string `json:"content_kind"`
-	ContentID        string `json:"content_id"`
-	ContentVersionID string `json:"content_version_id"`
-	Language         string `json:"language"`
-	Revision         int64  `json:"revision"`
+	ContentKind      string  `json:"content_kind"`
+	ContentID        string  `json:"content_id"`
+	ContentVersionID *string `json:"content_version_id"`
+	Language         string  `json:"language"`
+	Revision         int64   `json:"revision"`
 }
 
 type invalidDocumentRow struct {
@@ -230,7 +229,7 @@ const queueColumns = `(content_kind text,content_id text,content_version_id text
 func queueRows(rows []dirtyRow) ([]byte, error) {
 	out := make([]queueRow, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, queueRow{r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision})
+		out = append(out, queueRow{r.ContentKind, r.ContentID, r.ContentVersionID, r.Language, r.Revision})
 	}
 	return json.Marshal(out)
 }
@@ -257,18 +256,21 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 		current := map[documentIdentity]bool{}
 		locked, err := tx.Query(ctx, fmt.Sprintf(`SELECT d.content_kind, d.content_id, d.content_version_id, d.language
  FROM %s.content_search_dirty d JOIN jsonb_to_recordset($2::jsonb) AS r%s
- ON d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id AND d.language=r.language AND d.revision=r.revision
- WHERE d.tenant_id=$1 ORDER BY 1,2,3,4 FOR UPDATE OF d`, w.qs, queueColumns), w.cfg.Tenant, data)
+ ON d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id IS NOT DISTINCT FROM r.content_version_id AND d.language=r.language AND d.revision=r.revision
+ WHERE d.tenant_id=$1 ORDER BY 1,2,3 NULLS FIRST,4 FOR UPDATE OF d`, w.qs, queueColumns), w.cfg.Tenant, data)
 		if err != nil {
 			return err
 		}
 		defer locked.Close()
 		for locked.Next() {
-			var kind, id, version, language string
+			var kind, id, language string
+			var version *string
 			if err := locked.Scan(&kind, &id, &version, &language); err != nil {
 				return err
 			}
-			current[identity(search.DocumentKey{ContentRef: contentref.NewVersion(w.cfg.Tenant, kind, id, version), Language: language})] = true
+			ref := contentref.New(w.cfg.Tenant, kind, id)
+			ref.ContentVersionID = version
+			current[identity(search.DocumentKey{ContentRef: ref, Language: language})] = true
 		}
 		if err := locked.Err(); err != nil {
 			return err
@@ -288,7 +290,7 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 				invalid = append(invalid, invalidDocumentRow{
 					queueRow: queueRow{
 						ContentKind: r.ContentKind, ContentID: r.ContentID,
-						ContentVersionID: r.Version(), Language: r.Language, Revision: r.Revision,
+						ContentVersionID: r.ContentVersionID, Language: r.Language, Revision: r.Revision,
 					},
 					LastError: err.Error(),
 				})
@@ -325,7 +327,7 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 			if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_invalid i
  USING jsonb_to_recordset($2::jsonb) AS r%s
  WHERE i.tenant_id=$1 AND i.content_kind=r.content_kind AND i.content_id=r.content_id
- AND i.content_version_id=r.content_version_id AND i.language=r.language`, w.qs, queueColumns), w.cfg.Tenant, data); err != nil {
+ AND i.content_version_id IS NOT DISTINCT FROM r.content_version_id AND i.language=r.language`, w.qs, queueColumns), w.cfg.Tenant, data); err != nil {
 				return err
 			}
 		}
@@ -350,9 +352,12 @@ func (w syncer) ack(ctx context.Context, acked []dirtyRow) error {
 	if err != nil {
 		return err
 	}
-	_, err = w.cfg.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty d USING jsonb_to_recordset($2::jsonb) AS r%s
- WHERE d.tenant_id=$1 AND d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id
- AND d.language=r.language AND d.revision=r.revision`, w.qs, queueColumns), w.cfg.Tenant, data)
+	// A key's invalid row goes with its acknowledged dirty row.
+	_, err = w.cfg.Pool.Exec(ctx, fmt.Sprintf(`WITH acked AS (DELETE FROM %[1]s.content_search_dirty d USING jsonb_to_recordset($2::jsonb) AS r%[2]s
+ WHERE d.tenant_id=$1 AND d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id IS NOT DISTINCT FROM r.content_version_id
+ AND d.language=r.language AND d.revision=r.revision RETURNING d.content_kind, d.content_id, d.content_version_id, d.language)
+ DELETE FROM %[1]s.content_search_invalid i USING acked a WHERE i.tenant_id=$1 AND i.content_kind=a.content_kind AND i.content_id=a.content_id
+ AND i.content_version_id IS NOT DISTINCT FROM a.content_version_id AND i.language=a.language`, w.qs, queueColumns), w.cfg.Tenant, data)
 	return err
 }
 
@@ -387,12 +392,12 @@ func (w syncer) backfill(ctx context.Context) error {
 					cfg.Tenant, kind, lang, cursor, state, err.Error())
 				return err
 			}
-			rows := make([]map[string]string, 0, len(refs))
+			rows := make([]map[string]any, 0, len(refs))
 			for _, ref := range refs {
 				if ref.TenantID != cfg.Tenant || ref.ContentKind != kind {
 					return fmt.Errorf("worker: source listed %s outside the requested %s/%s", ref, cfg.Tenant, kind)
 				}
-				rows = append(rows, map[string]string{"content_id": ref.ContentID, "content_version_id": ref.Version()})
+				rows = append(rows, map[string]any{"content_id": ref.ContentID, "content_version_id": ref.ContentVersionID})
 			}
 			data, err := json.Marshal(rows)
 			if err != nil {

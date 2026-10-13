@@ -4,6 +4,7 @@ import type { ContentKitError } from "../client/errors.js";
 import type { ReadResult, RefBody } from "../client/generated/wire.js";
 import type { ReadOptions } from "../client/media/api.js";
 import { chunkOffsets, mergeReads, processing as isProcessing, READ_CHUNK } from "../client/media/windows.js";
+import { itemRef } from "../client/media/ref.js";
 import { useOptionalContentKitClient, useReadScope } from "./context.js";
 import { readKey, storeFor, type ReadEntry } from "./store.js";
 
@@ -97,7 +98,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const subscribe = useCallback(
     (l: () => void) => {
       if (!store || !fetching) return () => {};
-      const offs = keys.map((key, i) => store.subscribe(key, { kind: ref.kind, id: ref.id }, { prefix, download, editor, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
+      const offs = keys.map((key, i) => store.subscribe(key, itemRef(ref), { prefix, download, editor, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
       return () => offs.forEach((off) => off());
     },
     // ref and options are in keys.

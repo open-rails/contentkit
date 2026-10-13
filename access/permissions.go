@@ -72,8 +72,12 @@ func GroupOffersWrite(kind string) string { return kind + ":offers:write" }
 // GroupMediaWrite: upload and edit the group's media.
 func GroupMediaWrite(kind string) string { return kind + ":media:write" }
 
+// GroupCommentsModerate: delete, hold and release comments on the group and
+// the content it owns, and ban commenters from them.
+func GroupCommentsModerate(kind string) string { return kind + ":comments:moderate" }
+
 // GroupPermissions is every permission ContentKit checks in a group kind's
 // AuthKit scopes.
 func GroupPermissions(kind string) []string {
-	return []string{GroupContentWrite(kind), GroupSettingsManage(kind), GroupOffersWrite(kind), GroupMediaWrite(kind)}
+	return []string{GroupContentWrite(kind), GroupSettingsManage(kind), GroupOffersWrite(kind), GroupMediaWrite(kind), GroupCommentsModerate(kind)}
 }

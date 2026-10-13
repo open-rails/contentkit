@@ -45,15 +45,15 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	g1, g2 := hub.Content("gallery", cid(1)), hub.Content("gallery", cid(2))
 	day := func(d, h int) time.Time { return time.Date(2026, 6, d, h, 0, 0, 0, time.UTC) }
 
-	// Record signals: u1 completes g1; many anons view g2 (popular); a0 views
-	// both so g2 is co-engaged with g1.
+	// Record signals, scored as the engine scores them: u1 completes g1; many
+	// anons view g2 (popular); a0 views both so g2 is co-engaged with g1.
 	g1View := signal.Signal{ContentRef: g1, Subject: user, Type: signal.TypeView, EventID: "u1-g1", OccurredAt: day(1, 10), Progress: 20, ProgressMax: 20, Score: 100, Completed: true, Resume: "p:20"}
 	batch := []signal.Signal{g1View}
 	for i := 0; i < 8; i++ {
 		batch = append(batch, signal.Signal{ContentRef: g2, Subject: signal.Subject{AnonKey: fmt.Sprintf("a%d", i)}, Type: signal.TypeView,
-			EventID: fmt.Sprintf("a%d-g2", i), OccurredAt: day(2, 9+i%6), Progress: 18, ProgressMax: 20})
+			EventID: fmt.Sprintf("a%d-g2", i), OccurredAt: day(2, 9+i%6), Progress: 18, ProgressMax: 20, Score: 90, Completed: true})
 	}
-	batch = append(batch, signal.Signal{ContentRef: g1, Subject: signal.Subject{AnonKey: "a0"}, Type: signal.TypeView, EventID: "a0-g1", OccurredAt: day(2, 9), Progress: 18, ProgressMax: 20})
+	batch = append(batch, signal.Signal{ContentRef: g1, Subject: signal.Subject{AnonKey: "a0"}, Type: signal.TypeView, EventID: "a0-g1", OccurredAt: day(2, 9), Progress: 18, ProgressMax: 20, Score: 90, Completed: true})
 	if err := hub.RecordSignals(ctx, batch); err != nil {
 		t.Fatalf("RecordSignals: %v", err)
 	}

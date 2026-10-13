@@ -27,7 +27,10 @@ func (s *Store) markDirty(ctx context.Context, q Querier, groups []Group) error 
 				Deleted: g.State != StateActive, Reason: "groups"})
 		}
 	}
-	return search.MarkDirty(ctx, q, s.schema, marks)
+	if err := search.MarkDirty(ctx, q, s.schema, marks); err != nil || len(marks) == 0 || s.documents == nil {
+		return err
+	}
+	return s.documents(ctx, q)
 }
 
 // Limits of search.UpsertKeywordDocuments.

@@ -21,6 +21,7 @@ import (
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
@@ -64,8 +65,10 @@ func channelBilling(w *world) *openrails.Client {
 // neither; cards carry the avatar, the offer and the viewer's membership;
 // the viewer joins it free and finds it among their groups; uploads are rate
 // limited and capped per channel; the host's Go client reads and writes it;
-// a holder of channel:content:write writes its posts; deleting it retires
-// its scope, its posts and its media.
+// a holder of channel:content:write writes its posts; renaming it renames
+// its OpenRails product; deleting it retires its scope, its posts and hides
+// its media; restoring it brings back its scope, media and the posts its
+// deletion took, not one deleted before.
 func TestChannels(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -192,8 +195,27 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
 	f.want(http.StatusForbidden, writerToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Mine"}}}, nil)
 
-	// Deleting retires the scope, deletes the channel's posts and queues its
-	// media folder's deletion.
+	// Renaming the channel renames its product on OpenRails.
+	f.want(http.StatusOK, editorToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio Two"}}}, nil)
+	bill := ckopenrails.Billing(merchant)
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		products, err := bill.Products(ctx, []string{card.Access.Key.String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, ok := products[card.Access.Key.String()]; ok && p.DisplayName == "Studio Two" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the product keeps its name: %+v", products)
+		}
+	}
+
+	// Deleting retires the scope, deletes the channel's posts and hides its
+	// media, keeping its folder for a restore.
+	var earlier catalog.Content
+	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &earlier)
+	f.want(http.StatusNoContent, writerToken, "DELETE", "/contents/"+earlier.ID, nil, nil)
 	var deleted groups.Group
 	f.want(http.StatusOK, creatorToken, "DELETE", path, nil, &deleted)
 	if deleted.State != groups.StateDeleted || deleted.AuthScope != "" {
@@ -202,14 +224,57 @@ func TestChannels(t *testing.T) {
 	if g, err := w.ak.Group(ctx, iam.GroupByID(string(ch.ID))); err != nil || g.DeletedAt == nil {
 		t.Fatalf("the scope after delete %+v %v", g, err)
 	}
-	var state string
-	if err := w.pool.QueryRow(ctx, `SELECT state FROM `+pgx.Identifier{w.schema, "content_items"}.Sanitize()+` WHERE id = $1`, made2.ID).Scan(&state); err != nil || state != "deleted" {
-		t.Fatalf("the channel's post after delete: %q %v", state, err)
+	items := pgx.Identifier{w.schema, "content_items"}.Sanitize()
+	stateOf := func(id string) (state, cause string) {
+		t.Helper()
+		if err := w.pool.QueryRow(ctx, `SELECT state, coalesce(deleted_with_group, '') FROM `+items+` WHERE id = $1`, id).Scan(&state, &cause); err != nil {
+			t.Fatal(err)
+		}
+		return state, cause
 	}
-	var queued int
-	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+
-		` WHERE kind = 'contentkit_media_delete_folder' AND args->>'prefix' LIKE '%' || $1 || '%'`, string(ch.ID)).Scan(&queued); err != nil || queued == 0 {
-		t.Fatalf("the media folder's deletion: %d queued, %v", queued, err)
+	if state, cause := stateOf(made2.ID); state != "deleted" || cause != string(ch.ID) {
+		t.Fatalf("the channel's post after delete: %q by %q", state, cause)
+	}
+	if state, cause := stateOf(earlier.ID); state != "deleted" || cause != "" {
+		t.Fatalf("the post deleted before: %q by %q", state, cause)
+	}
+	jobs := func(kind string) int {
+		t.Helper()
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+
+			` WHERE kind = $1 AND args::text LIKE '%' || $2 || '%'`, kind, string(ch.ID)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := jobs("contentkit_media_delete_folder"); n != 0 {
+		t.Fatalf("the media folder's deletion was queued %d times on delete", n)
+	}
+	hides := jobs("contentkit_media_expose")
+	if hides == 0 {
+		t.Fatal("deleting queued no hiding of the channel's media")
+	}
+
+	// Restoring brings back the scope, the media and the post its deletion
+	// took; the one deleted before stays deleted.
+	var back groups.Group
+	f.want(http.StatusOK, creatorToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, &back)
+	if back.State != groups.StateActive || back.AuthScope != string(ch.ID) {
+		t.Fatalf("restored %+v", back)
+	}
+	if state, cause := stateOf(made2.ID); state != "draft" || cause != "" {
+		t.Fatalf("the channel's post after restore: %q by %q", state, cause)
+	}
+	if state, _ := stateOf(earlier.ID); state != "deleted" {
+		t.Fatalf("the post deleted before the channel: %q after restore", state)
+	}
+	if n := jobs("contentkit_media_expose"); n <= hides {
+		t.Fatalf("restoring queued no showing of the channel's media (%d exposes)", n)
+	}
+	var restored catalog.Content
+	f.want(http.StatusOK, creatorToken, "GET", "/contents/"+made2.ID, nil, &restored)
+	if !restored.Editor || restored.State != catalog.StateDraft {
+		t.Fatalf("the restored post as its channel's owner sees it: %+v", restored)
 	}
 }
 
@@ -254,9 +319,10 @@ func (v countedVerified) Can(ctx context.Context, scope auth.Scope, perm string)
 	return v.Verified.(auth.PermissionChecker).Can(ctx, scope, perm)
 }
 
-// A signed-in reader of a published channel post costs AuthKit no editor
-// check, and a failing one never fails it; the channel's writer still sees
-// its draft, and a failing check hides a draft rather than answering 503.
+// A signed-in reader's detail of a published channel post asks AuthKit once
+// whether they edit it, and a failing check never fails it; the channel's
+// writer still sees its draft, and a failing check hides a draft rather than
+// answering 503.
 func TestChannelPostReads(t *testing.T) {
 	w := newWorld(t)
 	writer, writerToken := w.person(iam.Role{})
@@ -284,8 +350,8 @@ func TestChannelPostReads(t *testing.T) {
 	counter.asked.Store(0)
 	var got catalog.Content
 	f.want(http.StatusOK, readerToken, "GET", "/contents/"+post.ID, nil, &got)
-	if got.ID != post.ID || got.Editor || counter.asked.Load() != 0 {
-		t.Fatalf("published read %+v: %d group checks, want none", got, counter.asked.Load())
+	if got.ID != post.ID || got.Editor || counter.asked.Load() != 1 {
+		t.Fatalf("published read %+v: %d group checks, want one", got, counter.asked.Load())
 	}
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+draft.ID, nil, &got)
 	if !got.Editor || counter.asked.Load() == 0 {
@@ -297,4 +363,99 @@ func TestChannelPostReads(t *testing.T) {
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+post.ID, nil, nil)
 	f.want(http.StatusNotFound, writerToken, "GET", "/contents/"+draft.ID, nil, nil)
 	f.want(http.StatusServiceUnavailable, writerToken, "PATCH", "/contents/"+draft.ID, catalog.ContentPatch{}, nil)
+}
+
+// A channel's comment moderators (channel:comments:moderate, and its owner)
+// moderate comments on its posts, asked only when they act: they delete
+// anyone's, hold one out of its thread and release it, list what is held,
+// and ban a commenter from the channel's content only; nobody else does,
+// nor a moderator of another channel. They find the channel among their
+// groups as its moderator.
+func TestChannelCommentModeration(t *testing.T) {
+	w := newWorld(t)
+	_, creatorToken := w.person(iam.Role{})
+	moderator, moderatorToken := w.person(iam.Role{})
+	commenter, commenterToken := w.person(iam.Role{})
+	_, strangerToken := w.person(iam.Role{})
+	_, otherToken := w.person(iam.Role{})
+	_, staff := w.person(w.staff)
+	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
+		c.Content.GroupKinds["channel"] = channel
+		d.Scopes = ckauthkit.Scopes(w.ak)
+	}))
+	var made []groups.Group
+	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	ch := made[0]
+	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(moderator.ID), w.channelModerator)
+	f.want(http.StatusCreated, otherToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "other"}}, nil)
+	var post catalog.Content
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID),
+		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, &post)
+	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
+	elsewhere, _ := w.published(f, staff, "blog")
+	item := "/contents/" + post.ID + "/comments"
+	comment := func(token, target, body string) content.Comment {
+		t.Helper()
+		var c content.Comment
+		f.want(http.StatusCreated, token, "POST", target, content.CommentInput{Body: body}, &c)
+		return c
+	}
+	listed := func(id string) bool {
+		t.Helper()
+		var list []content.Comment
+		f.want(http.StatusOK, "", "GET", item, nil, &list)
+		for _, c := range list {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	rude := comment(commenterToken, item, "rude")
+	f.want(http.StatusForbidden, strangerToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusForbidden, otherToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusNoContent, moderatorToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusForbidden, moderatorToken, "PATCH", "/comments/"+comment(commenterToken, item, "mine").ID, content.CommentEdit{Body: "theirs"}, nil)
+
+	doubtful := comment(commenterToken, item, "doubtful")
+	f.want(http.StatusForbidden, commenterToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	f.want(http.StatusNoContent, moderatorToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	f.want(http.StatusConflict, moderatorToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	if listed(doubtful.ID) {
+		t.Fatal("a held comment stays in its thread")
+	}
+	var held content.HeldPage
+	f.want(http.StatusForbidden, strangerToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, nil)
+	f.want(http.StatusOK, creatorToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, &held)
+	if len(held.Items) != 1 || held.Items[0].ID != doubtful.ID {
+		t.Fatalf("the channel's held comments %+v", held.Items)
+	}
+	f.want(http.StatusNoContent, moderatorToken, "POST", "/comments/"+doubtful.ID+"/release", nil, nil)
+	if !listed(doubtful.ID) {
+		t.Fatal("a released comment is not back in its thread")
+	}
+
+	bans := "/groups/" + string(ch.ID) + "/comment-bans"
+	f.want(http.StatusForbidden, strangerToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
+	f.want(http.StatusOK, moderatorToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
+	var refusal struct{ Code string }
+	f.want(http.StatusForbidden, commenterToken, "POST", item, content.CommentInput{Body: "again"}, &refusal)
+	if refusal.Code != "comment_banned" {
+		t.Fatalf("a banned commenter answered %q", refusal.Code)
+	}
+	comment(commenterToken, "/contents/"+elsewhere+"/comments", "elsewhere")
+	var list []content.CommentBan
+	f.want(http.StatusOK, creatorToken, "GET", bans, nil, &list)
+	if len(list) != 1 || list[0].UserID != commenter.ID || list[0].Scope != content.GroupScope(string(ch.ID)) {
+		t.Fatalf("the channel's bans %+v", list)
+	}
+	f.want(http.StatusNoContent, moderatorToken, "DELETE", bans+"/"+commenter.ID, nil, nil)
+	comment(commenterToken, item, "again")
+
+	var mine groups.MyGroupPage
+	f.want(http.StatusOK, moderatorToken, "GET", "/me/groups", nil, &mine)
+	if g := mine.Groups; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
+		t.Fatalf("the moderator's groups %+v", mine)
+	}
 }

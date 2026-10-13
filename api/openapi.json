@@ -934,6 +934,91 @@
         ]
       }
     },
+    "/v1/comments/{cid}/hold": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Holds a published comment for review: out of its thread, shown to its author only, until released or deleted. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope).",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "conflict",
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/comments/{cid}/release": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Publishes a held comment, as a reviewer's approval does. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope).",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/contents/{id}/like": {
       "post": {
         "tags": [
@@ -2854,6 +2939,254 @@
         ]
       }
     },
+    "/v1/groups/{id}/held-comments": {
+      "get": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/comment-bans": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommentBan"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/comment-bans/{user}": {
+      "put": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentBan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Lifts a user's ban on a user-owned group and its content.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/contents/{id}/can-comment": {
       "get": {
         "tags": [
@@ -3524,6 +3857,7 @@
           "conflict",
           "forbidden",
           "not_found",
+          "no_membership",
           "not_configured"
         ],
         "x-contentkit-error-sets": [
@@ -3696,7 +4030,8 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found"
+          "not_found",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -3893,7 +4228,8 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "forbidden"
+          "forbidden",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -4581,7 +4917,8 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found"
+          "not_found",
+          "no_membership"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -5901,7 +6238,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "Marks a group deleted and retires its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
+        "summary": "Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -5950,7 +6287,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "The viewer's active groups: those they own, edit through the group's AuthKit scope ({kind}:settings:manage) or hold the key of, each saying which, as GET /groups lists them.",
+        "summary": "The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
         "parameters": [
           {
             "name": "kind",
@@ -11667,6 +12004,9 @@
           "member": {
             "type": "boolean"
           },
+          "editor": {
+            "type": "boolean"
+          },
           "unknown": {
             "type": "boolean"
           }
@@ -12540,6 +12880,9 @@
           },
           "sort": {
             "type": "string"
+          },
+          "draft_ttl": {
+            "type": "integer"
           }
         },
         "required": [
@@ -12853,6 +13196,12 @@
           "editor": {
             "type": "boolean"
           },
+          "writer": {
+            "type": "boolean"
+          },
+          "moderator": {
+            "type": "boolean"
+          },
           "member": {
             "type": "boolean"
           }
@@ -12867,6 +13216,8 @@
           "created_at",
           "owner",
           "editor",
+          "writer",
+          "moderator",
           "member"
         ]
       },
@@ -15098,6 +15449,7 @@
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
+          "no_membership",
           "not_configured",
           "not_found",
           "not_uploaded",
@@ -15363,6 +15715,10 @@
     "moderation_rejected": {
       "status": 422,
       "meaning": "The moderator refused the text; `error` says why."
+    },
+    "no_membership": {
+      "status": 409,
+      "meaning": "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first."
     },
     "not_configured": {
       "status": 501,

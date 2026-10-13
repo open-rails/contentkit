@@ -93,7 +93,9 @@ describe("content pages against the real ContentKit", () => {
     // Pages into the version's folder; the worker renders and publishes them.
     const ref = { kind: "comic", id: c!.id, version: v.id };
     for (const [i, name] of ["001.png", "002.png"].entries()) await staff.media.put(png(name, i + 1, 60, 90), { ref, path: `originals/${name}`, wait: false });
-    await waitFor(() => expect(result.current.plan?.pages).toBe(2), wait);
+    await waitFor(() => expect(result.current.plan?.pages).toBe(2), wait).catch(async (e: Error) => {
+      throw new Error(`${e.message}\npending=${result.current.pending} error=${result.current.error?.code}\n${JSON.stringify(await h.publication(ref), null, 1)}`);
+    });
     const plan = result.current.plan!;
     expect(plan.segments).toHaveLength(1);
     expect(plan.segments[0]).toMatchObject({ start: 0, end: 2, released: true, locked: false });

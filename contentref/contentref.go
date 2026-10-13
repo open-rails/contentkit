@@ -93,7 +93,7 @@ func (r ContentRef) String() string {
 }
 
 // ContentKey is the comparable form of a ContentRef; ContentVersionID is ""
-// for the work. Storage keys use the same encoding.
+// for the work, which storage keys hold as NULL (internal/versionid).
 type ContentKey struct {
 	TenantID         string
 	ContentKind      string

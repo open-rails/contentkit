@@ -21,7 +21,6 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -249,8 +248,6 @@ func (h *harness) close() {
 }
 
 // ref is the item's reference in its kind's namespace.
-func (h *harness) ref(kind, id string) (contentref.ContentRef, error) { return h.reg.Ref(kind, id) }
-
 func openPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -1,36 +1,19 @@
 # Database initialization
 
-ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
+Each store has one baseline of the final schema (#117, pre-launch hard cut):
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | interactions, moderation, polls, preferences, keyword search and the retired taxonomy tables |
-| PostgreSQL | `migrations.Postgres` | `postgres/0002_search_invalid.up.sql` | durable invalid search-document state |
-| PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
-| PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0005_media_slot_backfill.up.sql` | slot index backfill progress (`content_media_slot_backfill`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0006_drop_media_slots.up.sql` | drops the slot index and its backfill (one media model) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0007_inline_image_names.up.sql` | renames post and poll image URL columns to image names (refuses legacy URLs; coordinated cutover, see HOST_INTEGRATION) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0008_canonical_interaction_ids.up.sql` | merges case spellings of interaction content ids and refuses them (`CHECK content_id = lower(content_id)`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0009_comment_bans.up.sql` | comment bans (`content_comment_bans`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0010_content_codes.up.sql` | content codes and legacy aliases (`content_codes`, `content_code_aliases`, `contentkit_content_code()`); backfills codes for existing taxonomy nodes and posts |
-| PostgreSQL | `migrations.Postgres` | `postgres/0011_media_commits.up.sql` | media commit journal and allocations (`content_media_commits`, `content_media_allocations`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0012_media_publications.up.sql` | current public publications per item (`content_media_publications`) and the media upgrade's progress (`content_media_upgrades`, `content_media_upgrade_failures`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0013_comment_author_index.up.sql` | a person's comments for moderators (`content_comments_author_idx`) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0014_owned_content.up.sql` | ContentKit-owned content, versions, facets, offers and groups (#117) |
-| PostgreSQL | `migrations.Postgres` | `postgres/0015_drop_taxonomy.up.sql` | drops the taxonomy tables groups replace; indexes windowed memberships |
+| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, groups, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
-The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
-an existing installation of the current ContentKit lineage. The baselines replace
-older feature-specific migration chains; they are not an in-place upgrade of
-those retired ledgers. Restore old installations with the matching library
-version and use a host-owned, verified data import when moving their data into
-fresh stores.
+There is no upgrade path from installs of an older chain: start from empty
+stores and import their data (`POST /v1/import`). A version id is NULL for the
+work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
 
 ## ContentKit's own schema
 
-`contentkit.New` applies the PostgreSQL chain to `Config.Database.Schema`
+`contentkit.New` applies the PostgreSQL baseline to `Config.Database.Schema`
 (default `contentkit`), River's migrations to `Database.RiverSchema` and the
 media worker's queue, and, with `Config.ClickHouse.Addr`, the ClickHouse
 baseline to `ClickHouse.Database`. The schema is ContentKit's alone: it may
@@ -65,17 +48,8 @@ Hosts own database roles and grants. Give the runtime role `USAGE` on its
 schema, required table privileges and sequence usage; keep DDL privileges on
 the migration role. ContentKit does not create application roles or grant
 access to another application's schema. Migration SQL contains the complete
-indexes, checks, internal foreign keys and dirty-queue trigger.
-Before deploying a worker that uses `0002`, apply the migration and grant its
-runtime role read/write access to `content_search_invalid`. Before deploying
-code that uses `0004` and `0005`, apply them and grant the host's runtime role
-read/write access to `content_media_slots` and `content_media_slot_backfill`
-(the media worker needs none). Existing slots enter the index at the first
-start: binding the media jobs to River schedules a one-time backfill.
-`0010` adds `content_codes` and `content_code_aliases`. The host's runtime
-role needs read/write access to both and EXECUTE on `contentkit_content_code()` (PUBLIC by default).
-Group and post writes register codes from then on, so grant the access
-before deploying code that uses `0010`.
+indexes, checks, internal foreign keys and triggers. The runtime role also needs
+EXECUTE on `contentkit_content_code()` (PUBLIC by default).
 
 ## Host relationships
 

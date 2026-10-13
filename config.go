@@ -2,7 +2,10 @@ package contentkit
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -106,6 +109,27 @@ type MediaConfig struct {
 	// Downloads are the version download quotas (anonymous, user, tiers);
 	// Deps.Redis shares them.
 	Downloads versions.Downloads `yaml:"downloads" json:"downloads"`
+}
+
+// MediaKinds is the media registry Config.Media serves, in the tenant's
+// namespace: content kinds' media are their versions', and each group kind
+// gains cover media (media.ForContent). The media worker runs it:
+// cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
+// and a host building its own worker gives it, with its hooks, to
+// media.NewRegistry.
+func (c Config) MediaKinds() (media.Config, error) {
+	if c.Media == nil {
+		return media.Config{}, errors.New("contentkit: Config.Media is not set")
+	}
+	mc, tenant := c.Media.Config, strings.TrimSpace(c.Tenant)
+	switch mc.Namespace {
+	case "":
+		mc.Namespace = tenant
+	case tenant:
+	default:
+		return media.Config{}, fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, tenant)
+	}
+	return media.ForContent(mc, c.Content)
 }
 
 // DeliveryConfig is how viewers with access present their item token to the

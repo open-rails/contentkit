@@ -205,13 +205,17 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	var list []string
-	for _, id := range ids {
+	var renamed []Ref
+	for i, id := range ids {
 		if changed[id] {
-			list = append(list, id)
+			list, renamed = append(list, id), append(renamed, Ref{Kind: rows[i].Kind, ID: GroupID(id)})
 		}
 	}
 	if len(list) == 0 {
 		return nil
+	}
+	if err := s.resyncSold(ctx, q, renamed); err != nil {
+		return err
 	}
 	if err := s.syncCodes(ctx, q, list); err != nil {
 		return err

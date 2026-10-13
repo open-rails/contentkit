@@ -16,7 +16,7 @@ for (const mode of ["alone", "router"] as const) {
     test(`media item panel: state, subtitles and poster (${mode}, ${theme})`, async ({ page }, info) => {
       const owner = await h.user();
       const video = await seedVideo(h, owner);
-      await page.goto(admin(`/admin/media/video/${video.id}`, owner, { mode, theme }));
+      await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode, theme }));
       const panel = page.locator("[data-ckui=media-item-panel]");
       await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
       expect(await inheritsHostTheme(page, "media-item-panel")).toBe(true);
@@ -51,7 +51,7 @@ for (const mode of ["alone", "router"] as const) {
   test(`media item panel: replace the source and choose the poster (${mode})`, async ({ page }) => {
     const owner = await h.user();
     const video = await seedVideo(h, owner);
-    await page.goto(admin(`/admin/media/video/${video.id}`, owner, { mode }));
+    await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode }));
     const panel = page.locator("[data-ckui=media-item-panel]");
     await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
     await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));

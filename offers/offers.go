@@ -192,6 +192,10 @@ type GroupAccess struct {
 	Offer *Sale `json:"offer,omitempty"`
 	// Member: the viewer holds the key (bought, subscribed or joined free).
 	Member bool `json:"member"`
+	// Editor: the viewer edits the group's content (its owner, a holder of
+	// {kind}:content:write in its AuthKit scope), so opens it all and is
+	// offered nothing.
+	Editor bool `json:"editor,omitempty"`
 	// Unknown: the billing read failed, so Member is false and may be wrong.
 	Unknown bool `json:"unknown,omitempty"`
 }

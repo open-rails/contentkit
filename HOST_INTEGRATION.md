@@ -53,6 +53,13 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.GroupsWrite` | `root:groups:write` | create, edit, merge and delete groups, and set memberships |
 
+A user-owned group kind with `auth_scope` (channels) has its own
+permissions, held in each group's AuthKit scope, whose persona declares
+`access.GroupPermissions(kind)`: `{kind}:content:write` (its content),
+`{kind}:settings:manage` (the group), `{kind}:offers:write`,
+`{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
+and ban on the group's content). The group's owner holds them all.
+
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
 
@@ -739,8 +746,9 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   and regenerates it. Apps sharing a namespace use one Postgres database:
   `PGLocker` takes advisory locks, which are per database, and Ceph RGW has
   no conditional PUT to fall back on.
-- The stock worker reads the registry as JSON (`json.Marshal(reg)` into
-  `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
+- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
+  and hooks are not included): an engine's is `Config.MediaKinds()`, printed
+  by `contentkit media-config`.
 
 ### Uploads and commit ops
 
@@ -943,8 +951,8 @@ Code changes:
 - `GatewayConfig(reg, defaults)` takes the defaults `image.PublishDefaults` returned.
 - `Registry.SrcSet` and `media.SrcSet` are removed: build public URLs with
   the lookup ("Public image URLs"), never from a preset's template.
-- Migrations `0011_media_commits` and `0012_media_publications`; River jobs
-  `contentkit_media_recover` (every minute) and `contentkit_media_upgrade`.
+- River jobs `contentkit_media_recover` (every minute) and
+  `contentkit_media_upgrade`.
 
 Order:
 

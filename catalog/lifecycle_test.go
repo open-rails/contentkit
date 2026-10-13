@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // A content item goes draft -> scheduled -> live -> deleted -> restored, and
@@ -199,7 +202,8 @@ func TestEventsRedeliverAfterFailureIntegration(t *testing.T) {
 // type, restrictions, listing and the access rule.
 func TestValidationIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	channel := f.group("channel", "studio")
+	channel, unsold := f.group("channel", "studio"), f.group("channel", "quiet")
+	f.sell(channel)
 	tag := f.group("tag", "red")
 	ok := gallery("Valid", "en")
 	ok.Attributes = map[string]any{"format": "manga", "volume": float64(3), "complete": true, "released": "2026-01-02T03:04:05Z", "note": "n"}
@@ -233,6 +237,27 @@ func TestValidationIntegration(t *testing.T) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
 		}
 	}
+	// Members-only content needs its group to sell a membership: on create,
+	// switching the item's rule or a version's override; a rule that stays
+	// with its group passes once the offer is gone.
+	members := &access.Rule{Level: access.GroupPPV, Group: unsold}
+	quiet := gallery("Quiet", "en")
+	quiet.Access = members
+	if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{quiet}); !errors.Is(err, ErrNoMembership) {
+		t.Errorf("members-only on an unsold group: %v, want ErrNoMembership", err)
+	}
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: members}}}); !errors.Is(err, ErrNoMembership) {
+		t.Errorf("switching to an unsold group: %v, want ErrNoMembership", err)
+	}
+	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Access: members}}}); !errors.Is(err, ErrNoMembership) {
+		t.Errorf("a version's override on an unsold group: %v, want ErrNoMembership", err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+pgx.Identifier{f.schema, "content_offers"}.Sanitize()+` SET state = 'withdrawn' WHERE target_id = $1`, channel); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.GroupPPV, Group: channel}}}}); err != nil {
+		t.Errorf("staying with a group whose offer was withdrawn: %v", err)
+	}
 	segs := []Segment{{Start: 0, End: 5}, {Start: 3, End: 9}}
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Segments: &segs}}}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("overlapping segments: %v", err)
@@ -257,5 +282,115 @@ func TestHiddenVersionFollowsTextIntegration(t *testing.T) {
 	got := f.read("staff", "main.test", id)[0]
 	if !slices.Equal(got.Versions[0].Languages, []string{"en"}) || got.Language != "en" || got.Slug != "diary" {
 		t.Fatalf("after English text: %+v", got)
+	}
+}
+
+// A kind's draft_ttl expires its drafts that never went live, rows and all;
+// a draft unpublished after going live, a fresh one and another kind's stay.
+func TestDraftExpiryIntegration(t *testing.T) {
+	f := newFixture(t, func(o *Options) {
+		blog := o.Kinds.Kinds["blog"]
+		blog.DraftTTL = 24 * time.Hour
+		o.Kinds.Kinds["blog"] = blog
+	})
+	var events []Event
+	f.s.Subscribe(func(_ context.Context, batch []Event) error {
+		events = append(events, batch...)
+		return nil
+	})
+	post := func(title string) string {
+		return f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: title}}})
+	}
+	abandoned, unpublished, fresh := post("Abandoned"), post("Unpublished"), post("Fresh")
+	f.publish("staff", unpublished, nil)
+	if err := f.s.Unpublish(f.ctx, f.as("staff"), []string{unpublished}); err != nil {
+		t.Fatal(err)
+	}
+	old := f.create("staff", gallery("Old gallery", "en"))
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` SET created_at = now() - interval '25 hours'
+ WHERE id = ANY($1)`, []string{abandoned, unpublished, old}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := f.s.ExpireDrafts(f.ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("expired %d, %v; want the abandoned draft", n, err)
+	}
+	var left []string
+	rows, err := f.pool.Query(f.ctx, `SELECT id FROM `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+		t.Fatal(err)
+	}
+	if want := slices.Sorted(slices.Values([]string{unpublished, fresh, old})); !slices.Equal(left, want) {
+		t.Fatalf("left %v, want %v", left, want)
+	}
+	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentPurged && e.ContentID == abandoned }) {
+		t.Fatalf("no purge event for the abandoned draft: %+v", events)
+	}
+	if n, err := f.s.ExpireDrafts(f.ctx); err != nil || n != 0 {
+		t.Fatalf("a second run expired %d, %v", n, err)
+	}
+	if err := (kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"blog": {Route: "b", Presentation: "post",
+		Versions: kinds.VersionRules{Languages: "one"}, DraftTTL: -time.Hour}}}).Validate(); err == nil {
+		t.Fatal("a negative draft_ttl was accepted")
+	}
+}
+
+// Once a free_after time passes, ReleaseFree runs a write's effects for the
+// content once (reads open it from that time on their own): a content update
+// event goes out, and a second run finds nothing; moving free_after arms it
+// again.
+func TestReleaseFreeIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	var events []Event
+	f.s.Subscribe(func(_ context.Context, batch []Event) error {
+		events = append(events, batch...)
+		return nil
+	})
+	free := f.now().Add(time.Hour)
+	in := gallery("Soon free", "en")
+	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}
+	id := f.create("staff", in)
+	f.publish("staff", id, nil)
+	plain := f.create("staff", gallery("Plain", "en"))
+	f.publish("staff", plain, nil)
+	applied := func() bool {
+		t.Helper()
+		var ok bool
+		if err := f.pool.QueryRow(f.ctx, `SELECT bool_and(free_applied) FROM `+pgx.Identifier{f.schema, "content_facets"}.Sanitize()+` WHERE content_id = $1`, id).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 || applied() {
+		t.Fatalf("released %d (%v) before free_after", n, err)
+	}
+	if d := f.read("", "main.test", id)[0].Versions[0].Decision; d.Allowed {
+		t.Fatalf("anonymous opens it before free_after: %+v", d)
+	}
+	f.advance(2 * time.Hour)
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 1 || !applied() {
+		t.Fatalf("released %d (%v) after free_after", n, err)
+	}
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 {
+		t.Fatalf("released again %d (%v)", n, err)
+	}
+	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentUpdated && e.ContentID == id }) {
+		t.Fatalf("no update event for the released item: %+v", events)
+	}
+	later := f.now().Add(time.Hour)
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.PPV, FreeAfter: &later}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if applied() {
+		t.Fatal("a moved free_after stays released")
 	}
 }

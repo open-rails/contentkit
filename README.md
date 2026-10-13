@@ -355,8 +355,9 @@ and links only `media/workqueue`. The worker hands readiness
 (`Hooks.ItemReady`), purges (`Hooks.PurgePublic`) and sweeps back to the
 host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
-needs only the registry as JSON (`MEDIA_KINDS_FILE`). Hosts with a
-`Private.Choose` build their own:
+needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
+`Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
+prints. Hosts with a `Private.Choose` build their own:
 
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_*

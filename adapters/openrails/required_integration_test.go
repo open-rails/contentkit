@@ -24,6 +24,7 @@ func TestGroupPPVRequiresMembershipIntegration(t *testing.T) {
 	ctx := t.Context()
 	owner, member, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)
+	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	none := []catalog.Creator{}
 	post := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.GroupPPV, Group: studio}, OwnerGroupID: studio, Creators: &none,
 		Text: map[string]catalog.Text{"en": {Title: "Members' PPV"}}})

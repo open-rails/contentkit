@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/auth"
@@ -81,45 +82,53 @@ func (s scopes) Retire(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// Holding is the user's live groups of the kinds' personas whose effective
-// permissions cover the kind's access.GroupSettingsManage: one memberships
-// listing and one EffectivePermissions read.
-func (s scopes) Holding(ctx context.Context, user string, kinds []string) ([]string, error) {
-	want := map[iam.Persona]iam.Perm{}
+// Holding answers, per live group of the kinds' personas the user is a member
+// of, which of its kind's access.GroupPermissions the user's effective
+// permissions there cover: one memberships listing and one
+// EffectivePermissions read.
+func (s scopes) Holding(ctx context.Context, user string, kinds []string) (map[string][]string, error) {
+	type named struct {
+		name string
+		perm iam.Perm
+	}
+	want := map[iam.Persona][]named{}
 	for _, k := range kinds {
 		persona, err := s.c.Persona(k)
 		if err != nil {
 			return nil, fmt.Errorf("authkit: persona of group kind %s: %w", k, err)
 		}
-		if want[persona], err = s.c.Permission(access.GroupSettingsManage(k)); err != nil {
-			return nil, fmt.Errorf("authkit: %w", err)
+		for _, name := range access.GroupPermissions(k) {
+			p, err := s.c.Permission(name)
+			if err != nil {
+				return nil, fmt.Errorf("authkit: %w", err)
+			}
+			want[persona] = append(want[persona], named{name, p})
 		}
 	}
 	var refs []iam.GroupRef
-	perm := map[string]iam.Perm{}
+	asked := map[string][]named{}
 	for m, err := range iam.All(func(p iam.PageRequest) (iam.ListPage[iam.Membership], error) {
 		return s.c.ListMemberships(ctx, iam.UserSubject(user), p)
 	}) {
 		if err != nil {
 			return nil, err
 		}
-		if p, ok := want[m.Group.Persona]; ok && m.Group.DeletedAt == nil {
-			refs, perm[m.Group.ID] = append(refs, iam.GroupByID(m.Group.ID)), p
+		if ps, ok := want[m.Group.Persona]; ok && m.Group.DeletedAt == nil {
+			refs, asked[m.Group.ID] = append(refs, iam.GroupByID(m.Group.ID)), ps
 		}
 	}
+	out := map[string][]string{}
 	if len(refs) == 0 {
-		return nil, nil
+		return out, nil
 	}
 	grants, err := s.c.EffectivePermissions(ctx, iam.UserIdentity(user), refs)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
 	for id, gs := range grants {
-		for _, g := range gs {
-			if perm[id].Matches(g) {
-				out = append(out, id)
-				break
+		for _, p := range asked[id] {
+			if slices.ContainsFunc(gs, p.perm.Matches) {
+				out[id] = append(out[id], p.name)
 			}
 		}
 	}

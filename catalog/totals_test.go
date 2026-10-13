@@ -20,6 +20,7 @@ import (
 func TestTotalsIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	yaoi, gore, studio := f.group("tag", "yaoi"), f.group("tag", "gore"), f.group("channel", "studio")
+	f.sell(studio)
 	premium := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	item := func(in ContentInput, publish bool) string {
 		id := f.create("staff", in)

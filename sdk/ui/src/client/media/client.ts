@@ -5,6 +5,7 @@ import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
+import { itemRef } from "./ref.js";
 import { defaultTransport, type Transport } from "./transport.js";
 
 /** Upload tuning for the media module. */
@@ -290,7 +291,7 @@ export class MediaClient {
       o.onState?.(structuredClone(replacement));
       files = (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }
-    emit({ type: "media.committed", ref: { kind: ref.kind, id: ref.id }, files });
+    emit({ type: "media.committed", ref: itemRef(ref), files });
     return files;
   }
 
@@ -317,7 +318,7 @@ export class MediaClient {
       if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
       if (f.failed) throw failureError(f.failed);
       if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) {
-        emit({ type: "media.processed", ref: { kind: ref.kind, id: ref.id }, file: f });
+        emit({ type: "media.processed", ref: itemRef(ref), file: f });
         return f;
       }
       if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });

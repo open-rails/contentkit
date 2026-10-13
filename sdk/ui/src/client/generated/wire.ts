@@ -666,6 +666,7 @@ export interface GroupAccess {
   key: string;
   offer?: Sale;
   member: boolean;
+  editor?: boolean;
   unknown?: boolean;
 }
 
@@ -916,6 +917,7 @@ export interface Kind {
   groups?: string[];
   attributes?: Record<string, Attribute>;
   sort?: string;
+  draft_ttl?: number;
 }
 
 export interface LanguageTotal {
@@ -1014,6 +1016,8 @@ export interface MyGroup {
   created_at: string;
   owner: boolean;
   editor: boolean;
+  writer: boolean;
+  moderator: boolean;
   member: boolean;
 }
 

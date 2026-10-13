@@ -96,6 +96,9 @@ type Options struct {
 	Body Sanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
 	DeletedRetention time.Duration
+	// DocumentsChanged runs in the writing transaction after a write queued
+	// search documents, so the engine can sync them at once. Optional.
+	DocumentsChanged func(ctx context.Context, q Querier) error
 	Now              func() time.Time
 	Logger           *slog.Logger
 }
@@ -116,6 +119,7 @@ type Store struct {
 	body      Sanitizer
 	media     *Media
 	retention time.Duration
+	documents func(ctx context.Context, q Querier) error
 	now       func() time.Time
 	log       *slog.Logger
 	totals    *cache.Cache[totalsKey, Total]
@@ -126,7 +130,7 @@ type Store struct {
 
 type tables struct {
 	items, text, creators, versions, versionText, segments, facets, events string
-	groups, groupNames, memberships, prefs, counts, docs                   string
+	groups, groupNames, memberships, prefs, counts, docs, offers           string
 }
 
 // New validates opts and checks the schema has the catalog tables.
@@ -149,9 +153,9 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 		t: tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
 			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
 			groups: q("content_groups"), groupNames: q("content_group_names"), memberships: q("content_memberships"),
-			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents")},
+			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers")},
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, groups: opts.Groups, moderator: opts.Moderation,
-		body: opts.Body, retention: opts.DeletedRetention, now: opts.Now, log: opts.Logger,
+		body: opts.Body, retention: opts.DeletedRetention, documents: opts.DocumentsChanged, now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {
 		g, err := access.NewGate(access.GateConfig{Tenant: opts.Tenant, Kinds: opts.Kinds, Logger: opts.Logger})
