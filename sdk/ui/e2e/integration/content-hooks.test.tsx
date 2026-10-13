@@ -143,7 +143,7 @@ describe("content hooks against the real ContentKit", () => {
     const signedOut = client();
     const out = renderHook(() => useFavorite(ref), { wrapper: wrap(signedOut, null) });
     await waitFor(() => expect(out.result.current).toMatchObject({ favorited: false, count: 0, loading: false }), wait);
-    expect(requests).toEqual([`GET /video/${ref.id}/favorite`]);
+    expect(requests).toEqual([`GET /contents/${ref.id}/favorite`]);
     // Not known to be signed out: the read runs, and a refused write rolls back.
     const unknown = renderHook(() => useFavorite(ref), { wrapper: wrap(client()) });
     await waitFor(() => expect(unknown.result.current.loading).toBe(false), wait);
@@ -254,7 +254,8 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => void (await writer.result.current.setCover(png())));
     await waitFor(() => expect(writer.result.current.content?.cover?.image).toMatch(/^i-/), wait);
     expect(writer.result.current.content?.cover?.url).toBeUndefined();
-    expect(writer.result.current.content?.images).toBeUndefined();
+    // A draft's body images reach its editors signed, never as public files.
+    for (const [n, u] of Object.entries(writer.result.current.content?.images ?? {})) expect([n, u.includes("?t=") && !u.includes("/public/")]).toEqual([name, true]);
     writer.unmount();
 
     // Reopened, the draft's images show through the editor read once their editor views render.

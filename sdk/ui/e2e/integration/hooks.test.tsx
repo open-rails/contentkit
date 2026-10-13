@@ -117,7 +117,7 @@ describe("media hooks against the real ContentKit", () => {
     act(() => result.current.add([png("1.png", 41)]));
     expect(result.current.waiting).toHaveLength(1);
     await waitFor(() => expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([["1.png", "forbidden"]]), wait);
-    expect(result.current.read.read).toMatchObject({ access: "full" });
+    expect(result.current.read.read).toMatchObject({ access: "none" });
     expect(result.current.read.read?.uploads).toBeUndefined();
     expect(result.current).toMatchObject({ busy: false, fileCount: 0, waiting: [] });
     expect(result.current.queue.items).toEqual([]);

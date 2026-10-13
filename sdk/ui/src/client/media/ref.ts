@@ -8,6 +8,10 @@ export const isContentId = (id: string) => contentId.test(id);
 /** An item's identity: kind, id and, for a content's version, the version. */
 export const itemKey = (ref: { kind: string; id: string; version?: string }) => (ref.version ? `${ref.kind}/${ref.id}/${ref.version}` : `${ref.kind}/${ref.id}`);
 
+/** An item's ref and nothing else: kind, id and its version when it names one. */
+export const itemRef = (ref: { kind: string; id: string; version?: string }) =>
+  ref.version ? { kind: ref.kind, id: ref.id, version: ref.version } : { kind: ref.kind, id: ref.id };
+
 /** Both refs name the same item (a version is its own item). */
 export const sameItem = (a: { kind: string; id: string; version?: string }, b: { kind: string; id: string; version?: string }) =>
   a.kind === b.kind && a.id === b.id && (a.version ?? "") === (b.version ?? "");

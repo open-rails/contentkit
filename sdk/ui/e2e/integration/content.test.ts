@@ -241,7 +241,7 @@ describe("content modules against the real ContentKit", () => {
 
     const video = await item();
     const top = await members("alice").comments.create(video, { body: "members only" });
-    expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await members().comments.standing(video)).toEqual({ can_comment: false, comments: "open", anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
     expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: acc.id("bob") });
     const post = await members("editor").contents.publish((await members("editor").contents.create({ kind: "blog", text: { en: { title: "Members", body: "b" } } })).id);
     const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });
@@ -353,7 +353,7 @@ describe("content modules against the real ContentKit", () => {
     const names = await staff.groups.names(group!.id, "add", [{ language: "en", kind: "alias", name: "Starry" }]);
     expect(names.map((n) => n.name).sort()).toEqual(["Night Sky", "Starry"]);
     expect((await ck().groups.get(group!.id, "en")).counts).toEqual([]);
-    await expect(ck("alice").groups.create([])).rejects.toEqual(code("forbidden"));
+    await expect(ck("alice").groups.create([{ kind: "tag", slug: `${slug}-x` }])).rejects.toEqual(code("forbidden"));
 
     const post = await ck("editor").contents.publish((await ck("editor").contents.create({ kind: "blog", text: { en: { title: "Coded post", body: "b" } } })).id);
     expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "blog", content_id: post.id, path: `/blog/${post.code}/coded-post` });
