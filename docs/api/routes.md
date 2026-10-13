@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (145). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (126). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -19,11 +19,9 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | GET | `/v1/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
-| GET | `/v1/contents/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Query: `version`, `language`, `sort`, `limit`, `offset`. |
-| POST | `/v1/contents/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a content item or one of its versions in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. Query: `version`. |
-| GET | `/v1/groups/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones. Query: `language`, `sort`, `limit`, `offset`. |
-| POST | `/v1/groups/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
-| GET | `/v1/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `language`, `limit`, `offset`. |
+| GET | `/v1/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
+| POST | `/v1/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
+| GET | `/v1/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
 | GET | `/v1/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
 | POST | `/v1/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
 | GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
@@ -32,20 +30,14 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/v1/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
 | DELETE | `/v1/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
-| POST | `/v1/contents/{id}/like` | public | — | 200 `ReactionCounts` | Likes a content item or one of its versions. Query: `version`. |
-| POST | `/v1/contents/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a content item or one of its versions. Query: `version`. |
-| DELETE | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a content item or one of its versions. Query: `version`. |
-| GET | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a content item or one of its versions and the caller's own reaction. Query: `version`. |
-| POST | `/v1/groups/{id}/like` | public | — | 200 `ReactionCounts` | Likes a group. |
-| POST | `/v1/groups/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a group. |
-| DELETE | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a group. |
-| GET | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a group and the caller's own reaction. |
-| POST | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a content item or one of its versions the caller sees; favoriting again is a no-op. Answers the state with its favorite count. Query: `version`. |
-| DELETE | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a content item or one of its versions, also one no longer visible. Answers the state with its favorite count. Query: `version`. |
-| GET | `/v1/contents/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible). Query: `version`. |
-| POST | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count. |
-| DELETE | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a group, also one no longer visible. Answers the state with its favorite count. |
-| GET | `/v1/groups/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible). |
+| POST | `/v1/{kind}/{id}/like` | public | — | 200 `ReactionCounts` | Likes a target. |
+| POST | `/v1/{kind}/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a target. |
+| DELETE | `/v1/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a target. |
+| GET | `/v1/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | A target's like and dislike counts and the caller's own reaction. |
+| GET | `/v1/favorites` | user | — | 200 `FavoriteItem[]` | The caller's favorites, newest first. Query: `limit`, `offset`. |
+| POST | `/v1/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count. |
+| DELETE | `/v1/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count. |
+| GET | `/v1/{kind}/{id}/favorite` | public | — | 200 `FavoriteState` | A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible). |
 | GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
 | GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
@@ -66,23 +58,16 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 200 `CommentBan` | A user's tenant-wide comment ban, expired or not; 404 when they have none. |
 | PUT | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
 | DELETE | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
-| GET | `/v1/contents/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a content item or one of its versions, and the ban that stops it. Query: `version`. |
-| GET | `/v1/groups/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a group, and the ban that stops it. |
+| GET | `/v1/{kind}/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a target, and the ban that stops it. |
 | GET | `/v1/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or content items awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
 | POST | `/v1/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or content item, at the revision the queue listed. |
-| GET | `/v1/moderation/banned-words` | staff `root:comments:moderate` | — | 200 `BannedWord[]` | The banned words and what each does. |
-| POST | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `BannedWordInput[]` | 200 `BannedWord[]` | Bans words, or changes what banned ones do: mask (the default) or reject. |
-| DELETE | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `string[]` | 204 — | Unbans words. |
-| GET | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | — | 200 `IPBan[]` | The IP bans, newest first, expired ones included. |
-| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting and answering polls, or replaces their bans. |
-| DELETE | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `string[]` | 204 — | Lifts the bans of addresses or networks. |
 
 ## Contents: content items, versions, catalog totals (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
-| GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state. Query: `language`. |
+| GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state. Query: `language`. |
 | GET | `/v1/contents/{id}/versions/{vid}` | public | — | 200 `Version` | One version of a content item as the viewer sees it, with its segments and access decision. Query: `language`. |
 | GET | `/v1/manage/contents` | public | — | 200 `Content[]` | Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit. Query: `kind`, `state`, `owner_group`, `q`, `language`, `limit`, `offset`. |
 | POST | `/v1/contents` | public | `ContentInput` | 201 `Content` | Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it. |
@@ -191,22 +176,18 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/contents` | public | — | 200 `ContentPage` | Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `cursor`, `limit`. |
-| GET | `/v1/search` | public | — | 200 `ContentPage` | Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise. Query: `q`, `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `personalize`, `session`, `cursor`, `limit`. |
+| GET | `/v1/contents` | public | — | 200 `ContentPage` | Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `cursor`, `limit`. |
+| GET | `/v1/search` | public | — | 200 `ContentPage` | Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise. Query: `q`, `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `personalize`, `cursor`, `limit`. |
 | GET | `/v1/typeahead` | public | — | 200 `Typeahead` | Suggests contents and groups while the reader types, tolerating typos and partial words. Query: `q`, `kind`, `group_kinds`, `language`, `display_language`, `mode`, `limit`. |
-| GET | `/v1/contents/{id}/similar` | public | — | 200 `ContentPage` | Contents like this one (co-engagement, or the configured source), of its kind unless kind names another. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
-| GET | `/v1/recommendations` | user | — | 200 `ContentPage` | Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out. Query: `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
-| GET | `/v1/release-dates` | public | — | 200 `ReleaseDates` | The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free. Query: `by`, `kind`, `groups`, `exclude_groups`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
+| GET | `/v1/contents/{id}/similar` | public | — | 200 `ContentPage` | Contents like this one (co-engagement, or the configured source), of its kind unless kind names another. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/recommendations` | user | — | 200 `ContentPage` | Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/release-dates` | public | — | 200 `ReleaseDates` | The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free. Query: `by`, `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
 | GET | `/v1/me/content-filters` | user | — | 200 `ContentFilters` | The reader's content filters: each configured filter's group, default and setting; every read applies them. Query: `language`. |
 | PUT | `/v1/me/content-filters` | user | `ContentFiltersUpdate` | 200 `ContentFilters` | Replaces the reader's content filter settings and whether lists include deleted content they hold. Query: `language`. |
 | GET | `/v1/me/history` | user | — | 200 `ContentPage` | The contents the reader engaged with, most recent first, with their progress. Query: `kind`, `status`, `card_groups`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
 | DELETE | `/v1/me/history` | user | — | 204 — | Erases the reader's history: of one content item, one kind or everything. Query: `kind`, `content_id`. |
 | POST | `/v1/signals` | public | `Signals` | 204 — | Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version. |
 | POST | `/v1/exposures` | public | `Exposures` | 204 — | Records result lists a client served, rendered or showed, for click attribution. |
-| GET | `/v1/me/favorites` | user | — | 200 `InteractionPage` | The content items (as their listing shows them) or groups the reader favorited, most recent first. Query: `target`, `kind`, `card_groups`, `cursor`, `limit`, `language`, `display_language`, `mode`. |
-| GET | `/v1/me/reactions` | user | — | 200 `InteractionPage` | The content items or groups the reader liked or disliked, most recent first: tag affinities and preferences. Query: `value`, `target`, `kind`, `card_groups`, `cursor`, `limit`, `language`, `display_language`, `mode`. |
-| GET | `/v1/me/searches` | public | — | 200 `RecentSearches` | The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session. Query: `session`, `limit`. |
-| DELETE | `/v1/me/searches` | public | — | 204 — | Clears the reader's recent searches: one query, or every one so far. Query: `session`, `query`. |
 
 ## Error codes
 
@@ -220,7 +201,6 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
-| `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |

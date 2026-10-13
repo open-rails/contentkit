@@ -295,7 +295,8 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 type CardOptions struct {
 	// Language resolves names and paths as ListOptions.Language does.
 	Language string
-	// Covers fills covers' renditions; chips leave them out.
+	// Covers fills covers' and avatars' renditions in one call; chips leave
+	// them out.
 	Covers bool
 }
 
@@ -319,31 +320,16 @@ func (s *Store) Cards(ctx context.Context, ids []GroupID, o CardOptions) ([]Grou
 		return nil, err
 	}
 	if o.Covers {
-		slots := make([]coverSlot, len(page.Groups))
+		shows := make([]shown, len(page.Groups))
 		for i := range page.Groups {
-			slots[i] = coverSlot{page.Groups[i].Kind, page.Groups[i].ID, page.Groups[i].Cover}
+			g := &page.Groups[i]
+			shows[i] = shown{kind: g.Kind, id: g.ID, cover: g.Cover, avatar: &g.Avatar}
 		}
-		if err := s.fillCovers(ctx, slots); err != nil {
+		if err := s.fill(ctx, shows); err != nil {
 			return nil, err
 		}
 	}
 	return page.Groups, nil
-}
-
-// coverSlot is a cover to fill in place.
-type coverSlot struct {
-	kind  string
-	id    GroupID
-	cover *Cover
-}
-
-// fillCovers resolves every slot's cover renditions in one call.
-func (s *Store) fillCovers(ctx context.Context, slots []coverSlot) error {
-	shows := make([]shown, len(slots))
-	for i, sl := range slots {
-		shows[i] = shown{kind: sl.kind, id: sl.id, cover: sl.cover}
-	}
-	return s.fill(ctx, shows)
 }
 
 const maxMergeHops = 8

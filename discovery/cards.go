@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -34,7 +35,10 @@ type Card struct {
 	Cover    []media.PublicRendition `json:"cover"`
 	Version  CardVersion             `json:"version"`
 	// Groups are the version's effective groups with a page, by group kind.
-	Groups      map[string][]Chip `json:"groups"`
+	Groups map[string][]Chip `json:"groups"`
+	// Owner is the owner group's card (a channel's name, path, avatar and
+	// cover).
+	Owner       *groups.GroupCard `json:"owner,omitempty"`
 	Counts      Counts            `json:"counts"`
 	Access      CardAccess        `json:"access"`
 	Viewer      *ViewerState      `json:"viewer,omitempty"`
@@ -80,6 +84,9 @@ type CardAccess struct {
 	Requires  string          `json:"requires,omitempty"`
 	Preview   *access.Preview `json:"preview,omitempty"`
 	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	// Offers are the purchasable offers of Sell's keys; tiers are the host's
+	// to label.
+	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // ViewerState is the signed-in reader's own standing with a content item.
@@ -122,6 +129,8 @@ type cardRow struct {
 	contentRule access.Rule
 	override    *access.Rule
 	groupIDs    []string
+	owner       string
+	creator     bool
 	slug        string
 }
 
@@ -138,7 +147,8 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
  f.popularity, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
- coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, '')
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
+ coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
 JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.vid
 JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
@@ -147,8 +157,8 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AN
 LEFT JOIN LATERAL (SELECT x.title, x.language FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
 LEFT JOIN %[6]s vt ON vt.tenant_id = v.tenant_id AND vt.version_id = v.id AND vt.language = t.language
-ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText),
-		pgx.NamedArgs{"d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages()})
+ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators),
+		pgx.NamedArgs{"d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages(), "d_user": person(q.reader.Actor)})
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +168,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var code string
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
 			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&code, &c.slug, &c.Title, &c.Language)
+			&code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
 		if err != nil {
 			return c, err
 		}
@@ -195,6 +205,9 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		if err := s.chips(ctx, q, got, o.chips); err != nil {
 			return nil, err
 		}
+		if err := s.owners(ctx, q, got); err != nil {
+			return nil, err
+		}
 		if err := s.viewerState(ctx, q.reader.Actor, got); err != nil {
 			return nil, err
 		}
@@ -205,7 +218,10 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	return out, nil
 }
 
-// decide asks the Gate for every card's version in one call.
+// decide asks the Gate for every card's version in one call, and the offers
+// its paywalls sell in one more. Editors open what they edit (staff, its
+// creators, its owner group's editors): owner-group editorship is asked only
+// of cards the rule leaves locked, once per owner group.
 func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
@@ -215,6 +231,7 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {
 		return err
 	}
+	var keys []string
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter}
 		for _, k := range d.Sell {
@@ -224,6 +241,35 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 			a.Requires = d.Requires.String()
 		}
 		rows[i].Access = a
+	}
+	var locked []string
+	for _, c := range rows {
+		if !c.Access.Allowed && !c.creator && c.owner != "" {
+			locked = append(locked, c.owner)
+		}
+	}
+	editors := q.viewer.Editors(ctx, locked)
+	for i := range rows {
+		c := &rows[i]
+		if !c.Access.Allowed && (q.viewer.Staff() || c.creator || editors[c.owner]) {
+			c.Access = CardAccess{Allowed: true}
+		}
+		keys = append(keys, c.Access.Sell...)
+	}
+	if s.o.Sales == nil || len(keys) == 0 {
+		return nil
+	}
+	sales, err := s.o.Sales.Sales(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		a := &rows[i].Access
+		for _, k := range a.Sell {
+			if sale, ok := sales[k]; ok {
+				a.Offers = append(a.Offers, sale)
+			}
+		}
 	}
 	return nil
 }
@@ -288,6 +334,40 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 		}
 	}
 	return nil
+}
+
+// owners fills the cards' owner groups, avatars and covers resolved, in one
+// call.
+func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
+	var ids []groups.GroupID
+	for _, c := range rows {
+		if c.owner != "" && !slices.Contains(ids, groups.GroupID(c.owner)) {
+			ids = append(ids, groups.GroupID(c.owner))
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.path, Covers: true})
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		for j := range cards {
+			if string(cards[j].ID) == rows[i].owner {
+				rows[i].Owner = &cards[j]
+			}
+		}
+	}
+	return nil
+}
+
+// person is a signed-in person's id, else "".
+func person(a access.Actor) string {
+	if a.Person() {
+		return a.ID
+	}
+	return ""
 }
 
 // viewerState fills a signed-in reader's favorites and, with a signal plane,

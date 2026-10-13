@@ -56,6 +56,8 @@ type Options struct {
 	Groups *groups.Store
 	// Covers resolves cards' covers; nil leaves them out.
 	Covers Covers
+	// Sales fills cards' paywall offers; nil leaves them out.
+	Sales Sales
 	// Hub is the keyword search client and the signal plane. Without a
 	// signal plane, history, signals, exposures, view_status, similar,
 	// recommendations and popularity are unavailable.
@@ -77,7 +79,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, searches, searchMarks, erased string
+	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, searches, searchMarks, erased, creators string
 }
 
 // New validates o.
@@ -107,7 +109,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{o: o, t: tables{facets: q("content_facets"), items: q("content_items"), versions: q("content_versions"),
 		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
 		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"),
-		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects")}}
+		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators")}}
 	if store := o.Hub.Signals(); store != nil {
 		c := o.Candidates
 		if c == nil {

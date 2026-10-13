@@ -1,5 +1,7 @@
 import { Harness, type TestUser } from "../support/harness.ts";
 
+export { itemParam, mediaRef } from "../support/harness.ts";
+
 export const harness = () => new Harness(process.env.CKUI_E2E_ORIGIN!);
 
 export const screenshots = process.env.SCREENSHOT_DIR ?? "test-results/screenshots";

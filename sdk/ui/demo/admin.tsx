@@ -1,14 +1,14 @@
-import { CommentModeration, ContentManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, ContentManager, GroupManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import type { RefBody } from "@openrails/contentkit-ui/client";
+import type { Membership, RefBody } from "@openrails/contentkit-ui/client";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* ContentManager of blog posts
-// (with the package's rich-text editor), /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// (with the package's rich-text editor), /admin/groups/* GroupManager, /admin/media/{kind}/{id}[/{version}] MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -48,6 +48,7 @@ function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
 }
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
+const member = (m: Membership) => <span data-demo="member">{m.content_id}</span>;
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -71,12 +72,14 @@ function Alone() {
       ) : at.startsWith("/admin/polls") ? (
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
       ) : at.startsWith("/admin/media/") ? (
-        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]! }} languages={subtitleLanguages} />
+        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]!, version: at.split("/")[5] || undefined }} languages={subtitleLanguages} />
       ) : at.startsWith("/admin/uploads") ? (
         <>
           <Created />
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
+      ) : at.startsWith("/admin/groups") ? (
+        <GroupManager {...common} basePath="/admin/groups" renderContent={member} />
       ) : at.startsWith("/admin/posts") ? (
         <ContentManager {...common} kind="blog" basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} contentHref={contentHref} />
       ) : (
@@ -97,6 +100,7 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
+        <Link to="/admin/groups">Groups</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -107,7 +111,7 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
-        <Route path="/admin/media/:kind/:id" element={<MediaPage />} />
+        <Route path="/admin/media/:kind/:id/:version?" element={<MediaPage />} />
         <Route
           path="/admin/uploads"
           element={
@@ -116,6 +120,10 @@ function Hosted() {
               <UploadQueue client={client} createItem={createItem} path={q.get("path") ?? "file"} language={lang} />
             </>
           }
+        />
+        <Route
+          path="/admin/groups/*"
+          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} renderContent={member} pageSize={size} language={lang} />}
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
@@ -128,8 +136,8 @@ function Hosted() {
 }
 
 function MediaPage() {
-  const { kind, id } = useParams();
-  return <MediaItemPanel client={client} item={{ kind: kind!, id: id! }} languages={subtitleLanguages} language={lang} />;
+  const { kind, id, version } = useParams();
+  return <MediaItemPanel client={client} item={{ kind: kind!, id: id!, version }} languages={subtitleLanguages} language={lang} />;
 }
 
 function UserPage() {

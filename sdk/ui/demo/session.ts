@@ -28,8 +28,8 @@ export const client = createContentKitClient({
   token: () => auth.getAccessToken(),
 });
 
-/** The item of kind whose id is the query parameter name; null when absent. */
+/** The item of kind the query parameter name holds ("{id}", a version's "{id}~{version}"); null when absent. */
 export function item(name: string, kind: string): RefBody | null {
-  const id = q.get(name);
-  return id ? { kind, id } : null;
+  const [id, version] = (q.get(name) ?? "").split("~");
+  return id ? (version ? { kind, id, version } : { kind, id }) : null;
 }
