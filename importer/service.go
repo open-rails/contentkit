@@ -441,10 +441,17 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	// Comment ids are uuids; only well-formed ids reach that column.
+	uuids := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if contentref.ValidateID(id) == nil {
+			uuids = append(uuids, id)
+		}
+	}
 	rows, err := tx.Query(ctx, `SELECT 'c', id, kind FROM `+r.s.qs+`.content_items WHERE tenant_id = $1 AND id = ANY($2)
  UNION ALL SELECT 'v', id, content_id FROM `+r.s.qs+`.content_versions WHERE tenant_id = $1 AND id = ANY($2)
  UNION ALL SELECT 'g', id, kind FROM `+r.s.qs+`.content_groups WHERE tenant_id = $1 AND id = ANY($2)
- UNION ALL SELECT 'm', id::text, '' FROM `+r.s.qs+`.content_comments WHERE tenant_id = $1 AND id::text = ANY($2)`, r.s.o.Tenant, ids)
+ UNION ALL SELECT 'm', id::text, '' FROM `+r.s.qs+`.content_comments WHERE tenant_id = $1 AND id = ANY($3::uuid[])`, r.s.o.Tenant, ids, uuids)
 	if err != nil {
 		return err
 	}

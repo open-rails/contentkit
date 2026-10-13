@@ -26,6 +26,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -520,4 +521,33 @@ func png(t *testing.T, w int) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
+}
+
+// With a signal plane, imported views land in it, a version's for its
+// content too, and re-sending them adds none.
+func TestImportSignals(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	chDB := "ck_import_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	env.Empty(t, chDB)
+	admin := env.Open(t, "")
+	f := newEngineWith(t, func(cfg *contentkit.Config, _ *contentkit.Deps) {
+		cfg.ClickHouse = contentkit.ClickHouseConfig{Database: chDB, Addr: env.Addr, Username: env.User, Password: env.Password, Cluster: env.Cluster}
+	})
+	t.Cleanup(func() {
+		env.Drop(t, admin, chDB)
+		_, _ = f.pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE app = 'contentkit_signal' AND database LIKE '%' || $1", chDB)
+	})
+	b := catalogBatch()
+	b.Offers = nil
+	for range 2 {
+		res := f.importBatch(t, b)
+		if len(res.Failed) > 0 || res.Written["signals"] != 2 || res.Skipped["signals"] != 0 {
+			t.Fatalf("result %+v", res)
+		}
+	}
+	conn := env.Open(t, chDB)
+	var n uint64
+	if err := conn.QueryRow(t.Context(), `SELECT count() FROM signals FINAL WHERE tenant = ? AND event_id IN ('view:1', 'view:2')`, tenant).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("signals %d %v: a version view counts for its content too", n, err)
+	}
 }

@@ -727,8 +727,9 @@ Uploads land at a staged name, `temp/u-{uuid}`, which presign answers as
 that name. The media worker then hashes each staged upload and places it at
 `private/sha256-{hex}` of its bytes before processing (an upload gone or
 changed by then fails with `not_uploaded`), so no client ever writes under a
-blob name. Server-side imports use `Uploads.Ingest`, which stages the same
-way.
+blob name. The upload routes admit a signed-in person or application;
+`CanUpload` decides. Importers upload with `Client.IngestMedia` (presign,
+PUT or parts, commit; [docs/import.md](docs/import.md)).
 
 | Op | Does |
 | --- | --- |

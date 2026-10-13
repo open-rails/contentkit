@@ -510,7 +510,7 @@ WHERE (x.likes, x.dislikes, x.favorites, x.comment_count) IS DISTINCT FROM (EXCL
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id = '' AND r.value = 1)::int AS likes,
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id = '' AND r.value = -1)::int AS dislikes
  FROM unnest($2::text[]) AS x(id)) n
- WHERE c.tenant_id = $1 AND c.id::text = n.id AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, KindComment)
+ WHERE c.tenant_id = $1 AND c.id = n.id::uuid AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, KindComment)
 	return err
 }
 
@@ -726,8 +726,9 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []ImportVote) 
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT o.id,
- (SELECT count(*) FROM `+s.t.pollVotes+` v WHERE v.option_id = o.id)::int AS votes FROM `+s.t.pollOptions+` o WHERE o.question_id = ANY($1::uuid[])) n
+	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
+ FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE question_id = ANY($1::uuid[]) GROUP BY option_id) c
+  ON c.option_id = x.id WHERE x.question_id = ANY($1::uuid[])) n
  WHERE o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))))
 	return err
 }
