@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -87,10 +88,10 @@ func (e *env) processor(t *testing.T, s media.Store) *image.Processor {
 // switchable resolves every item visible until hidden is set.
 type switchable struct{ hidden *atomic.Bool }
 
-func (s switchable) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (s switchable) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
-		out[r.Key()] = access.Resolution{Visible: !s.hidden.Load(), Accessible: true}
+		out[r.Key()] = resolve.Resolution{Visible: !s.hidden.Load(), Accessible: true}
 	}
 	return out, nil
 }

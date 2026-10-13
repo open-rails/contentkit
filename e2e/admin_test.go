@@ -65,7 +65,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	u, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
 	g, _ := w.published(f, staff, "gallery", o.ID)
-	item := "/gallery/" + g
+	item := "/contents/" + g
 
 	var first, reply, gone content.Comment
 	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "one"}, &first)

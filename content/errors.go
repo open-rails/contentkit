@@ -2,7 +2,7 @@ package content
 
 import "errors"
 
-// Sentinel errors an access.ContentResolver may return to gate a target; mapped to HTTP
+// Sentinel errors a resolver may return to gate a target; mapped to HTTP
 // status without leaking which one beyond the code.
 var (
 	// ErrNotFound: the reference does not exist. -> 404
@@ -13,6 +13,9 @@ var (
 	ErrForbidden = errors.New("content: not accessible")
 	// ErrTenant: a reference of another tenant reached this runtime.
 	ErrTenant = errors.New("content: reference belongs to another tenant")
+	// ErrCommentsClosed: the target's comments are closed or hidden. -> 403
+	// comments_closed
+	ErrCommentsClosed = errors.New("content: comments are closed")
 	// ErrNoClassifier: a free-text poll needs an AnswerClassifier. -> 501
 	ErrNoClassifier = errors.New("content: free-text polls need an AnswerClassifier")
 )

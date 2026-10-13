@@ -183,7 +183,7 @@ func TestEngineIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
 		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
 	}
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes {
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
@@ -215,12 +215,12 @@ func TestEngineIntegration(t *testing.T) {
 	create(catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Autumn Festival Report", Body: "b"}}})
 	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "No"}}}, nil)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents/"+gallery, nil, nil)
-	s.call(http.StatusCreated, user, "POST", "/api/ck/v1/gallery/"+gallery+"/comments", map[string]string{"body": "first"}, nil)
-	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+gallery+"/like", nil, nil)
-	s.call(http.StatusOK, user, "POST", "/api/ck/v1/gallery/"+gallery+"/favorite", nil, nil)
-	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/gallery/"+gallery+"/favorite", nil, nil)
-	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/gallery/"+cid(1)+"/like", nil, nil)
-	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/video/"+gallery+"/like", nil, nil)
+	s.call(http.StatusCreated, user, "POST", "/api/ck/v1/contents/"+gallery+"/comments", map[string]string{"body": "first"}, nil)
+	s.call(http.StatusOK, user, "POST", "/api/ck/v1/contents/"+gallery+"/like", nil, nil)
+	s.call(http.StatusOK, user, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
+	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/contents/"+cid(1)+"/like", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/groups/"+gallery+"/like", nil, nil)
 	g1 := contentref.New(tenant, "gallery", gallery)
 	counts, err := e.content.Counts(ctx, []contentref.ContentRef{g1})
 	if err != nil || counts[g1.Key()] != (content.Counts{Likes: 1, Favorites: 1, CommentCount: 1}) {

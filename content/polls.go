@@ -20,7 +20,7 @@ import (
 // either multiple_choice (options, anon-capable one-vote-per-(poll,user)/
 // (poll,ip) tallying) or free_text (one editable answer per signed-in actor,
 // grouped by the host's AnswerClassifier). It is not tied to host content, so
-// it never gates on the access.ContentResolver: writes gate on the root:polls:write perm;
+// it never gates on the resolve.Resolver: writes gate on the root:polls:write perm;
 // reads/votes/answers are public until the poll closes. Questions carry the
 // tenant; options, votes and answers hang off their question.
 type polls struct {
@@ -157,8 +157,8 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	}
 	for _, o := range in.Options {
 		if _, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollOptions+`
-			(question_id, label, position) VALUES ($1, $2, $3)`,
-			id, o.Label, o.Position); err != nil {
+			(tenant_id, question_id, label, position) VALUES ($1, $2, $3, $4)`,
+			p.s.tenant, id, o.Label, o.Position); err != nil {
 			return Poll{}, err
 		}
 	}
@@ -491,7 +491,7 @@ func (p *polls) answersFor(ctx context.Context, actor access.Actor, ids []string
 // optionsFor batch-loads options keyed by question id (one array-param query).
 func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[string][]PollOption, error) {
 	rows, err := q.Query(ctx, `SELECT question_id::text, id::text, label, coalesce(image_name, ''), position, vote_count
-		FROM `+p.s.t.pollOptions+` WHERE question_id = ANY($1::uuid[]) ORDER BY question_id, position`, ids)
+		FROM `+p.s.t.pollOptions+` WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) ORDER BY question_id, position`, p.s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +515,7 @@ func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids
 		return map[string]string{}, nil
 	}
 	rows, err := q.Query(ctx, `SELECT question_id::text, option_id::text FROM `+p.s.t.pollVotes+`
-		WHERE question_id = ANY($1::uuid[]) AND `+actorPred(userID, 2), ids, actorArg(userID, ip))
+		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND `+actorPred(userID, 3), p.s.tenant, ids, actorArg(userID, ip))
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +560,7 @@ func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID s
 	// Option must belong to this poll.
 	var exists bool
 	err = tx.QueryRow(ctx, `SELECT true FROM `+p.s.t.pollOptions+`
-		WHERE id = $1 AND question_id = $2`, optionID, pollID).Scan(&exists)
+		WHERE tenant_id = $3 AND id = $1 AND question_id = $2`, optionID, pollID, p.s.tenant).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Poll{}, badRequest("option does not belong to poll")
 	}
@@ -571,14 +571,14 @@ func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID s
 	// ON CONFLICT DO NOTHING makes a duplicate voter BLOCK then no-op (0 rows) —
 	// a bare INSERT would raise 23505, aborting the whole tx (25P02).
 	tag, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollVotes+`
-		(question_id, option_id, user_id, ip) VALUES ($1, $2, $3, $4)`+pollVoteConflict(userID),
-		pollID, optionID, nullIf(userID), nullIf(ip))
+		(tenant_id, question_id, option_id, user_id, ip) VALUES ($5, $1, $2, $3, $4)`+pollVoteConflict(userID),
+		pollID, optionID, nullIf(userID), nullIf(ip), p.s.tenant)
 	if err != nil {
 		return Poll{}, err
 	}
 	if tag.RowsAffected() == 1 {
 		if _, err := tx.Exec(ctx, `UPDATE `+p.s.t.pollOptions+`
-			SET vote_count = vote_count + 1 WHERE id = $1`, optionID); err != nil {
+			SET vote_count = vote_count + 1 WHERE tenant_id = $2 AND id = $1`, optionID, p.s.tenant); err != nil {
 			return Poll{}, err
 		}
 	}
@@ -633,6 +633,13 @@ func (p *polls) answer(ctx context.Context, actor access.Actor, pollID, text str
 	}
 	if utf8.RuneCountInString(text) > maxAnswerLen {
 		return Poll{}, badRequest("text exceeds %d characters", maxAnswerLen)
+	}
+	if err := p.rt.checkIPBan(ctx, actor); err != nil {
+		return Poll{}, err
+	}
+	text, err := p.rt.rules.apply(ctx, text)
+	if err != nil {
+		return Poll{}, err
 	}
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
@@ -756,18 +763,12 @@ func (rt *Runtime) ReclassifyPending(ctx context.Context, after string, limit in
 	return out, first
 }
 
-// ownsQuestion renders the predicate tying an option/vote row to a question of
-// this tenant; col is the question id column, n the tenant placeholder.
-func (p *polls) ownsQuestion(col string, n int) string {
-	return `EXISTS (SELECT 1 FROM ` + p.s.t.pollQuestions + ` tq WHERE tq.id = ` + col + ` AND tq.tenant_id = $` + strconv.Itoa(n) + `)`
-}
-
 // pollVoteConflict targets the partial unique index for the voter's dedup key.
 func pollVoteConflict(userID string) string {
 	if userID != "" {
-		return ` ON CONFLICT (question_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
+		return ` ON CONFLICT (tenant_id, question_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
 	}
-	return ` ON CONFLICT (question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
+	return ` ON CONFLICT (tenant_id, question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
 }
 
 // --- HTTP ---
@@ -808,9 +809,9 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: httpapi.H((*polls).handleVote)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/answer", Resource: "polls", Auth: httpapi.User,
-		Doc:       "Stores or replaces the caller's answer to an open free-text poll.",
+		Doc:       "Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.",
 		Request:   PollAnswerInput{},
-		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeCommentBanned, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*polls).handleAnswer)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Sets the question image to an inline image uploaded to the poll's media folder; \"\" clears it.",
@@ -892,8 +893,8 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	}
 	var o PollOption
 	err := p.s.pool.QueryRow(req.Context(), `INSERT INTO `+p.s.t.pollOptions+`
-		(question_id, label, position)
-		SELECT q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
+		(tenant_id, question_id, label, position)
+		SELECT q.tenant_id, q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE tenant_id = q.tenant_id AND question_id = q.id))
 		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
 		RETURNING id::text, label, position, vote_count`,
 		id, strings.TrimSpace(*in.Label), in.Position, p.s.tenant).
@@ -942,7 +943,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	var o PollOption
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), position = COALESCE($3, position)
-		WHERE id = $1 AND question_id = $4 AND `+p.ownsQuestion("question_id", 5)+`
+		WHERE id = $1 AND question_id = $4 AND tenant_id = $5
 		RETURNING id::text, question_id::text, label, coalesce(image_name,''), position, vote_count`,
 		oid, in.Label, in.Position, pollID, p.s.tenant).
 		Scan(&o.ID, &pollID, &o.Label, &o.image, &o.Position, &o.VoteCount)
@@ -980,8 +981,8 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	// Single statement: delete only when >= 3 siblings exist, so a poll never
 	// shrinks below 2 votable options.
 	tag, err := p.s.pool.Exec(req.Context(), `DELETE FROM `+p.s.t.pollOptions+` o
-		WHERE o.id = $1 AND o.question_id = $2 AND `+p.ownsQuestion("o.question_id", 3)+` AND (
-			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
+		WHERE o.id = $1 AND o.question_id = $2 AND o.tenant_id = $3 AND (
+			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.tenant_id = $3 AND s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -990,7 +991,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 		// Missing option and too-few-options both land here; disambiguate.
 		var exists bool
 		if err := p.s.pool.QueryRow(req.Context(), `SELECT true FROM `+p.s.t.pollOptions+`
-			WHERE id = $1 AND question_id = $2 AND `+p.ownsQuestion("question_id", 3), oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
+			WHERE id = $1 AND question_id = $2 AND tenant_id = $3`, oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
 			writeErr(w, badRequest("a poll needs at least 2 options"))
 			return
 		}
@@ -1014,7 +1015,7 @@ func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_name = NULLIF($3, '') WHERE id = $4 AND question_id = $1 AND `+p.ownsQuestion("question_id", 2), req.PathValue("oid"))
+	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_name = NULLIF($3, '') WHERE id = $4 AND question_id = $1 AND tenant_id = $2`, req.PathValue("oid"))
 }
 
 // setImage runs update with $1 the poll id, $2 the tenant, $3 the image name

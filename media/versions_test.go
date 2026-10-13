@@ -17,6 +17,7 @@ func bookKind() media.Kind {
 			Import: "import/{name}", Download: "zip"},
 		Uploads: []media.Upload{
 			{Path: "cover", Content: true, Types: pngs, MaxBytes: 1 << 20},
+			{Path: "inline/{name}", Content: true, Named: true, Max: 10, Types: pngs, MaxBytes: 1 << 20},
 			{Path: "pages/{name}", Types: pngs, MaxBytes: 1 << 20},
 			{Path: "audio/{name}", Types: []string{"audio/wav"}, MaxBytes: 1 << 20},
 			{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20},
@@ -31,6 +32,7 @@ func bookKind() media.Kind {
 		},
 		Public: []media.Public{
 			{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{100}},
+			{Name: "inline", From: "inline/{name}", To: "{name}-{w}.webp", Widths: []int{400, 800}},
 			{Name: "preview", From: "previews/{name}", To: "preview-{n}.webp", First: 2},
 		}}
 }
@@ -74,8 +76,23 @@ func TestVersionsKind(t *testing.T) {
 	if ti.Prefix() != "site/book/"+content+"/" || vi.Prefix() != "site/book/"+content+"/"+version+"/" {
 		t.Fatalf("folders %s %s", ti.Prefix(), vi.Prefix())
 	}
-	if len(ti.Kind().Uploads) != 1 || ti.Kind().Uploads[0].Path != "cover" || len(ti.Kind().Public) != 1 {
+	if len(ti.Kind().Uploads) != 2 || ti.Kind().Uploads[0].Path != "cover" || len(ti.Kind().Public) != 2 {
 		t.Fatalf("content level %+v", ti.Kind())
+	}
+	// Named content images get the body kind: their public preset, and a
+	// private rendition at its largest width for opened locked items.
+	body, err := reg.Kind("book" + media.BodySuffix)
+	if err != nil || body.Versions || len(body.Uploads) != 1 || body.Uploads[0].Path != "inline/{name}" || body.Uploads[0].Content ||
+		len(body.Public) != 1 || body.Public[0].Name != "inline" || len(body.Private) != 1 || body.Private[0].Name != "inline-open" ||
+		body.Private[0].Image.Width != 800 {
+		t.Fatalf("body kind %+v %v", body, err)
+	}
+	if base, ok := media.BodyOf(body.Name); !ok || base != "book" {
+		t.Fatalf("BodyOf %q", base)
+	}
+	if _, err := media.ForContent(media.Config{Namespace: "site", Kinds: []media.Kind{book, {Name: "book.body",
+		Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1}}}}}, site); err == nil {
+		t.Fatal("a declared body kind is accepted")
 	}
 	if len(vi.Kind().Uploads) != 4 || len(vi.Kind().Public) != 1 || vi.Kind().Public[0].Name != "preview" {
 		t.Fatalf("version level %+v", vi.Kind().Uploads)
@@ -125,7 +142,7 @@ func TestVersionsKind(t *testing.T) {
 		"playback not audio":          func(k *media.Kind) { k.Publish.Playback = "read" },
 		"import not a zip":            func(k *media.Kind) { k.Publish.Import = "pages/{name}" },
 		"download not host only zip":  func(k *media.Kind) { k.Private[3].HostOnly = false },
-		"pages at the content level":  func(k *media.Kind) { k.Uploads[1].Content = true },
+		"pages at the content level":  func(k *media.Kind) { k.Uploads[2].Content = true },
 	} {
 		k := bookKind()
 		mutate(&k)

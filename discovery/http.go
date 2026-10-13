@@ -32,10 +32,16 @@ func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 		})
 	}}
 	httpapi.Mount(mux, g.Guard, handler{s}, routes)
+	httpapi.Mount(mux, g.Guard, handler{s}, mineRoutes)
+	httpapi.Mount(mux, g.Guard, handler{s}, searchRoutes)
 	return mux, nil
 }
 
-func init() { httpapi.Register(httpapi.Discovery, routes) }
+func init() {
+	httpapi.Register(httpapi.Discovery, routes)
+	httpapi.Register(httpapi.Discovery, mineRoutes)
+	httpapi.Register(httpapi.Discovery, searchRoutes)
+}
 
 type handler struct{ s *Service }
 
@@ -79,7 +85,7 @@ var routes = []httpapi.Route[handler]{
 		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
 			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups,
-				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's")}, pageParams),
+				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Suggests contents and groups while the reader types, tolerating typos and partial words.",
@@ -189,6 +195,9 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 		o.Unpersonalized = !p
 	}
 	page, err := h.s.Search(r.Context(), o)
+	if err == nil {
+		h.recordSearch(r, o, page)
+	}
 	h.reply(w, r, page, err)
 }
 

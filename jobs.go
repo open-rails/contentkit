@@ -59,6 +59,7 @@ const (
 	recountEvery        = 15 * time.Minute
 	windowsEvery        = time.Minute
 	popularityEvery     = time.Hour
+	searchPruneEvery    = time.Hour
 	windowsLookback     = 5 * time.Minute // well past windowsEvery, so no window change is missed
 )
 
@@ -83,6 +84,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &popularityWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -97,6 +99,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{}, true)
 		periodic("contentkit_groups_recount", recountEvery, groupsArgs{}, true)
 		periodic("contentkit_groups_windows", windowsEvery, groupsArgs{Windows: true}, true)
+		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{}, false)
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
 		}
@@ -213,6 +216,22 @@ func (w *popularityWorker) Work(ctx context.Context, _ *river.Job[popularityArgs
 		return err
 	}
 	return nil
+}
+
+type searchPruneArgs struct{}
+
+func (searchPruneArgs) Kind() string { return "contentkit_search_prune" }
+
+// searchPruneWorker deletes recent searches hidden by a clear, of erased
+// people, or past their retention.
+type searchPruneWorker struct {
+	river.WorkerDefaults[searchPruneArgs]
+	e *Engine
+}
+
+func (w *searchPruneWorker) Work(ctx context.Context, _ *river.Job[searchPruneArgs]) error {
+	_, err := w.e.discover.PruneSearches(ctx)
+	return err
 }
 
 type preferenceSyncArgs struct {

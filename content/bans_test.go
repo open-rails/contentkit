@@ -37,12 +37,12 @@ func bansRuntime(t *testing.T) (*Runtime, http.Handler) {
 	res.setOwned("gallery", cid(2), other.ID)
 	res.setOwned("gallery", cid(3), troll.ID)
 	res.setOwned("gallery", cid(4), "")
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, UserInfo: commentsDirectory{},
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), UserInfo: commentsDirectory{},
 		Auth: testauth.Auth{Authz: banAuthz{operators: map[string]bool{operator.ID: true}}}})
 	return rt, rt.Handler()
 }
 
-func gallery(n int, rest string) string { return "/gallery/" + cid(n) + rest }
+func gallery(n int, rest string) string { return "/contents/" + cid(n) + rest }
 
 // comment posts a comment (a reply when replyTo is set) and returns the response.
 func comment(t *testing.T, h http.Handler, who access.Actor, n int, replyTo string) *httptest.ResponseRecorder {

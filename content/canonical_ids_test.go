@@ -9,17 +9,18 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // foldingResolver finds content whatever the letter case of its id and keeps
 // the requested reference, like a host resolving `WHERE id = $1::uuid`.
 type foldingResolver map[string]bool
 
-func (f foldingResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (f foldingResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, r := range refs {
 		if f[strings.ToLower(r.ContentID)] {
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+			out[r.Key()] = resolve.Resolution{Visible: true, Accessible: true}
 		}
 	}
 	return out, nil
@@ -51,14 +52,15 @@ func spellings(id string, n int) []string {
 // and EraseSubjects undid only the lower-case one.
 func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 	const gallery = "0192abcd-ef01-7abc-8def-0123456789ab"
-	rt, pool := newTestRuntime(t, Options{Resolver: foldingResolver{gallery: true}, ContentKinds: []string{"gallery"}, Anonymous: Anonymous{Reactions: true}})
+	rt, pool := newTestRuntime(t, Options{Resolver: foldingResolver{gallery: true}, Kinds: testKinds("gallery"), Anonymous: Anonymous{Reactions: true}})
+	storeTarget(t, rt, "gallery", gallery)
 	h, ctx := rt.Handler(), context.Background()
 	attacker, anon := access.Actor{ID: "attacker"}, access.Actor{Anonymous: true, IP: "203.0.113.9"}
 	fans := []access.Actor{{ID: "u1"}, {ID: "u2"}}
 
 	comment := func(actor access.Actor, in CommentInput) Comment {
 		t.Helper()
-		rec := doJSON(t, h, actor, "POST", "/gallery/"+gallery+"/comments", in)
+		rec := doJSON(t, h, actor, "POST", "/contents/"+gallery+"/comments", in)
 		var cm Comment
 		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &cm) != nil {
 			t.Fatalf("comment: %d %s", rec.Code, rec.Body.String())
@@ -88,14 +90,14 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 	for _, fan := range fans {
 		like(fan, "/comments/"+rival+"/like")
 	}
-	like(attacker, "/gallery/"+gallery+"/like")
+	like(attacker, "/contents/"+gallery+"/like")
 	if reply := comment(fans[1], CommentInput{Body: "re", ReplyToID: strings.ToUpper(rival)}); reply.ReplyToID != rival {
 		t.Fatalf("reply_to_id = %q, want the stored %q", reply.ReplyToID, rival)
 	}
 
 	list := func(actor access.Actor) []Comment {
 		t.Helper()
-		rec := doJSON(t, h, actor, "GET", "/gallery/"+gallery+"/comments?sort=best", nil)
+		rec := doJSON(t, h, actor, "GET", "/contents/"+gallery+"/comments?sort=best", nil)
 		var out []Comment
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
 			t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
@@ -107,14 +109,14 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 		t.Fatalf("sort=best = %+v, want the rival (3 likes) over the target (1 like, mine)", got)
 	}
 
-	// A route id the resolver keeps is the row key, so it must be canonical.
+	// A route names its target by its exact id: another spelling names nothing.
 	upper := strings.ToUpper(gallery)
-	for _, route := range []string{"POST /gallery/" + upper + "/like", "GET /gallery/" + upper + "/reaction", "POST /gallery/" + upper + "/favorite",
-		"DELETE /gallery/" + upper + "/favorite", "GET /gallery/" + upper + "/favorite", "POST /gallery/" + upper + "/comments", "GET /gallery/" + upper + "/comments"} {
+	for _, route := range []string{"POST /contents/" + upper + "/like", "GET /contents/" + upper + "/reaction", "POST /contents/" + upper + "/favorite",
+		"DELETE /contents/" + upper + "/favorite", "GET /contents/" + upper + "/favorite", "POST /contents/" + upper + "/comments", "GET /contents/" + upper + "/comments"} {
 		method, path, _ := strings.Cut(route, " ")
 		rec := doJSON(t, h, attacker, method, path, CommentInput{Body: "x"})
-		if rec.Code != http.StatusBadRequest || decodeErr(t, rec.Body.String()).Code != CodeInvalidRequest {
-			t.Errorf("%s = %d %s, want 400 invalid_request", route, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNotFound || decodeErr(t, rec.Body.String()).Code != CodeNotFound {
+			t.Errorf("%s = %d %s, want 404 not_found", route, rec.Code, rec.Body.String())
 		}
 	}
 

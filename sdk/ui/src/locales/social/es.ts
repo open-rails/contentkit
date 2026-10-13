@@ -72,6 +72,7 @@ export const social: typeof en = {
     showMore: "Ver más",
     showLess: "Ver menos",
     restore: "Restaurar",
+    closed: "Los comentarios están cerrados.",
     locked: "No puedes comentar aquí.",
     rateLimited: "Estás comentando demasiado rápido. Inténtalo de nuevo en {seconds} s.",
     rateLimitedSoon: "Estás comentando demasiado rápido. Inténtalo de nuevo en un momento.",

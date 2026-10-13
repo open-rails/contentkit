@@ -125,8 +125,13 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.commentBans+` WHERE tenant_id=$1 AND (user_id=ANY($2) OR scope=ANY($3))`, rt.tenant, ids, scopes); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.commentBans+` SET banned_by='' WHERE tenant_id=$1 AND banned_by=ANY($2)`, rt.tenant, ids); err != nil {
-		return err
+	// Moderation rules they set keep standing without their id.
+	for _, q := range []string{`UPDATE ` + rt.store.t.commentBans + ` SET banned_by='' WHERE tenant_id=$1 AND banned_by=ANY($2)`,
+		`UPDATE ` + rt.store.t.ipBans + ` SET banned_by='' WHERE tenant_id=$1 AND banned_by=ANY($2)`,
+		`UPDATE ` + rt.store.t.bannedWords + ` SET created_by='' WHERE tenant_id=$1 AND created_by=ANY($2)`} {
+		if _, err := tx.Exec(ctx, q, rt.tenant, ids); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET body=coalesce(published_body,''), user_id=CASE WHEN published_body IS NOT NULL THEN user_id ELSE NULL END, anon_name=CASE WHEN published_body IS NOT NULL THEN anon_name ELSE '[deleted]' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_body IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()
  WHERE tenant_id=$1 AND user_id=ANY($2) AND moderation IN ('held','rejected')`, rt.tenant, ids); err != nil {
@@ -236,7 +241,7 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 			}
 		}
 	}
-	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.pollVotes+` v USING `+s.t.pollQuestions+` q WHERE v.question_id=q.id AND q.tenant_id=$1 AND v.user_id=ANY($2) RETURNING v.option_id::text`, rt.tenant, ids)
+	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.pollVotes+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING option_id::text`, rt.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -259,7 +264,7 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	}
 	sort.Strings(options)
 	for _, id := range options {
-		if _, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` SET vote_count=GREATEST(vote_count-$2,0) WHERE id=$1`, id, votes[id]); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` SET vote_count=GREATEST(vote_count-$2,0) WHERE tenant_id=$3 AND id=$1`, id, votes[id], rt.tenant); err != nil {
 			return err
 		}
 	}

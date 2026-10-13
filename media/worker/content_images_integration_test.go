@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -46,7 +47,7 @@ func (ckStaff) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 // module, as a host wires them.
 type others struct{ content *content.Runtime }
 
-func (o *others) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (o *others) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	return o.content.MediaResolver().Resolve(ctx, refs, a)
 }
 

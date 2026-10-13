@@ -10,12 +10,13 @@ import (
 // registers them in the catalog in the order they are documented.
 func init() {
 	httpapi.Register(httpapi.Content, configRoutes)
-	httpapi.Register(httpapi.Content, commentRoutes)
-	httpapi.Register(httpapi.Content, reactionRoutes)
-	httpapi.Register(httpapi.Content, favoriteRoutes)
+	httpapi.Register(httpapi.Content, commentRoutes())
+	httpapi.Register(httpapi.Content, reactionRoutes())
+	httpapi.Register(httpapi.Content, favoriteRoutes())
 	httpapi.Register(httpapi.Content, pollRoutes)
-	httpapi.Register(httpapi.Content, banRoutes)
+	httpapi.Register(httpapi.Content, banRoutes())
 	httpapi.Register(httpapi.Content, moderationRoutes)
+	httpapi.Register(httpapi.Content, ruleRoutes)
 }
 
 var sortParam = httpapi.Text("sort", "likes (most liked), best (Wilson lower bound) or newest (the default)")
@@ -28,11 +29,12 @@ func (rt *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()
 	g := rt.guard.Guard
 	httpapi.Mount(mux, g, rt, configRoutes)
-	httpapi.Mount(mux, g, rt.comments, commentRoutes)
-	httpapi.Mount(mux, g, rt.reactions, reactionRoutes)
-	httpapi.Mount(mux, g, rt.favorites, favoriteRoutes)
+	httpapi.Mount(mux, g, rt.comments, commentRoutes())
+	httpapi.Mount(mux, g, rt.reactions, reactionRoutes())
+	httpapi.Mount(mux, g, rt.favorites, favoriteRoutes())
 	httpapi.Mount(mux, g, rt.polls, pollRoutes)
-	httpapi.Mount(mux, g, rt, banRoutes)
+	httpapi.Mount(mux, g, rt, banRoutes())
 	httpapi.Mount(mux, g, rt, moderationRoutes)
+	httpapi.Mount(mux, g, rt, ruleRoutes)
 	return rt.accessLog(memoized(mux))
 }

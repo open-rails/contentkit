@@ -49,7 +49,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	g1, g1v := w.published(f, staff, "gallery", o.ID)
 	g2, _ := w.published(f, staff, "gallery")
 	album, _ := w.published(f, staff, "album", u.ID)
-	item := "/gallery/" + g1
+	item := "/contents/" + g1
 
 	// What signed-out visitors may do: nothing here (the default).
 	var cfg content.Config
@@ -146,7 +146,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, owner, "DELETE", "/comments/"+root.ID+"/reaction", nil, nil)
 	f.want(http.StatusNoContent, owner, "DELETE", "/comments/"+reply.ID, nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/comments/"+reply.ID+"/restore", nil, nil)
-	f.want(http.StatusNotFound, anon, "GET", "/gallery/"+uuid.Must(uuid.NewV7()).String()+"/comments", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/contents/"+uuid.Must(uuid.NewV7()).String()+"/comments", nil, nil)
 
 	// Native reply/like notices use the same authenticated user and mount.
 	var notices notify.Page
@@ -172,7 +172,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusForbidden, user, "POST", "/notifications/publish", welcome, nil)
 
-	// Reactions on host content.
+	// Reactions on content.
 	for _, verb := range []string{"like", "dislike"} {
 		f.want(http.StatusOK, user, "POST", item+"/"+verb, nil, nil)
 	}
@@ -183,7 +183,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusUnauthorized, anon, "POST", item+"/favorite", nil, nil)
 	f.want(http.StatusOK, user, "POST", item+"/favorite", nil, nil)
 	f.want(http.StatusOK, user, "GET", item+"/favorite", nil, nil)
-	f.want(http.StatusOK, user, "GET", "/favorites", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/me/favorites", nil, nil)
 	f.want(http.StatusOK, user, "DELETE", item+"/favorite", nil, nil)
 
 	// Polls.

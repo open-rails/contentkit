@@ -30,7 +30,7 @@ type limitFixture struct {
 // the content (once per schema), otherwise it reuses from's schema and ids.
 func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixture {
 	t.Helper()
-	opts := Options{Limits: limits, ContentKinds: []string{"gallery", "post"},
+	opts := Options{Limits: limits, Kinds: testKinds("gallery", "post"),
 		Anonymous: Anonymous{Comments: true, Reactions: true, Votes: true}}
 	if from != nil {
 		opts.Schema, opts.Resolver = from.rt.schema, from.rt.resolver
@@ -79,7 +79,7 @@ func TestRateLimitsPerActionAndChurn(t *testing.T) {
 	two := []Rate{{2, time.Hour}}
 	f := newLimitFixture(t, Limits{Comment: two, CommentReaction: two, Reaction: two, Favorite: two, PollVote: two}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
-	g1, g2 := "/gallery/"+cid(1), "/gallery/"+cid(2)
+	g1, g2 := "/contents/"+cid(1), "/contents/"+cid(2)
 	opt := map[string]string{"option_id": f.poll.Options[0].ID}
 	for _, c := range []struct {
 		action Action
@@ -124,7 +124,7 @@ func TestRateLimitCommentBurstAndSustained(t *testing.T) {
 	f := newLimitFixture(t, Limits{Comment: []Rate{{2, 3 * time.Second}, {3, time.Hour}}}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
 	post := func() *httptest.ResponseRecorder {
-		return doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "spam"})
+		return doJSON(t, f.h, bot, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "spam"})
 	}
 	for i := range 2 {
 		if rec := post(); rec.Code != http.StatusCreated {
@@ -147,20 +147,20 @@ func TestRateLimitDefaults(t *testing.T) {
 	f := newLimitFixture(t, Limits{KeyPrefix: "defaults:"}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
 	for i := range 5 {
-		if rec := doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "c" + strconv.Itoa(i)}); rec.Code != http.StatusCreated {
+		if rec := doJSON(t, f.h, bot, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "c" + strconv.Itoa(i)}); rec.Code != http.StatusCreated {
 			t.Fatalf("comment %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
-	assertLimited(t, doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "six"}), ActionComment, 290, 300)
+	assertLimited(t, doJSON(t, f.h, bot, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "six"}), ActionComment, 290, 300)
 	for i := range 20 {
 		method := []string{"POST", "DELETE"}[i%2]
-		if rec := doJSON(t, f.h, bot, method, "/gallery/"+cid(1)+"/favorite", nil); rec.Code != http.StatusOK {
+		if rec := doJSON(t, f.h, bot, method, "/contents/"+cid(1)+"/favorite", nil); rec.Code != http.StatusOK {
 			t.Fatalf("favorite toggle %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
-	assertLimited(t, doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/favorite", nil), ActionFavorite, 50, 60)
+	assertLimited(t, doJSON(t, f.h, bot, "POST", "/contents/"+cid(1)+"/favorite", nil), ActionFavorite, 50, 60)
 
-	_, err := New(context.Background(), Options{Pool: f.rt.store.pool, Schema: f.rt.schema, Tenant: testTenant,
+	_, err := New(context.Background(), Options{Kinds: testKinds("gallery"), Pool: f.rt.store.pool, Schema: f.rt.schema, Tenant: testTenant,
 		Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Limits: Limits{Favorite: []Rate{{0, time.Minute}}}})
 	if err == nil || !strings.Contains(err.Error(), "favorite") {
 		t.Fatalf("a zero-count rate: %v", err)
@@ -205,7 +205,7 @@ func TestRateLimitSharedAcrossReplicas(t *testing.T) {
 			b := newLimitFixture(t, limits(rdb), &a)
 			bot := access.Actor{ID: "bot", Kind: "user"}
 			comment := func(f limitFixture, who access.Actor) *httptest.ResponseRecorder {
-				return doJSON(t, f.h, who, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "spam"})
+				return doJSON(t, f.h, who, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "spam"})
 			}
 			before := RateLimitRedisErrors.Value()
 			for i, f := range []limitFixture{a, b, a} {
@@ -219,12 +219,12 @@ func TestRateLimitSharedAcrossReplicas(t *testing.T) {
 			if rec := comment(b, access.Actor{ID: "human", Kind: "user"}); rec.Code != http.StatusCreated {
 				t.Fatalf("another user: %d %s", rec.Code, rec.Body.String())
 			}
-			for i, s := range []step{{"POST", "/gallery/" + cid(1) + "/favorite", nil}, {"DELETE", "/gallery/" + cid(1) + "/favorite", nil}} {
+			for i, s := range []step{{"POST", "/contents/" + cid(1) + "/favorite", nil}, {"DELETE", "/contents/" + cid(1) + "/favorite", nil}} {
 				if rec := doJSON(t, []limitFixture{a, b}[i].h, bot, s.method, s.path, nil); rec.Code != http.StatusOK {
 					t.Fatalf("favorite step %d: %d %s", i, rec.Code, rec.Body.String())
 				}
 			}
-			assertLimited(t, doJSON(t, a.h, bot, "POST", "/gallery/"+cid(1)+"/favorite", nil), ActionFavorite, 3590, 3600)
+			assertLimited(t, doJSON(t, a.h, bot, "POST", "/contents/"+cid(1)+"/favorite", nil), ActionFavorite, 3590, 3600)
 			if got := RateLimitRedisErrors.Value(); got != before {
 				t.Fatalf("redis errors %d -> %d", before, got)
 			}

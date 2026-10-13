@@ -37,8 +37,12 @@ func (c *Client) GetConfig(ctx context.Context) (content.Config, error) {
 	return out, err
 }
 
-// GetCommentsQuery is the query of GetComments.
-type GetCommentsQuery struct {
+// GetContentCommentsQuery is the query of GetContentComments.
+type GetContentCommentsQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+	// only this language's comments; every language by default
+	Language string
 	// likes (most liked), best (Wilson lower bound) or newest (the default)
 	Sort string
 	// page size: 20 by default, at most 100
@@ -47,8 +51,14 @@ type GetCommentsQuery struct {
 	Offset int
 }
 
-func (q GetCommentsQuery) values() url.Values {
+func (q GetContentCommentsQuery) values() url.Values {
 	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
 	}
@@ -61,22 +71,81 @@ func (q GetCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetComments is GET /v1/{kind}/{id}/comments (public). A target's top-level comments with reply counts; the caller also sees its own held and rejected ones.
-func (c *Client) GetComments(ctx context.Context, kind string, id string, q GetCommentsQuery) ([]content.Comment, error) {
+// GetContentComments is GET /v1/contents/{id}/comments (public). The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones.
+func (c *Client) GetContentComments(ctx context.Context, id string, q GetContentCommentsQuery) ([]content.Comment, error) {
 	var out []content.Comment
-	err := c.call(ctx, http.MethodGet, expand("/v1/{kind}/{id}/comments", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PostComments is POST /v1/{kind}/{id}/comments (public). Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
-func (c *Client) PostComments(ctx context.Context, kind string, id string, body content.CommentInput) (content.Comment, error) {
+// PostContentCommentsQuery is the query of PostContentComments.
+type PostContentCommentsQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q PostContentCommentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// PostContentComments is POST /v1/contents/{id}/comments (public). Comments on a content item or one of its versions in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
+func (c *Client) PostContentComments(ctx context.Context, id string, body content.CommentInput, q PostContentCommentsQuery) (content.Comment, error) {
 	var out content.Comment
-	err := c.call(ctx, http.MethodPost, expand("/v1/{kind}/{id}/comments", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/comments", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	return out, err
+}
+
+// GetGroupCommentsQuery is the query of GetGroupComments.
+type GetGroupCommentsQuery struct {
+	// only this language's comments; every language by default
+	Language string
+	// likes (most liked), best (Wilson lower bound) or newest (the default)
+	Sort string
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetGroupCommentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetGroupComments is GET /v1/groups/{id}/comments (public). The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.
+func (c *Client) GetGroupComments(ctx context.Context, id string, q GetGroupCommentsQuery) ([]content.Comment, error) {
+	var out []content.Comment
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PostGroupComments is POST /v1/groups/{id}/comments (public). Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
+func (c *Client) PostGroupComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
+	var out content.Comment
+	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // GetCommentsLatestQuery is the query of GetCommentsLatest.
 type GetCommentsLatestQuery struct {
+	// only this language's comments; every language by default
+	Language string
 	// page size: 20 by default, at most 100
 	Limit int
 	// items to skip
@@ -85,6 +154,9 @@ type GetCommentsLatestQuery struct {
 
 func (q GetCommentsLatestQuery) values() url.Values {
 	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
 	}
@@ -203,78 +275,199 @@ func (c *Client) DeleteCommentReaction(ctx context.Context, cid string) (content
 	return out, err
 }
 
-// PostLike is POST /v1/{kind}/{id}/like (public). Likes a target.
-func (c *Client) PostLike(ctx context.Context, kind string, id string) (content.ReactionCounts, error) {
-	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodPost, expand("/v1/{kind}/{id}/like", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
+// PostContentLikeQuery is the query of PostContentLike.
+type PostContentLikeQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
 }
 
-// PostDislike is POST /v1/{kind}/{id}/dislike (public). Dislikes a target.
-func (c *Client) PostDislike(ctx context.Context, kind string, id string) (content.ReactionCounts, error) {
-	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodPost, expand("/v1/{kind}/{id}/dislike", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteReaction is DELETE /v1/{kind}/{id}/reaction (public). Clears the caller's reaction to a target.
-func (c *Client) DeleteReaction(ctx context.Context, kind string, id string) (content.ReactionCounts, error) {
-	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodDelete, expand("/v1/{kind}/{id}/reaction", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// GetReaction is GET /v1/{kind}/{id}/reaction (public). A target's like and dislike counts and the caller's own reaction.
-func (c *Client) GetReaction(ctx context.Context, kind string, id string) (content.ReactionCounts, error) {
-	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodGet, expand("/v1/{kind}/{id}/reaction", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// GetFavoritesQuery is the query of GetFavorites.
-type GetFavoritesQuery struct {
-	// page size: 20 by default, at most 100
-	Limit int
-	// items to skip
-	Offset int
-}
-
-func (q GetFavoritesQuery) values() url.Values {
+func (q PostContentLikeQuery) values() url.Values {
 	v := url.Values{}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Offset != 0 {
-		v.Set("offset", fmt.Sprint(q.Offset))
+	if q.Version != "" {
+		v.Set("version", q.Version)
 	}
 	return v
 }
 
-// GetFavorites is GET /v1/favorites (user). The caller's favorites, newest first.
-func (c *Client) GetFavorites(ctx context.Context, q GetFavoritesQuery) ([]content.FavoriteItem, error) {
-	var out []content.FavoriteItem
-	err := c.call(ctx, http.MethodGet, "/v1/favorites", q.values(), nil, &out)
+// PostContentLike is POST /v1/contents/{id}/like (public). Likes a content item or one of its versions.
+func (c *Client) PostContentLike(ctx context.Context, id string, q PostContentLikeQuery) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/like", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PostFavorite is POST /v1/{kind}/{id}/favorite (user). Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count.
-func (c *Client) PostFavorite(ctx context.Context, kind string, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodPost, expand("/v1/{kind}/{id}/favorite", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
+// PostContentDislikeQuery is the query of PostContentDislike.
+type PostContentDislikeQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q PostContentDislikeQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// PostContentDislike is POST /v1/contents/{id}/dislike (public). Dislikes a content item or one of its versions.
+func (c *Client) PostContentDislike(ctx context.Context, id string, q PostContentDislikeQuery) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/dislike", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// DeleteFavorite is DELETE /v1/{kind}/{id}/favorite (user). Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count.
-func (c *Client) DeleteFavorite(ctx context.Context, kind string, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodDelete, expand("/v1/{kind}/{id}/favorite", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
+// DeleteContentReactionQuery is the query of DeleteContentReaction.
+type DeleteContentReactionQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q DeleteContentReactionQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// DeleteContentReaction is DELETE /v1/contents/{id}/reaction (public). Clears the caller's reaction to a content item or one of its versions.
+func (c *Client) DeleteContentReaction(ctx context.Context, id string, q DeleteContentReactionQuery) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/reaction", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetFavorite is GET /v1/{kind}/{id}/favorite (public). A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible).
-func (c *Client) GetFavorite(ctx context.Context, kind string, id string) (content.FavoriteState, error) {
+// GetContentReactionQuery is the query of GetContentReaction.
+type GetContentReactionQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q GetContentReactionQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// GetContentReaction is GET /v1/contents/{id}/reaction (public). The like and dislike counts of a content item or one of its versions and the caller's own reaction.
+func (c *Client) GetContentReaction(ctx context.Context, id string, q GetContentReactionQuery) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/reaction", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PostGroupLike is POST /v1/groups/{id}/like (public). Likes a group.
+func (c *Client) PostGroupLike(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/like", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostGroupDislike is POST /v1/groups/{id}/dislike (public). Dislikes a group.
+func (c *Client) PostGroupDislike(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/dislike", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// DeleteGroupReaction is DELETE /v1/groups/{id}/reaction (public). Clears the caller's reaction to a group.
+func (c *Client) DeleteGroupReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// GetGroupReaction is GET /v1/groups/{id}/reaction (public). The like and dislike counts of a group and the caller's own reaction.
+func (c *Client) GetGroupReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostContentFavoriteQuery is the query of PostContentFavorite.
+type PostContentFavoriteQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q PostContentFavoriteQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// PostContentFavorite is POST /v1/contents/{id}/favorite (user). Favorites a content item or one of its versions the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
+func (c *Client) PostContentFavorite(ctx context.Context, id string, q PostContentFavoriteQuery) (content.FavoriteState, error) {
 	var out content.FavoriteState
-	err := c.call(ctx, http.MethodGet, expand("/v1/{kind}/{id}/favorite", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/favorite", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// DeleteContentFavoriteQuery is the query of DeleteContentFavorite.
+type DeleteContentFavoriteQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q DeleteContentFavoriteQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// DeleteContentFavorite is DELETE /v1/contents/{id}/favorite (user). Unfavorites a content item or one of its versions, also one no longer visible. Answers the state with its favorite count.
+func (c *Client) DeleteContentFavorite(ctx context.Context, id string, q DeleteContentFavoriteQuery) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/favorite", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetContentFavoriteQuery is the query of GetContentFavorite.
+type GetContentFavoriteQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q GetContentFavoriteQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// GetContentFavorite is GET /v1/contents/{id}/favorite (public). The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible).
+func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContentFavoriteQuery) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/favorite", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PostGroupFavorite is POST /v1/groups/{id}/favorite (user). Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
+func (c *Client) PostGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// DeleteGroupFavorite is DELETE /v1/groups/{id}/favorite (user). Unfavorites a group, also one no longer visible. Answers the state with its favorite count.
+func (c *Client) DeleteGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// GetGroupFavorite is GET /v1/groups/{id}/favorite (public). The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).
+func (c *Client) GetGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -403,7 +596,7 @@ func (c *Client) PostPollVote(ctx context.Context, id string, body content.PollV
 	return out, err
 }
 
-// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll.
+// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.
 func (c *Client) PostPollAnswer(ctx context.Context, id string, body content.PollAnswerInput) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/answer", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -526,10 +719,31 @@ func (c *Client) DeleteGlobalCommentBan(ctx context.Context, user string) error 
 	return c.call(ctx, http.MethodDelete, expand("/v1/global-comment-bans/{user}", "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
-// GetCanComment is GET /v1/{kind}/{id}/can-comment (public). Whether the caller may comment on a target, and the ban that stops it.
-func (c *Client) GetCanComment(ctx context.Context, kind string, id string) (content.CommentStanding, error) {
+// GetContentCanCommentQuery is the query of GetContentCanComment.
+type GetContentCanCommentQuery struct {
+	// one version of the content item; the item itself by default
+	Version string
+}
+
+func (q GetContentCanCommentQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	return v
+}
+
+// GetContentCanComment is GET /v1/contents/{id}/can-comment (public). Whether the caller may comment on a content item or one of its versions, and the ban that stops it.
+func (c *Client) GetContentCanComment(ctx context.Context, id string, q GetContentCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
-	err := c.call(ctx, http.MethodGet, expand("/v1/{kind}/{id}/can-comment", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetGroupCanComment is GET /v1/groups/{id}/can-comment (public). Whether the caller may comment on a group, and the ban that stops it.
+func (c *Client) GetGroupCanComment(ctx context.Context, id string) (content.CommentStanding, error) {
+	var out content.CommentStanding
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/can-comment", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -569,6 +783,44 @@ func (c *Client) PostModerationResolve(ctx context.Context, kind string, id stri
 	var out content.ReviewOutcome
 	err := c.call(ctx, http.MethodPost, expand("/v1/moderation/{kind}/{id}/resolve", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
+}
+
+// GetModerationBannedWords is GET /v1/moderation/banned-words (staff). The banned words and what each does.
+func (c *Client) GetModerationBannedWords(ctx context.Context) ([]content.BannedWord, error) {
+	var out []content.BannedWord
+	err := c.call(ctx, http.MethodGet, "/v1/moderation/banned-words", nil, nil, &out)
+	return out, err
+}
+
+// PostModerationBannedWords is POST /v1/moderation/banned-words (staff). Bans words, or changes what banned ones do: mask (the default) or reject.
+func (c *Client) PostModerationBannedWords(ctx context.Context, body []content.BannedWordInput) ([]content.BannedWord, error) {
+	var out []content.BannedWord
+	err := c.call(ctx, http.MethodPost, "/v1/moderation/banned-words", nil, body, &out)
+	return out, err
+}
+
+// DeleteModerationBannedWords is DELETE /v1/moderation/banned-words (staff). Unbans words.
+func (c *Client) DeleteModerationBannedWords(ctx context.Context, body []string) error {
+	return c.call(ctx, http.MethodDelete, "/v1/moderation/banned-words", nil, body, nil)
+}
+
+// GetModerationIpBans is GET /v1/moderation/ip-bans (staff). The IP bans, newest first, expired ones included.
+func (c *Client) GetModerationIpBans(ctx context.Context) ([]content.IPBan, error) {
+	var out []content.IPBan
+	err := c.call(ctx, http.MethodGet, "/v1/moderation/ip-bans", nil, nil, &out)
+	return out, err
+}
+
+// PostModerationIpBans is POST /v1/moderation/ip-bans (staff). Bans addresses or networks from commenting and answering polls, or replaces their bans.
+func (c *Client) PostModerationIpBans(ctx context.Context, body []content.IPBanInput) ([]content.IPBan, error) {
+	var out []content.IPBan
+	err := c.call(ctx, http.MethodPost, "/v1/moderation/ip-bans", nil, body, &out)
+	return out, err
+}
+
+// DeleteModerationIpBans is DELETE /v1/moderation/ip-bans (staff). Lifts the bans of addresses or networks.
+func (c *Client) DeleteModerationIpBans(ctx context.Context, body []string) error {
+	return c.call(ctx, http.MethodDelete, "/v1/moderation/ip-bans", nil, body, nil)
 }
 
 // GetCatalogTotalsQuery is the query of GetCatalogTotals.
@@ -1659,6 +1911,8 @@ type GetSearchQuery struct {
 	CardGroups []string
 	// false ranks a signed-in reader's results as anyone's
 	Personalize *bool
+	// a signed-out reader's session, which keeps its recent searches
+	Session string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -1714,6 +1968,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.Personalize != nil {
 		v.Set("personalize", fmt.Sprint(*q.Personalize))
+	}
+	if q.Session != "" {
+		v.Set("session", q.Session)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2175,6 +2432,173 @@ func (c *Client) PostSignals(ctx context.Context, body discovery.Signals) error 
 // PostExposures is POST /v1/exposures (public). Records result lists a client served, rendered or showed, for click attribution.
 func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) error {
 	return c.call(ctx, http.MethodPost, "/v1/exposures", nil, body, nil)
+}
+
+// GetMeFavoritesQuery is the query of GetMeFavorites.
+type GetMeFavoritesQuery struct {
+	// contents (the default) or groups
+	Target string
+	// only this content kind or group kind
+	Kind string
+	// the group kinds cards name; every kind with a page by default
+	CardGroups []string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 24 by default, at most 100
+	Limit int
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+}
+
+func (q GetMeFavoritesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Target != "" {
+		v.Set("target", q.Target)
+	}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.CardGroups) > 0 {
+		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	return v
+}
+
+// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) or groups the reader favorited, most recent first.
+func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (discovery.InteractionPage, error) {
+	var out discovery.InteractionPage
+	err := c.call(ctx, http.MethodGet, "/v1/me/favorites", q.values(), nil, &out)
+	return out, err
+}
+
+// GetMeReactionsQuery is the query of GetMeReactions.
+type GetMeReactionsQuery struct {
+	// like or dislike; both by default
+	Value string
+	// contents (the default) or groups
+	Target string
+	// only this content kind or group kind
+	Kind string
+	// the group kinds cards name; every kind with a page by default
+	CardGroups []string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 24 by default, at most 100
+	Limit int
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+}
+
+func (q GetMeReactionsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Value != "" {
+		v.Set("value", q.Value)
+	}
+	if q.Target != "" {
+		v.Set("target", q.Target)
+	}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.CardGroups) > 0 {
+		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	return v
+}
+
+// GetMeReactions is GET /v1/me/reactions (user). The content items or groups the reader liked or disliked, most recent first: tag affinities and preferences.
+func (c *Client) GetMeReactions(ctx context.Context, q GetMeReactionsQuery) (discovery.InteractionPage, error) {
+	var out discovery.InteractionPage
+	err := c.call(ctx, http.MethodGet, "/v1/me/reactions", q.values(), nil, &out)
+	return out, err
+}
+
+// GetMeSearchesQuery is the query of GetMeSearches.
+type GetMeSearchesQuery struct {
+	// a signed-out reader's session, which keeps its recent searches
+	Session string
+	// 10 by default, at most 100
+	Limit int
+}
+
+func (q GetMeSearchesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Session != "" {
+		v.Set("session", q.Session)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetMeSearches is GET /v1/me/searches (public). The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session.
+func (c *Client) GetMeSearches(ctx context.Context, q GetMeSearchesQuery) (discovery.RecentSearches, error) {
+	var out discovery.RecentSearches
+	err := c.call(ctx, http.MethodGet, "/v1/me/searches", q.values(), nil, &out)
+	return out, err
+}
+
+// DeleteMeSearchesQuery is the query of DeleteMeSearches.
+type DeleteMeSearchesQuery struct {
+	// a signed-out reader's session, which keeps its recent searches
+	Session string
+	// only this query
+	Query string
+}
+
+func (q DeleteMeSearchesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Session != "" {
+		v.Set("session", q.Session)
+	}
+	if q.Query != "" {
+		v.Set("query", q.Query)
+	}
+	return v
+}
+
+// DeleteMeSearches is DELETE /v1/me/searches (public). Clears the reader's recent searches: one query, or every one so far.
+func (c *Client) DeleteMeSearches(ctx context.Context, q DeleteMeSearchesQuery) error {
+	return c.call(ctx, http.MethodDelete, "/v1/me/searches", q.values(), nil, nil)
 }
 
 // PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.

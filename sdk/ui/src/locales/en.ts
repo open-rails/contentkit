@@ -267,6 +267,8 @@ export const en = {
     resume_mismatch: "The saved upload is for a different file. Please pick the file again.",
     moderation_rejected: "This was rejected by moderation.",
     comment_banned: "You can't comment here.",
+    comments_closed: "Comments are closed here.",
+    limit_reached: "You already have as many of these as allowed.",
     comment_too_long: "This comment is too long.",
     commentTooLongBy: "A comment is at most {maxChars} characters.",
     not_configured: "This feature isn't available on this site.",

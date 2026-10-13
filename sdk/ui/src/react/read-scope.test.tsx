@@ -11,6 +11,7 @@ import { useSlotCrop, useSlotImage } from "./slot.js";
 
 afterEach(cleanup);
 const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
+const target = { type: "contents" as const, id: ref.id };
 
 it.each([false, true])("rolls back a failed comment reaction after a reply, unless refetched: %s", async (refetch) => {
   let mine = 0;
@@ -21,7 +22,7 @@ it.each([false, true])("rolls back a failed comment reaction after a reply, unle
     return Response.json([{ id: "parent", body: "parent", likes: mine, dislikes: 0, mine, reply_count: mine }]);
   } });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer="alice">{children}</ContentKitProvider>;
-  const { result } = renderHook(() => useComments(ref), { wrapper });
+  const { result } = renderHook(() => useComments(target), { wrapper });
   await waitFor(() => expect(result.current.loading).toBe(false));
   let pending: Promise<void>;
   act(() => { pending = result.current.react(result.current.items[0]!, 1); });
@@ -104,7 +105,7 @@ it.each([
     },
   });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} {...scope} onChange={onChange}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => ({ comments: useComments(ref), reaction: useReaction(ref) }), { wrapper });
+  const { result, rerender } = renderHook(() => ({ comments: useComments(target), reaction: useReaction(target) }), { wrapper });
   await waitFor(() => expect(result.current.comments.loading || result.current.reaction.loading).toBe(false));
   let pending: Promise<unknown>;
   act(() => { pending = kind === "comment" ? result.current.comments.post("old language") : result.current.reaction.set(1); });
@@ -179,7 +180,7 @@ it.each(["unchanged", "viewer", "round-trip"] as const)("keeps failed comment-re
     },
   });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => useComments(ref), { wrapper });
+  const { result, rerender } = renderHook(() => useComments(target), { wrapper });
   await waitFor(() => expect(result.current.loading).toBe(false));
   let pending: Promise<void>;
   act(() => { pending = result.current.react(result.current.items[0]!, -1); });
@@ -212,7 +213,7 @@ it("does not roll back a new reaction after leaving and returning to the same vi
       : Response.json({ likes: 0, dislikes: 0, mine: 0 }),
   });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => useReaction(ref), { wrapper });
+  const { result, rerender } = renderHook(() => useReaction(target), { wrapper });
   await waitFor(() => expect(result.current.loading).toBe(false));
   let old: Promise<void>;
   act(() => { old = result.current.set(1); });
@@ -250,8 +251,8 @@ it.each(["viewer", "language", "accessRevision"] as const)("isolates mounted med
   const { result, rerender } = renderHook(() => ({
     media: useMediaRead(ref),
     sharedMedia: useMediaRead(ref),
-    comments: useComments(ref),
-    sharedComments: useComments(ref),
+    comments: useComments(target),
+    sharedComments: useComments(target),
   }), { wrapper });
 
   const finish = (batch: typeof requests, value: number) => {
@@ -295,7 +296,7 @@ it("seeds a new viewer's read from the current initial data, not the previous vi
   let viewer = "alice";
   let initial = { likes: 1, dislikes: 0, mine: 1 };
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => useReaction(ref, { initial }), { wrapper });
+  const { result, rerender } = renderHook(() => useReaction(target, { initial }), { wrapper });
   expect(result.current.counts.mine).toBe(1);
   viewer = "bob";
   initial = { likes: 1, dislikes: 0, mine: 0 };

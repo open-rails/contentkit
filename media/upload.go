@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -690,7 +691,7 @@ func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	res, err := access.ResolveOne(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
+	res, err := resolve.One(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
 	if err != nil {
 		return nil, fmt.Errorf("media: resolve %s: %w", item.Ref(), err)
 	}

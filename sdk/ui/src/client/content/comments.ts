@@ -1,10 +1,12 @@
-import type { AdminComment, Comment, CommentInput, CommentStanding, FeedItem, ReactionCounts, RefBody } from "../generated/wire.js";
+import type { AdminComment, Comment, CommentInput, CommentStanding, FeedItem, ReactionCounts } from "../generated/wire.js";
 import type { Http } from "../http.js";
 import { call, type PageQuery } from "../route.js";
-import { reactionVerb, type Reaction, type Sort } from "./types.js";
+import { reactionVerb, type Reaction, type Sort, type Target } from "./types.js";
 
 export interface CommentQuery extends PageQuery {
   sort?: Sort;
+  /** Only this language's thread. */
+  language?: string;
 }
 
 export interface AdminCommentQuery extends PageQuery {
@@ -14,26 +16,28 @@ export interface AdminCommentQuery extends PageQuery {
   author?: string;
 }
 
-// Content ids are the host's opaque text (not only media's UUIDv7s).
-const target = (ref: RefBody) => ({ kind: ref.kind, id: ref.id });
-
 /** Comments on an item: threads, replies, edits, tombstones, reactions, standing, the latest feed and moderation. */
 export class CommentsClient {
   constructor(private readonly http: Http) {}
 
-  /** The item's top-level comments with reply counts; the caller also gets its own held and rejected ones. */
-  list(ref: RefBody, q: CommentQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
-    return call(this.http, "GET", "/{kind}/{id}/comments", { params: target(ref), query: q, signal });
+  /** The target's top-level comments with reply counts; the caller also gets its own held and rejected ones. */
+  list(t: Target, q: CommentQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
+    const o = { params: { id: t.id }, signal };
+    return t.type === "groups"
+      ? call(this.http, "GET", "/groups/{id}/comments", { ...o, query: q })
+      : call(this.http, "GET", "/contents/{id}/comments", { ...o, query: { ...q, version: t.version } });
   }
   /** A top-level comment's replies, oldest first. */
   replies(id: string, q: PageQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
     return call(this.http, "GET", "/comments/{cid}/replies", { params: { cid: id }, query: q, signal });
   }
-  /** Comments on the item, or replies to a top-level comment (reply_to_id); anonymous callers give anon_name. */
-  async create(ref: RefBody, input: CommentInput): Promise<Comment> {
+  /** Comments on the target in a language's thread, or replies to a top-level comment (reply_to_id); anonymous callers give anon_name. */
+  async create(t: Target, input: CommentInput): Promise<Comment> {
     const emit = this.http.captureChanges();
-    const comment: Comment = await call(this.http, "POST", "/{kind}/{id}/comments", { params: target(ref), body: input });
-    emit({ type: "comment.created", ref: target(ref), comment });
+    const o = { params: { id: t.id }, body: input };
+    const comment: Comment =
+      t.type === "groups" ? await call(this.http, "POST", "/groups/{id}/comments", o) : await call(this.http, "POST", "/contents/{id}/comments", { ...o, query: { version: t.version } });
+    emit({ type: "comment.created", target: t, comment });
     return comment;
   }
   /** Replaces the body: its author, or a moderator. */
@@ -59,11 +63,14 @@ export class CommentsClient {
     return counts;
   }
   /** Whether the caller may comment on the item, the ban that stops it, and what it may do to others' comments. */
-  standing(ref: RefBody, signal?: AbortSignal): Promise<CommentStanding> {
-    return call(this.http, "GET", "/{kind}/{id}/can-comment", { params: target(ref), signal });
+  standing(t: Target, signal?: AbortSignal): Promise<CommentStanding> {
+    const o = { params: { id: t.id }, signal };
+    return t.type === "groups"
+      ? call(this.http, "GET", "/groups/{id}/can-comment", o)
+      : call(this.http, "GET", "/contents/{id}/can-comment", { ...o, query: { version: t.version } });
   }
   /** The newest published comments across the site, with their items; a page may under-fill. */
-  latest(q: PageQuery = {}, signal?: AbortSignal): Promise<FeedItem[]> {
+  latest(q: PageQuery & { language?: string } = {}, signal?: AbortSignal): Promise<FeedItem[]> {
     return call(this.http, "GET", "/comments/latest", { query: q, signal });
   }
   /** Every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate). */
