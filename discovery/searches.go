@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -131,9 +132,10 @@ func (s *Service) PruneSearches(ctx context.Context) (int, error) {
 			`DELETE FROM ` + s.t.searches + ` x USING ` + s.t.searchMarks + ` m
  WHERE x.tenant_id = $1 AND m.tenant_id = x.tenant_id AND m.subject = x.subject AND x.searched_at < m.hidden_before`,
 			`DELETE FROM ` + s.t.searches + ` x USING ` + s.t.erased + ` e WHERE x.tenant_id = $1 AND e.tenant_id = x.tenant_id AND e.actor_id = x.subject`,
-			`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND searched_at < now() - make_interval(secs => $2)`,
+			`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND searched_at < now() - make_interval(secs => ` +
+				strconv.Itoa(int(SearchRetention.Seconds())) + `)`,
 		} {
-			tag, err := tx.Exec(ctx, q, s.o.Tenant, SearchRetention.Seconds())
+			tag, err := tx.Exec(ctx, q, s.o.Tenant)
 			if err != nil {
 				return err
 			}

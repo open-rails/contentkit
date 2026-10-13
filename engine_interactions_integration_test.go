@@ -341,8 +341,9 @@ func TestEngineCommentsSettingAndSiteScope(t *testing.T) {
 	s.call(http.StatusOK, u1, "GET", main, nil, nil)
 	s.call(http.StatusOK, u1, "POST", main+"/like", nil, nil)
 	for _, call := range []struct{ method, path string }{{"GET", ""}, {"GET", "/comments"}, {"POST", "/like"}, {"GET", "/reaction"},
-		{"POST", "/favorite"}, {"GET", "/favorite"}, {"GET", "/can-comment"}} {
+		{"POST", "/favorite"}, {"GET", "/can-comment"}} {
 		s.call(http.StatusNotFound, u1, call.method, safe+call.path, nil, nil)
 	}
+	s.call(http.StatusNotFound, access.Actor{Anonymous: true, IP: "10.0.0.3"}, "GET", safe+"/favorite", nil, nil)
 	s.call(http.StatusOK, u1, "GET", "http://safe.example"+item+"/comments", nil, nil)
 }

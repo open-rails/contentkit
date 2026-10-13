@@ -822,7 +822,7 @@ func commentRoutes() []httpapi.Route[*comments] {
 				Doc:     "Comments on " + noun + " in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
 				Query:   targetQuery(typ),
 				Request: CommentInput{}, Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
-				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 				Serve: func(c *comments) http.HandlerFunc { return c.handleCreate(typ) }})
 	}
 	return append(out, otherCommentRoutes...)
@@ -853,7 +853,7 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",

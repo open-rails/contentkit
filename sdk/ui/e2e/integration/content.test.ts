@@ -169,7 +169,7 @@ describe("content modules against the real ContentKit", () => {
     expect(await ck("moderator").comments.standing(video)).toMatchObject({ moderate: true, ban_scopes: ["global"] });
     expect(await ck("alice").comments.standing(await item({ access: "none" }))).toMatchObject({ can_comment: false });
     await expect(ck("alice").comments.standing(await item({ hidden: true }))).rejects.toEqual(code("not_found"));
-    await expect(ck("alice").comments.list({ kind: "unknown", id: (await item()).id })).rejects.toEqual(code("not_found"));
+    await expect(ck("alice").comments.list({ type: "groups", id: (await item()).id })).rejects.toEqual(code("not_found"));
 
     const spammer = ck(await h.user());
     for (let i = 0; i < 20; i++) await spammer.comments.create(video, { body: `post ${i}` });
