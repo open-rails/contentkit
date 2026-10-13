@@ -334,18 +334,33 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			for o, err := range env.Store.List(ctx, item.PublicPrefix()) {
 				t.Logf("public %s %v err=%v", o.Key, o.LastModified, err)
 			}
-			rows, err := pool.Query(ctx, `SELECT id, state, attempt, args::text, errors::text, created_at, finalized_at FROM `+workers+`.river_job ORDER BY id`)
-			if err == nil {
+			for _, schema := range []string{workers, hostRiver} {
+				rows, err := pool.Query(ctx, `SELECT id, kind, state, attempt, args::text, errors::text, created_at, attempted_at, finalized_at FROM `+schema+`.river_job ORDER BY id`)
+				if err != nil {
+					t.Logf("jobs %s: %v", schema, err)
+					continue
+				}
 				for rows.Next() {
 					var (
-						id, attempt int64
-						state, args string
-						errs        *string
-						created     time.Time
-						finalized   *time.Time
+						id, attempt       int64
+						kind, state, args string
+						errs              *string
+						created           time.Time
+						attempted         *time.Time
+						finalized         *time.Time
 					)
-					_ = rows.Scan(&id, &state, &attempt, &args, &errs, &created, &finalized)
-					t.Logf("job %d %s attempt=%d %s errors=%v created=%v finalized=%v", id, state, attempt, args, errs, created, finalized)
+					_ = rows.Scan(&id, &kind, &state, &attempt, &args, &errs, &created, &attempted, &finalized)
+					t.Logf("job %s %d %s %s attempt=%d %s errors=%v created=%v attempted=%v finalized=%v", schema[:8], id, kind, state, attempt, args, errs, created, attempted, finalized)
+				}
+				rows.Close()
+			}
+			rows, err := pool.Query(ctx, `SELECT operation_id::text, state, effects::text, updated_at FROM `+schema+`.content_media_commits WHERE content_id = $1 ORDER BY updated_at`, id)
+			if err == nil {
+				for rows.Next() {
+					var op, state, effects string
+					var at time.Time
+					_ = rows.Scan(&op, &state, &effects, &at)
+					t.Logf("commit %s %s %v %.300s", op, state, at, effects)
 				}
 				rows.Close()
 			}

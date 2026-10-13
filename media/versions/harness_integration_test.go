@@ -216,6 +216,8 @@ type site struct {
 	reader  *media.Reader
 	svc     *versions.Service
 	srv     *httptest.Server
+	workers string // the worker's River schema
+	host    string // the host's River schema
 
 	staff, creator, fan, stranger access.Actor
 }
@@ -271,6 +273,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 	if err := riverhelpers.ApplyMigrations(ctx, s.pool, host); err != nil {
 		t.Fatal(err)
 	}
+	s.workers, s.host = workers, host
 	if s.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: s.reg, Locker: media.PGLocker(s.pool), Journal: journal,
 		Pool: s.pool, Processes: queue}); err != nil {
 		t.Fatal(err)
@@ -313,6 +316,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 			t.Error(err)
 		}
 	})
+	t.Cleanup(func() { s.dumpJobs() })
 	mux := http.NewServeMux()
 	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(s.uploads, media.UploadHandlerOptions{Auth: authn})))
 	mux.Handle("/media/", http.StripPrefix("/media", s.reader.Handler(media.HandlerOptions{Auth: authn, Limit: media.RateLimit{Disabled: true}})))
@@ -324,6 +328,38 @@ func newSite(t *testing.T, o siteOptions) *site {
 	s.srv = httptest.NewServer(mux)
 	t.Cleanup(s.srv.Close)
 	return s
+}
+
+// dumpJobs logs every River job of the worker and the host (#132 diagnostics).
+func (s *site) dumpJobs() {
+	for _, schema := range []string{s.workers, s.host} {
+		rows, err := s.pool.Query(context.Background(), `SELECT id, kind, state, attempt, args::text, coalesce(errors[array_length(errors, 1)]::text, ''),
+	created_at, attempted_at, finalized_at FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()+` ORDER BY id`)
+		if err != nil {
+			s.t.Logf("jobs %s: %v", schema, err)
+			continue
+		}
+		for rows.Next() {
+			var (
+				id, attempt          int64
+				kind, state, args, e string
+				created              time.Time
+				attempted, finalized *time.Time
+			)
+			if err := rows.Scan(&id, &kind, &state, &attempt, &args, &e, &created, &attempted, &finalized); err != nil {
+				s.t.Logf("jobs: %v", err)
+				break
+			}
+			at := func(t *time.Time) string {
+				if t == nil {
+					return "-"
+				}
+				return t.Format("15:04:05.000")
+			}
+			s.t.Logf("job %s %d %s %s a=%d c=%s r=%s f=%s %s %.200s", schema[:12], id, kind, state, attempt, created.Format("15:04:05.000"), at(attempted), at(finalized), args, e)
+		}
+		rows.Close()
+	}
 }
 
 func (s *site) table(name string) string { return pgx.Identifier{s.schema, name}.Sanitize() }
