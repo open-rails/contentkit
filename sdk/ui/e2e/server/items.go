@@ -28,6 +28,10 @@ type items struct {
 
 func newItems() *items { return &items{m: map[contentref.ContentKey]item{}} }
 
+// itemKey is a content item's key: the catalog's item, whatever level its
+// kind's media live on.
+func itemKey(kind, id string) contentref.ContentKey { return contentref.New(tenant, kind, id).Key() }
+
 func (s *items) get(k contentref.ContentKey) (item, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

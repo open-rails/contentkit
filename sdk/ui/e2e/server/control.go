@@ -183,12 +183,7 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	if in.Title != "" {
 		it.Code, it.Path = c.Code, c.Path
 	}
-	ref, err := h.ref(it.Kind, it.ID)
-	if err != nil {
-		fail(w, http.StatusBadRequest, err)
-		return
-	}
-	h.items.put(ref.Key(), it)
+	h.items.put(itemKey(it.Kind, it.ID), it)
 	reply(w, http.StatusCreated, it)
 }
 
@@ -202,12 +197,8 @@ func itemRule(open string) *access.Rule {
 
 // updateItem: {access?, hidden?} changes what viewers may do.
 func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
-	ref, err := h.ref(r.PathValue("kind"), r.PathValue("id"))
-	if err != nil {
-		fail(w, http.StatusBadRequest, err)
-		return
-	}
-	it, ok := h.items.get(ref.Key())
+	key := itemKey(r.PathValue("kind"), r.PathValue("id"))
+	it, ok := h.items.get(key)
 	if !ok {
 		fail(w, http.StatusNotFound, errors.New("no such item"))
 		return
@@ -229,6 +220,7 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 		it.Access = *in.Access
 	}
 	if in.Hidden != nil && *in.Hidden != it.Hidden {
+		var err error
 		if *in.Hidden {
 			_, err = ck.PostContentUnpublish(r.Context(), it.ID)
 		} else {
@@ -240,7 +232,7 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 		}
 		it.Hidden = *in.Hidden
 	}
-	h.items.put(ref.Key(), it)
+	h.items.put(key, it)
 	reply(w, http.StatusOK, it)
 }
 

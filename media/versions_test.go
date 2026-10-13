@@ -90,8 +90,8 @@ func TestVersionsKind(t *testing.T) {
 	if base, ok := media.BodyOf(body.Name); !ok || base != "book" {
 		t.Fatalf("BodyOf %q", base)
 	}
-	if _, err := media.ForContent(media.Config{Namespace: "site", Kinds: []media.Kind{book, {Name: "book.body",
-		Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1}}}}}, site); err == nil {
+	if _, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{{Name: "book.body",
+		Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1}}}}}); err == nil {
 		t.Fatal("a declared body kind is accepted")
 	}
 	if len(vi.Kind().Uploads) != 4 || len(vi.Kind().Public) != 1 || vi.Kind().Public[0].Name != "preview" {
@@ -120,9 +120,9 @@ func TestVersionsKind(t *testing.T) {
 	if strings.Join(paths, " ") != "read/{name}=image/webp thumb/{name}=image/webp listen/{name}=audio/mp4" {
 		t.Fatalf("published uploads %v", paths)
 	}
-	// The worker's registry derives it again.
+	// The worker's registry derives them again.
 	b, err := json.Marshal(reg)
-	if err != nil || strings.Contains(string(b), media.PublishedSuffix) {
+	if err != nil || strings.Contains(string(b), media.PublishedSuffix) || strings.Contains(string(b), media.BodySuffix) {
 		t.Fatalf("registry JSON carries derived kinds: %v", err)
 	}
 	parsed, err := media.ParseConfig(b)

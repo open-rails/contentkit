@@ -22,12 +22,14 @@ const maxFirst = 100
 
 // Registry is a validated Config.
 type Registry struct {
-	cfg   Config
-	kinds map[string]*Kind
-	all   []*Kind // declared kinds, then the derived published kinds
+	cfg      Config
+	declared int // cfg.Kinds[:declared] are c's; the body kinds follow
+	kinds    map[string]*Kind
+	all      []*Kind // cfg.Kinds, then the published kinds
 }
 
-// NewRegistry validates c.
+// NewRegistry validates c and derives its kinds' body kinds (a Versions
+// kind with named content images: BodySuffix) and published kinds.
 func NewRegistry(c Config) (*Registry, error) {
 	if !layout.ValidSegment(c.Namespace) {
 		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
@@ -47,10 +49,19 @@ func NewRegistry(c Config) (*Registry, error) {
 	if err := c.Editor.validate(); err != nil {
 		return nil, fmt.Errorf("media: Editor: %w", err)
 	}
-	r := &Registry{cfg: c, kinds: make(map[string]*Kind, len(c.Kinds))}
-	r.cfg.Kinds = make([]Kind, len(c.Kinds))
+	kinds := slices.Clone(c.Kinds)
+	for _, k := range c.Kinds {
+		if _, ok := BodyOf(k.Name); ok {
+			return nil, fmt.Errorf("media: kind %q: %s names a content kind's body kind", k.Name, BodySuffix)
+		}
+		if body, ok := bodyKind(k); k.Versions && ok {
+			kinds = append(kinds, body)
+		}
+	}
+	r := &Registry{cfg: c, declared: len(c.Kinds), kinds: make(map[string]*Kind, len(kinds))}
+	r.cfg.Kinds = make([]Kind, len(kinds))
 	var derived []*Kind
-	for i, k := range c.Kinds {
+	for i, k := range kinds {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
@@ -256,7 +267,11 @@ func (r *Registry) PresetRules() []PresetRule {
 // MarshalJSON is the registry as data (no hooks, defaults, Choose or
 // derived kinds, which NewRegistry derives again): the stock worker's
 // MEDIA_KINDS_FILE.
-func (r *Registry) MarshalJSON() ([]byte, error) { return json.Marshal(r.cfg) }
+func (r *Registry) MarshalJSON() ([]byte, error) {
+	cfg := r.cfg
+	cfg.Kinds = cfg.Kinds[:r.declared]
+	return json.Marshal(cfg)
+}
 
 // ParseConfig reads a registry written by Registry.MarshalJSON; unknown
 // keys are ignored.
