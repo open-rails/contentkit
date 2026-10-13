@@ -248,7 +248,8 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	var created catalog.Content
 	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Pictures", Body: "soon"}}}, &created)
 	id := created.ID
-	a, b := upload("blog", id, 3), upload("blog", id, 9)
+	// Body images live in the post's body item; its cover in its own folder.
+	a, b, cover := upload("blog"+media.BodySuffix, id, 3), upload("blog"+media.BodySuffix, id, 9), upload("blog", id, 7)
 	var inline catalog.InlineImage
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
 	if inline.Ref != catalog.ImageRef(a) {
@@ -256,7 +257,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	}
 	body := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, inline.Ref, catalog.ImageRef(b))
 	must(http.StatusOK, staff, "PUT", "/v1/contents/"+id+"/text/en", catalog.Text{Title: "Pictures", Body: body}, nil)
-	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &b}, nil)
+	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &cover}, nil)
 
 	// A draft: its editors read references and see the images through
 	// signed editor views; no one else sees the item or its folder.
@@ -266,7 +267,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	}
 	var draft catalog.Content
 	must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &draft)
-	if draft.Body != body || draft.Images != nil || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != b {
+	if draft.Body != body || draft.Images != nil || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != cover {
 		t.Fatalf("draft %+v", draft)
 	}
 	eventually(t, "the editor preview", time.Minute, func() bool {
@@ -281,7 +282,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		var c catalog.Content
 		eventually(t, what, 2*time.Minute, func() bool {
 			c = catalog.Content{}
-			if call(anon, "GET", "/v1/contents/"+id, nil, &c) != http.StatusOK || strings.Contains(c.Body, catalog.ImageScheme) || len(c.Images) != 2 {
+			if call(anon, "GET", "/v1/contents/"+id, nil, &c) != http.StatusOK || strings.Contains(c.Body, catalog.ImageScheme) || len(c.Images) != 3 {
 				return false
 			}
 			for name, u := range c.Images {
@@ -291,7 +292,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			}
 			return true
 		})
-		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want || c.Cover == nil || c.Cover.URL == nil || *c.Cover.URL != c.Images[b] {
+		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want || c.Cover == nil || c.Cover.URL == nil || *c.Cover.URL != c.Images[cover] {
 			t.Fatalf("%s: %+v", what, c)
 		}
 		var stored string
@@ -303,16 +304,18 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	published := resolved("the published images", nil)
 
-	ref, err := reg.Ref("blog", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := queue.Enqueue(ctx, media.ProcessJob{Ref: ref, Preset: "inline", Force: true}); err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{"blog", "blog" + media.BodySuffix} {
+		ref, err := reg.Ref(kind, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := queue.Enqueue(ctx, media.ProcessJob{Ref: ref, Preset: "inline", Force: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	regenerated := resolved("the regenerated images", published.Images)
 	eventually(t, "the first generation's retirement", 2*time.Minute, func() bool {
-		return !exists(published.Images[a]) && !exists(published.Images[b])
+		return !exists(published.Images[a]) && !exists(published.Images[b]) && !exists(published.Images[cover])
 	})
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
