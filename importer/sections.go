@@ -122,8 +122,8 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		return nil, c.ExternalID, err
 	}
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
-		Listing: c.Listing, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes, Cover: c.Cover, Creators: c.Creators, Text: c.Text,
-		Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+		Listing: c.Listing, Comments: c.Comments, ViewBaseline: c.ViewBaseline, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
+		Cover: c.Cover, Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.OwnerGroup != nil {
 		if in.OwnerGroupID, err = r.ref(EntityGroup, *c.OwnerGroup); err != nil {
 			return nil, c.ExternalID, err

@@ -4364,7 +4364,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -5989,6 +5989,59 @@
           "gone",
           "not_found"
         ],
+        "x-contentkit-error-sets": [
+          "module:codes",
+          "request"
+        ]
+      }
+    },
+    "/v1/codes/aliases": {
+      "post": {
+        "tags": [
+          "codes"
+        ],
+        "summary": "Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: found, not_found (unknown or hidden) or gone; at most 100.",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "description": "the language of the paths' prefix and slug",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AliasLookup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasResults"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "codes",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:codes",
           "request"
@@ -9965,6 +10018,31 @@
           "content_id"
         ]
       },
+      "AliasKey": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "AliasLookup": {
+        "type": "object",
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AliasKey"
+            }
+          }
+        }
+      },
       "AliasRecord": {
         "type": "object",
         "properties": {
@@ -9981,6 +10059,49 @@
             "$ref": "#/components/schemas/TargetRef"
           }
         }
+      },
+      "AliasResult": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AliasStatus"
+          },
+          "resolved": {
+            "$ref": "#/components/schemas/Resolved"
+          },
+          "locator": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "kind",
+          "key",
+          "status"
+        ]
+      },
+      "AliasResults": {
+        "type": "object",
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AliasResult"
+            }
+          }
+        },
+        "required": [
+          "aliases"
+        ]
       },
       "Anchor": {
         "type": "object",
@@ -11239,6 +11360,12 @@
           },
           "listing": {
             "type": "string"
+          },
+          "comments": {
+            "type": "string"
+          },
+          "view_baseline": {
+            "type": "integer"
           },
           "access": {
             "$ref": "#/components/schemas/Rule"
@@ -15660,6 +15787,14 @@
           "listed",
           "members",
           "unlisted"
+        ]
+      },
+      "AliasStatus": {
+        "type": "string",
+        "enum": [
+          "found",
+          "not_found",
+          "gone"
         ]
       }
     },

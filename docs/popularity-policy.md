@@ -29,6 +29,10 @@ nothing decays. Work consumption counts once across versions; version coverage
 (`Metrics` on `ref.WithVersion(v)`), active consumption and explicit feedback
 are separate metrics.
 
+An imported legacy view count (`view_baseline`, [import](import.md)) is no
+input: it has no time, viewer or engagement. It only adds to displayed views
+and the all-time `most_viewed` sort.
+
 **Feedback** is each subject's current preference: one replaceable event per
 subject × work × axis (`EventID` fixed, `Revision` = mutation time), counted on
 the UTC day it last changed. An unvote drops out, like→dislike counts once as

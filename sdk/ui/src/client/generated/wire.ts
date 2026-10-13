@@ -18,6 +18,7 @@ export type ModerationState = "approved" | "held" | "rejected";
 export type ContentState = "draft" | "published" | "deleted";
 export type VersionState = "draft" | "published";
 export type Listing = "listed" | "members" | "unlisted";
+export type AliasStatus = "found" | "not_found" | "gone";
 
 export interface AdminComment {
   id: string;
@@ -43,11 +44,34 @@ export interface AdminComment {
   deleted_at?: string;
 }
 
+export interface AliasKey {
+  source: string;
+  kind: string;
+  key: string;
+}
+
+export interface AliasLookup {
+  aliases: AliasKey[];
+}
+
 export interface AliasRecord {
   kind: string;
   key: string;
   locator?: string;
   target: TargetRef;
+}
+
+export interface AliasResult {
+  source: string;
+  kind: string;
+  key: string;
+  status: AliasStatus;
+  resolved?: Resolved;
+  locator?: string;
+}
+
+export interface AliasResults {
+  aliases: AliasResult[];
 }
 
 export interface Anchor {
@@ -405,6 +429,8 @@ export interface ContentRecord {
   published_at?: string;
   deleted_at?: string;
   listing?: string;
+  comments?: string;
+  view_baseline?: number;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;

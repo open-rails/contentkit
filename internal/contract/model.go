@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 )
@@ -59,6 +60,7 @@ var enums = []enum{
 	{"VersionState", []string{catalog.StateDraft, catalog.StatePublished}, []string{"catalog.VersionInput.state"}},
 	{"Listing", []string{catalog.ListingListed, catalog.ListingMembers, catalog.ListingUnlisted},
 		[]string{"catalog.Content.listing", "catalog.ContentInput.listing", "catalog.ContentPatch.listing"}},
+	{"AliasStatus", []string{contenturl.AliasFound, contenturl.AliasNotFound, contenturl.AliasGone}, []string{"contenturl.AliasResult.status"}},
 }
 
 func errorCodeNames() []string {

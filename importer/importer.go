@@ -128,6 +128,12 @@ type ContentRecord struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	// Listing is listed (the default), members or unlisted.
 	Listing string `json:"listing,omitempty"`
+	// Comments is open (the default), closed or hidden.
+	Comments string `json:"comments,omitempty"`
+	// ViewBaseline is the legacy system's all-time view count. Displayed
+	// views and the most_viewed sort add it to the viewers the signal plane
+	// counts; popularity and trending never see it.
+	ViewBaseline int64 `json:"view_baseline,omitempty"`
 	// Access defaults to public. A group rule names the group's id.
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`

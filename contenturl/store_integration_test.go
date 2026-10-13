@@ -119,14 +119,11 @@ func TestPutAssignsOnceAndResolves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Resolve(ctx, lower)
-	if err != nil || got.Code != v.Code || got.Slug != "renamed" || !got.ContentRef.Equal(video) {
-		t.Fatalf("Resolve %+v %v", got, err)
+	got, err := s.Resolve(ctx, []contenturl.Code{lower, "00000000A", lower})
+	if l := got[lower]; err != nil || len(got) != 1 || l.Code != v.Code || l.Slug != "renamed" || !l.ContentRef.Equal(video) {
+		t.Fatalf("Resolve %+v %v (an unknown code is absent)", got, err)
 	}
-	if _, err := s.Resolve(ctx, "00000000A"); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("unknown code: %v", err)
-	}
-	if _, err := s.Resolve(ctx, "g4vrq3zq5"); !errors.Is(err, contenturl.ErrInvalidCode) {
+	if _, err := s.Resolve(ctx, []contenturl.Code{"g4vrq3zq5"}); !errors.Is(err, contenturl.ErrInvalidCode) {
 		t.Fatalf("non-canonical code: %v", err)
 	}
 
@@ -162,11 +159,12 @@ func TestTenantsAreIsolated(t *testing.T) {
 	if mine.Code == theirs.Code {
 		t.Fatal("independent tenants drew one code")
 	}
-	if _, err := other.Resolve(ctx, mine.Code); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("hentai0 resolved a doujins code: %v", err)
+	got, err := other.Resolve(ctx, []contenturl.Code{mine.Code, theirs.Code})
+	if _, leaked := got[mine.Code]; err != nil || leaked {
+		t.Fatalf("hentai0 resolved a doujins code: %+v %v", got, err)
 	}
-	if got, err := other.Resolve(ctx, theirs.Code); err != nil || got.TenantID != "hentai0" || got.Slug != "theirs" {
-		t.Fatalf("own code %+v %v", got, err)
+	if l := got[theirs.Code]; l.TenantID != "hentai0" || l.Slug != "theirs" {
+		t.Fatalf("own code %+v", l)
 	}
 }
 
@@ -228,7 +226,7 @@ func TestMergeRedirectsOneHop(t *testing.T) {
 	if err := s.Merge(ctx, ref("gallery", 1), ref("gallery", 2)); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Resolve(ctx, a.Code); got.Code != b.Code || !got.ContentRef.Equal(ref("gallery", 2)) {
+	if got, _ := s.Resolve(ctx, []contenturl.Code{a.Code}); got[a.Code].Code != b.Code || !got[a.Code].ContentRef.Equal(ref("gallery", 2)) {
 		t.Fatalf("a resolves to %+v", got)
 	}
 	if err := s.Merge(ctx, ref("gallery", 2), ref("gallery", 1)); !errors.Is(err, contenturl.ErrConflict) {
@@ -241,9 +239,11 @@ func TestMergeRedirectsOneHop(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT merged_into FROM `+schema+`.content_codes WHERE code = $1`, string(a.Code)).Scan(&merged); err != nil || merged != string(c.Code) {
 		t.Fatalf("a.merged_into = %q %v, want %q (flattened)", merged, err, c.Code)
 	}
-	for _, code := range []contenturl.Code{a.Code, b.Code, c.Code} {
-		if got, err := s.Resolve(ctx, code); err != nil || got.Code != c.Code || got.Slug != "c" {
-			t.Fatalf("%s resolves to %+v %v", code, got, err)
+	all := []contenturl.Code{a.Code, b.Code, c.Code}
+	got, err := s.Resolve(ctx, all)
+	for _, code := range all {
+		if l := got[code]; err != nil || l.Code != c.Code || l.Slug != "c" {
+			t.Fatalf("%s resolves to %+v %v", code, l, err)
 		}
 	}
 	if byKey, _ := s.Links(ctx, []contentref.ContentRef{ref("gallery", 1)}); byKey[ref("gallery", 1).Key()].Code != c.Code {
@@ -272,6 +272,19 @@ func alias(source, kind, key, locator string, r contentref.ContentRef) codes.Ali
 	return codes.Alias{Source: source, Kind: kind, Key: key, Locator: locator, Target: codes.Key{Kind: r.ContentKind, ID: r.ContentID}}
 }
 
+func ak(kind, key string) contenturl.AliasKey {
+	return contenturl.AliasKey{Source: "doujins-legacy", Kind: kind, Key: key}
+}
+
+func resolveAlias(t *testing.T, s *contenturl.Store, kind, key string) *contenturl.AliasMatch {
+	t.Helper()
+	got, err := s.ResolveAliases(t.Context(), []contenturl.AliasKey{ak(kind, key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got[0]
+}
+
 func TestAliases(t *testing.T) {
 	ctx, pool, schema, s := setup(t)
 	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
@@ -288,14 +301,16 @@ func TestAliases(t *testing.T) {
 	if err := putAliases(ctx, pool, schema, aliases...); err != nil {
 		t.Fatalf("idempotent re-run: %v", err)
 	}
-	if got, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "12345"); err != nil || got.Code != links[0].Code || got.Locator != "" {
+	got, err := s.ResolveAliases(ctx, []contenturl.AliasKey{ak("folder", "12345"), ak("object-token", "zz99yy88"),
+		ak("tag-name", "mother x son"), ak("folder", "12345")})
+	if err != nil || len(got) != 4 || got[0] == nil || got[0].Code != links[0].Code || got[0].Locator != "" || got[3] == nil || got[3].Code != got[0].Code {
 		t.Fatalf("alias %+v %v", got, err)
 	}
-	if got, err := s.ResolveAlias(ctx, "doujins-legacy", "object-token", "zz99yy88"); err != nil || got.Code != links[0].Code || got.Locator != "7" {
-		t.Fatalf("alias with locator %+v %v", got, err)
+	if got[1] == nil || got[1].Code != links[0].Code || got[1].Locator != "7" {
+		t.Fatalf("alias with locator %+v", got[1])
 	}
-	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "tag-name", "mother x son"); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("aliases match verbatim: %v", err)
+	if got[2] != nil {
+		t.Fatalf("aliases match verbatim: %+v", got[2])
 	}
 	// An alias never moves: other content, another locator, or a batch that
 	// disagrees with itself is ErrConflict and writes nothing.
@@ -308,8 +323,8 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("PutAliases(%+v) = %v, want ErrConflict", batch, err)
 		}
 	}
-	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "777"); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("conflicting batch left alias 777: %v", err)
+	if got := resolveAlias(t, s, "folder", "777"); got != nil {
+		t.Fatalf("conflicting batch left alias 777: %+v", got)
 	}
 	// The refusal precedes any write, so even a caller that commits anyway keeps nothing.
 	if err := putAliases(ctx, pool, schema,
@@ -318,24 +333,27 @@ func TestAliases(t *testing.T) {
 	); !errors.Is(err, contenturl.ErrConflict) {
 		t.Fatalf("in-tx conflict: %v", err)
 	}
-	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "776"); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("refused batch wrote alias 776: %v", err)
+	if got := resolveAlias(t, s, "folder", "776"); got != nil {
+		t.Fatalf("refused batch wrote alias 776: %+v", got)
 	}
-	err := putAliases(ctx, pool, schema,
+	err = putAliases(ctx, pool, schema,
 		alias("doujins-legacy", "folder", "778", "", ref("gallery", 1)),
 		alias("doujins-legacy", "folder", "779", "", ref("gallery", 9)),
 	)
 	if !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("unregistered alias target: %v", err)
 	}
-	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "778"); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("failed batch left alias 778: %v", err)
+	if got := resolveAlias(t, s, "folder", "778"); got != nil {
+		t.Fatalf("failed batch left alias 778: %+v", got)
 	}
 	if err := s.Merge(ctx, ref("gallery", 2), ref("gallery", 1)); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.ResolveAlias(ctx, "doujins-legacy", "tag-name", "Mother X Son"); got.Code != links[0].Code {
+	if got := resolveAlias(t, s, "tag-name", "Mother X Son"); got == nil || got.Code != links[0].Code {
 		t.Fatalf("alias does not follow the merge: %+v", got)
+	}
+	if _, err := s.ResolveAliases(ctx, []contenturl.AliasKey{ak("Folder", "1")}); !errors.Is(err, contenturl.ErrInvalid) {
+		t.Errorf("malformed alias kind: %v", err)
 	}
 	for _, bad := range []codes.Alias{alias("legacy", "Legacy", "1", "", ref("gallery", 1)), alias("legacy", "legacy", "", "", ref("gallery", 1))} {
 		if err := putAliases(ctx, pool, schema, bad); !errors.Is(err, contenturl.ErrInvalid) {

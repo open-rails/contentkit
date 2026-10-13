@@ -1,8 +1,10 @@
 package contenturl_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,14 +31,19 @@ func TestRouterCanonicalizes(t *testing.T) {
 		Routes:    contenturl.Routes{"video": "watch", "gallery": "g"},
 		Languages: []string{"en", "es"},
 		BaseURL:   "https://hentai0.test/",
-		Visibility: func(_ *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-			switch {
-			case l.ContentRef.Equal(ref("gallery", 2)):
-				return contenturl.Hidden, nil
-			case l.ContentRef.Equal(ref("gallery", 5)):
-				return contenturl.Gone, nil
+		Visibility: func(_ *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) {
+			out := make([]contenturl.Visibility, len(links))
+			for i, l := range links {
+				switch {
+				case l.ContentRef.Equal(ref("gallery", 2)):
+					out[i] = contenturl.Hidden
+				case l.ContentRef.Equal(ref("gallery", 5)):
+					out[i] = contenturl.Gone
+				default:
+					out[i] = contenturl.Visible
+				}
 			}
-			return contenturl.Visible, nil
+			return out, nil
 		},
 	})
 	if err != nil {
@@ -126,21 +133,53 @@ func TestRouterCanonicalizes(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	legacy := httptest.NewRequest("GET", "/movie/night-before-346791971", nil)
-	for _, c := range []struct {
-		source, kind, key string
-		want              contenturl.Decision
-	}{
-		{"hentai0-legacy", "video", "346791971", contenturl.Decision{Matched: true, Redirect: true, Path: "/es/watch/" + string(video) + "/la-noche-antes"}},
-		{"doujins-legacy", "object-token", "ab12cd34", contenturl.Decision{Matched: true, Redirect: true, Path: "/es/watch/" + string(video) + "/la-noche-antes", Locator: "12"}},
-		{"hentai0-legacy", "video", "5", contenturl.Decision{Gone: true}},
-		{"hentai0-legacy", "video", "2", contenturl.Decision{}},
-		{"hentai0-legacy", "video", "404", contenturl.Decision{}},
+	key := func(source, kind, k string) contenturl.AliasKey {
+		return contenturl.AliasKey{Source: source, Kind: kind, Key: k}
+	}
+	lookup := contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("hentai0-legacy", "video", "346791971"), key("doujins-legacy", "object-token", "ab12cd34"),
+		key("hentai0-legacy", "video", "5"), key("hentai0-legacy", "video", "2"), key("hentai0-legacy", "video", "404")}}
+	post := func(target string, body any) (*httptest.ResponseRecorder, contenturl.AliasResults) {
+		b, _ := json.Marshal(body)
+		rec := httptest.NewRecorder()
+		api.ServeHTTP(rec, httptest.NewRequest("POST", target, bytes.NewReader(b)))
+		var out contenturl.AliasResults
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec, out
+	}
+	rec, got := post("/api/content-urls/aliases?lang=es", lookup)
+	if rec.Code != 200 || len(got.Aliases) != 5 {
+		t.Fatalf("aliases %d %s", rec.Code, rec.Body)
+	}
+	esPath := "/es/watch/" + string(video) + "/la-noche-antes"
+	for i, want := range []struct{ status, path, locator string }{
+		{contenturl.AliasFound, esPath, ""}, {contenturl.AliasFound, esPath, "12"}, {contenturl.AliasGone, "", ""}, {contenturl.AliasNotFound, "", ""}, {contenturl.AliasNotFound, "", ""},
 	} {
-		d, err := router.DecideAlias(legacy, c.source, c.kind, c.key, "es")
-		if err != nil || d.Matched != c.want.Matched || d.Gone != c.want.Gone || d.Redirect != c.want.Redirect || d.Path != c.want.Path || d.Locator != c.want.Locator {
-			t.Errorf("DecideAlias(%s, %s, %s) = %+v %v, want %+v", c.source, c.kind, c.key, d, err, c.want)
+		a := got.Aliases[i]
+		path := ""
+		if a.Resolved != nil {
+			path = a.Resolved.Path
 		}
+		if a.AliasKey != lookup.Aliases[i] || a.Status != want.status || path != want.path || a.Locator != want.locator ||
+			(a.Status == contenturl.AliasFound) != (a.Resolved != nil && a.Resolved.Code == video) {
+			t.Errorf("alias %d = %+v, want %+v", i, a, want)
+		}
+	}
+	tooMany := contenturl.AliasLookup{Aliases: make([]contenturl.AliasKey, contenturl.MaxAliases+1)}
+	for i := range tooMany.Aliases {
+		tooMany.Aliases[i] = key("hentai0-legacy", "video", fmt.Sprint(i))
+	}
+	for target, body := range map[string]any{
+		"/api/content-urls/aliases?lang=fr": lookup,
+		"/api/content-urls/aliases":         contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("Hentai0", "video", "1")}},
+		"/api/content-urls/aliases?x=1":     map[string]any{"aliases": []any{}, "lang": "es"},
+		"/api/content-urls/aliases?n=101":   tooMany,
+	} {
+		if rec, _ := post(target, body); rec.Code != 400 || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+			t.Errorf("POST %s = %d %s, want 400", target, rec.Code, rec.Body)
+		}
+	}
+	if rec, got := post("/api/content-urls/aliases", contenturl.AliasLookup{}); rec.Code != 200 || got.Aliases == nil || len(got.Aliases) != 0 {
+		t.Errorf("empty lookup %d %s", rec.Code, rec.Body)
 	}
 	if path, ok := router.Path(contenturl.Link{ContentRef: contentref.New(tenant, "gallery", id(9)), Code: "0000000AB", Slug: "x"}, ""); !ok || path != "/g/0000000AB/x" {
 		t.Fatalf("Path %q %v", path, ok)

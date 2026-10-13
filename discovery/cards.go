@@ -65,7 +65,7 @@ type Chip struct {
 }
 
 // Counts are a content item's interaction counts; Views counts its distinct
-// viewers of all time.
+// viewers of all time plus its imported legacy view count.
 type Counts struct {
 	Likes     int   `json:"likes"`
 	Dislikes  int   `json:"dislikes"`
@@ -146,7 +146,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		vids[i] = p.version
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.popularity, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
+ f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
@@ -166,8 +166,9 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var c cardRow
 		var pop []byte
 		var code string
+		var baseline int64
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
-			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
+			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
 		if err != nil {
 			return c, err
@@ -178,7 +179,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 				return c, err
 			}
 		}
-		c.Counts.Views = p.Views
+		c.Counts.Views = p.Views + baseline
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
 			c.Path = contenturl.Path(q.path, route, contenturl.Code(code), c.slug)

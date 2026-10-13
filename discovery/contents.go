@@ -13,8 +13,8 @@ type ListOptions struct {
 	Reader
 	Filter
 	// Sort is newest, oldest, title, popular[:period], top_rated[:period],
-	// most_favorited, position or random; the kind's configured sort, else
-	// newest, by default. Periods are popularity.Periods.
+	// most_favorited, most_viewed, position or random; the kind's configured
+	// sort, else newest, by default. Periods are popularity.Periods.
 	Sort string
 	// CardGroups are the group kinds cards name; every kind with a page by
 	// default.
