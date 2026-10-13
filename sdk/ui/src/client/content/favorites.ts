@@ -1,5 +1,6 @@
 import type { FavoriteState, InteractionPage } from "../generated/wire.js";
 import type { Http } from "../http.js";
+import { query, type AccessMode } from "../discovery.js";
 import { call } from "../route.js";
 import type { Target } from "./types.js";
 
@@ -9,10 +10,13 @@ export interface MineQuery {
   target?: "contents" | "groups";
   /** One content kind or group kind. */
   kind?: string;
+  /** The group kinds each card names; every kind with a page by default. */
+  card_groups?: readonly string[];
   cursor?: string;
   limit?: number;
   language?: string;
   display_language?: string;
+  mode?: AccessMode;
 }
 
 /** Favorites: the target's count for everyone, the signed-in caller's own. */
@@ -36,6 +40,6 @@ export class FavoritesClient {
   }
   /** The caller's favorites, most recent first: content cards or groups. */
   mine(q: MineQuery = {}, signal?: AbortSignal): Promise<InteractionPage> {
-    return call(this.http, "GET", "/me/favorites", { query: q, signal });
+    return call(this.http, "GET", "/me/favorites", { query: query(q) as never, signal });
   }
 }

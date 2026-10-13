@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "语言",
     version: "版本",
     locked: "已锁定",
+    lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
     saved: "已保存。",
@@ -36,6 +37,10 @@ export const content: typeof en = {
     listing_listed: "显示",
     listing_members: "仅对可打开者显示",
     listing_unlisted: "不公开列出（仅限链接）",
+    comments: "评论",
+    comments_open: "开放",
+    comments_closed: "关闭（保留已有评论）",
+    comments_hidden: "隐藏",
     accessTitle: "访问权限与价格",
     access: "谁可以打开",
     level_public: "所有人",

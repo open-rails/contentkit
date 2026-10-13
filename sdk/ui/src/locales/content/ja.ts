@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "言語",
     version: "バージョン",
     locked: "ロック中",
+    lockedOption: "{name}（ロック中）",
   },
   contentEditor: {
     saved: "保存しました。",
@@ -36,6 +37,10 @@ export const content: typeof en = {
     listing_listed: "表示",
     listing_members: "開ける人にだけ表示",
     listing_unlisted: "非表示（リンクのみ）",
+    comments: "コメント",
+    comments_open: "受け付ける",
+    comments_closed: "締め切り（表示のみ）",
+    comments_hidden: "非表示",
     accessTitle: "アクセスと価格",
     access: "開ける人",
     level_public: "全員",

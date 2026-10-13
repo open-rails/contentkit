@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "언어",
     version: "버전",
     locked: "잠김",
+    lockedOption: "{name} (잠김)",
   },
   contentEditor: {
     saved: "저장했습니다.",
@@ -36,6 +37,10 @@ export const content: typeof en = {
     listing_listed: "표시",
     listing_members: "열 수 있는 사람에게만 표시",
     listing_unlisted: "비공개 목록(링크로만)",
+    comments: "댓글",
+    comments_open: "열림",
+    comments_closed: "닫힘 (기존 댓글 유지)",
+    comments_hidden: "숨김",
     accessTitle: "이용 권한과 가격",
     access: "열 수 있는 사람",
     level_public: "모두",

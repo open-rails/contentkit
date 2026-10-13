@@ -7,7 +7,7 @@ import { FavoritesClient } from "./content/favorites.js";
 import { ModerationClient } from "./content/moderation.js";
 import { PollsClient } from "./content/polls.js";
 import { ReactionsClient } from "./content/reactions.js";
-import type { Config, ContentModel, RefBody } from "./generated/wire.js";
+import type { Batch, Config, ContentModel, RefBody, Result } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
 import { GroupsClient } from "./groups.js";
 import { OffersClient } from "./offers.js";
@@ -64,6 +64,8 @@ export interface ContentKitClient {
   config(signal?: AbortSignal): Promise<Config>;
   /** The site's content model: languages, tiers, kinds, group kinds and content filters. */
   kinds(signal?: AbortSignal): Promise<ContentModel>;
+  /** Staff bulk import (root:import:write): groups, contents, memberships, offers and aliases, idempotent per source. */
+  import(batch: Batch): Promise<Result>;
   /** A module's base URL as configured (no trailing slash). */
   url(module: ContentKitModule, ref?: RefBody): string;
   /** Cache context only, not authentication. The React provider keeps this in sync. */
@@ -94,6 +96,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) => call(h, "GET", "/kinds", { signal }),
+    import: (batch) => call(h, "POST", "/import", { body: batch }),
     url: (module, ref) => h.mount(module, ref),
     setReadScope: (scope) => h.setReadScope(scope),
     subscribe: (listener) => h.subscribe(listener),

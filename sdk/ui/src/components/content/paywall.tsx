@@ -1,21 +1,20 @@
 import { LockIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Decision, Terms, Version } from "../../client/generated/wire.js";
-import type { DecisionOffer } from "../../client/offers.js";
+import type { Decision, Sale, Terms, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
-import { ContentKitContext } from "../../react/context.js";
-import { offersOf } from "../../react/detail.js";
+import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
-import { formatDate } from "../social/parts.js";
+import { contentError, ErrorLine, formatDate, useAction } from "../social/parts.js";
 import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+import type { PlayerMenuItem } from "../video-player.js";
 
 /** An offer's price and period in words: "$2.99", "$4.99 / 30 days", "$1.99 for 48 hours". */
 export function priceLabel(m: Translator, terms: Terms): string {
@@ -37,9 +36,9 @@ export interface PaywallProps {
   /**
    * Starts a purchase: the host creates the order through billing-ui
    * (createOrder with offer.price_id) and shows OrderCheckout; for a tier
-   * (no offer), its subscription page.
+   * (no offer), its subscription page. A free group offer joins here instead.
    */
-  onCheckout: (o: { key: string; offer?: DecisionOffer }) => void;
+  onCheckout: (o: { key: string; offer?: Sale }) => void;
   /** Tiers' names and prices from the host's catalog, by tier key. */
   tiers?: Readonly<Record<string, { label?: string; price?: string }>>;
   /** Asks a signed-out reader to sign in (they may hold it already); default the provider's. */
@@ -47,30 +46,36 @@ export interface PaywallProps {
   labels?: Labels;
   /** Below the offers: the host's own. */
   children?: ReactNode;
+  client?: ContentKitClient;
+  onError?: ContentKitErrorHandler;
   className?: string;
   appearance?: ContentKitUiAppearance;
-  client?: ContentKitClient;
 }
 
 /** Why content is locked and how to open it: its offers, the tiers that include it, previews and when it turns free. */
-export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, children, className, appearance, client }: PaywallProps) {
+export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, children, client: own, onError, className, appearance }: PaywallProps) {
   const m = useMessages();
   const { t } = m;
   const ctx = useContext(ContentKitContext);
-  const { kinds } = useKinds({ client });
+  const client = useContentKitClient(own);
+  const { kinds } = useKinds({ client: own });
+  const join = useAction("membership.join", onError);
   if (decision.allowed) return null;
   const signIn = onSignIn ?? ctx?.onSignIn;
-  const offers = offersOf(decision);
+  const offers = decision.offers ?? [];
   const sold = new Set(offers.map((o) => o.key));
   const siteTiers = kinds?.tiers ?? Object.keys(tiers ?? {});
   const tierKeys = (decision.sell ?? []).filter((k) => !sold.has(k) && (siteTiers.includes(k) || !!tiers?.[k]));
-  const requires = decision.requires && !offers.some((o) => o.key === decision.requires) ? decision.requires : undefined;
+  const required = decision.requires;
+  // A required key nothing here offers gets its own button; the others wait for it.
+  const requires = required && !offers.some((o) => o.key === required) ? required : undefined;
+  const waits = (key: string) => !!required && key !== required;
   const preview = decision.preview;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-3 rounded-lg border border-border p-4 text-sm", className)} data-ckui="paywall">
       <p className="flex items-center gap-2 font-medium">
         <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-4" aria-hidden />
-        {decision.unknown ? t("paywall.unknown") : requires ? t("paywall.requiresFirst") : t("paywall.locked")}
+        {decision.unknown ? t("paywall.unknown") : required ? t("paywall.requiresFirst") : t("paywall.locked")}
       </p>
       {preview?.pages ? <p className="text-muted-foreground">{m.plural("paywall.previewPages", preview.pages)}</p> : null}
       {preview?.segments ? <p className="text-muted-foreground">{m.plural("paywall.previewSegments", preview.segments)}</p> : null}
@@ -82,11 +87,25 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
               {t("paywall.joinFirst")}
             </Button>
           )}
-          {offers.map((o) => (
-            <Button key={o.key} size="sm" disabled={!!requires} onClick={() => onCheckout({ key: o.key, offer: o })} data-ckui="paywall-offer" data-target={o.target.kind}>
-              {t(o.target.kind === "group" ? "paywall.joinFor" : o.target.kind === "version" ? "paywall.unlockVersionFor" : "paywall.unlockFor", { price: priceLabel(m, o.terms) })}
-            </Button>
-          ))}
+          {offers.map((o) =>
+            o.target.kind === "group" && Number(o.terms.amount) === 0 ? (
+              <Button
+                key={o.key}
+                size="sm"
+                disabled={waits(o.key) || join.pending}
+                onClick={() => (ctx?.viewer === null && signIn ? signIn() : void join.run(() => client.offers.join(o.target.id)))}
+                data-ckui="paywall-offer"
+                data-target="group"
+                data-free=""
+              >
+                {t("paywall.joinFirst")}
+              </Button>
+            ) : (
+              <Button key={o.key} size="sm" disabled={waits(o.key)} onClick={() => onCheckout({ key: o.key, offer: o })} data-ckui="paywall-offer" data-target={o.target.kind}>
+                {t(o.target.kind === "group" ? "paywall.joinFor" : o.target.kind === "version" ? "paywall.unlockVersionFor" : "paywall.unlockFor", { price: priceLabel(m, o.terms) })}
+              </Button>
+            ),
+          )}
           {tierKeys.map((k) => (
             <Button key={k} size="sm" variant={offers.length ? "outline" : "default"} onClick={() => onCheckout({ key: k })} data-ckui="paywall-tier" data-tier={k}>
               {t("paywall.subscribe", { tier: tiers?.[k]?.label ?? labelOf(labels, k) })}
@@ -95,6 +114,7 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
           ))}
         </div>
       )}
+      {join.error && <ErrorLine>{contentError(m, join.error)}</ErrorLine>}
       {ctx?.viewer === null && signIn && (
         <p className="text-muted-foreground">
           {t("paywall.haveIt")}{" "}
@@ -124,16 +144,21 @@ function versionName(v: Version, languageName: (l: string) => string, labels?: L
   return v.label || (v.traits.length ? v.traits.map((x) => labelOf(labels, x)).join(" · ") : v.languages.map(languageName).join(", "));
 }
 
+const primary = (v: Version) => v.languages[0] ?? "";
+
+/** The shown version, the versions' languages and the shown language's variants. */
+function choices(versions: readonly Version[], value: string | null | undefined) {
+  const current = versions.find((v) => v.id === value) ?? versions[0]!;
+  const language = primary(current);
+  return { current, language, languages: [...new Set(versions.map(primary))], variants: versions.filter((v) => primary(v) === language) };
+}
+
 /** Chooses among a content's versions: a language first when they differ in language, then its variants (traits, labels). */
 export function VersionPicker({ versions, value, onChange, labels, className, appearance }: VersionPickerProps) {
   const { t } = useMessages();
   const languageName = useLanguageName();
   if (versions.length < 2) return null;
-  const current = versions.find((v) => v.id === value) ?? versions[0]!;
-  const primary = (v: Version) => v.languages[0] ?? "";
-  const languages = [...new Set(versions.map(primary))];
-  const language = primary(current);
-  const variants = versions.filter((v) => primary(v) === language);
+  const { current, language, languages, variants } = choices(versions, value);
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("flex flex-wrap items-center gap-2 text-sm", className)} data-ckui="version-picker">
       {languages.length > 1 && (
@@ -177,4 +202,41 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
       )}
     </ContentKitUiRoot>
   );
+}
+
+/** VersionPicker as VideoPlayer settings entries (menuItems), for a watch page. */
+export function useVersionMenuItems(
+  versions: readonly Version[],
+  value: string | null | undefined,
+  onChange: (version: string) => void,
+  labels?: Labels,
+): PlayerMenuItem[] {
+  const { t } = useMessages();
+  const languageName = useLanguageName();
+  return useMemo(() => {
+    if (versions.length < 2) return [];
+    const { current, language, languages, variants } = choices(versions, value);
+    const out: PlayerMenuItem[] = [];
+    if (languages.length > 1)
+      out.push({
+        label: t("versions.language"),
+        value: language,
+        options: languages.map((l) => ({ value: l, label: languageName(l) })),
+        onChange: (l) => {
+          const v = versions.find((x) => primary(x) === l);
+          if (v) onChange(v.id);
+        },
+      });
+    if (variants.length > 1)
+      out.push({
+        label: t("versions.version"),
+        value: current.id,
+        options: variants.map((v) => {
+          const name = versionName(v, languageName, labels);
+          return { value: v.id, label: v.decision.allowed ? name : t("versions.lockedOption", { name }) };
+        }),
+        onChange,
+      });
+    return out;
+  }, [versions, value, onChange, labels, t, languageName]);
 }

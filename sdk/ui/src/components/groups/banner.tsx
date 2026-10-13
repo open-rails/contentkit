@@ -2,10 +2,9 @@ import { cn } from "cn";
 import { useContext, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Edit, GroupAccess, GroupDetail } from "../../client/generated/wire.js";
+import type { Edit, GroupAccess, GroupDetail, Sale } from "../../client/generated/wire.js";
 import type { GroupImageSlot } from "../../client/groups.js";
 import { decodeImage, type CropSource } from "../../client/image.js";
-import type { DecisionOffer } from "../../client/offers.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup } from "../../react/groups.js";
@@ -21,7 +20,7 @@ import { GroupAvatar, GroupCover, type GroupLike } from "./parts.js";
 export interface MembershipBoxProps {
   group: Pick<GroupDetail, "id" | "kind" | "name"> & { access?: GroupAccess };
   /** Buys a sold membership: the host creates the order through billing-ui. */
-  onCheckout?: (o: { key: string; offer: DecisionOffer }) => void;
+  onCheckout?: (o: { key: string; offer: Sale }) => void;
   /** Asks a signed-out visitor to sign in; default the provider's. */
   onSignIn?: () => void;
   client?: ContentKitClient;
@@ -41,7 +40,7 @@ export function MembershipBox({ group, onCheckout, onSignIn, client: own, onErro
   if (!a || a.editor) return null;
   const signedOut = ctx?.viewer === null;
   const signIn = onSignIn ?? ctx?.onSignIn;
-  const offer: DecisionOffer | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;
+  const offer: Sale | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-2 rounded-lg border border-border p-3 text-sm", className)} data-ckui="membership-box" data-member={a.member}>
       {a.unknown ? (

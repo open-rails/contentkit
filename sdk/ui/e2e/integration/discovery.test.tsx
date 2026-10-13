@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Beacons, type ContentKitClient, type GroupCard } from "../../src/client/index.js";
+import { ContentGrid, ContentRail } from "../../src/index.js";
 import {
   ContentKitProvider,
   useContentFilters,
   useContents,
   useHistory,
+  useRecentSearches,
   useRecommendations,
   useReleaseDates,
   useSearch,
@@ -115,6 +117,32 @@ describe("discovery against the real ContentKit", () => {
     expect(ta.current.query).toBe(word.slice(0, 6));
   });
 
+  it("useRecentSearches: what a reader searched, newest first, one or all cleared; signed out, by session", async () => {
+    const r = run();
+    for (const [who, c] of [
+      ["signed in", client(h, cfg, await h.user())],
+      ["signed out", client(h, cfg, null)],
+    ] as const) {
+      // This file's other searches share the tab's session.
+      await c.discovery.clearSearches();
+      await c.discovery.search({ q: `first ${r}` });
+      await c.discovery.search({ q: `second ${r}` });
+      const { result } = renderHook(() => useRecentSearches({ limit: 5 }), { wrapper: wrap(c) });
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`second ${r}`, `first ${r}`]), wait);
+      await act(() => result.current.clear(`second ${r}`));
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`first ${r}`]), wait);
+      // A search made through the client shows at once.
+      await act(async () => {
+        await c.discovery.search({ q: `third ${r}` });
+      });
+      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`third ${r}`, `first ${r}`]), wait);
+      await act(() => result.current.clear());
+      await waitFor(() => expect(result.current.searches, who).toEqual([]), wait);
+    }
+    // Another session keeps its own.
+    expect((await client(h, cfg, null).discovery.recentSearches({ session: `other-${r}` })).searches).toEqual([]);
+  });
+
   it("useReleaseDates: per day, how many contents and how many are free", async () => {
     const r = run();
     const t = await tag(`dates-${r}`);
@@ -161,6 +189,65 @@ describe("discovery against the real ContentKit", () => {
     });
     expect(result.current.items[0]!.counts.favorites).toBe(1);
     expect(result.current.items[0]!.viewer?.favorited).toBe(true);
+  });
+
+  it("ContentRail: a featured group's members in its order and windows, any list, no continue watching without the signal plane", async () => {
+    const r = run();
+    const t = await tag(`rails-${r}`);
+    const [rail] = await staff.groups.create([{ kind: "rail", slug: `featured-${r}`, names: [{ language: "en", kind: "name", name: `Featured ${r}` }] }]);
+    const [one, two, later] = await seedContents(
+      staff,
+      ["One", "Two", "Later"].map((n) => ({ kind: "comic", titles: { en: `${n} ${r}` }, groups: [t.id], versions: [{ languages: ["en"] }] })),
+    );
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+    await staff.groups.addMembers(rail!.id, [{ content_id: two!.id }, { content_id: one!.id, active_until: tomorrow }, { content_id: later!.id, active_from: tomorrow }]);
+    const reader = await h.user();
+    render(
+      <>
+        <ContentRail title="Featured" group={rail!.id} />
+        <ContentRail title="Newest" list={{ kind: "comic", groups: [t.id], sort: "title" }} />
+        <ContentRail title="Continue watching" history={{ status: "in_progress" }} />
+      </>,
+      { wrapper: wrap(client(h, cfg, reader), { viewer: reader.id, language: "en" }) },
+    );
+    const titles = (surface: string) => [...document.querySelectorAll(`[data-ckui=content-rail][data-surface=${surface}] [data-ckui=card-title]`)].map((x) => x.textContent);
+    await waitFor(() => expect(titles("featured")).toEqual([`Two ${r}`, `One ${r}`]), wait);
+    await waitFor(() => expect(titles("list")).toEqual([`Later ${r}`, `One ${r}`, `Two ${r}`]), wait);
+    expect(screen.getByRole("heading", { name: "Featured" })).toBeTruthy();
+    await waitFor(() => expect(document.querySelectorAll("[data-ckui=content-rail]")).toHaveLength(2), wait);
+    expect(screen.queryByRole("heading", { name: "Continue watching" })).toBeNull();
+  });
+
+  it("owner_group: a group's own feed, and each card's owner chip", async () => {
+    const r = run();
+    const [owner] = await staff.groups.create([{ kind: "artist", slug: `owner-${r}`, names: [{ language: "en", kind: "name", name: `Studio ${r}` }] }]);
+    const t = await tag(`owned-${r}`);
+    const [owned] = await seedContents(staff, [
+      { kind: "comic", titles: { en: `Owned ${r}` }, owner: owner!.id, groups: [t.id], versions: [{ languages: ["en"] }] },
+      { kind: "comic", titles: { en: `Other ${r}` }, groups: [t.id], versions: [{ languages: ["en"] }] },
+    ]);
+    const c = client(h, cfg, null);
+    const { result } = renderHook(() => useContents({ kind: "comic", owner_group: owner!.id }), { wrapper: wrap(c, { viewer: null, language: "en" }) });
+    await waitFor(() => expect(result.current.items.map((x) => x.id)).toEqual([owned!.id]), wait);
+    expect(result.current.items[0]!.owner).toMatchObject({ id: owner!.id, kind: "artist", name: `Studio ${r}` });
+
+    const { container } = render(
+      <>
+        <section data-test="tag">
+          <ContentGrid query={{ kind: "comic", groups: [t.id], sort: "title" }} />
+        </section>
+        <section data-test="feed">
+          <ContentGrid query={{ kind: "comic", owner_group: owner!.id }} owner={false} />
+        </section>
+      </>,
+      { wrapper: wrap(c, { viewer: null, language: "en" }) },
+    );
+    const titles = (s: string) => [...container.querySelectorAll(`[data-test=${s}] [data-ckui=card-title]`)].map((x) => x.textContent);
+    await waitFor(() => expect([titles("tag"), titles("feed")]).toEqual([[`Other ${r}`, `Owned ${r}`], [`Owned ${r}`]]), wait);
+    const chips = container.querySelectorAll("[data-test=tag] [data-ckui=card-owner]");
+    // The avatar's initial, then the name.
+    expect([...chips].map((x) => [x.getAttribute("data-id"), x.textContent])).toEqual([[owner!.id, `SStudio ${r}`]]);
+    expect(container.querySelectorAll("[data-test=feed] [data-ckui=card-owner]")).toHaveLength(0);
   });
 
   it("without the signal plane: rails leave themselves out, history says so, beacons turn off", async () => {

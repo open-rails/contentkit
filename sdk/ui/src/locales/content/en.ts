@@ -27,6 +27,7 @@ export const content = {
     language: "Language",
     version: "Version",
     locked: "Locked",
+    lockedOption: "{name} (locked)",
   },
   contentEditor: {
     saved: "Saved.",
@@ -35,6 +36,10 @@ export const content = {
     listing_listed: "Listed",
     listing_members: "Listed for those who can open it",
     listing_unlisted: "Unlisted (link only)",
+    comments: "Comments",
+    comments_open: "Open",
+    comments_closed: "Closed (kept, no new ones)",
+    comments_hidden: "Hidden",
     accessTitle: "Access and price",
     access: "Who can open it",
     level_public: "Everyone",

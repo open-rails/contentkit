@@ -34,13 +34,14 @@ export {
   type Period,
   type RailQuery,
   type ReaderQuery,
+  type RecentSearchesQuery,
   type ReleaseDatesQuery,
   type SearchQuery,
   type TypeaheadQuery,
 } from "./discovery.js";
 export { VersionsClient, isPending } from "./versions.js";
-export { OffersClient, type DecisionOffer } from "./offers.js";
-export { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
+export { OffersClient } from "./offers.js";
+export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";

@@ -1,5 +1,6 @@
 import type { InteractionPage, ReactionCounts } from "../generated/wire.js";
 import type { Http } from "../http.js";
+import { query } from "../discovery.js";
 import { call } from "../route.js";
 import { reactionVerb, type Reaction, type Target } from "./types.js";
 import type { MineQuery } from "./favorites.js";
@@ -29,6 +30,6 @@ export class ReactionsClient {
   }
   /** What the signed-in caller liked or disliked, most recent first: content cards or groups (tag preferences). */
   mine(q: MineQuery & { value?: "like" | "dislike" } = {}, signal?: AbortSignal): Promise<InteractionPage> {
-    return call(this.http, "GET", "/me/reactions", { query: q, signal });
+    return call(this.http, "GET", "/me/reactions", { query: query(q) as never, signal });
   }
 }

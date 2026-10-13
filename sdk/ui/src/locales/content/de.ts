@@ -28,6 +28,7 @@ export const content: typeof en = {
     language: "Sprache",
     version: "Version",
     locked: "Gesperrt",
+    lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
     saved: "Gespeichert.",
@@ -36,6 +37,10 @@ export const content: typeof en = {
     listing_listed: "Aufgelistet",
     listing_members: "Aufgelistet für alle, die es öffnen können",
     listing_unlisted: "Nicht aufgelistet (nur per Link)",
+    comments: "Kommentare",
+    comments_open: "Offen",
+    comments_closed: "Geschlossen (bleiben, keine neuen)",
+    comments_hidden: "Ausgeblendet",
     accessTitle: "Zugang und Preis",
     access: "Wer es öffnen kann",
     level_public: "Alle",

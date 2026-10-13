@@ -242,6 +242,7 @@ export class ResourceStore {
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameTarget(t.target, c.target), () => c.counts);
         if (c.target.type === "contents") cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+        this.invalidate((t) => t.type === "reactions");
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameTarget(t.target, c.target), () => ({ favorited: c.favorited, count: c.count }));
@@ -291,6 +292,9 @@ export class ResourceStore {
         break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards");
+        break;
+      case "searches.changed":
+        this.invalidate((t) => t.type === "searches");
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
