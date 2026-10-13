@@ -61,8 +61,8 @@ out, err := client.IngestMedia(ctx, nil, media.RefBody{Kind: "gallery", ID: cont
 ```
 
 `IngestMedia` presigns each file, uploads it (one PUT or multipart parts) and
-commits the folder in one operation; a retry with the same `operationID`
-commits once. Publication, renditions and version facts (pages, duration)
+commits the folder in one operation; sending the files again (a new
+`operationID`) uploads nothing the folder already holds. Publication, renditions and version facts (pages, duration)
 follow from the media jobs.
 
 ## Record shapes

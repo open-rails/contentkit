@@ -28,9 +28,9 @@ const ingestPartSize = 32 << 20
 // IngestMedia uploads files into one media item (a content item's, or one
 // version's) and commits them as one operation: the upload routes' presign,
 // a PUT or multipart parts to the bucket over bucket (http.DefaultClient when
-// nil), then commit. operationID is a stable UUID of the commit, so sending
-// it again after a failure commits once. It is how an importer fills an
-// imported version's folder.
+// nil), then commit. operationID is a UUID of this commit; sending the files
+// again (a new operationID) finds bytes the folder holds and uploads nothing
+// twice. It is how an importer fills an imported version's folder.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
 	if bucket == nil {
 		bucket = http.DefaultClient

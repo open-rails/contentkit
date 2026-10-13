@@ -3956,7 +3956,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
@@ -4011,7 +4012,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "forbidden",
           "not_found"
@@ -4060,7 +4062,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "forbidden",
           "not_found"
@@ -4109,7 +4112,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "checksum_mismatch",
           "forbidden",
@@ -4153,7 +4157,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "forbidden",
           "not_found"
@@ -4202,7 +4207,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
@@ -4299,7 +4305,8 @@
           }
         ],
         "x-contentkit-module": "upload",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "forbidden",
           "not_found"

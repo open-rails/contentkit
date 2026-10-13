@@ -504,12 +504,12 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if len(out.Files) != 2 || out.Files[0].Path != "originals/0001.png" {
 		t.Fatalf("committed %+v", out.Files)
 	}
-	// A retry of the same operation commits nothing twice.
+	// Sending them again finds the folder's bytes and keeps two pages.
 	for _, p := range pages {
 		_, _ = p.Body.Seek(0, 0)
 	}
-	if again, err := f.e.Client().IngestMedia(t.Context(), nil, ref, op, pages); err != nil || len(again.Files) != 2 {
-		t.Fatalf("retry %+v %v", again.Files, err)
+	if again, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(), pages); err != nil || len(again.Files) != 2 {
+		t.Fatalf("again %+v %v", again.Files, err)
 	}
 }
 

@@ -90,13 +90,13 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| POST | `/v1/media/upload/presign` | user | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
-| POST | `/v1/media/upload/parts` | user | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
-| POST | `/v1/media/upload/parts/list` | user | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
-| POST | `/v1/media/upload/complete` | user | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
-| POST | `/v1/media/upload/abort` | user | `TicketBody` | 204 — | Abandons a multipart upload. |
-| POST | `/v1/media/upload/commit` | user | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
-| GET | `/v1/media/upload/frame` | user | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
+| POST | `/v1/media/upload/presign` | editor `root:content:write` | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
+| POST | `/v1/media/upload/parts` | editor `root:content:write` | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
+| POST | `/v1/media/upload/parts/list` | editor `root:content:write` | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
+| POST | `/v1/media/upload/complete` | editor `root:content:write` | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
+| POST | `/v1/media/upload/abort` | editor `root:content:write` | `TicketBody` | 204 — | Abandons a multipart upload. |
+| POST | `/v1/media/upload/commit` | editor `root:content:write` | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
+| GET | `/v1/media/upload/frame` | editor `root:content:write` | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
 
 ## Media reads and playback (`/v1/media`)
 
