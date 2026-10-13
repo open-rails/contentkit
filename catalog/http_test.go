@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -194,7 +195,7 @@ func TestModerationHoldIntegration(t *testing.T) {
 	f := newFixture(t, func(o *Options) {
 		var err error
 		rt, err = content.New(t.Context(), content.Options{Pool: o.Pool, Schema: o.Schema, Tenant: tenant, Auth: o.Auth,
-			Resolver: late, ContentKinds: []string{"gallery", "blog"}, Moderator: mod, Limits: content.Limits{Disabled: true}})
+			Resolver: late, Kinds: o.Kinds, Moderator: mod, Limits: content.Limits{Disabled: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,6 +267,6 @@ func TestModerationHoldIntegration(t *testing.T) {
 // content runtime it serves.
 type lateResolver struct{ s *Store }
 
-func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	return l.s.Resolver().Resolve(ctx, refs, a)
 }

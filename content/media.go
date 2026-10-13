@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -108,17 +109,17 @@ var (
 	_ MediaReader            = (*media.Reader)(nil)
 )
 
-// MediaResolver is the access.ContentResolver of the poll media kind: route
+// MediaResolver is the resolve.Resolver of the poll media kind: route
 // the host registry's Hooks.Resolver to it for Media.PollKind, as CanUpload
 // is routed. A poll's folder shows while the poll exists, edited by
 // root:polls:write holders. Other refs are omitted (denied).
-func (rt *Runtime) MediaResolver() access.ContentResolver { return mediaResolver{rt} }
+func (rt *Runtime) MediaResolver() resolve.Resolver { return mediaResolver{rt} }
 
 type mediaResolver struct{ rt *Runtime }
 
-func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	rt := m.rt
-	out := make(map[contentref.ContentKey]access.Resolution, len(refs))
+	out := make(map[contentref.ContentKey]resolve.Resolution, len(refs))
 	if rt.media == nil {
 		return out, nil
 	}
@@ -143,7 +144,7 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 			if err := rows.Scan(&id); err != nil {
 				return nil, err
 			}
-			out[rt.Ref(rt.media.PollKind, id).Key()] = access.Resolution{Visible: true, Accessible: true, Editor: pollWrite}
+			out[rt.Ref(rt.media.PollKind, id).Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: pollWrite}
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err

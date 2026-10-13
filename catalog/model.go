@@ -157,17 +157,19 @@ type Content struct {
 	// of its versions, else its first version's paywall.
 	Decision Decision `json:"decision"`
 	// Images maps each resolved image name of Body and the cover to its URL.
-	Images       map[string]string `json:"images,omitempty"`
-	Cover        *Cover            `json:"cover,omitempty"`
-	State        string            `json:"state"`
-	Listing      string            `json:"listing"`
-	PublishAt    *time.Time        `json:"publish_at,omitempty"`
-	PublishedAt  *time.Time        `json:"published_at,omitempty"`
-	Live         bool              `json:"live"`
-	Access       access.Rule       `json:"access"`
-	Restrictions []string          `json:"restrictions"`
-	Attributes   map[string]any    `json:"attributes"`
-	OwnerGroupID string            `json:"owner_group_id,omitempty"`
+	Images  map[string]string `json:"images,omitempty"`
+	Cover   *Cover            `json:"cover,omitempty"`
+	State   string            `json:"state"`
+	Listing string            `json:"listing"`
+	// Comments is open, closed or hidden.
+	Comments     string         `json:"comments"`
+	PublishAt    *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt  *time.Time     `json:"published_at,omitempty"`
+	Live         bool           `json:"live"`
+	Access       access.Rule    `json:"access"`
+	Restrictions []string       `json:"restrictions"`
+	Attributes   map[string]any `json:"attributes"`
+	OwnerGroupID string         `json:"owner_group_id,omitempty"`
 	// Owner is the owner group's card (a channel's name, path, avatar and
 	// cover) while it is active.
 	Owner    *groups.GroupCard `json:"owner,omitempty"`

@@ -11,6 +11,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
@@ -59,14 +60,18 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := serve(t, routes)
-	u1 := access.Actor{ID: "u1", Kind: "user"}
-	s.call(http.StatusOK, u1, "POST", "/ck/v1/gallery/"+cid(1)+"/like", nil, nil)
-	s.call(http.StatusOK, u1, "POST", "/ck/v1/gallery/"+cid(1)+"/favorite", nil, nil)
+	u1, staff := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "staff", Kind: "user"}
+	var c catalog.Content
+	s.call(http.StatusCreated, staff, "POST", "/ck/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Harbor"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
+	s.call(http.StatusOK, staff, "POST", "/ck/v1/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
+	s.call(http.StatusOK, u1, "POST", "/ck/v1/contents/"+c.ID+"/like", nil, nil)
+	s.call(http.StatusOK, u1, "POST", "/ck/v1/contents/"+c.ID+"/favorite", nil, nil)
 
 	if _, err := e.own.Insert(ctx, preferenceSyncArgs{}, &river.InsertOpts{Queue: QueueContentKit}); err != nil {
 		t.Fatal(err)
 	}
-	g1 := contentref.New(tenant, "gallery", cid(1))
+	g1 := contentref.New(tenant, "gallery", c.ID)
 	user := signal.Subject{UserID: "u1"}
 	deadline := time.Now().Add(60 * time.Second)
 	for {

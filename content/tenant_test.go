@@ -18,18 +18,18 @@ func TestTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: res, ContentKinds: []string{"gallery"}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, Kinds: testKinds("gallery")})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: res, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	u := access.Actor{ID: "shared-account", Kind: "user"}
 	ga, gb := a.Ref("gallery", cid(1)), b.Ref("gallery", cid(1))
 
-	if _, err := a.reactions.react(ctx, u, "gallery", cid(1), 1); err != nil {
+	if _, err := a.reactions.react(ctx, u, a.Ref("gallery", cid(1)), 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := favErr(a.favorites.add(ctx, u, "gallery", cid(1))); err != nil {
+	if err := favErr(a.favorites.add(ctx, u, a.Ref("gallery", cid(1)))); err != nil {
 		t.Fatal(err)
 	}
 	cm := mustComment(t, a, u, "gallery", cid(1), CommentInput{Body: "on a"})
@@ -44,16 +44,13 @@ func TestTenantIsolation(t *testing.T) {
 	if m, err := b.Counts(ctx, []contentref.ContentRef{gb}); err != nil || len(m) != 0 {
 		t.Fatalf("tenant b sees a's counts: %v err=%v", m, err)
 	}
-	if m, _ := b.MyReactions(ctx, u, []contentref.ContentRef{gb}); len(m) != 0 {
-		t.Fatalf("tenant b sees a's reaction: %v", m)
+	if reactionOf(t, b, u, gb) != 0 || favorited(t, b, u.ID, gb) {
+		t.Fatal("tenant b sees a's reaction or favorite")
 	}
-	if m, _ := b.IsFavorited(ctx, u.ID, []contentref.ContentRef{gb}); m[gb.Key()] {
-		t.Fatal("tenant b sees a's favorite")
-	}
-	if list, _ := b.comments.list(ctx, u, "gallery", cid(1), "", 10, 0); len(list) != 0 {
+	if list, _ := b.comments.list(ctx, u, b.Ref("gallery", cid(1)), "", "", 10, 0); len(list) != 0 {
 		t.Fatalf("tenant b sees a's comments: %v", list)
 	}
-	if feed, _ := b.LatestComments(ctx, u, 10, 0); len(feed) != 0 {
+	if feed, _ := b.LatestComments(ctx, u, "", 10, 0); len(feed) != 0 {
 		t.Fatalf("tenant b's feed shows a's comments: %v", feed)
 	}
 	if n, _ := b.LatestCommentsTotal(ctx); n != 0 {
@@ -90,20 +87,18 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	// Cross-tenant references are refused on every read API.
 	for name, err := range map[string]error{
-		"Counts":      errOf(b.Counts(ctx, []contentref.ContentRef{ga})),
-		"MyReactions": errOf(b.MyReactions(ctx, u, []contentref.ContentRef{ga})),
-		"IsFavorited": errOf(b.IsFavorited(ctx, u.ID, []contentref.ContentRef{ga})),
+		"Counts": errOf(b.Counts(ctx, []contentref.ContentRef{ga})),
 	} {
 		if !errors.Is(err, ErrTenant) {
 			t.Fatalf("%s with a foreign reference: want ErrTenant, got %v", name, err)
 		}
 	}
 	// The shared account's tenant-b wishlist is its own.
-	if err := favErr(b.favorites.add(ctx, u, "gallery", cid(1))); err != nil {
+	if err := favErr(b.favorites.add(ctx, u, b.Ref("gallery", cid(1)))); err != nil {
 		t.Fatal(err)
 	}
-	if items, _ := a.ListFavorites(ctx, u.ID, 0, 0); len(items) != 1 || items[0].TenantID != "site_a" {
-		t.Fatalf("tenant a favorites = %v", items)
+	if !favorited(t, a, u.ID, ga) || len(favoriteIDs(t, a, u.ID)) != 1 {
+		t.Fatal("tenant a's favorite is not its own")
 	}
 	if c := countsOf(t, b, gb); c.Favorites != 1 || c.Likes != 0 {
 		t.Fatalf("tenant b counts = %+v, want its own favorite only", c)

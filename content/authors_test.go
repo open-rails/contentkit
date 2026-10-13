@@ -34,7 +34,7 @@ func (d *countingDirectory) Get(ctx context.Context, ids []string) (map[string]u
 // outage leaves bare ids and never fails the listing.
 func TestAuthorsResolveInTwoCalls(t *testing.T) {
 	dir := &countingDirectory{}
-	rt, m := newMediaTest(t, Options{UserInfo: dir, Resolver: resolverWith("gallery", cid(1)), ContentKinds: []string{"gallery"}})
+	rt, m := newMediaTest(t, Options{UserInfo: dir, Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery")})
 	m.publish("avatar-alice")
 	for _, who := range []string{"alice", "bob", "gone", "alice"} {
 		mustComment(t, rt, access.Actor{ID: who, Kind: "user"}, "gallery", cid(1), CommentInput{Body: "from " + who})
@@ -45,7 +45,7 @@ func TestAuthorsResolveInTwoCalls(t *testing.T) {
 	m.mu.Unlock()
 
 	var list []Comment
-	if code := send(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "GET", "/gallery/"+cid(1)+"/comments?sort=newest", nil, &list); code != http.StatusOK || len(list) != 4 {
+	if code := send(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "GET", "/contents/"+cid(1)+"/comments?sort=newest", nil, &list); code != http.StatusOK || len(list) != 4 {
 		t.Fatalf("list: %d %d", code, len(list))
 	}
 	m.mu.Lock()
@@ -71,7 +71,7 @@ func TestAuthorsResolveInTwoCalls(t *testing.T) {
 
 	dir.down = true
 	list = nil
-	if code := send(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "GET", "/gallery/"+cid(1)+"/comments", nil, &list); code != http.StatusOK || len(list) != 4 {
+	if code := send(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "GET", "/contents/"+cid(1)+"/comments", nil, &list); code != http.StatusOK || len(list) != 4 {
 		t.Fatalf("outage: %d %d", code, len(list))
 	}
 	for _, c := range list {

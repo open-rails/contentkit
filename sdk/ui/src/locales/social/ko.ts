@@ -72,6 +72,7 @@ export const social: typeof en = {
     showMore: "더 보기",
     showLess: "접기",
     restore: "복원",
+    closed: "댓글이 닫혔습니다.",
     locked: "여기에는 댓글을 쓸 수 없습니다.",
     rateLimited: "댓글을 너무 빨리 쓰고 있습니다. {seconds}초 후에 다시 시도하세요.",
     rateLimitedSoon: "댓글을 너무 빨리 쓰고 있습니다. 잠시 후 다시 시도하세요.",

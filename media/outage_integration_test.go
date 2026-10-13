@@ -11,6 +11,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/tcpproxy"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -29,8 +30,8 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}}
-	res.set(cid(1), access.Resolution{Visible: true, Accessible: true})
+	res := &resolver{verdicts: map[string]resolve.Resolution{}, anon: map[string]resolve.Resolution{}}
+	res.set(cid(1), resolve.Resolution{Visible: true, Accessible: true})
 	cfg2 := testConfig(env.Tenant, "acct")
 	cfg2.Hooks = media.Hooks{Resolver: res}
 	kinds, err := media.NewRegistry(cfg2)

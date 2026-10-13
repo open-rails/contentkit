@@ -46,7 +46,7 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Users = dir }))
 	_, staff := w.person(w.staff)
 	g, _ := w.published(f, staff, "gallery")
-	item := "/gallery/" + g
+	item := "/contents/" + g
 
 	// Alice uploads her avatar; Bob may not upload it for her.
 	body := pngBytes(t, 32)

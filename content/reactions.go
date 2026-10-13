@@ -120,15 +120,13 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 	return value, true, nil
 }
 
-// react is the entry point for host-registered kinds: it gates on
-// accessibility and applies the reaction under the canonical preference
-// reference (or the resolver's for a declined target), which it returns.
-func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id string, value int16) (contentref.ContentRef, error) {
-	ref, err := r.rt.gate(ctx, kind, id, actor, true)
+// react gates on accessibility and applies the reaction under the canonical
+// reference, which it returns.
+func (r *reactions) react(ctx context.Context, actor access.Actor, target contentref.ContentRef, value int16) (contentref.ContentRef, error) {
+	ref, err := r.rt.gate(ctx, target, actor, true)
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
-	storage, _ := r.rt.preferences.work(ref)
 	tx, err := r.s.beginMutation(ctx)
 	if err != nil {
 		return contentref.ContentRef{}, err
@@ -137,10 +135,10 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id stri
 	if err := r.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return contentref.ContentRef{}, err
 	}
-	if _, _, err := r.applyTx(ctx, tx, actor, storage.Key(), value); err != nil {
+	if _, _, err := r.applyTx(ctx, tx, actor, ref.Key(), value); err != nil {
 		return contentref.ContentRef{}, err
 	}
-	return storage, tx.Commit(ctx)
+	return ref, tx.Commit(ctx)
 }
 
 // counts returns the split tally plus the caller's own reaction: an O(1) read
@@ -165,39 +163,56 @@ func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, k
 
 // --- HTTP ---
 
-var reactionRoutes = []httpapi.Route[*reactions]{
-	reaction(httpapi.POST, "like", "Likes a target.", 1),
-	reaction(httpapi.POST, "dislike", "Dislikes a target.", -1),
-	reaction(httpapi.DELETE, "reaction", "Clears the caller's reaction to a target.", 0),
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/reaction", Resource: "reactions", Auth: httpapi.Public,
-		Doc:       "A target's like and dislike counts and the caller's own reaction.",
-		Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeNotFound}},
-		Serve: httpapi.H((*reactions).handleGet)},
+func reactionRoutes() []httpapi.Route[*reactions] {
+	var out []httpapi.Route[*reactions]
+	for _, typ := range TargetTypes {
+		noun := targetNoun(typ)
+		out = append(out,
+			reaction(typ, httpapi.POST, "like", "Likes "+noun+".", 1),
+			reaction(typ, httpapi.POST, "dislike", "Dislikes "+noun+".", -1),
+			reaction(typ, httpapi.DELETE, "reaction", "Clears the caller's reaction to "+noun+".", 0),
+			httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/reaction", Resource: "reactions", Auth: httpapi.Public,
+				Doc: "The like and dislike counts of " + noun + " and the caller's own reaction.", Query: targetQuery(typ),
+				Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeNotFound}},
+				Serve: func(r *reactions) http.HandlerFunc { return r.rt.targetHandler(typ, r.handleGet) }})
+	}
+	return out
 }
 
-func reaction(method, verb, doc string, value int16) httpapi.Route[*reactions] {
-	return httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: method, Path: "/{kind}/{id}/" + verb, Resource: "reactions", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
-		Serve: func(r *reactions) http.HandlerFunc { return r.handleSet(value) }}
+func reaction(typ TargetType, method, verb, doc string, value int16) httpapi.Route[*reactions] {
+	return httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: method, Path: "/" + string(typ) + "/{id}/" + verb, Resource: "reactions", Auth: httpapi.Public,
+		Doc: doc, Query: targetQuery(typ), Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})},
+		Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+		Serve: func(r *reactions) http.HandlerFunc { return r.handleSet(typ, value) }}
 }
 
-func (r *reactions) handleSet(value int16) http.HandlerFunc {
+// targetNoun names a target type in route docs.
+func targetNoun(typ TargetType) string {
+	if typ == TargetGroup {
+		return "a group"
+	}
+	return "a content item or one of its versions"
+}
+
+func (r *reactions) handleSet(typ TargetType, value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
 		err := participant(actor, r.rt.anonymous.Reactions)
 		if err == nil {
 			err = r.rt.limit(req.Context(), ActionReaction, actor)
 		}
-		if err != nil {
-			writeErr(w, err)
-			return
+		var target contentref.ContentRef
+		if err == nil {
+			target, err = r.rt.target(req, typ)
 		}
-		ref, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
-		if err != nil {
-			writeErr(w, err)
-			return
+		var ref contentref.ContentRef
+		if err == nil {
+			ref, err = r.react(req.Context(), actor, target, value)
 		}
-		cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Key())
+		var cnt ReactionCounts
+		if err == nil {
+			cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key())
+		}
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -206,15 +221,13 @@ func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	}
 }
 
-func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request) {
+func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	actor := r.rt.actor(req.Context())
-	ref, err := r.rt.gate(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor, false)
-	if err != nil {
-		writeErr(w, err)
-		return
+	ref, err := r.rt.gate(req.Context(), target, actor, false)
+	var cnt ReactionCounts
+	if err == nil {
+		cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key())
 	}
-	ref, _ = r.rt.preferences.work(ref) // counts live under the canonical reference
-	cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Key())
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -72,6 +72,7 @@ export const social: typeof en = {
     showMore: "もっと見る",
     showLess: "閉じる",
     restore: "復元",
+    closed: "コメントは締め切られました。",
     locked: "ここにはコメントできません。",
     rateLimited: "コメントのペースが速すぎます。{seconds} 秒後にもう一度お試しください。",
     rateLimitedSoon: "コメントのペースが速すぎます。しばらくしてからもう一度お試しください。",

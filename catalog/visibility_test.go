@@ -7,6 +7,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // The one visibility rule: site scopes (excluded restrictions, required
@@ -156,13 +157,13 @@ func TestResolverIntegration(t *testing.T) {
 		contentref.New(tenant, "blog", id), contentref.New("other", "gallery", id)}
 	for _, c := range []struct {
 		actor string
-		want  map[contentref.ContentKey]access.Resolution
+		want  map[contentref.ContentKey]resolve.Resolution
 	}{
-		{anon, map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Owner: "alice"},
+		{anon, map[contentref.ContentKey]resolve.Resolution{ref.Key(): {Ref: ref, Visible: true, Owner: "alice"},
 			ref.WithVersion(vs[1].ID).Key(): {Ref: ref.WithVersion(vs[1].ID), Visible: true, Owner: "alice"}}},
-		{"pam", map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Owner: "alice"},
+		{"pam", map[contentref.ContentKey]resolve.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Owner: "alice"},
 			ref.WithVersion(vs[1].ID).Key(): {Ref: ref.WithVersion(vs[1].ID), Visible: true, Accessible: true, Owner: "alice"}}},
-		{"staff", map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Editor: true, Owner: "alice"},
+		{"staff", map[contentref.ContentKey]resolve.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Editor: true, Owner: "alice"},
 			ref.WithVersion(vs[1].ID).Key():                {Ref: ref.WithVersion(vs[1].ID), Visible: true, Accessible: true, Editor: true, Owner: "alice"},
 			contentref.New(tenant, "gallery", draft).Key(): {Ref: contentref.New(tenant, "gallery", draft), Visible: true, Accessible: true, Editor: true, Owner: "staff"}}},
 	} {

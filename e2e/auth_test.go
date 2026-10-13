@@ -31,7 +31,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 	f := serve(t, w.engine(nil))
 	g, _ := w.published(f, staff, "gallery")
 	album, _ := w.published(f, staff, "album")
-	item := "/gallery/" + g
+	item := "/contents/" + g
 	comment := content.CommentInput{Body: "hello"}
 
 	signedOut, gone := w.person(iam.Role{})

@@ -10,6 +10,7 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -84,17 +85,17 @@ func (s *Store) PublishDue(ctx context.Context) (int, error) {
 }
 
 // RefreshCounts copies each content item's interaction counts into its
-// facets: likes, favorites and rating (the Wilson lower bound of likes over
-// likes and dislikes). It returns how many facet rows changed.
+// facets: likes, dislikes, favorites and rating (the Wilson lower bound of
+// likes over likes and dislikes). It returns how many facet rows changed.
 func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE `+s.t.facets+` f SET likes = n.likes, favorites = n.favorites, rating = n.rating, updated_at = clock_timestamp()
- FROM (SELECT f.version_id, coalesce(c.likes, 0) AS likes, coalesce(c.favorites, 0) AS favorites,
-  CASE WHEN coalesce(c.likes + c.dislikes, 0) = 0 THEN 0::double precision
-   ELSE ((c.likes + 1.9208) / (c.likes + c.dislikes) - 1.96 * sqrt((c.likes::double precision * c.dislikes) / (c.likes + c.dislikes) + 0.9604)
-    / (c.likes + c.dislikes)) / (1 + 3.8416 / (c.likes + c.dislikes)) END AS rating
+	tag, err := s.pool.Exec(ctx, `UPDATE `+s.t.facets+` f SET likes = n.likes, dislikes = n.dislikes, favorites = n.favorites, rating = n.rating,
+ updated_at = clock_timestamp()
+ FROM (SELECT f.version_id, coalesce(c.likes, 0) AS likes, coalesce(c.dislikes, 0) AS dislikes, coalesce(c.favorites, 0) AS favorites,
+  `+content.RatingSQL("coalesce(c.likes, 0)", "coalesce(c.dislikes, 0)")+` AS rating
   FROM `+s.t.facets+` f LEFT JOIN `+s.t.counts+` c ON c.tenant_id = f.tenant_id AND c.content_kind = f.kind AND c.content_id = f.content_id
    AND c.content_version_id = '' WHERE f.tenant_id = $1) n
- WHERE f.tenant_id = $1 AND f.version_id = n.version_id AND (f.likes, f.favorites, f.rating) IS DISTINCT FROM (n.likes, n.favorites, n.rating)`, s.tenant)
+ WHERE f.tenant_id = $1 AND f.version_id = n.version_id
+  AND (f.likes, f.dislikes, f.favorites, f.rating) IS DISTINCT FROM (n.likes, n.dislikes, n.favorites, n.rating)`, s.tenant)
 	if err != nil {
 		return 0, err
 	}

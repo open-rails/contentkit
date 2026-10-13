@@ -508,7 +508,7 @@ func (s *Store) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 	var url string
 	if err == nil {
-		url, err = s.previewURL(r.Context(), actor, got[r.PathValue("id")].kind, r.PathValue("id"), *in.Image)
+		url, err = s.previewURL(r.Context(), actor, got[r.PathValue("id")].kind+media.BodySuffix, r.PathValue("id"), *in.Image)
 	}
 	if err != nil {
 		writeErr(w, err)

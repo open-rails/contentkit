@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -82,6 +83,14 @@ func (s *Store) checkListing(l string) error {
 		return nil
 	}
 	return invalid("listing %q must be listed, members or unlisted", l)
+}
+
+func checkComments(c string) error {
+	switch c {
+	case content.CommentsOpen, content.CommentsClosed, content.CommentsHidden:
+		return nil
+	}
+	return invalid("comments %q must be open, closed or hidden", c)
 }
 
 // checkRule validates r against the config (access.Rule.Validate) and sorts

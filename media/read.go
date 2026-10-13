@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -142,7 +144,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 // sign every URL through it.
 type Grant struct {
 	Item       Item
-	Resolution access.Resolution
+	Resolution resolve.Resolution
 	Manifest   *Manifest
 	Expires    time.Time
 	item       string // the item token; "" without access
@@ -161,7 +163,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	res, err := access.ResolveOne(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
+	res, err := resolve.One(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
 	}
@@ -298,6 +300,44 @@ func (r *Registry) editorViews(m *Manifest) map[string]bool {
 		}
 	}
 	return out
+}
+
+// NamedURLs are, for a viewer the item opens to, the URLs of the named
+// uploads' (Upload.Named) first private images, by name: how an opened
+// content's body shows images that have no public files. Names without one,
+// and every name for a viewer the item does not open to, are absent. The URLs
+// carry the item token (Delivery's cookie mode is not assumed).
+func (r *Reader) NamedURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor, names []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	g, err := r.Grant(ctx, ref, actor)
+	if errors.Is(err, ErrNotVisible) {
+		return out, nil
+	}
+	if err != nil || !g.Full() {
+		return out, err
+	}
+	k := g.Item.Kind()
+	for _, f := range g.Manifest.Files {
+		if f.IsUpload() || f.Blob == "" || !g.listed(f, false) {
+			continue
+		}
+		p := k.private(f.Preset)
+		src, ok := g.Manifest.Get(f.From)
+		if p == nil || p.Image == nil || p.HostOnly || !ok || !src.IsUpload() {
+			continue
+		}
+		name := k.NameOf(src.Path)
+		if _, done := out[name]; done || !slices.Contains(names, name) {
+			continue
+		}
+		if out[name], err = g.url(f.Blob, "", false, false); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // ReadOptions select what a read returns.

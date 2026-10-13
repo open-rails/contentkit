@@ -35,6 +35,7 @@ var codes = []ErrorCode{
 	{CodeUnauthorized, http.StatusUnauthorized, "The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which."},
 	{CodeForbidden, http.StatusForbidden, "The actor may not do this."},
 	{"comment_banned", http.StatusForbidden, "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."},
+	{"comments_closed", http.StatusForbidden, "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused."},
 	{"comment_too_long", http.StatusUnprocessableEntity, "The comment is longer than the site allows; `details.max` is the limit in characters."},
 	{CodeNotFound, http.StatusNotFound, "Nothing by that name, or nothing the actor may see."},
 	{CodeConflict, http.StatusConflict, "A concurrent change, a path or slug already taken, or an operation id already used for another commit."},

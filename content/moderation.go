@@ -143,29 +143,25 @@ func (c Chain) Screen(ctx context.Context, in ModerationInput) (Verdict, error) 
 	return Verdict{Decision: DecisionApprove, Model: "contentkit/chain"}, nil
 }
 
-// BasicModerator is the deterministic policy: reject links, near-instant
-// duplicate submissions from one actor and a censor word list. The dup guard
-// is per process; multi-replica hosts wanting global dedup wire their own.
+// BasicModerator is the deterministic policy: reject links and near-instant
+// duplicate submissions from one actor (banned words are data: rules.go).
+// The dup guard is per process; multi-replica hosts wanting global dedup
+// wire their own.
 type BasicModerator struct {
-	AllowLinks  bool          // default false: reject bodies containing URLs
-	DupWindow   time.Duration // 0 = 30s; negative disables
-	CensorWords []string      // nil = built-in set; empty = none; whole words, case-insensitive
+	AllowLinks bool          // default false: reject bodies containing URLs
+	DupWindow  time.Duration // 0 = 30s; negative disables
 
-	once     sync.Once
-	censorRe *regexp.Regexp
-	mu       sync.Mutex
-	recent   map[duplicateKey]time.Time
-	erased   map[subjectKey]bool
-	swept    time.Time
-	now      func() time.Time
+	once   sync.Once
+	mu     sync.Mutex
+	recent map[duplicateKey]time.Time
+	erased map[subjectKey]bool
+	swept  time.Time
+	now    func() time.Time
 }
 
 const basicModel = "contentkit/basic"
 
-var (
-	defaultCensor = []string{"childporn", "cp"}
-	urlRe         = regexp.MustCompile(`(?i)\b(?:https?://|www\.)\S+`)
-)
+var urlRe = regexp.MustCompile(`(?i)\b(?:https?://|www\.)\S+`)
 
 func (m *BasicModerator) init() {
 	m.once.Do(func() {
@@ -174,17 +170,6 @@ func (m *BasicModerator) init() {
 		}
 		if m.now == nil {
 			m.now = time.Now
-		}
-		words := m.CensorWords
-		if words == nil {
-			words = defaultCensor
-		}
-		if len(words) > 0 {
-			quoted := make([]string, len(words))
-			for i, w := range words {
-				quoted[i] = regexp.QuoteMeta(w)
-			}
-			m.censorRe = regexp.MustCompile(`(?i)\b(` + strings.Join(quoted, "|") + `)\b`)
 		}
 		m.recent = map[duplicateKey]time.Time{}
 		m.erased = map[subjectKey]bool{}
@@ -197,9 +182,6 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 	text := strings.TrimSpace(in.Title + "\n" + in.Text)
 	if !m.AllowLinks && urlRe.MatchString(text) {
 		return Verdict{Decision: DecisionReject, Reason: "links are not allowed", Model: basicModel}, nil
-	}
-	if m.censorRe != nil && m.censorRe.MatchString(text) {
-		return Verdict{Decision: DecisionReject, Reason: "content violates policy", Model: basicModel}, nil
 	}
 	if m.DupWindow > 0 && in.ItemID == "" {
 		actor := in.Actor.ID
@@ -472,7 +454,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 // reply_count for a reply, the reference's comment_count for a top-level one.
 func (c *comments) count(ctx context.Context, tx pgx.Tx, replyTo *string, k contentref.ContentKey, delta int) error {
 	if replyTo != nil {
-		_, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET reply_count = GREATEST(reply_count + $2, 0), updated_at = now() WHERE id = $1`, *replyTo, delta)
+		_, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET reply_count = GREATEST(reply_count + $2, 0), updated_at = now() WHERE tenant_id = $3 AND id = $1`, *replyTo, delta, c.s.tenant)
 		return err
 	}
 	return bumpCounts(ctx, tx, c.s, k, 0, 0, 0, delta)

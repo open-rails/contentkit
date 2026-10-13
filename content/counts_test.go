@@ -12,7 +12,7 @@ func TestCounts_RollupAggregates(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	res.set("gallery", cid(2), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
 	must := func(err error) {
 		t.Helper()
@@ -20,13 +20,13 @@ func TestCounts_RollupAggregates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), 1)))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), -1)))
-	must(favErr(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", cid(1))))
-	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "hi"}); err != nil {
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)), 1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, rt.Ref("gallery", cid(1)), -1)))
+	must(favErr(rt.favorites.add(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)))))
+	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)), CommentInput{Body: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u3"}, "gallery", cid(2), 1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u3"}, rt.Ref("gallery", cid(2)), 1)))
 
 	if c := countsOf(t, rt, ref("gallery", cid(1))); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 || c.CommentCount != 1 {
 		t.Fatalf("g1 counts = %+v, want 1/1/1/1", c)
@@ -41,19 +41,20 @@ func TestCounts_RollupAggregates(t *testing.T) {
 	if _, ok := m[ref("gallery", cid(3)).Key()]; ok {
 		t.Fatal("g3 has no engagement; it should be absent from the batch map")
 	}
-	must(favErr(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, "gallery", cid(1))))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), 1)))
+	must(favErr(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)))))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, rt.Ref("gallery", cid(1)), 1)))
 	if c := countsOf(t, rt, ref("gallery", cid(1))); c.Favorites != 0 || c.Likes != 2 || c.Dislikes != 0 {
 		t.Fatalf("after unfavorite + switch: %+v, want favorites=0 likes=2 dislikes=0", c)
 	}
 }
 
-func TestMyReactions_BatchAndByActor(t *testing.T) {
+// Reactions on groups are each actor's own, signed in or by IP.
+func TestReactions_PerActorOnGroups(t *testing.T) {
 	res := &fakeResolver{}
 	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		res.set("tag", id, true, true)
 	}
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"tag"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("tag")})
 	ctx := context.Background()
 	u := access.Actor{ID: "u1"}
 	must := func(err error) {
@@ -62,34 +63,21 @@ func TestMyReactions_BatchAndByActor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(1), 1)))
-	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(2), -1)))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "tag", cid(3), 1)))
-
+	must(reactErr(rt.reactions.react(ctx, u, rt.Ref("tag", cid(1)), 1)))
+	must(reactErr(rt.reactions.react(ctx, u, rt.Ref("tag", cid(2)), -1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, rt.Ref("tag", cid(3)), 1)))
 	t1, t2, t3 := ref("tag", cid(1)), ref("tag", cid(2)), ref("tag", cid(3))
-	m, err := rt.MyReactions(ctx, u, []contentref.ContentRef{t1, t2, t3})
-	if err != nil {
-		t.Fatal(err)
+	if reactionOf(t, rt, u, t1) != 1 || reactionOf(t, rt, u, t2) != -1 || reactionOf(t, rt, u, t3) != 0 {
+		t.Fatal("u1's reactions are not its own")
 	}
-	if m[t1.Key()] != 1 || m[t2.Key()] != -1 {
-		t.Fatalf("MyReactions = %+v, want t1=1 t2=-1", m)
-	}
-	if _, ok := m[t3.Key()]; ok {
-		t.Fatal("t3 belongs to another actor; it must be absent")
-	}
-	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(2), 0)))
-	list, err := rt.ReactionsByActor(ctx, u, "tag", 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || !list[0].ContentRef.Equal(t1) || list[0].Value != 1 {
-		t.Fatalf("ReactionsByActor = %+v, want only t1=1", list)
+	must(reactErr(rt.reactions.react(ctx, u, rt.Ref("tag", cid(2)), 0)))
+	if reactionOf(t, rt, u, t2) != 0 {
+		t.Fatal("a cleared reaction stays")
 	}
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
-	must(reactErr(rt.reactions.react(ctx, anon, "tag", cid(3), 1)))
-	am, err := rt.MyReactions(ctx, anon, []contentref.ContentRef{t3})
-	if err != nil || am[t3.Key()] != 1 {
-		t.Fatalf("anon MyReactions = %+v err=%v, want t3=1", am, err)
+	must(reactErr(rt.reactions.react(ctx, anon, rt.Ref("tag", cid(3)), 1)))
+	if reactionOf(t, rt, anon, t3) != 1 {
+		t.Fatal("anonymous reaction not keyed by IP")
 	}
 }
 
@@ -136,7 +124,7 @@ func TestComments_SortByBest(t *testing.T) {
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "hater"}, big.ID, -1); err != nil {
 		t.Fatal(err)
 	}
-	top, err := rt.comments.list(ctx, a, "gallery", cid(1), "best", 10, 0)
+	top, err := rt.comments.list(ctx, a, rt.Ref("gallery", cid(1)), "", "best", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +148,7 @@ func TestComments_SortByLikes(t *testing.T) {
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "x1"}, c1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	top, err := rt.comments.list(ctx, a, "gallery", cid(1), "likes", 10, 0)
+	top, err := rt.comments.list(ctx, a, rt.Ref("gallery", cid(1)), "", "likes", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

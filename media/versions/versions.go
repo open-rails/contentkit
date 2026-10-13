@@ -8,7 +8,7 @@
 //
 // Whether a viewer sees, opens or edits a content or a version is the
 // catalog's decision over the access gate, ContentKit's own
-// access.ContentResolver; this package adds segments' release and the rule's
+// resolve.Resolver; this package adds segments' release and the rule's
 // preview to it. The listing projection is refreshed through Facets.
 package versions
 
@@ -28,6 +28,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 )
@@ -47,7 +48,7 @@ type Facets interface {
 // Others answer the media kinds of neither contents nor groups: posts' and
 // polls' images.
 type Others interface {
-	access.ContentResolver
+	resolve.Resolver
 	media.UploadAuthorizer
 }
 
@@ -61,7 +62,7 @@ type Options struct {
 	// Resolver decides contents ({kind, content}) and versions ({kind,
 	// content, version}) for a viewer: Visible (live, or edited by them),
 	// Accessible (opened by them) and Editor.
-	Resolver access.ContentResolver
+	Resolver resolve.Resolver
 	// Gate answers the tiers a viewer holds for download quotas; optional.
 	Gate      *access.Gate
 	Facets    Facets
@@ -150,7 +151,7 @@ func (s *Service) ref(kind string, t Target) (contentref.ContentRef, error) {
 }
 
 // decide resolves targets of kind for actor.
-func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, targets []Target) (map[Target]access.Resolution, error) {
+func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, targets []Target) (map[Target]resolve.Resolution, error) {
 	refs := make([]contentref.ContentRef, len(targets))
 	for i, t := range targets {
 		refs[i] = contentref.New(s.reg.Namespace(), kind, t.Content).WithVersion(t.Version)
@@ -159,7 +160,7 @@ func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, t
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[Target]access.Resolution, len(targets))
+	out := make(map[Target]resolve.Resolution, len(targets))
 	for i, t := range targets {
 		out[t] = got[refs[i].Key()]
 	}

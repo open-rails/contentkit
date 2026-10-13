@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -86,7 +86,7 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 		return empty, err
 	}
 	anchor := contentref.New(s.o.Tenant, kind, anchorID)
-	res, err := access.ResolveOne(ctx, s.o.Resolver, anchor, o.Actor)
+	res, err := resolve.One(ctx, s.o.Resolver, anchor, o.Actor)
 	if err != nil {
 		return empty, err
 	}

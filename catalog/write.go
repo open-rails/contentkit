@@ -28,6 +28,9 @@ type ContentInput struct {
 	// Text is the text per language.
 	Text    map[string]Text `json:"text,omitempty"`
 	Listing string          `json:"listing,omitempty"` // default listed
+	// Comments is open (the default), closed (existing ones show, new ones
+	// are refused) or hidden.
+	Comments string `json:"comments,omitempty"`
 	// Access defaults to public.
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
@@ -45,6 +48,7 @@ type ContentInput struct {
 // ContentPatch edits a content item; nil fields stay.
 type ContentPatch struct {
 	Listing      *string        `json:"listing,omitempty"`
+	Comments     *string        `json:"comments,omitempty"`
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions *[]string      `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"` // replaces all
@@ -213,6 +217,12 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		if err := s.checkListing(p.Listing); err != nil {
 			return nil, err
 		}
+		if p.Comments == "" {
+			p.Comments = content.CommentsOpen
+		}
+		if err := checkComments(p.Comments); err != nil {
+			return nil, err
+		}
 		rule := access.Rule{Level: access.Public}
 		if c.Access != nil {
 			rule = *c.Access
@@ -285,9 +295,9 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		}
 		rule, _ := json.Marshal(p.Access)
 		attrs, _ := json.Marshal(p.Attributes)
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, listing, access, restrictions, attributes, owner_group_id, created_by)
- VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), nullif($9, ''))`,
-			s.tenant, p.id, p.Kind, p.Listing, rule, p.Restrictions, attrs, p.OwnerGroupID, viewerID(actor)); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, listing, access, restrictions, attributes, owner_group_id, created_by, comments)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), nullif($9, ''), $10)`,
+			s.tenant, p.id, p.Kind, p.Listing, rule, p.Restrictions, attrs, p.OwnerGroupID, viewerID(actor), p.Comments); err != nil {
 			return nil, err
 		}
 		if err := s.writeTexts(ctx, tx, p.id, p.Text, nil); err != nil {
@@ -338,6 +348,11 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		ids[i] = u.ID
 		if u.Listing != nil {
 			if err := s.checkListing(*u.Listing); err != nil {
+				return err
+			}
+		}
+		if u.Comments != nil {
+			if err := checkComments(*u.Comments); err != nil {
 				return err
 			}
 		}
@@ -404,8 +419,8 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET listing = coalesce($3, listing), access = coalesce($4, access),
  restrictions = coalesce($5, restrictions), attributes = coalesce($6, attributes),
- cover = CASE WHEN $7 THEN $8::jsonb ELSE cover END WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, u.ID, u.Listing, access, restrictions, attrs, u.Cover != nil, cover); err != nil {
+ cover = CASE WHEN $7 THEN $8::jsonb ELSE cover END, comments = coalesce($9, comments) WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, u.ID, u.Listing, access, restrictions, attrs, u.Cover != nil, cover, u.Comments); err != nil {
 				return fx, err
 			}
 			if u.Creators != nil {
