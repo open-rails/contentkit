@@ -153,7 +153,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt, err := content.New(ctx, content.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth,
-		Resolver: cat.Resolver(), ContentKinds: []string{"blog", "gallery"}, Limits: content.Limits{Disabled: true},
+		Resolver: cat.Resolver(), Kinds: site, Limits: content.Limits{Disabled: true},
 		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs, Reader: reader}})
 	if err != nil {
 		t.Fatal(err)
