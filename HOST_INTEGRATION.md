@@ -951,8 +951,8 @@ Code changes:
 - `GatewayConfig(reg, defaults)` takes the defaults `image.PublishDefaults` returned.
 - `Registry.SrcSet` and `media.SrcSet` are removed: build public URLs with
   the lookup ("Public image URLs"), never from a preset's template.
-- Migrations `0011_media_commits` and `0012_media_publications`; River jobs
-  `contentkit_media_recover` (every minute) and `contentkit_media_upgrade`.
+- River jobs `contentkit_media_recover` (every minute) and
+  `contentkit_media_upgrade`.
 
 Order:
 
