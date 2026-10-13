@@ -76,6 +76,24 @@ func (h uploadHandler) presign(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (h uploadHandler) copy(w http.ResponseWriter, r *http.Request) {
+	var b CopyBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	ref, err := h.ref(b.Ref)
+	var staged []StagedCopy
+	if err == nil {
+		staged, err = h.u.StageCopies(r.Context(), actor, ref, b.Files)
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, CopyReply{Files: staged})
+}
+
 func (h uploadHandler) parts(w http.ResponseWriter, r *http.Request) {
 	var b PartsBody
 	actor, ok := h.read(w, r, &b)

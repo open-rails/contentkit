@@ -441,7 +441,9 @@ and `Gate.Decide` for items; staff (`root:content:view-restricted`),
 creators and owner-group editors see everything. Discovery lists and searches
 under it; media and interactions resolve through it. Held text goes to the
 shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
-counts what anyone and each tier opens, per kind and language.
+(`kinds`, `languages`) counts what anyone and each tier opens, per kind and
+language; a sibling deployment reads it with
+`catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
 
 ## Signal plane and discovery
 

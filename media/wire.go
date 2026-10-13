@@ -69,6 +69,18 @@ type PartsBody struct {
 	Parts  []PartBody `json:"parts"`
 }
 
+// CopyBody stages server-side copies of keys of the item's bucket outside
+// ContentKit's namespaces (an importer's), for one commit's puts.
+type CopyBody struct {
+	Ref   RefBody       `json:"ref"`
+	Files []CopyRequest `json:"files"`
+}
+
+// CopyReply is each copy's path to commit and staged blob, in order.
+type CopyReply struct {
+	Files []StagedCopy `json:"files"`
+}
+
 type TicketBody struct {
 	Ticket string `json:"ticket"`
 }

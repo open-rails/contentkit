@@ -511,6 +511,25 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if again, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(), pages); err != nil || len(again.Files) != 2 {
 		t.Fatalf("again %+v %v", again.Files, err)
 	}
+	// A file already in the bucket, outside ContentKit's namespaces, is
+	// copied server-side; one inside them is refused.
+	src, body := "legacy-"+env.Tenant+"/0003.png", png(t, 10)
+	if _, err := env.Store.Put(t.Context(), src, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/octet-stream"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = env.Store.Delete(context.Background(), src) })
+	copied, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
+		[]contentkit.MediaFile{{Path: "originals/0003.png", Type: "image/png", From: src, Size: int64(len(body))}})
+	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/0003.png" {
+		t.Fatalf("copied %+v %v", copied.Files, err)
+	}
+	if _, err := env.Store.Head(t.Context(), src); err != nil {
+		t.Fatalf("the source went: %v", err)
+	}
+	if _, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
+		[]contentkit.MediaFile{{Path: "originals/0004.png", Type: "image/png", From: env.Tenant + "/gallery/" + id("gallery", 1) + "/x.png"}}); err == nil {
+		t.Fatal("a source inside ContentKit's namespace was copied")
+	}
 }
 
 func png(t *testing.T, w int) []byte {

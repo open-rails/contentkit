@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"bytes"
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/media"
 )
 
 // A group imported by staff takes reactions, favorites and comments like
@@ -131,5 +134,34 @@ func TestTypeaheadFollowsGroupWrites(t *testing.T) {
 	// The first may wait for the sync the engine runs on start.
 	if !shows(time.Minute) || !shows(5*time.Second) {
 		t.Fatal("a new group is not in the typeahead")
+	}
+}
+
+// Staff importing stage a server-side copy of a file in the bucket outside
+// ContentKit's namespaces and commit it; a person may not.
+func TestImportStagesBucketCopies(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	_, user := w.person(iam.Role{})
+	f := serve(t, w.engine(nil))
+	album, _ := w.published(f, staff, "album")
+	src, body := "legacy-"+w.tenant+"/0001.png", pngBytes(t, 16)
+	if _, err := w.env.Store.Put(t.Context(), src, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/png"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.env.Store.Delete(context.Background(), src) })
+	ref := media.RefBody{Kind: "album", ID: album}
+	in := media.CopyBody{Ref: ref, Files: []media.CopyRequest{{Path: "originals/0001", Type: "image/png", From: src, Size: int64(len(body))}}}
+	f.want(http.StatusForbidden, user, "POST", "/media/upload/copy", in, nil)
+	var staged media.CopyReply
+	f.want(http.StatusOK, staff, "POST", "/media/upload/copy", in, &staged)
+	if len(staged.Files) != 1 || staged.Files[0].Path != "originals/0001.png" || staged.Files[0].Size != int64(len(body)) {
+		t.Fatalf("staged %+v", staged)
+	}
+	var done media.CommitReply
+	f.want(http.StatusOK, staff, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+		Ops: []media.Op{{Op: media.OpPut, Path: staged.Files[0].Path, Blob: staged.Files[0].Blob}}}, &done)
+	if len(done.Files) != 1 || done.Files[0].Path != "originals/0001.png" {
+		t.Fatalf("committed %+v", done.Files)
 	}
 }

@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (152). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (153). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -112,6 +112,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | POST | `/v1/media/upload/presign` | editor `root:content:write` | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
+| POST | `/v1/media/upload/copy` | staff `root:import:write` | `CopyBody` | 200 `CopyReply` | Stages server-side copies of keys of the item's bucket outside ContentKit's namespaces, for one commit's puts (an importer's files). |
 | POST | `/v1/media/upload/parts` | editor `root:content:write` | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
 | POST | `/v1/media/upload/parts/list` | editor `root:content:write` | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
 | POST | `/v1/media/upload/complete` | editor `root:content:write` | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |

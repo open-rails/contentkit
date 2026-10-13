@@ -19,6 +19,11 @@ type MediaFile struct {
 	Type string
 	// Body is read twice: hashed, then sent.
 	Body io.ReadSeeker
+	// From instead copies this key of the item's bucket, outside
+	// ContentKit's namespaces, server-side (root:import:write); Size, when
+	// set, is checked against it.
+	From string
+	Size int64
 	Meta map[string]any
 }
 
@@ -30,13 +35,21 @@ const ingestPartSize = 32 << 20
 // a PUT or multipart parts to the bucket over bucket (http.DefaultClient when
 // nil), then commit. operationID is a UUID of this commit; sending the files
 // again (a new operationID) finds bytes the folder holds and uploads nothing
-// twice. It is how an importer fills an imported version's folder.
+// twice. Files with From are copied server-side, in one request. It is how
+// an importer fills an imported version's folder.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
 	if bucket == nil {
 		bucket = http.DefaultClient
 	}
-	ops := make([]media.Op, 0, len(files))
-	for _, f := range files {
+	ops := make([]media.Op, len(files))
+	var copies []media.CopyRequest
+	var copied []int
+	for i, f := range files {
+		if f.From != "" {
+			copies = append(copies, media.CopyRequest{Path: f.Path, Type: f.Type, From: f.From, Size: f.Size})
+			copied = append(copied, i)
+			continue
+		}
 		size, err := f.Body.Seek(0, io.SeekEnd)
 		if err != nil {
 			return media.CommitReply{}, err
@@ -62,7 +75,19 @@ func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media
 		if err != nil {
 			return media.CommitReply{}, err
 		}
-		ops = append(ops, media.Op{Op: media.OpPut, Path: plan.Path, Blob: blob, Meta: f.Meta})
+		ops[i] = media.Op{Op: media.OpPut, Path: plan.Path, Blob: blob, Meta: f.Meta}
+	}
+	if len(copies) > 0 {
+		staged, err := c.PostMediaUploadCopy(ctx, media.CopyBody{Ref: ref, Files: copies})
+		if err != nil {
+			return media.CommitReply{}, err
+		}
+		if len(staged.Files) != len(copies) {
+			return media.CommitReply{}, fmt.Errorf("contentkit: %d copies staged of %d", len(staged.Files), len(copies))
+		}
+		for j, s := range staged.Files {
+			ops[copied[j]] = media.Op{Op: media.OpPut, Path: s.Path, Blob: s.Blob, Meta: files[copied[j]].Meta}
+		}
 	}
 	return c.PostMediaUploadCommit(ctx, media.CommitBody{Ref: ref, OperationID: operationID, Ops: ops})
 }

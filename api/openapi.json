@@ -5111,6 +5111,60 @@
         ]
       }
     },
+    "/v1/media/upload/copy": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Stages server-side copies of keys of the item's bucket outside ContentKit's namespaces, for one commit's puts (an importer's files).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:import:write",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "quota_exceeded",
+          "rate_limited",
+          "too_large",
+          "type_not_allowed"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/media/upload/parts": {
       "post": {
         "tags": [
@@ -11262,6 +11316,20 @@
           "content_id"
         ]
       },
+      "CopyBody": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyRequest"
+            }
+          }
+        }
+      },
       "CopyFrom": {
         "type": "object",
         "properties": {
@@ -11273,6 +11341,37 @@
           },
           "path": {
             "type": "string"
+          }
+        }
+      },
+      "CopyReply": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StagedCopy"
+            }
+          }
+        },
+        "required": [
+          "files"
+        ]
+      },
+      "CopyRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
           }
         }
       },
@@ -14884,6 +14983,25 @@
             }
           }
         }
+      },
+      "StagedCopy": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "blob": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "blob",
+          "size"
+        ]
       },
       "Target": {
         "type": "object",

@@ -1124,6 +1124,13 @@ func (c *Client) PostMediaUploadPresign(ctx context.Context, body media.PresignB
 	return out, err
 }
 
+// PostMediaUploadCopy is POST /v1/media/upload/copy (staff). Stages server-side copies of keys of the item's bucket outside ContentKit's namespaces, for one commit's puts (an importer's files).
+func (c *Client) PostMediaUploadCopy(ctx context.Context, body media.CopyBody) (media.CopyReply, error) {
+	var out media.CopyReply
+	err := c.call(ctx, http.MethodPost, "/v1/media/upload/copy", nil, body, &out)
+	return out, err
+}
+
 // PostMediaUploadParts is POST /v1/media/upload/parts (editor). Presigns multipart parts, each bound to its SHA-256.
 func (c *Client) PostMediaUploadParts(ctx context.Context, body media.PartsBody) (media.PartsReply, error) {
 	var out media.PartsReply

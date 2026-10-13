@@ -423,8 +423,9 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	}
 }
 
-// Copy keeps the type and metadata, copies objects past the part size in
-// ranged parts (5 MiB here, 5 GiB in production), and honours IfMatch.
+// Copy keeps the type (unless replaced) and metadata, copies objects past the
+// part size in ranged parts (5 MiB here, 5 GiB in production), and honours
+// IfMatch.
 func TestCopyInOneRequestOrInParts(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
@@ -464,6 +465,13 @@ func TestCopyInOneRequestOrInParts(t *testing.T) {
 		rc.Close()
 		if !bytes.Equal(b, body) || got.ContentType != "video/mp4" || got.CacheControl != "no-cache" || got.Metadata["of"] != "x" {
 			t.Fatalf("%d: copied %d bytes, %+v", size, len(b), got)
+		}
+		typed := dst + "-typed"
+		if obj, err := store.Copy(ctx, src, typed, media.CopyOptions{ContentType: "application/zip"}); err != nil || obj.ContentType != "application/zip" {
+			t.Fatalf("%d: retyped copy %+v %v", size, obj, err)
+		}
+		if got, err := store.Head(ctx, typed); err != nil || got.ContentType != "application/zip" || got.CacheControl != "no-cache" || got.Metadata["of"] != "x" {
+			t.Fatalf("%d: retyped copy kept %+v %v", size, got, err)
 		}
 		version, err := store.Client().HeadObject(ctx, &s3.HeadObjectInput{Bucket: &cfg.Bucket, Key: &src})
 		if err != nil {

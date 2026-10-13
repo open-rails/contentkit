@@ -62,8 +62,12 @@ out, err := client.IngestMedia(ctx, nil, media.RefBody{Kind: "gallery", ID: cont
 
 `IngestMedia` presigns each file, uploads it (one PUT or multipart parts) and
 commits the folder in one operation; sending the files again (a new
-`operationID`) uploads nothing the folder already holds. Publication, renditions and version facts (pages, duration)
-follow from the media jobs.
+`operationID`) uploads nothing the folder already holds. A file whose `From`
+names a key of the media bucket outside ContentKit's namespaces (a legacy
+export staged there) is copied server-side instead (`POST
+/v1/media/upload/copy`, `root:import:write`), so no byte passes through the
+importer. Publication, renditions and version facts (pages, duration) follow
+from the media jobs.
 
 ## Record shapes
 

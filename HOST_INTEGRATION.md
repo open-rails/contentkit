@@ -768,7 +768,10 @@ that name. The media worker then hashes each staged upload and places it at
 changed by then fails with `not_uploaded`), so no client ever writes under a
 blob name. The upload routes admit a signed-in person or application;
 `CanUpload` decides. Importers upload with `Client.IngestMedia` (presign,
-PUT or parts, commit; [docs/import.md](docs/import.md)).
+PUT or parts, commit; [docs/import.md](docs/import.md)); a file whose `From`
+names a key of the item's bucket outside ContentKit's namespaces is copied
+server-side instead, so no byte passes through the importer. Server-side
+code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
 
 | Op | Does |
 | --- | --- |

@@ -425,10 +425,26 @@ export interface ContentRef {
   content_version_id?: string;
 }
 
+export interface CopyBody {
+  ref: RefBody;
+  files: CopyRequest[];
+}
+
 export interface CopyFrom {
   id: string;
   version?: string;
   path: string;
+}
+
+export interface CopyReply {
+  files: StagedCopy[];
+}
+
+export interface CopyRequest {
+  path: string;
+  type: string;
+  from: string;
+  size?: number;
 }
 
 export interface Count {
@@ -1522,6 +1538,12 @@ export interface SignalRecord {
 export interface Signals {
   session?: string;
   signals: SignalInput[];
+}
+
+export interface StagedCopy {
+  path: string;
+  blob: string;
+  size: number;
 }
 
 export interface Target {
