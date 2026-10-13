@@ -97,7 +97,7 @@ it("CommentModeration: bans words several at once, switches one to refusing, unb
 
 it("CommentModeration: without root:comments:moderate the rule sections say so", async () => {
   const refuse = () => json(403, { error: "forbidden", code: "forbidden" });
-  const s = server({ "GET /moderation/banned-words": refuse, "GET /moderation/ip-bans": refuse });
+  const s = server(Object.fromEntries(["/comments/admin", "/moderation/held", "/global-comment-bans", "/moderation/banned-words", "/moderation/ip-bans"].map((p) => [`GET ${p}`, refuse])));
   render(<CommentModeration sections={["words", "ips"]} />, { wrapper: wrap(s.client) });
   expect(await screen.findByText("You don't have permission to moderate comments.")).toBeInTheDocument();
 });
