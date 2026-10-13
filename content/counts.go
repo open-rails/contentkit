@@ -7,6 +7,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // Counts is the denormalized per-reference aggregate (content_interaction_counts).
@@ -81,7 +82,7 @@ func (rt *Runtime) Counts(ctx context.Context, refs []contentref.ContentRef) (ma
 	for rows.Next() {
 		k := contentref.ContentKey{TenantID: rt.tenant}
 		var c Counts
-		if err := rows.Scan(&k.ContentKind, &k.ContentID, &k.ContentVersionID, &c.Likes, &c.Dislikes, &c.Favorites, &c.CommentCount); err != nil {
+		if err := rows.Scan(&k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &c.Likes, &c.Dislikes, &c.Favorites, &c.CommentCount); err != nil {
 			return nil, err
 		}
 		out[k] = c

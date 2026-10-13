@@ -16,6 +16,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
 )
@@ -142,7 +143,7 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		var targetDeleted *time.Time
 		var targetState, targetLanguage string
 		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation, language FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1`, in.ReplyToID, c.s.tenant)
-		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, &target.ContentVersionID, &targetReply, &targetDeleted, &targetState, &targetLanguage); err != nil {
+		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, versionid.Into(&target.ContentVersionID), &targetReply, &targetDeleted, &targetState, &targetLanguage); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Comment{}, badRequest("comment to reply to not found")
 			}
@@ -289,7 +290,7 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 func (c *comments) refOf(ctx context.Context, q querier, cid string) (contentref.ContentRef, error) {
 	var k contentref.ContentKey
 	err := q.QueryRow(ctx, `SELECT `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant).
-		Scan(&k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		Scan(&k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contentref.ContentRef{}, ErrNotFound
 	}
@@ -322,7 +323,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, language stri
 		var replyTo, userID, anonName *string
 		var deletedAt *time.Time
 		var kind, id, version, state, reason string
-		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &deletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kind, &id, &version); err != nil {
+		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &deletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kind, &id, versionid.Into(&version)); err != nil {
 			return nil, err
 		}
 		it.ContentRef = contentref.NewVersion(c.s.tenant, kind, id, version)
@@ -422,7 +423,7 @@ func (c *comments) adminList(ctx context.Context, kind, author string, limit, of
 		var it AdminComment
 		var replyTo, userID, anonName *string
 		var kindCol, id, version, state, reason string
-		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &it.DeletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kindCol, &id, &version); err != nil {
+		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &it.DeletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kindCol, &id, versionid.Into(&version)); err != nil {
 			return nil, err
 		}
 		it.Moderation, it.ModerationReason = state, reason
@@ -467,7 +468,7 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 	var state string
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET deleted_at = NULL, updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
-		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound // missing or not deleted
 	}
@@ -544,7 +545,7 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Co
 		ids[i] = list[i].ID
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT content_id, value FROM `+c.s.t.reactions+`
-		WHERE tenant_id = $1 AND content_kind = $2 AND content_version_id = '' AND content_id = ANY($3) AND `+actorPred(userID, 4),
+		WHERE tenant_id = $1 AND content_kind = $2 AND content_version_id IS NULL AND content_id = ANY($3) AND `+actorPred(userID, 4),
 		c.s.tenant, KindComment, ids, actorArg(userID, ip))
 	if err != nil {
 		return err
@@ -613,7 +614,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	var revision int64
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
-		Scan(&before, &revision, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		Scan(&before, &revision, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Comment{}, ErrNotFound
 	}
@@ -665,7 +666,7 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 	var state string
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET deleted_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // already deleted
 	}
@@ -715,7 +716,7 @@ func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, er
 	var k contentref.ContentKey
 	var deletedAt *time.Time
 	row := c.s.pool.QueryRow(ctx, `SELECT user_id, `+keyCols+`, deleted_at, moderation_revision FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant)
-	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &deletedAt, &t.revision); err != nil {
+	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &deletedAt, &t.revision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return writeTarget{}, ErrNotFound
 		}

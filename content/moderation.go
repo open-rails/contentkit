@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
 )
@@ -342,7 +343,7 @@ func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.
 		it := HeldItem{Kind: KindComment}
 		var k contentref.ContentKey
 		var meta []byte
-		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &it.AuthorID, &it.AnonName, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt, &it.Revision); err != nil {
+		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &it.AuthorID, &it.AnonName, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt, &it.Revision); err != nil {
 			return err
 		}
 		it.Ref = k.Ref()
@@ -436,7 +437,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		moderated_by = $5, moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
 		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
-		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

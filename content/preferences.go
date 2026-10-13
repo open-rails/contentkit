@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // The preference boundary: an authenticated actor's current reaction
@@ -165,7 +166,7 @@ func (p *preferences) page(ctx context.Context, q querier, after int64) (page []
 	for rows.Next() {
 		var r Preference
 		var kind, id, version string
-		if err := rows.Scan(&r.Axis, &r.ActorID, &kind, &id, &version, &r.Value, &r.Revision, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.Axis, &r.ActorID, &kind, &id, versionid.Into(&version), &r.Value, &r.Revision, &r.UpdatedAt); err != nil {
 			return nil, 0, 0, err
 		}
 		n++

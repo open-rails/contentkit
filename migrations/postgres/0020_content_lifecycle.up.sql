@@ -58,3 +58,64 @@ CREATE INDEX content_facets_free_idx ON content_facets (tenant_id, access_free_a
 ALTER TABLE content_comment_bans DROP CONSTRAINT content_comment_bans_scope_ck;
 ALTER TABLE content_comment_bans ADD CONSTRAINT content_comment_bans_scope_ck
     CHECK (scope = 'global' OR (scope LIKE 'owner:%' AND length(scope) > 6) OR (scope LIKE 'group:%' AND length(scope) > 6));
+
+-- No version is NULL everywhere, never '': interactions, search and media
+-- keyed by a target's version take NULL for the work itself, and keys treat
+-- NULLs as equal.
+-- The search worker deletes a key's invalid row with its dirty row.
+DO $$
+DECLARE fk text;
+BEGIN
+    SELECT conname INTO STRICT fk FROM pg_constraint WHERE conrelid = 'content_search_invalid'::regclass AND contype = 'f';
+    EXECUTE format('ALTER TABLE content_search_invalid DROP CONSTRAINT %I', fk);
+END;
+$$;
+ALTER TABLE content_search_invalid DROP CONSTRAINT content_search_invalid_pkey;
+ALTER TABLE content_search_dirty DROP CONSTRAINT content_search_dirty_pkey;
+ALTER TABLE content_search_documents DROP CONSTRAINT content_search_documents_pkey;
+ALTER TABLE content_interaction_counts DROP CONSTRAINT content_interaction_counts_pkey;
+ALTER TABLE content_favorites DROP CONSTRAINT content_favorites_pkey;
+ALTER TABLE content_media_publications DROP CONSTRAINT content_media_publications_pkey;
+DROP INDEX content_reactions_ip_uq;
+DROP INDEX content_reactions_user_uq;
+
+ALTER TABLE content_search_invalid ALTER COLUMN content_version_id DROP NOT NULL;
+ALTER TABLE content_search_dirty ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_search_documents ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_comments ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_interaction_counts ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_favorites ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_reactions ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_media_publications ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+ALTER TABLE content_media_commits ALTER COLUMN content_version_id DROP NOT NULL, ALTER COLUMN content_version_id DROP DEFAULT;
+
+UPDATE content_search_invalid SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_search_dirty SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_search_documents SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_comments SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_interaction_counts SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_favorites SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_reactions SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_media_publications SET content_version_id = NULL WHERE content_version_id = '';
+UPDATE content_media_commits SET content_version_id = NULL WHERE content_version_id = '';
+
+ALTER TABLE content_search_invalid ADD CONSTRAINT content_search_invalid_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, language),
+    ADD CONSTRAINT content_search_invalid_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_search_dirty ADD CONSTRAINT content_search_dirty_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, language),
+    ADD CONSTRAINT content_search_dirty_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_search_documents ADD CONSTRAINT content_search_documents_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, language),
+    ADD CONSTRAINT content_search_documents_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_comments ADD CONSTRAINT content_comments_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_interaction_counts ADD CONSTRAINT content_interaction_counts_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id),
+    ADD CONSTRAINT content_interaction_counts_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_favorites ADD CONSTRAINT content_favorites_key UNIQUE NULLS NOT DISTINCT (tenant_id, user_id, content_kind, content_id, content_version_id),
+    ADD CONSTRAINT content_favorites_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_reactions ADD CONSTRAINT content_reactions_version_check CHECK (content_version_id <> '');
+CREATE UNIQUE INDEX content_reactions_ip_uq ON content_reactions (tenant_id, content_kind, content_id, content_version_id, ip) NULLS NOT DISTINCT
+    WHERE ((user_id IS NULL) AND (ip IS NOT NULL));
+CREATE UNIQUE INDEX content_reactions_user_uq ON content_reactions (tenant_id, content_kind, content_id, content_version_id, user_id) NULLS NOT DISTINCT
+    WHERE (user_id IS NOT NULL);
+ALTER TABLE content_media_publications ADD CONSTRAINT content_media_publications_key
+    UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset),
+    ADD CONSTRAINT content_media_publications_version_check CHECK (content_version_id <> '');
+ALTER TABLE content_media_commits ADD CONSTRAINT content_media_commits_version_check CHECK (content_version_id <> '');

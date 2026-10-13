@@ -153,7 +153,7 @@ func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
  FROM (SELECT f.version_id, coalesce(c.likes, 0) AS likes, coalesce(c.dislikes, 0) AS dislikes, coalesce(c.favorites, 0) AS favorites,
   `+content.RatingSQL("coalesce(c.likes, 0)", "coalesce(c.dislikes, 0)")+` AS rating
   FROM `+s.t.facets+` f LEFT JOIN `+s.t.counts+` c ON c.tenant_id = f.tenant_id AND c.content_kind = f.kind AND c.content_id = f.content_id
-   AND c.content_version_id = '' WHERE f.tenant_id = $1) n
+   AND c.content_version_id IS NULL WHERE f.tenant_id = $1) n
  WHERE f.tenant_id = $1 AND f.version_id = n.version_id
   AND (f.likes, f.dislikes, f.favorites, f.rating) IS DISTINCT FROM (n.likes, n.dislikes, n.favorites, n.rating)`, s.tenant)
 	if err != nil {

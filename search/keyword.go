@@ -90,7 +90,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 		prefixes[i] = t + "*"
 	}
 	args["prefix"] = strings.Join(prefixes, " ")
-	const order = `sd.content_kind,sd.content_id,sd.content_version_id`
+	const order = `sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST`
 	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, priority, terms, from, where)
 	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,%s LIMIT @limit`, terms, "("+terms+")", terms, order)
 	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
@@ -122,14 +122,12 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 			}
 			seen++
 			h := Hit{ContentRef: contentref.ContentRef{TenantID: opts.Tenant}}
-			var version string
 			var fields []string
 			var aliases int
-			if err := rows.Scan(&h.ContentKind, &h.ContentID, &version, &h.Language, &h.Priority, &fields, &aliases); err != nil {
+			if err := rows.Scan(&h.ContentKind, &h.ContentID, &h.ContentVersionID, &h.Language, &h.Priority, &fields, &aliases); err != nil {
 				rows.Close()
 				return result, err
 			}
-			h.ContentRef = h.ContentRef.WithVersion(version)
 			h.Score = keywordScore(ctx, q, tokens, fields, aliases)
 			if err := ctx.Err(); err != nil {
 				rows.Close()
@@ -198,7 +196,7 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 	type row struct {
 		Kind    string `json:"content_kind"`
 		ID      string `json:"content_id"`
-		Version string `json:"content_version_id"`
+		Version *string `json:"content_version_id"`
 	}
 	rows := make([]row, 0, len(candidates))
 	byKey := map[documentKey]int{}
@@ -210,7 +208,7 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 			return nil, err
 		}
 		byKey[documentKey{c.Key(), c.Language}] = i
-		rows = append(rows, row{c.ContentKind, c.ContentID, c.Version()})
+		rows = append(rows, row{c.ContentKind, c.ContentID, c.ContentVersionID})
 	}
 	data, err := json.Marshal(rows)
 	if err != nil {
@@ -219,7 +217,7 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 	args["candidates"] = data
 	sql := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s FROM %s
  JOIN jsonb_to_recordset(@candidates::jsonb) AS c(content_kind text,content_id text,content_version_id text)
- ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id=sd.content_version_id
+ ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id IS NOT DISTINCT FROM sd.content_version_id
  WHERE %s`, priority, from, where)
 	res, err := pool.Query(ctx, sql, args)
 	if err != nil {
@@ -229,12 +227,12 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 	out := make([]Hit, len(candidates))
 	present := make([]bool, len(candidates))
 	for res.Next() {
-		var kind, id, version string
+		ref := contentref.ContentRef{TenantID: opts.Tenant}
 		var pr int32
-		if err := res.Scan(&kind, &id, &version, &pr); err != nil {
+		if err := res.Scan(&ref.ContentKind, &ref.ContentID, &ref.ContentVersionID, &pr); err != nil {
 			return nil, err
 		}
-		i, ok := byKey[documentKey{contentref.ContentKey{TenantID: opts.Tenant, ContentKind: kind, ContentID: id, ContentVersionID: version}, opts.Language}]
+		i, ok := byKey[documentKey{ref.Key(), opts.Language}]
 		if !ok {
 			continue
 		}

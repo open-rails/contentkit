@@ -352,7 +352,7 @@ func TestPreferences_ExportScope(t *testing.T) {
 	u1 := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", cid(42), 1)
 	commentID := cid(501)
-	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'gallery', $2, '', 'a', 'hi')`, testTenant, cid(42), commentID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'gallery', $2, NULL, 'a', 'hi')`, testTenant, cid(42), commentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.comments.reactTx(ctx, u1, commentID, 1); err != nil {

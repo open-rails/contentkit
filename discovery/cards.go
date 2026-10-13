@@ -384,7 +384,7 @@ func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []ca
 		rows[i].Viewer = &ViewerState{}
 	}
 	fav, err := s.o.Pool.Query(ctx, `SELECT f.content_id FROM `+s.t.favorites+` f JOIN unnest($3::text[], $4::text[]) AS r(kind, id)
- ON f.content_kind = r.kind AND f.content_id = r.id WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_version_id = '' AND f.value = 1`,
+ ON f.content_kind = r.kind AND f.content_id = r.id WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_version_id IS NULL AND f.value = 1`,
 		s.o.Tenant, actor.ID, kinds, ids)
 	if err != nil {
 		return err

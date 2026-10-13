@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -79,7 +80,7 @@ func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) err
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = 'held', published_body = NULL, moderation_reason = 'held by a moderator',
 		moderated_by = $3, moderated_at = now(), moderation_revision = moderation_revision + 1, updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND moderation = 'approved'
-		RETURNING reply_to_id::text, `+keyCols, cid, c.s.tenant, actor.ID).Scan(&replyTo, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		RETURNING reply_to_id::text, `+keyCols, cid, c.s.tenant, actor.ID).Scan(&replyTo, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return httpError{status: http.StatusConflict, msg: "only a published comment is held"}
 	}
