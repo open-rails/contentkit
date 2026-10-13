@@ -135,6 +135,11 @@ export class Harness {
     return res.ok ? res.json() : null;
   }
 
+  /** A version's publication jobs, its publications and its item's files, for a failing wait. */
+  publication(ref: { kind: string; id: string; version: string }): Promise<unknown> {
+    return this.call("GET", `/publication?${new URLSearchParams(ref)}`);
+  }
+
   faults(rules: Fault[]): Promise<(Fault & { id: number; hits: number })[]> {
     return this.call("POST", "/faults", rules);
   }

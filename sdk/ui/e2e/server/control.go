@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/helpers/notify"
 
 	contentkit "github.com/open-rails/contentkit"
@@ -57,6 +58,7 @@ func (h *harness) routes(static string) http.Handler {
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
+	mux.HandleFunc("GET /__test/publication", h.publication)
 	mux.HandleFunc("POST /__test/recount", h.recount)
 	mux.HandleFunc("GET /__test/outbox", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, h.outbox.Messages("", r.URL.Query().Get("to")))
@@ -288,6 +290,41 @@ func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{"size": n, "sha256": hex.EncodeToString(sum.Sum(nil))})
+}
+
+// publication: ?kind&id&version → the version's publication jobs, its
+// publications and its item's files, for a test that waits on them.
+func (h *harness) publication(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ref, err := h.reg.VersionRef(q.Get("kind"), q.Get("id"), q.Get("version"))
+	if err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	out := map[string]any{}
+	collect := func(name, sql string, args ...any) {
+		rows, err := h.pool.Query(r.Context(), sql, args...)
+		if err != nil {
+			out[name] = err.Error()
+			return
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowToMap)
+		if err != nil {
+			out[name] = err.Error()
+			return
+		}
+		out[name] = got
+	}
+	collect("jobs", `SELECT kind, queue, state, attempt, errors, scheduled_at FROM `+riverSchema+`.river_job
+ WHERE args->>'version' = $1 OR args->>'Version' = $1 ORDER BY id`, q.Get("version"))
+	collect("publications", `SELECT id, kind, state, created_at, ready_at FROM `+schema+`.content_version_publications
+ WHERE version_id = $1 ORDER BY created_at`, q.Get("version"))
+	if m, _, err := h.manifests.Get(r.Context(), ref); err != nil {
+		out["files"] = err.Error()
+	} else {
+		out["files"] = m.Files
+	}
+	reply(w, http.StatusOK, out)
 }
 
 func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string, error) {
