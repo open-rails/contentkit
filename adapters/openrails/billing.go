@@ -106,7 +106,8 @@ func (a adapter) Products(ctx context.Context, keys []string) (map[string]access
 func (a adapter) CreateProducts(ctx context.Context, products []access.NewProduct) ([]access.Product, error) {
 	out := make([]access.Product, 0, len(products))
 	for _, p := range products {
-		res, err := a.c.CreateProduct(ctx, billing.CreateProductParams{Key: p.Key, DisplayName: p.DisplayName, Entitlements: p.Entitlements})
+		res, err := a.c.CreateProduct(ctx, billing.CreateProductParams{Key: p.Key, DisplayName: p.DisplayName, Entitlements: p.Entitlements,
+			RequiredEntitlements: p.RequiredEntitlements})
 		if err != nil {
 			return nil, fmt.Errorf("create product %s: %w", p.Key, err)
 		}
@@ -128,6 +129,9 @@ func (a adapter) UpdateProducts(ctx context.Context, updates []access.ProductUpd
 		}
 		if u.Archived != nil {
 			params.Archived = catalog.Value(*u.Archived)
+		}
+		if u.RequiredEntitlements != nil {
+			params.RequiredEntitlements = catalog.Value(append([]string{}, *u.RequiredEntitlements...))
 		}
 		res, err := a.c.UpdateProduct(ctx, id, params)
 		if err != nil {
@@ -279,7 +283,8 @@ func ids(g access.Grant) (billing.CustomerID, billing.ProductID, error) {
 }
 
 func product(p billing.Product) access.Product {
-	out := access.Product{ID: p.ID.String(), Key: p.Key, DisplayName: p.DisplayName, Entitlements: p.Entitlements, Archived: p.Archived}
+	out := access.Product{ID: p.ID.String(), Key: p.Key, DisplayName: p.DisplayName, Entitlements: p.Entitlements,
+		RequiredEntitlements: p.RequiredEntitlements, Archived: p.Archived}
 	for _, pr := range p.Prices {
 		if !pr.Archived {
 			out.Prices = append(out.Prices, price(pr))

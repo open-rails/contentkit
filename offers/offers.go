@@ -187,8 +187,9 @@ func (s *Service) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 // key, its active offer and the viewer's standing.
 type GroupAccess struct {
 	Key access.Key `json:"key"`
-	// Offer is the active offer's terms; nil while the group sells nothing.
-	Offer *Terms `json:"offer,omitempty"`
+	// Offer is the active offer as paywalls show it (Sales); nil while the
+	// group sells nothing.
+	Offer *Sale `json:"offer,omitempty"`
 	// Member: the viewer holds the key (bought, subscribed or joined free).
 	Member bool `json:"member"`
 	// Unknown: the billing read failed, so Member is false and may be wrong.
@@ -218,9 +219,8 @@ func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups [
 		return nil, err
 	}
 	for i, k := range keys {
-		if o, ok := live[k.String()]; ok {
-			t := o.Terms
-			out[i].Offer = &t
+		if sale, ok := saleOf(live[k.String()]); ok {
+			out[i].Offer = &sale
 		}
 		out[i].Member, out[i].Unknown = held[i], unknown
 	}

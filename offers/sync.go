@@ -2,8 +2,10 @@ package offers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -113,6 +115,10 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 	if err != nil {
 		return "", "", err
 	}
+	required, err := s.required(ctx, tx, t)
+	if err != nil {
+		return "", "", err
+	}
 	products, err := s.billing.Products(ctx, []string{key.String()})
 	if err != nil {
 		return "", "", err
@@ -122,7 +128,8 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 	case !exists && active == nil:
 		return "", "", nil
 	case !exists:
-		created, err := s.billing.CreateProducts(ctx, []access.NewProduct{{Key: key.String(), DisplayName: name, Entitlements: []string{key.String()}}})
+		created, err := s.billing.CreateProducts(ctx, []access.NewProduct{{Key: key.String(), DisplayName: name, Entitlements: []string{key.String()},
+			RequiredEntitlements: required}})
 		if err != nil {
 			return "", "", err
 		}
@@ -135,7 +142,10 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 		if archived := active == nil; p.Archived != archived {
 			u.Archived = &archived
 		}
-		if u.DisplayName != nil || u.Archived != nil {
+		if !slices.Equal(p.RequiredEntitlements, required) {
+			u.RequiredEntitlements = &required
+		}
+		if u.DisplayName != nil || u.Archived != nil || u.RequiredEntitlements != nil {
 			updated, err := s.billing.UpdateProducts(ctx, []access.ProductUpdate{u})
 			if err != nil {
 				return "", "", err
@@ -171,6 +181,44 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 		return "", "", err
 	}
 	return p.ID, prices[0].ID, nil
+}
+
+// required is what a buyer of t must already hold: the group's key when the
+// rule it sells under is group_ppv (a content's own rule, a version's
+// effective one).
+func (s *Service) required(ctx context.Context, tx pgx.Tx, t Target) ([]string, error) {
+	out := []string{}
+	if t.Kind == GroupTarget {
+		return out, nil
+	}
+	var crule, vrule []byte
+	err := tx.QueryRow(ctx, `SELECT c.access, (SELECT v.access FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.id = $3)
+		FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = $2`, s.tenant, orID(t), versionOf(t)).Scan(&crule, &vrule)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rule access.Rule
+	if err := json.Unmarshal(crule, &rule); err != nil {
+		return nil, err
+	}
+	if vrule != nil {
+		var o access.Rule
+		if err := json.Unmarshal(vrule, &o); err != nil {
+			return nil, err
+		}
+		rule = access.Effective(rule, &o)
+	}
+	if rule.Level != access.GroupPPV {
+		return out, nil
+	}
+	k, err := access.GroupKey(s.tenant, rule.Group)
+	if err != nil {
+		return nil, err
+	}
+	return []string{k.String()}, nil
 }
 
 // displayName is the product name: the title of the content, with a
