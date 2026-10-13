@@ -3,7 +3,6 @@
 -- a comments setting; moderation rules and recent searches are ContentKit
 -- data.
 
-ALTER TABLE content_comments ADD COLUMN language text DEFAULT ''::text NOT NULL;
 ALTER TABLE content_comments DROP CONSTRAINT content_comments_reply_to_id_fkey;
 ALTER TABLE content_comments DROP CONSTRAINT content_comments_pkey;
 ALTER TABLE content_comments ADD CONSTRAINT content_comments_pkey PRIMARY KEY (tenant_id, id);

@@ -53,10 +53,12 @@ const (
 	// contents, release dates, the reader's content filters and history, and
 	// signals and exposures.
 	Discovery Module = "discovery"
+	// Import is the bulk import.
+	Import Module = "import"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Groups, Notifications, Versions, Offers, Discovery}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Groups, Notifications, Versions, Offers, Discovery, Import}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
 // content, groups, versions, offers and kinds at its root and the others beneath their own
@@ -79,7 +81,7 @@ func (m Module) Prefix() string {
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
 	return []string{"media", "codes", "groups", "contents", "kinds", "offers", "me", "catalog", "notifications",
-		"search", "typeahead", "recommendations", "release-dates", "signals", "exposures"}
+		"search", "typeahead", "recommendations", "release-dates", "signals", "exposures", "import"}
 }
 
 // Tier is what a route requires of its caller before its handler acts. The
@@ -348,7 +350,7 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal}
 	case "module:versions":
 		return []string{CodeInternal, CodeNotFound, CodeUnavailable}
-	case "module:offers", "module:discovery":
+	case "module:offers", "module:discovery", "module:import":
 		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil

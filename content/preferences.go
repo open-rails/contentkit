@@ -178,32 +178,6 @@ func (p *preferences) page(ctx context.Context, q querier, after int64) (page []
 	return page, last, n, rows.Err()
 }
 
-// SeedPreferenceRevisionFloor raises the schema's revision sequence so every
-// future revision exceeds floor, and returns the resulting floor. It only ever
-// advances and fails closed outside the safe range. Run it after restoring
-// PostgreSQL against a retained signal plane, before writers resume.
-func (rt *Runtime) SeedPreferenceRevisionFloor(ctx context.Context, floor int64) (int64, error) {
-	if floor < 0 || floor > maxPreferenceRevisionFloor {
-		return 0, fmt.Errorf("content: preference revision floor %d is outside the safe range [0, %d]", floor, maxPreferenceRevisionFloor)
-	}
-	var current, used int64
-	var called bool
-	if err := rt.store.pool.QueryRow(ctx, `SELECT last_value, is_called FROM `+rt.store.revisionSeq).Scan(&current, &called); err != nil {
-		return 0, err
-	}
-	if err := rt.store.pool.QueryRow(ctx, `SELECT GREATEST((SELECT COALESCE(max(revision), 0) FROM `+rt.store.t.reactions+`), (SELECT COALESCE(max(revision), 0) FROM `+rt.store.t.favorites+`))`).Scan(&used); err != nil {
-		return 0, err
-	}
-	want := max(max(floor, current), used)
-	if want == current && (called || floor < current && used < current) {
-		return current, nil
-	}
-	if _, err := rt.store.pool.Exec(ctx, `SELECT setval('`+rt.store.revisionSeq+`', $1)`, want); err != nil {
-		return 0, err
-	}
-	return want, nil
-}
-
 // nextRevision is the SQL allocating a preference revision.
 func (s *store) nextRevision() string { return `nextval('` + s.revisionSeq + `')` }
 
