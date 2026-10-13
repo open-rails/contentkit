@@ -30,6 +30,12 @@ export interface ContentFilterQuery {
   exclude_groups?: readonly string[];
   /** Only contents this group owns: a channel's feed. */
   owner_group?: string;
+  /** User ids: only contents one of them is credited on. */
+  creators?: readonly string[];
+  /** public (anyone opens it now) or the level it stays locked at. */
+  access?: readonly ("public" | "tier" | "group" | "ppv" | "group_ppv")[];
+  /** Only contents locked behind one of these tiers. */
+  tiers?: readonly string[];
   /** Version traits every listed version has. */
   traits?: readonly string[];
   /** "name:value" of the kind's filterable attributes. */
