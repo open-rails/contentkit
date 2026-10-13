@@ -56,7 +56,8 @@ type world struct {
 	n       int
 }
 
-func newWorld(t *testing.T) *world {
+// newWorld builds the world; edits adjust OpenRails' configuration.
+func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 	t.Helper()
 	if os.Getenv("CONTENTKIT_TEST_URL") == "" && os.Getenv("CONTENTKIT_TEST_REQUIRE_DB") == "1" {
 		t.Fatal("CONTENTKIT_TEST_URL is required")
@@ -72,6 +73,9 @@ func newWorld(t *testing.T) *world {
 	})
 	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: orSchema, RiverSchema: orSchema}, TestMode: openrails.Sandbox,
 		ProviderWriteMode: openrails.ProviderWritesReadOnly, Merchants: map[string]openrails.MerchantDeclaration{tenant: {DisplayName: "OnlyDemo"}}}
+	for _, edit := range edits {
+		edit(&cfg)
+	}
 	engine, err := openrails.New(ctx, cfg, openrails.Deps{Postgres: pool})
 	if err != nil {
 		t.Fatal(err)

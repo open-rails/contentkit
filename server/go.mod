@@ -10,7 +10,7 @@ require (
 	github.com/open-rails/contentkit v0.78.0
 	github.com/open-rails/contentkit/adapters/openrails v0.2.0
 	github.com/open-rails/helpers v1.12.0
-	github.com/open-rails/openrails v0.248.0
+	github.com/open-rails/openrails v0.248.2-0.20261012231748-551da3531f10
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.47.0
 )

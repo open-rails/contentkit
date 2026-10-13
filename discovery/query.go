@@ -56,6 +56,9 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
+	// OwnerGroups keeps content one of these groups owns (a channel's feed);
+	// owning is not membership and opens nothing.
+	OwnerGroups []string
 }
 
 // View statuses.
@@ -74,6 +77,7 @@ type sel struct {
 	where   []string
 	args    pgx.NamedArgs
 	reader  Reader
+	viewer  *catalog.Viewer
 	display string
 	path    string // language of card paths; "" unprefixed
 	loc     *time.Location
@@ -113,10 +117,16 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode})
+	owners, err := uniqueIDs("owner_group", f.OwnerGroups)
 	if err != nil {
 		return nil, err
 	}
+	// A channel's feed shows its editors the channel's drafts too.
+	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners})
+	if err != nil {
+		return nil, err
+	}
+	q.viewer = v
 	listed, args := v.Listed("f")
 	q.and("f.tenant_id = @d_tenant", nil)
 	q.and("("+listed+")", args)
@@ -128,29 +138,20 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		}
 		q.and("f.kind = @d_kind", pgx.NamedArgs{"d_kind": f.Kind})
 	}
-	ids := func(name string, in []string) ([]string, error) {
-		out := []string{}
-		for _, id := range in {
-			if id = strings.TrimSpace(id); id != "" && !slices.Contains(out, id) {
-				out = append(out, id)
-			}
-		}
-		if len(out) > 50 {
-			return nil, fmt.Errorf("%w: at most 50 %s", ErrInvalid, name)
-		}
-		return out, nil
-	}
-	if gs, err := ids("groups", f.Groups); err != nil {
+	if gs, err := uniqueIDs("groups", f.Groups); err != nil {
 		return nil, err
 	} else if len(gs) > 0 {
 		q.and("f.group_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": gs})
 	}
-	if gs, err := ids("exclude_groups", f.ExcludeGroups); err != nil {
+	if gs, err := uniqueIDs("exclude_groups", f.ExcludeGroups); err != nil {
 		return nil, err
 	} else if len(gs) > 0 {
 		q.and("NOT (f.group_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": gs})
 	}
-	if ts, err := ids("traits", f.Traits); err != nil {
+	if len(owners) > 0 {
+		q.and("f.owner_group_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
+	}
+	if ts, err := uniqueIDs("traits", f.Traits); err != nil {
 		return nil, err
 	} else if len(ts) > 0 {
 		for _, t := range ts {
@@ -180,6 +181,20 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		}
 	}
 	return q, nil
+}
+
+// uniqueIDs trims and dedupes a filter's ids, at most 50.
+func uniqueIDs(name string, in []string) ([]string, error) {
+	out := []string{}
+	for _, id := range in {
+		if id = strings.TrimSpace(id); id != "" && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > 50 {
+		return nil, fmt.Errorf("%w: at most 50 %s", ErrInvalid, name)
+	}
+	return out, nil
 }
 
 // attributes renders declared filterable attributes as one JSON containment.

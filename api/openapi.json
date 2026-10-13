@@ -2635,7 +2635,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state.",
+        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.",
         "parameters": [
           {
             "name": "id",
@@ -3146,6 +3146,19 @@
             "name": "exclude_groups",
             "in": "query",
             "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -7138,6 +7151,19 @@
             }
           },
           {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -7440,6 +7466,19 @@
             }
           },
           {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -7601,6 +7640,19 @@
             "name": "exclude_groups",
             "in": "query",
             "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -7778,6 +7830,19 @@
             "name": "exclude_groups",
             "in": "query",
             "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -8541,6 +8606,9 @@
               }
             }
           },
+          "owner": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
           "counts": {
             "$ref": "#/components/schemas/Counts"
           },
@@ -8598,6 +8666,12 @@
           "free_after": {
             "type": "string",
             "format": "date-time"
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sale"
+            }
           }
         },
         "required": [
@@ -8961,6 +9035,9 @@
           "body": {
             "type": "string"
           },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
           "images": {
             "type": "object",
             "additionalProperties": {
@@ -9003,6 +9080,9 @@
           "owner_group_id": {
             "type": "string"
           },
+          "owner": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
           "creators": {
             "type": "array",
             "items": {
@@ -9039,6 +9119,9 @@
           "ever_sold": {
             "type": "boolean"
           },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
+          },
           "revision": {
             "type": "integer"
           },
@@ -9062,6 +9145,7 @@
           "path",
           "language",
           "title",
+          "decision",
           "state",
           "listing",
           "live",
@@ -9505,6 +9589,12 @@
           "free_after": {
             "type": "string",
             "format": "date-time"
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sale"
+            }
           }
         },
         "required": [
@@ -10083,7 +10173,7 @@
             "type": "string"
           },
           "offer": {
-            "$ref": "#/components/schemas/Terms"
+            "$ref": "#/components/schemas/Sale"
           },
           "member": {
             "type": "boolean"
@@ -12383,6 +12473,28 @@
           "level"
         ]
       },
+      "Sale": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "price_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "target",
+          "terms"
+        ]
+      },
       "Segment": {
         "type": "object",
         "properties": {
@@ -12735,6 +12847,9 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/VersionText"
             }
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
           }
         },
         "required": [

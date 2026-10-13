@@ -509,6 +509,9 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 	if e.media != nil {
 		o.Covers = e.media.versions
 	}
+	if e.offers != nil {
+		o.Sales = e.offers
+	}
 	var err error
 	if e.discover, err = discovery.New(o); err != nil {
 		return err

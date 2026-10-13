@@ -47,10 +47,11 @@ type Querier interface {
 }
 
 // Groups answers each version's effective group ids (its content's
-// memberships, its own and what they imply), read in q's transaction:
-// *groups.Store.
+// memberships, its own and what they imply), read in q's transaction, and
+// owner groups' cards: *groups.Store.
 type Groups interface {
 	EffectiveGroups(ctx context.Context, q groups.Querier, versionIDs []string) (map[string][]string, error)
+	Cards(ctx context.Context, ids []groups.GroupID, o groups.CardOptions) ([]groups.GroupCard, error)
 }
 
 // Moderation screens text before it publishes: content.Runtime.
@@ -59,9 +60,12 @@ type Moderation interface {
 }
 
 // Offers is *offers.Service: Resync re-syncs the targets' products in the
-// writing transaction.
+// writing transaction; Sales and Current fill reads' paywalls and editors'
+// offers.
 type Offers interface {
 	Resync(ctx context.Context, tx pgx.Tx, targets []offers.Target) error
+	Sales(ctx context.Context, keys []string) (map[string]offers.Sale, error)
+	Current(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []offers.Target) ([]*offers.Offer, error)
 }
 
 // Sanitizer cleans rich text on write: content.ContentProcessor.
@@ -79,8 +83,8 @@ type Options struct {
 	// Gate answers viewers' entitlements; nil builds one without billing
 	// (only free rules and claimed tiers open).
 	Gate *access.Gate
-	// Offers renames the products of content whose title changes; nil when
-	// nothing is sold.
+	// Offers renames the products of content whose title changes and answers
+	// paywalls' offers; nil when nothing is sold.
 	Offers Offers
 	// Groups answers effective group ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged.

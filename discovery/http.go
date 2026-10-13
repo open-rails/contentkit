@@ -49,6 +49,7 @@ var (
 		httpapi.Text("kind", "only this content kind"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
+		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
 		httpapi.List("traits", "version traits every listed version has"),
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
@@ -154,7 +155,8 @@ func readerOf(r *http.Request) Reader {
 func filterOf(r *http.Request) Filter {
 	q := r.URL.Query()
 	return Filter{Kind: q.Get("kind"), Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
-		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status")}
+		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
+		OwnerGroups: list(q.Get("owner_group"))}
 }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {

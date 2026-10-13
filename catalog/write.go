@@ -118,8 +118,9 @@ type effects struct {
 	events []Event
 	codes  bool // slugs may have changed
 	expose bool // anonymous visibility may have changed
-	// retitled are offer targets whose product name may have changed.
-	retitled []offers.Target
+	// resync are offer targets whose product's name or required entitlements
+	// may have changed.
+	resync []offers.Target
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
 	forks     []versions.Fork
@@ -176,8 +177,8 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 			return err
 		}
 	}
-	if len(fx.retitled) > 0 && s.offers != nil {
-		if err := s.offers.Resync(ctx, tx, fx.retitled); err != nil {
+	if len(fx.resync) > 0 && s.offers != nil {
+		if err := s.offers.Resync(ctx, tx, fx.resync); err != nil {
 			return err
 		}
 	}
@@ -418,6 +419,10 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 					return fx, err
 				}
 				fx.republish = append(fx.republish, inheriting...)
+				fx.resync = append(fx.resync, offers.Target{Kind: offers.ContentTarget, ID: u.ID})
+				for _, v := range inheriting {
+					fx.resync = append(fx.resync, offers.Target{Kind: offers.VersionTarget, ID: v.Version, Content: u.ID})
+				}
 			}
 			fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: o.kind, ContentID: u.ID})
 		}
@@ -579,7 +584,7 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 			if err != nil {
 				return fx, err
 			}
-			fx.retitled = append(fx.retitled, retitled...)
+			fx.resync = append(fx.resync, retitled...)
 			if err := s.writeTexts(ctx, tx, id, set, drop); err != nil {
 				return fx, err
 			}
@@ -826,8 +831,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err
 			}
-			if p.Label != nil {
-				fx.retitled = append(fx.retitled, offers.Target{Kind: offers.VersionTarget, ID: p.VersionID, Content: p.ContentID})
+			if p.Label != nil || p.Access != nil || p.ClearAccess {
+				fx.resync = append(fx.resync, offers.Target{Kind: offers.VersionTarget, ID: p.VersionID, Content: p.ContentID})
 			}
 			if p.Access != nil || p.ClearAccess || p.Segments != nil {
 				fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})

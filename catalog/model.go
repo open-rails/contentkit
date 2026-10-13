@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // Errors; match with errors.Is.
@@ -83,6 +85,9 @@ type Decision struct {
 	// Preview is what a locked viewer still reads; FreeAfter when it opens to all.
 	Preview   *access.Preview `json:"preview,omitempty"`
 	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	// Offers are the purchasable offers of Sell's keys; tiers are the host's
+	// to label.
+	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // Version is what a viewer opens.
@@ -114,6 +119,8 @@ type Version struct {
 	Decision   Decision       `json:"decision"`
 	// Text is every language's override, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
+	// Offer is the version's current offer, for its offer editors.
+	Offer *offers.Offer `json:"offer,omitempty"`
 }
 
 // GroupSummary names one group a content item belongs to.
@@ -138,8 +145,13 @@ type Content struct {
 	Title       string `json:"title"`
 	Slug        string `json:"slug,omitempty"`
 	Description string `json:"description,omitempty"`
-	// Body shows each inline image with a current public file as its URL.
+	// Body shows each inline image with a current public file as its URL;
+	// only editors and viewers Decision allows get it. Description is the
+	// teaser everyone reads.
 	Body string `json:"body,omitempty"`
+	// Decision is the viewer's access to the item: allowed when they open any
+	// of its versions, else its first version's paywall.
+	Decision Decision `json:"decision"`
 	// Images maps each resolved image name of Body and the cover to its URL.
 	Images       map[string]string `json:"images,omitempty"`
 	Cover        *Cover            `json:"cover,omitempty"`
@@ -152,19 +164,24 @@ type Content struct {
 	Restrictions []string          `json:"restrictions"`
 	Attributes   map[string]any    `json:"attributes"`
 	OwnerGroupID string            `json:"owner_group_id,omitempty"`
-	Creators     []Creator         `json:"creators"`
-	Groups       []GroupSummary    `json:"groups"`
-	Versions     []Version         `json:"versions"`
+	// Owner is the owner group's card (a channel's name, path, avatar and
+	// cover) while it is active.
+	Owner    *groups.GroupCard `json:"owner,omitempty"`
+	Creators []Creator         `json:"creators"`
+	Groups   []GroupSummary    `json:"groups"`
+	Versions []Version         `json:"versions"`
 	// Editor: the viewer may edit it; the fields below are theirs.
 	Editor           bool            `json:"editor"`
 	Text             map[string]Text `json:"text,omitempty"`
 	Moderation       string          `json:"moderation,omitempty"`
 	ModerationReason string          `json:"moderation_reason,omitempty"`
 	EverSold         bool            `json:"ever_sold,omitempty"`
-	Revision         int64           `json:"revision"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	DeletedAt        *time.Time      `json:"deleted_at,omitempty"`
+	// Offer is the item's current offer, for its offer editors.
+	Offer     *offers.Offer `json:"offer,omitempty"`
+	Revision  int64         `json:"revision"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	DeletedAt *time.Time    `json:"deleted_at,omitempty"`
 }
 
 // ImageScheme is the URL scheme of an inline image reference in a body.

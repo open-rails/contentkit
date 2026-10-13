@@ -610,7 +610,7 @@ func (q GetContentQuery) values() url.Values {
 	return v
 }
 
-// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state.
+// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.
 func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -1536,6 +1536,8 @@ type GetContentsQuery struct {
 	Groups []string
 	// group ids no listed version is in
 	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1572,6 +1574,9 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if len(q.ExcludeGroups) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -1629,6 +1634,8 @@ type GetSearchQuery struct {
 	Groups []string
 	// group ids no listed version is in
 	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1670,6 +1677,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if len(q.ExcludeGroups) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -1779,6 +1789,8 @@ type GetContentSimilarQuery struct {
 	Groups []string
 	// group ids no listed version is in
 	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1811,6 +1823,9 @@ func (q GetContentSimilarQuery) values() url.Values {
 	}
 	if len(q.ExcludeGroups) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -1860,6 +1875,8 @@ type GetRecommendationsQuery struct {
 	Groups []string
 	// group ids no listed version is in
 	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1892,6 +1909,9 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if len(q.ExcludeGroups) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
@@ -1943,6 +1963,8 @@ type GetReleaseDatesQuery struct {
 	Groups []string
 	// group ids no listed version is in
 	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
 	// version traits every listed version has
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
@@ -1978,6 +2000,9 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if len(q.ExcludeGroups) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
 	}
 	if len(q.Traits) > 0 {
 		v.Set("traits", strings.Join(q.Traits, ","))
