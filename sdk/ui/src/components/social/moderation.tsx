@@ -98,9 +98,9 @@ function Moderation({ sections, basePath, navigation, ...p }: Rest & { sections:
       {title}
       <Tabs value={section} onValueChange={(v) => loc.go(viewOf(v as ModerationSection))}>
         {allowed.length > 1 && (
-          <TabsList>
+          <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {allowed.map((s) => (
-              <TabsTrigger key={s} value={s}>
+              <TabsTrigger key={s} value={s} className="h-7.5">
                 {label[s]}
               </TabsTrigger>
             ))}

@@ -20,10 +20,10 @@ name: go
     - '!.dockerignore'
     - '.github/clickhouse/**'
     - '.github/workflows/go.yaml'
-  # Integration branches: lane PRs merge without waiting; each push runs the full
-  # suite once and a newer push cancels it.
+  # master and integration branches: PRs merge without waiting, so each push runs
+  # the suite once (master's health) and a newer push to the same ref cancels it.
   push:
-    branches: ['next/**']
+    branches: [master, 'next/**']
     paths:
     - '**'
     - '!**.md'
@@ -44,7 +44,7 @@ name: go
 permissions:
   contents: read
 concurrency:
-  group: go-${{ github.event.pull_request.number || github.ref }}
+  group: go-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   test:

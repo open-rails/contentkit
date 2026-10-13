@@ -40,7 +40,7 @@ for (const mode of ["alone", "router"] as const) {
       await expect(rows).toHaveText([new RegExp(`Bob one ${tag}`)]);
 
       // Sections are paths under basePath.
-      await mod.getByRole("tab", { name: "Bans" }).click();
+      await mod.getByRole("tab", { name: "Bans", exact: true }).click();
       await expect(page).toHaveURL(/\/admin\/comments\/bans$/);
       await expect(mod.locator("[data-ckui=comment-bans]")).toBeVisible();
       await page.goBack();
@@ -57,7 +57,7 @@ for (const mode of ["alone", "router"] as const) {
       if (mode === "router") {
         // The host's own links move the flow: one source of truth.
         await page.locator("[data-demo=host-nav]").getByRole("link", { name: "Bans" }).click();
-        await expect(mod.getByRole("tab", { name: "Bans" })).toHaveAttribute("aria-selected", "true");
+        await expect(mod.getByRole("tab", { name: "Bans", exact: true })).toHaveAttribute("aria-selected", "true");
         await expect(where).toHaveText("/admin/comments/bans");
       }
     });

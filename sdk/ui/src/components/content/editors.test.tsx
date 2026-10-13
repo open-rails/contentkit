@@ -88,7 +88,8 @@ const detail = (id: string, name: string): GroupDetail => ({
 
 it("VersionsEditor: a kind whose one version is hidden keeps that version's media upload, without version management", async () => {
   const s = server({ "GET /kinds": () => model });
-  const { container } = render(<VersionsEditor content={content()} />, { wrapper: wrap(s.client) });
+  // The flow's client, no provider, as ContentManager renders it.
+  const { container } = render(<VersionsEditor content={content()} client={s.client} />);
   await waitFor(() => expect(container.querySelector('[data-ckui="version-media"] [data-ckui="media-folder"]')).not.toBeNull());
   expect(container.querySelector('[data-ckui="versions-editor"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Add version" })).toBeNull();

@@ -47,7 +47,7 @@ func channelBilling(w *world) *openrails.Client {
 	})
 	engine, err := openrails.New(ctx, openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema},
 		ProviderWriteMode: openrails.ProviderWritesReadOnly,
-		Merchants: map[string]openrails.MerchantDeclaration{w.tenant: {DisplayName: "E2E"}}}, openrails.Deps{Postgres: w.pool})
+		Merchants:         map[string]openrails.MerchantDeclaration{w.tenant: {DisplayName: "E2E"}}}, openrails.Deps{Postgres: w.pool})
 	if err != nil {
 		w.t.Fatal(err)
 	}
