@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { ReadResult } from "../client/generated/wire.js";
+import type { ReadResult, RefBody } from "../client/generated/wire.js";
 import type { PresetRule } from "../client/generated/wire.js";
 import { defaultImage, isPattern, ruleDir } from "../client/media/rules.js";
 import type { PublicPreset } from "../client/public.js";
@@ -64,18 +64,20 @@ export interface UsePublicImage {
 }
 
 /**
- * An item's public image for a preset ("avatar", "cover"): the exact
- * renditions from a read's `public` (or the host's listing), else the kind's
- * default image, else none. Reads refresh after commits through the same client.
+ * An item's public image for a preset ("avatar", "cover", a version's
+ * "poster"): the exact renditions from a read's `public` (or the host's
+ * listing), else the kind's default image, else none. Reads refresh after
+ * commits through the same client.
  */
-export function usePublicImage(kind: string, id: string, preset: string, o: PublicImageOptions = {}): UsePublicImage {
+export function usePublicImage(item: RefBody, preset: string, o: PublicImageOptions = {}): UsePublicImage {
+  const { kind, id } = item;
   const client = useOptionalContentKitClient(o.client);
   const { presets, loaded } = usePresets({ client });
   const rule = presets.find((p) => p.kind === kind && p.name === preset);
   const listed = o.image !== undefined;
   // The read waits for the presets, so it lists only the preset's upload.
   const prefix = rule ? (isPattern(rule.from) ? ruleDir(rule.from) : rule.from) : undefined;
-  const r = useMediaRead({ kind, id }, { prefix, read: listed || !loaded ? null : o.read, client });
+  const r = useMediaRead(item, { prefix, read: listed || !loaded ? null : o.read, client });
   const image = useMemo((): { image: PublicPreset | null; isDefault: boolean } => {
     const own = listed ? o.image : r.read?.public?.find((p) => p.preset === preset);
     if (own && own.renditions.length) return { image: { preset, renditions: own.renditions, aspect: ("aspect" in own && own.aspect) || rule?.aspect }, isDefault: false };

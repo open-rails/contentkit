@@ -1,7 +1,7 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { fixture, mediaClient, seedVideo } from "../support/seed.ts";
-import { admin, harness, inheritsHostTheme, screenshots as dir } from "./pages.ts";
+import { mediaRef, admin, harness, inheritsHostTheme, screenshots as dir } from "./pages.ts";
 
 // MediaItemPanel in demo/admin.tsx over the real media worker: a video's
 // state, source, subtitles, poster and regenerate.
@@ -16,7 +16,7 @@ for (const mode of ["alone", "router"] as const) {
     test(`media item panel: state, subtitles and poster (${mode}, ${theme})`, async ({ page }, info) => {
       const owner = await h.user();
       const video = await seedVideo(h, owner);
-      await page.goto(admin(`/admin/media/video/${video.id}`, owner, { mode, theme }));
+      await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode, theme }));
       const panel = page.locator("[data-ckui=media-item-panel]");
       await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
       expect(await inheritsHostTheme(page, "media-item-panel")).toBe(true);
@@ -47,31 +47,37 @@ for (const mode of ["alone", "router"] as const) {
   }
 }
 
+test.describe("re-encode", () => {
+  test.skip(({ isMobile }) => isMobile, "one Chromium run covers a re-encode");
+
+  for (const mode of ["alone", "router"] as const) {
+    test(`media item panel: replace the source and choose the poster (${mode})`, async ({ page }) => {
+      const owner = await h.user();
+      const video = await seedVideo(h, owner);
+      await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode }));
+      const panel = page.locator("[data-ckui=media-item-panel]");
+      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
+      await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));
+      await expect(state(page)).toHaveAttribute("data-state", "processing", { timeout: 30_000 });
+      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
+
+      await panel.getByRole("button", { name: "Choose poster" }).click();
+      const picker = page.getByRole("dialog", { name: "Set cover" });
+      await picker.getByRole("button", { name: "Use this frame" }).click({ timeout: 60_000 });
+      await expect(picker).toBeHidden({ timeout: 60_000 });
+      await expect(panel.locator("[data-ckui=media-poster] img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 90_000 });
+    });
+  }
+});
+
 for (const mode of ["alone", "router"] as const) {
-  test(`media item panel: replace the source and choose the poster (${mode})`, async ({ page }) => {
-    const owner = await h.user();
-    const video = await seedVideo(h, owner);
-    await page.goto(admin(`/admin/media/video/${video.id}`, owner, { mode }));
-    const panel = page.locator("[data-ckui=media-item-panel]");
-    await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
-    await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));
-    await expect(state(page)).toHaveAttribute("data-state", "processing", { timeout: 30_000 });
-    await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
-
-    await panel.getByRole("button", { name: "Choose poster" }).click();
-    const picker = page.getByRole("dialog", { name: "Set cover" });
-    await picker.getByRole("button", { name: "Use this frame" }).click({ timeout: 60_000 });
-    await expect(picker).toBeHidden({ timeout: 60_000 });
-    await expect(panel.locator("[data-ckui=media-poster] img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 90_000 });
-  });
-
   test(`media item panel: a failed encode shows why, and regenerate retries it (${mode})`, async ({ page }) => {
     const owner = await h.user();
     const it = await h.item({ kind: "video", owner: owner.id });
-    const ref = { kind: it.kind, id: it.id };
+    const ref = mediaRef(it);
     // Not a video: the worker's probe fails it.
     await mediaClient(h, owner).put(new File([fixture("small.png")], "broken.mp4", { type: "video/mp4" }), { ref, path: "source", wait: false });
-    await page.goto(admin(`/admin/media/video/${it.id}`, owner, { mode }));
+    await page.goto(admin(`/admin/media/video/${it.id}/${it.version}`, owner, { mode }));
     const panel = page.locator("[data-ckui=media-item-panel]");
     await expect(state(page)).toHaveAttribute("data-state", "failed", { timeout: 120_000 });
     await expect(panel.locator("[data-ckui=media-failure]")).toContainText("source");
@@ -91,6 +97,6 @@ for (const mode of ["alone", "router"] as const) {
 test("someone who can't edit the item is told so", async ({ page }) => {
   const owner = await h.user();
   const it = await h.item({ kind: "video", owner: owner.id });
-  await page.goto(admin(`/admin/media/video/${it.id}`, await h.user(), { mode: "alone" }));
+  await page.goto(admin(`/admin/media/video/${it.id}/${it.version}`, await h.user(), { mode: "alone" }));
   await expect(page.locator("[data-ckui=media-item-panel] [data-ckui=no-access]")).toContainText("You can't edit this item's media.", { timeout: 30_000 });
 });

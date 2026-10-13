@@ -8,7 +8,7 @@ import { MediaGallery, MediaReadinessNotice, VideoPosterPicker } from "../../src
 import { ContentKitProvider } from "../../src/react/index.js";
 import { bytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { client, fixture, harness, item, png, recorder, wait, NodeFile } from "./setup.js";
+import { client, fixture, harness, item, png, recorder, wait, NodeFile, itemFolder } from "./setup.js";
 
 const h = harness();
 let cfg: Config;
@@ -22,10 +22,7 @@ beforeAll(async () => {
 URL.createObjectURL ??= () => "blob:frame";
 URL.revokeObjectURL ??= () => {};
 
-async function own(kind: string): Promise<RefBody> {
-  const { kind: k, id } = await item(h, kind, owner);
-  return { kind: k, id };
-}
+const own = (kind: string): Promise<RefBody> => item(h, kind, owner);
 
 /** Bytes no decoder reads, declared as type: the worker refuses them. */
 const garbage = (name: string, type: string, seed = 1) => new NodeFile([bytes(4096, seed)], name, { type }) as unknown as File;
@@ -78,8 +75,8 @@ it("MediaGallery item reads through the client and builds HLS bases on its media
   );
   expect(await screen.findByText("1 / 2", undefined, wait)).toBeInTheDocument();
   expect(reads.at(-1)!.searchParams.get("prefix")).toBe("large/");
-  expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", expect.stringContaining(`${cfg.media}/v1/${cfg.namespace}/album/${post.id}/private/`));
-  expect(c.media.hlsBase(post, "hls/")).toBe(`${h.origin}${cfg.api}/media/album/${post.id}/hls/hls/`);
+  expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", expect.stringContaining(`${cfg.media}/v1/${cfg.namespace}/${itemFolder(post)}/private/`));
+  expect(c.media.hlsBase(post, "hls/")).toBe(`${h.origin}${cfg.api}/v1/media/album/${post.id}/versions/${post.version}/hls/hls/`);
 });
 
 it("VideoPosterPicker takes frames from another video and uploads the chosen one as the cover image", async () => {

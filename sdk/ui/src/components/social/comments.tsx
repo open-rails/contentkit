@@ -5,7 +5,8 @@ import { createContext, useContext, useId, useMemo, useRef, useState, type Keybo
 import type { ContentKitClient } from "../../client/client.js";
 import type { BanScope, Reaction, Sort } from "../../client/content/types.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import type { BanNotice as BanNoticeData, Comment, CommentBan, CommentStanding, PublicUser, RefBody } from "../../client/generated/wire.js";
+import type { Target } from "../../client/content/types.js";
+import type { BanNotice as BanNoticeData, Comment, CommentBan, CommentStanding, PublicUser } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
 import { useCanComment, useCommentBans, useCommentReplies, useComments, type UseComments } from "../../react/comments.js";
@@ -24,8 +25,10 @@ import { BanNotice, CommentBanDialog } from "./bans.js";
 import { ConfirmDialog, contentError, ErrorLine, RelativeTime, UserAvatar, UserName } from "./parts.js";
 
 export interface CommentsProps {
-  /** The commented item. */
-  item: RefBody;
+  /** The commented content item, version or group. */
+  item: Target;
+  /** One language's thread: shown, and joined by new comments. */
+  language?: string;
   /** The item's comment count, for the heading; without it the heading has none. */
   count?: number;
   /** Initial order: newest (default) or best (top). */
@@ -53,7 +56,7 @@ export interface CommentsProps {
 }
 
 interface Thread {
-  item: RefBody;
+  item: Target;
   comments: UseComments;
   standing: CommentStanding | null;
   /** undefined: not known yet. */
@@ -98,7 +101,7 @@ export function Comments(p: CommentsProps) {
   const { t } = m;
   const ctx = useContext(ContentKitContext);
   const [sort, setSort] = useState<Sort>(p.sort ?? "newest");
-  const comments = useComments(p.item, { sort, pageSize: p.pageSize ?? 20, client: p.client });
+  const comments = useComments(p.item, { sort, language: p.language, pageSize: p.pageSize ?? 20, client: p.client });
   const { standing, reload: reloadStanding } = useCanComment(p.item, { client: p.client });
   const { config } = useContentConfig({ client: p.client });
   const report = useErrorReporter(p.onError);
@@ -148,6 +151,7 @@ export function Comments(p: CommentsProps) {
   const canWrite = standing ? standing.can_comment : true;
   const heading = p.heading === undefined ? (p.count === undefined ? t("comments.title") : m.plural("comments.count", p.count)) : p.heading;
 
+  if (standing?.comments === "hidden") return null;
   return (
     <ThreadContext.Provider value={thread}>
       <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments">
@@ -165,7 +169,9 @@ export function Comments(p: CommentsProps) {
             </Select>
           </div>
         )}
-        {ban ? (
+        {standing?.comments === "closed" ? (
+          <p className="rounded-lg border border-border p-3 text-muted-foreground">{t("comments.closed")}</p>
+        ) : ban ? (
           <BanNotice ban={ban} />
         ) : mustSignIn("comment") ? (
           signIn ? (

@@ -5,6 +5,7 @@ import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
+import { itemRef } from "./ref.js";
 import { defaultTransport, type Transport } from "./transport.js";
 
 /** Upload tuning for the media module. */
@@ -116,6 +117,8 @@ export interface NamedOptions {
   wait?: boolean;
   /** How long to wait, ms. */
   timeout?: number;
+  /** A crop or rotation the file is committed with. */
+  edit?: Edit;
 }
 
 /** An upload to a Named path, committed. */
@@ -126,10 +129,8 @@ export interface NamedUpload {
   file: FileInfo;
 }
 
-/** The media kinds of post and poll folders (content.Media.PostKind and PollKind). */
+/** The media kind of poll folders (content.Media.PollKind). A content item's folder is its kind's. */
 export interface ContentFolders {
-  /** Default "post". */
-  post?: string;
   /** Default "poll". */
   poll?: string;
 }
@@ -177,7 +178,7 @@ export class MediaClient {
     o: MediaOptions = {},
     folders: ContentFolders = {},
   ) {
-    this.folders = { post: folders.post ?? "post", poll: folders.poll ?? "poll" };
+    this.folders = { poll: folders.poll ?? "poll" };
     this.api = new MediaApi(http);
     this.transport = o.transport ?? defaultTransport;
     this.concurrency = o.concurrency ?? 4;
@@ -290,7 +291,7 @@ export class MediaClient {
       o.onState?.(structuredClone(replacement));
       files = (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }
-    emit({ type: "media.committed", ref: { kind: ref.kind, id: ref.id }, files });
+    emit({ type: "media.committed", ref: itemRef(ref), files });
     return files;
   }
 
@@ -317,7 +318,7 @@ export class MediaClient {
       if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
       if (f.failed) throw failureError(f.failed);
       if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) {
-        emit({ type: "media.processed", ref: { kind: ref.kind, id: ref.id }, file: f });
+        emit({ type: "media.processed", ref: itemRef(ref), file: f });
         return f;
       }
       if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });
@@ -380,26 +381,22 @@ export class MediaClient {
    * routes take: a poll or option image, a post cover.
    */
   async uploadNamed(ref: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload> {
-    const f = await this.put(file, { ref, path: o.path ?? (file.name || "image"), signal: o.signal, onProgress: o.onProgress, wait: o.wait, timeout: o.timeout });
+    const f = await this.put(file, { ref, path: o.path ?? (file.name || "image"), signal: o.signal, onProgress: o.onProgress, wait: o.wait, timeout: o.timeout, edit: o.edit });
     const name = stem(f.path.slice(f.path.lastIndexOf("/") + 1));
     if (!named.test(name)) throw new ContentKitError("invalid_request", `${f.path} is not a server-named upload path of ${ref.kind}`);
     return { name, path: f.path, file: f };
   }
 
   /**
-   * An image for a post's rich-text body, uploaded to the post's folder;
-   * resolves with its reference to store in the body (`ref`) and a URL that
-   * shows it to the editor now (`url`, null while none exists).
+   * An image for a content item's rich-text body, uploaded to the item's body
+   * folder ({kind}.body and its id, BODY_SUFFIX), which only viewers who open
+   * the item see; resolves with its reference to store in the body (`ref`) and
+   * a URL that shows it to the editor now (`url`, null while none exists).
    */
-  async uploadInline(post: string, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
-    const up = await this.uploadNamed(this.postRef(post), file, o);
-    const r: InlineImage = await call(this.http, "POST", "/posts/{id}/images", { params: { id: post }, body: { image: up.name }, signal: o.signal });
+  async uploadInline(item: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
+    const up = await this.uploadNamed(item, file, o);
+    const r: InlineImage = await call(this.http, "POST", "/contents/{id}/images", { params: { id: item.id }, body: { image: up.name }, signal: o.signal });
     return { ...up, ...r };
-  }
-
-  /** The media folder of a post. */
-  postRef(id: string): RefBody {
-    return { kind: this.folders.post, id };
   }
 
   /** The media folder of a poll. */

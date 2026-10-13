@@ -1,5 +1,6 @@
 import { ContentKitError, aborted, readContentKitError } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
+import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
@@ -7,23 +8,34 @@ export type Mount = string | ((ref: RefBody) => string);
 
 /**
  * Where each module lives when the host does not serve them all under
- * baseUrl's fixed sub-paths.
+ * baseUrl's fixed sub-paths (CONTENTKIT_MODULES: the API version, then the
+ * module's path). A mount is the module's full base URL.
  */
 export interface ContentKitMounts {
-  /** Posts, comments, reactions, favorites, polls, bans, moderation. Default baseUrl. */
+  /** Comments, reactions, favorites, polls, bans, moderation. Default `{baseUrl}/v1`. */
   content?: string;
-  /** Media reads and HLS playlists. Default `{baseUrl}/media`. */
+  /** Content items and catalog totals. Default `{baseUrl}/v1`. */
+  contents?: string;
+  /** Media reads and HLS playlists. Default `{baseUrl}/v1/media`. */
   media?: Mount;
-  /** Uploads and commits. Default `{baseUrl}/media/upload`. */
+  /** Uploads and commits. Default `{baseUrl}/v1/media/upload`. */
   upload?: Mount;
-  /** Content-code lookup. Default `{baseUrl}/codes`. */
+  /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
-  /** Taxonomy. Default `{baseUrl}/taxonomy`. */
-  taxonomy?: string;
-  /** The public catalog. Default `{baseUrl}/catalog`. */
-  catalog?: string;
-  /** User inbox. Default `{baseUrl}/notifications`. */
+  /** Groups. Default `{baseUrl}/v1`. */
+  groups?: string;
+  /** The site's content model. Default `{baseUrl}/v1`. */
+  kinds?: string;
+  /** User inbox. Default `{baseUrl}/v1/notifications`. */
   notifications?: string;
+  /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
+  versions?: string;
+  /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
+  offers?: string;
+  /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
+  discovery?: string;
+  /** Bulk import (a service's). Default `{baseUrl}/v1`. */
+  import?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
@@ -41,7 +53,7 @@ export type ContentKitChange =
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;
 
 export interface HttpOptions {
-  /** Where the host mounts ContentKit, e.g. "/api/v1/contentkit". */
+  /** Where the host mounts ContentKit's routes (contentkit.Routes.Prefix), e.g. "/api/contentkit". */
   baseUrl: string;
   mounts?: ContentKitMounts;
   /** Transport for API calls; pass an authenticating fetch (auth-ui's authFetch). */
@@ -65,6 +77,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Read the body as a Blob instead of JSON. */
   blob?: boolean;
+  keepalive?: boolean;
 }
 
 const trim = (u: string) => u.replace(/\/+$/, "");
@@ -88,19 +101,10 @@ export class Http {
       return trim(m(ref));
     }
     if (m !== undefined) return trim(m);
-    switch (module) {
-      case "content":
-        return this.base;
-      case "media":
-        return `${this.base}/media`;
-      case "upload":
-        return `${this.base}/media/upload`;
-      default:
-        return `${this.base}/${module}`;
-    }
+    return this.base + CONTENTKIT_MODULES[module];
   }
 
-  async request<T>(url: string, { method, body, signal, blob }: RequestOptions = {}): Promise<T> {
+  async request<T>(url: string, { method, body, signal, blob, keepalive }: RequestOptions = {}): Promise<T> {
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
     if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -116,6 +120,7 @@ export class Http {
         body: body === undefined ? null : JSON.stringify(body),
         credentials: this.o.credentials ?? "same-origin",
         signal: signal ?? null,
+        ...(keepalive ? { keepalive } : {}),
       });
     } catch (err) {
       if (signal?.aborted) throw aborted(signal);

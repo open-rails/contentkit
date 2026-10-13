@@ -11,6 +11,18 @@ name: media-image
     - 'cmd/media-worker/**'
     - '!cmd/*/Dockerfile'
     - '.github/workflows/media-image.yaml'
+  # Integration branches: lane PRs merge without waiting; each push runs the full
+  # suite once and a newer push cancels it.
+  push:
+    branches: ['next/**']
+    paths:
+    - 'media/**'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - 'cmd/media-worker/**'
+    - '!cmd/*/Dockerfile'
+    - '.github/workflows/media-image.yaml'
   workflow_call: {}
 permissions:
   contents: read
@@ -68,5 +80,5 @@ jobs:
           -e CONTENTKIT_TEST_S3_SECRET_KEY -e CONTENTKIT_TEST_S3_REQUIRE -e CONTENTKIT_TEST_FFMPEG -e GOFLAGS=-buildvcs=false \
           golang:1.26.6-trixie sh -ec '
             apt-get update -qq && apt-get install -y -qq --no-install-recommends libvips-dev ffmpeg libheif-plugin-dav1d libheif-plugin-aomenc >/dev/null
-            go vet ./media/worker/... ./cmd/media-worker/...
-            go test ./media/worker/... ./cmd/media-worker/... -count=1 -race -p 2 -v'
+            go vet ./media/worker/... ./cmd/media-worker/... ./media/versions/...
+            go test ./media/worker/... ./cmd/media-worker/... ./media/versions/... -count=1 -race -p 2 -v'

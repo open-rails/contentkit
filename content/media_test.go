@@ -11,30 +11,17 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	riverhelpers "github.com/open-rails/helpers/river"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/s3"
 )
 
 // mediaAdmin holds every permission when it calls the module directly; over
 // HTTP the runtime's Authorizer decides.
 var mediaAdmin = testauth.Actor(access.Actor{ID: "admin", Kind: "user"}, testauth.All{})
-
-func insertPost(t *testing.T, rt *Runtime) string {
-	t.Helper()
-	id := contentref.NewID()
-	if _, err := rt.store.pool.Exec(context.Background(),
-		`INSERT INTO `+rt.store.t.posts+` (id, tenant_id, author_id, title, body) VALUES ($2,$1,'admin','t','b')`, rt.tenant, id); err != nil {
-		t.Fatalf("insert post: %v", err)
-	}
-	return id
-}
 
 func newMediaTest(t *testing.T, opts Options) (*Runtime, *testMedia) {
 	t.Helper()
@@ -63,120 +50,6 @@ func send(t *testing.T, rt *Runtime, actor access.Actor, method, path string, bo
 }
 
 func image(name string) map[string]string { return map[string]string{"image": name} }
-
-// Bodies store references and covers names; reads resolve both to the
-// images' current public files, so a new generation or origin shows at once
-// and an image without one stays a reference.
-func TestMedia_PostCoverAndInlineImages(t *testing.T) {
-	// A host's HTML sanitizer that keeps <img src>.
-	html := processorFunc(func(_ context.Context, raw string) (string, error) { return raw, nil })
-	rt, m := newMediaTest(t, Options{PostBodyProcessor: html})
-	id := insertPost(t, rt)
-	ref := rt.Ref("post", id)
-	name, other := "i-"+uuid.NewString(), "i-"+uuid.NewString()
-
-	var cover map[string]*string
-	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(name), &cover); code != 200 || cover["cover_url"] != nil {
-		t.Fatalf("cover without a public file %d %v", code, cover)
-	}
-	var inline InlineImage
-	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline.Ref != "contentkit:"+name || inline.URL != nil {
-		t.Fatalf("inline %d %+v", code, inline)
-	}
-	page := func(src string) string {
-		return `<p><img src="` + src + `"> and <img src="` + ImageRef(other) + `"> again <img src="` + src + `"></p>`
-	}
-	body := page(inline.Ref)
-	var v Post
-	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, PostInput{Body: &body}, &v); code != 200 || v.Body != body || v.Images != nil || *v.Cover != name || v.CoverURL != nil {
-		t.Fatalf("unpublished post %d %+v", code, v)
-	}
-
-	m.publish(name)
-	want := m.url(ref, name)
-	check := func(v Post) {
-		t.Helper()
-		if v.Body != page(want) || v.CoverURL == nil || *v.CoverURL != want || len(v.Images) != 1 || v.Images[name] != want {
-			t.Fatalf("resolved post %+v", v)
-		}
-	}
-	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v)
-	check(v)
-	var stored, storedCover string
-	if err := rt.store.pool.QueryRow(t.Context(), `SELECT body, cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&stored, &storedCover); err != nil || stored != body || storedCover != name {
-		t.Fatalf("stored %q %q, err=%v", stored, storedCover, err)
-	}
-	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline.URL == nil || *inline.URL != want {
-		t.Fatalf("published inline %d %+v", code, inline)
-	}
-
-	// A new generation (a regenerate, a hide and show) and a new origin show
-	// at once; lists resolve every post with one lookup.
-	m.publish(name)
-	m.origin = "https://moved-media.test"
-	want = m.url(ref, name)
-	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, map[string]bool{"is_draft": false}, &v); code != 200 {
-		t.Fatalf("publish %d", code)
-	}
-	check(v)
-	second := insertPost(t, rt)
-	secondBody := "see " + ImageRef(other)
-	send(t, rt, mediaAdmin, "PATCH", "/posts/"+second, PostInput{Body: &secondBody, IsDraft: ptr(false)}, nil)
-	m.publish(other)
-	before := m.lookupCount()
-	var listed []Post
-	if code := send(t, rt, mediaAdmin, "GET", "/posts", nil, &listed); code != 200 || len(listed) != 2 || m.lookupCount() != before+1 {
-		t.Fatalf("list %d %+v, lookups %d", code, listed, m.lookupCount()-before)
-	}
-	for _, p := range listed {
-		if p.ID == second && p.Body != "see "+m.url(rt.Ref("post", second), other) {
-			t.Fatalf("second post %+v", p)
-		}
-	}
-
-	// The exported helper resolves stored rows the way the routes do.
-	rows := []Post{{ID: id, Body: body, Cover: &name}}
-	both := strings.ReplaceAll(page(want), ImageRef(other), m.url(ref, other))
-	if err := rt.ResolvePosts(t.Context(), rows); err != nil || rows[0].Body != both || *rows[0].CoverURL != want || len(rows[0].Images) != 2 {
-		t.Fatalf("ResolvePosts %+v %v", rows[0], err)
-	}
-
-	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(""), nil); code != 200 {
-		t.Fatalf("clear %d", code)
-	}
-	var cleared Post
-	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &cleared)
-	if cleared.ID != id || cleared.Cover != nil || cleared.CoverURL != nil {
-		t.Fatalf("cover not cleared: %+v", cleared)
-	}
-	var clearedName *string
-	if err := rt.store.pool.QueryRow(t.Context(), `SELECT cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&clearedName); err != nil || clearedName != nil {
-		t.Fatalf("cleared cover name %v, err=%v", clearedName, err)
-	}
-
-	for _, tc := range []struct {
-		path string
-		body any
-		want int
-	}{
-		{"/posts/" + id + "/images", image("https://evil.example/x.png"), 400},
-		{"/posts/" + id + "/images", image("cover"), 400},
-		{"/posts/" + id + "/images", image(""), 400},
-		{"/posts/" + id + "/images", map[string]string{}, 400},
-		{"/posts/" + contentref.NewID() + "/images", image(name), 404},
-	} {
-		if code := send(t, rt, mediaAdmin, "POST", tc.path, tc.body, nil); code != tc.want {
-			t.Errorf("POST %s %v: %d, want %d", tc.path, tc.body, code, tc.want)
-		}
-	}
-	// A cover is not a post field: it is set only from the post's own folder.
-	for _, m := range []string{"POST /posts", "PATCH /posts/" + id} {
-		method, path, _ := strings.Cut(m, " ")
-		if code := send(t, rt, mediaAdmin, method, path, map[string]any{"title": "t", "body": "b", "cover_url": "https://evil.example/x.png"}, nil); code != 400 {
-			t.Errorf("%s with cover_url: %d", m, code)
-		}
-	}
-}
 
 func TestMedia_PollImages(t *testing.T) {
 	rt, m := newMediaTest(t, Options{})
@@ -243,127 +116,9 @@ func TestMedia_PollImages(t *testing.T) {
 	}
 }
 
-func TestMedia_SoftDeleteHidesPostAndDeletesPoll(t *testing.T) {
-	rt, m := newMediaTest(t, Options{})
-	post := insertPost(t, rt)
-	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := send(t, rt, mediaAdmin, "DELETE", "/posts/"+post, nil, nil); code != http.StatusNoContent {
-		t.Fatalf("delete post %d", code)
-	}
-	if code := send(t, rt, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code >= 300 {
-		t.Fatalf("delete poll %d", code)
-	}
-	want := []string{testTenant + "/poll/" + poll.ID}
-	if got := m.deletions(); !slices.Equal(got, want) {
-		t.Fatalf("deleted %v, want %v", got, want)
-	}
-	if want := []string{testTenant + "/post/" + post}; !slices.Equal(m.exposed, want) {
-		t.Fatalf("exposed %v, want %v", m.exposed, want)
-	}
-}
-
-func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
-	ctx := context.Background()
-	ports := (&testMedia{}).options()
-	ports.PostKind = "article"
-	rt, pool := newTestRuntime(t, Options{Media: ports, Moderator: &fakeModerator{}})
-	reg, err := media.NewRegistry(media.Config{Namespace: testTenant, Kinds: []media.Kind{{Name: "article",
-		Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1024, Named: true, Max: 100}}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only transactionally queued jobs are exercised; workers and S3 are not started.
-	store, err := s3.New(s3.Config{Bucket: "unused", Endpoint: "http://127.0.0.1:1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal, err := media.NewPGJournal(pool, rt.schema, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Journal: journal})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := riverhelpers.ApplyMigrations(ctx, pool, rt.schema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := riverhelpers.New(ctx, pool, &river.Config{Schema: rt.schema}, jobs.RiverJobs()); err != nil {
-		t.Fatal(err)
-	}
-	rt.media.Folders = jobs
-	schema := pgx.Identifier{rt.schema}.Sanitize()
-	queue := schema + ".river_job"
-	snapshot := func() string {
-		t.Helper()
-		var state string
-		err := pool.QueryRow(ctx, `SELECT jsonb_build_array(
-			(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM `+rt.store.t.posts+` p),
-			(SELECT jsonb_agg(to_jsonb(d) ORDER BY content_id, language) FROM `+schema+`.content_search_dirty d),
-			(SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM `+queue+` j))::text`).Scan(&state)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return state
-	}
-	var post Post
-	for i, step := range []struct {
-		name, method, path string
-		body               any
-		status             int
-	}{
-		{"create", "POST", "/posts", PostInput{Title: ptr("Title"), Body: ptr("iffy"), Language: ptr("en")}, 202},
-		{"update", "PATCH", "/posts/{id}", PostInput{Body: ptr("iffy edit"), Language: ptr("ja")}, 202},
-		{"approve", "POST", "/moderation/post/{id}/resolve", map[string]any{"revision": 2, "decision": "approve"}, 200},
-		{"delete", "DELETE", "/posts/{id}", nil, 204},
-	} {
-		t.Run(step.name, func(t *testing.T) {
-			path := strings.ReplaceAll(step.path, "{id}", post.ID)
-			if _, err := pool.Exec(ctx, `ALTER TABLE `+queue+` ADD CONSTRAINT reject_exposure CHECK (kind <> 'contentkit_media_expose') NOT VALID`); err != nil {
-				t.Fatal(err)
-			}
-			before := snapshot()
-			if code := send(t, rt, mediaAdmin, step.method, path, step.body, nil); code != 500 {
-				t.Fatalf("queue failure: status %d, want 500", code)
-			}
-			if after := snapshot(); after != before {
-				t.Fatal("queue failure committed post, keyword or media job changes")
-			}
-			if _, err := pool.Exec(ctx, `ALTER TABLE `+queue+` DROP CONSTRAINT reject_exposure`); err != nil {
-				t.Fatal(err)
-			}
-			var result Post
-			var out any = &result
-			if step.status == http.StatusNoContent {
-				out = nil
-			}
-			if code := send(t, rt, mediaAdmin, step.method, path, step.body, out); code != step.status {
-				t.Fatalf("status %d, want %d", code, step.status)
-			}
-			if i == 0 {
-				post = result
-			}
-			var count int
-			if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+queue+` WHERE kind='contentkit_media_expose' AND args->'ref'=$1::jsonb`, rt.Ref("article", post.ID)).Scan(&count); err != nil {
-				t.Fatal(err)
-			}
-			if count != i+1 {
-				t.Fatalf("committed exposure jobs %d, want %d", count, i+1)
-			}
-		})
-		if t.Failed() {
-			break
-		}
-	}
-}
-
 func TestMedia_CanUpload(t *testing.T) {
 	ctx := context.Background()
 	rt, _ := newMediaTest(t, Options{Media: (&testMedia{}).options()})
-	post := insertPost(t, rt)
 	poll, err := rt.polls.create(ctx, mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -372,106 +127,97 @@ func TestMedia_CanUpload(t *testing.T) {
 		ref  contentref.ContentRef
 		want bool
 	}{
-		{rt.Ref("post", post), true},
 		{rt.Ref("poll", poll.ID), true},
-		{rt.Ref("post", contentref.NewID()), false},
 		{rt.Ref("poll", contentref.NewID()), false},
-		{rt.Ref("gallery", post), false},
-		{contentref.New("other", "post", post), false},
-		{rt.Ref("post", post).WithVersion("v1"), false},
+		{rt.Ref("gallery", poll.ID), false},
+		{contentref.New("other", "poll", poll.ID), false},
+		{rt.Ref("poll", poll.ID).WithVersion("v1"), false},
 	} {
 		g, err := rt.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: tc.ref})
 		if err != nil || g.Allowed != tc.want {
 			t.Errorf("%s: %+v %v, want %v", tc.ref, g, err, tc.want)
 		}
 	}
-	denied, _ := newTestRuntime(t, Options{Auth: testauth.Auth{Authz: denyAll{}}, Media: (&testMedia{}).options()})
-	if g, err := denied.CanUpload(ctx, denied.as(mediaAdmin), media.UploadTarget{Ref: denied.Ref("post", insertPost(t, denied))}); err != nil || g.Allowed {
-		t.Fatalf("without PostWrite: %+v %v", g, err)
+	denied, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: denyAll{}},
+		Resolver: &fakeResolver{}, Media: (&testMedia{}).options()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, err := denied.CanUpload(ctx, denied.as(mediaAdmin), media.UploadTarget{Ref: denied.Ref("poll", poll.ID)}); err != nil || g.Allowed {
+		t.Fatalf("without PollsWrite: %+v %v", g, err)
 	}
 }
 
-func TestMedia_ImageRoutesRequirePerm(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Auth: testauth.Auth{Authz: denyAll{}}, Media: (&testMedia{}).options()})
-	id := insertPost(t, rt)
-	if code := send(t, rt, access.Actor{ID: "nonadmin"}, "PUT", "/posts/"+id+"/cover", image("i-"+uuid.NewString()), nil); code != http.StatusForbidden {
-		t.Fatalf("want 403, got %d", code)
-	}
-}
-
-// A foreign tenant's admin cannot point another tenant's post or poll at an image.
+// A foreign tenant's admin cannot point another tenant's poll at an image.
 func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	m := &testMedia{}
 	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Media: m.options()})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
+	b, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
 		Media: m.options()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	post := insertPost(t, a)
 	poll, err := a.polls.create(ctx, mediaAdmin, PollInput{Question: "Q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := image("i-" + uuid.NewString())
-	for _, path := range []string{"/posts/" + post + "/cover", "/polls/" + poll.ID + "/image", "/polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
+	for _, path := range []string{"/polls/" + poll.ID + "/image", "/polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
 		if code := send(t, b, mediaAdmin, "PUT", path, name, nil); code != http.StatusNotFound {
 			t.Errorf("PUT %s from another tenant: %d", path, code)
 		}
 	}
-	if code := send(t, b, mediaAdmin, "DELETE", "/posts/"+post, nil, nil); code != http.StatusNotFound || len(m.deletions()) != 0 {
+	if code := send(t, b, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code != http.StatusNotFound || len(m.deletions()) != 0 {
 		t.Fatalf("foreign delete: %d %v", code, m.deletions())
 	}
 }
 
-// A post's folder shows like the post: published to everyone, unpublished
-// only to its editors (PostWrite and its author), deleted to no one; a
-// poll's while the poll exists, edited by PollWrite holders.
-func TestMediaResolverShowsPostFoldersLikeThePost(t *testing.T) {
-	ctx := context.Background()
-	rt, _ := newMediaTest(t, Options{Auth: testauth.Auth{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}}})
-	draft, published, deleted, author := insertPost(t, rt), insertPost(t, rt), insertPost(t, rt), insertPost(t, rt)
-	exec := func(sql string, args ...any) {
-		t.Helper()
-		if _, err := rt.store.pool.Exec(ctx, sql, args...); err != nil {
-			t.Fatal(err)
-		}
+func TestMedia_DeletingAPollDeletesItsFolder(t *testing.T) {
+	rt, m := newMediaTest(t, Options{})
+	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	exec(`UPDATE `+rt.store.t.posts+` SET is_draft = false WHERE id = ANY($1)`, []string{published, deleted})
-	exec(`UPDATE `+rt.store.t.posts+` SET deleted_at = now() WHERE id = $1`, deleted)
-	exec(`UPDATE `+rt.store.t.posts+` SET author_id = 'writer' WHERE id = $1`, author)
+	if code := send(t, rt, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code >= 300 {
+		t.Fatalf("delete poll %d", code)
+	}
+	want := []string{testTenant + "/poll/" + poll.ID}
+	if got := m.deletions(); !slices.Equal(got, want) {
+		t.Fatalf("deleted %v, want %v", got, want)
+	}
+}
+
+// A poll's folder shows while the poll exists, edited by PollsWrite holders.
+func TestMediaResolverShowsPollFolders(t *testing.T) {
+	ctx := context.Background()
+	rt, _ := newMediaTest(t, Options{Auth: testauth.Auth{Authz: roleAuthz{writers: map[string]bool{"admin": true}}}})
 	var poll Poll
 	if code := send(t, rt, mediaAdmin, "POST", "/polls", PollInput{Question: "Q", Language: "en",
 		Options: []PollOptionInput{{Label: "A"}, {Label: "B", Position: 1}}}, &poll); code != http.StatusCreated {
 		t.Fatalf("create poll: %d", code)
 	}
-	post := func(id string) contentref.ContentRef { return rt.Ref("post", id) }
-	refs := []contentref.ContentRef{post(draft), post(published), post(deleted), post(author), rt.Ref("poll", poll.ID),
-		rt.Ref("gallery", draft), contentref.New("other", "post", published)}
-	full := func(editor bool) access.Resolution {
-		return access.Resolution{Visible: true, Accessible: true, Editor: editor}
+	refs := []contentref.ContentRef{rt.Ref("poll", poll.ID), rt.Ref("poll", contentref.NewID()), rt.Ref("gallery", poll.ID), contentref.New("other", "poll", poll.ID)}
+	full := func(editor bool) resolve.Resolution {
+		return resolve.Resolution{Visible: true, Accessible: true, Editor: editor}
 	}
 	for _, c := range []struct {
 		actor access.Actor
-		want  map[contentref.ContentRef]access.Resolution
-	}{
-		{access.Actor{Anonymous: true}, map[contentref.ContentRef]access.Resolution{post(published): full(false), rt.Ref("poll", poll.ID): full(false)}},
-		{access.Actor{ID: "reader"}, map[contentref.ContentRef]access.Resolution{post(published): full(false), rt.Ref("poll", poll.ID): full(false)}},
-		{access.Actor{ID: "writer"}, map[contentref.ContentRef]access.Resolution{post(published): full(false), post(author): full(true), rt.Ref("poll", poll.ID): full(false)}},
-		{mediaAdmin, map[contentref.ContentRef]access.Resolution{post(draft): full(true), post(published): full(true), post(author): full(true), rt.Ref("poll", poll.ID): full(true)}},
-	} {
+		want  resolve.Resolution
+	}{{access.Actor{Anonymous: true}, full(false)}, {access.Actor{ID: "reader"}, full(false)}, {mediaAdmin, full(true)}} {
 		got, err := rt.MediaResolver().Resolve(ctx, refs, c.actor)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != len(c.want) {
-			t.Errorf("%s: %d resolutions, want %d: %v", c.actor.ID, len(got), len(c.want), got)
-		}
-		for ref, want := range c.want {
-			if got[ref.Key()] != want {
-				t.Errorf("%s %s: %+v, want %+v", c.actor.ID, ref, got[ref.Key()], want)
-			}
+		if len(got) != 1 || got[refs[0].Key()] != c.want {
+			t.Errorf("%s: %v, want only the poll as %+v", c.actor.ID, got, c.want)
 		}
 	}
+}
+
+// roleAuthz grants every permission to the actors in writers only.
+type roleAuthz struct{ writers map[string]bool }
+
+func (a roleAuthz) Can(_ context.Context, actor access.Actor, _ string) (bool, error) {
+	return a.writers[actor.ID], nil
 }

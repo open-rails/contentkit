@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -749,7 +750,7 @@ func TestCommitVerifiesBlobs(t *testing.T) {
 // anonymous viewers cannot see it, so its public presets are not pending.
 func TestNamedAndHiddenNewItem(t *testing.T) {
 	f := newFixture(t)
-	f.res.set(cid(1), access.Resolution{Visible: false})
+	f.res.set(cid(1), resolve.Resolution{Visible: false})
 	post := f.ref("post", 1)
 	p, blob := f.upload(post, "inline/whatever.png", "image/png", png(1))
 	if !strings.HasPrefix(p, "inline/"+media.NamedPrefix) || !strings.HasSuffix(p, ".png") || !media.ValidNamed(strings.TrimSuffix(strings.TrimPrefix(p, "inline/"), ".png")) {

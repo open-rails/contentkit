@@ -1,10 +1,16 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/zh.js";
 import { social } from "./social/zh.js";
+import { groups } from "./groups/zh.js";
+import { discovery } from "./discovery/zh.js";
+import { content } from "./content/zh.js";
 
 export const zh: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
+  ...groups,
+  ...discovery,
+  ...content,
   common: {
     cancel: "取消",
     close: "关闭",
@@ -262,9 +268,12 @@ export const zh: ContentKitUiMessageBundle = {
     resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
     moderation_rejected: "已被审核拒绝。",
     comment_banned: "你无法在此评论。",
+    comments_closed: "此处评论已关闭。",
+    limit_reached: "已达到允许的上限。",
     comment_too_long: "评论太长了。",
     commentTooLongBy: "评论最多 {maxChars} 个字符。",
     not_configured: "此网站未提供该功能。",
+    no_membership: "仅限会员的内容需要一个可加入或购买的群组。请先为该群组添加报价。",
     tenant_mismatch: "我们这边出了点问题，请重试。",
     gone: "此内容已不可用。",
   },

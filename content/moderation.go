@@ -18,9 +18,12 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
-// Moderation states stored in content_comments.moderation / content_posts.moderation.
+// Moderation states stored in content_comments.moderation and
+// content_items.moderation.
 const (
 	ModerationApproved = "approved"
 	ModerationHeld     = "held"
@@ -44,6 +47,24 @@ type screening struct {
 	state  string // ModerationApproved | ModerationHeld
 	reason *string
 	meta   []byte // jsonb or nil
+}
+
+// Screening is what a write stores after the moderator ran: State approved or
+// held, with the Reason shown to the author and the Verdict kept for the
+// reviewer (moderation_verdict jsonb, nil without a moderator).
+type Screening struct {
+	State   string
+	Reason  *string
+	Verdict []byte
+}
+
+// Screen runs the moderator over another module's text write (the catalog's)
+// as it does over comments: a reject verdict is a RejectedError (store
+// nothing), a failure or an unknown decision holds, no moderator approves.
+// An erased subject is refused (ErrSubjectErased).
+func (rt *Runtime) Screen(ctx context.Context, in ModerationInput) (Screening, error) {
+	sc, err := rt.screen(ctx, in)
+	return Screening{State: sc.state, Reason: sc.reason, Verdict: sc.meta}, err
 }
 
 // screen runs the moderator over one write. A reject verdict is returned as
@@ -124,29 +145,25 @@ func (c Chain) Screen(ctx context.Context, in ModerationInput) (Verdict, error) 
 	return Verdict{Decision: DecisionApprove, Model: "contentkit/chain"}, nil
 }
 
-// BasicModerator is the deterministic policy: reject links, near-instant
-// duplicate submissions from one actor and a censor word list. The dup guard
-// is per process; multi-replica hosts wanting global dedup wire their own.
+// BasicModerator is the deterministic policy: reject links and near-instant
+// duplicate submissions from one actor (banned words are data: rules.go).
+// The dup guard is per process; multi-replica hosts wanting global dedup
+// wire their own.
 type BasicModerator struct {
-	AllowLinks  bool          // default false: reject bodies containing URLs
-	DupWindow   time.Duration // 0 = 30s; negative disables
-	CensorWords []string      // nil = built-in set; empty = none; whole words, case-insensitive
+	AllowLinks bool          // default false: reject bodies containing URLs
+	DupWindow  time.Duration // 0 = 30s; negative disables
 
-	once     sync.Once
-	censorRe *regexp.Regexp
-	mu       sync.Mutex
-	recent   map[duplicateKey]time.Time
-	erased   map[subjectKey]bool
-	swept    time.Time
-	now      func() time.Time
+	once   sync.Once
+	mu     sync.Mutex
+	recent map[duplicateKey]time.Time
+	erased map[subjectKey]bool
+	swept  time.Time
+	now    func() time.Time
 }
 
 const basicModel = "contentkit/basic"
 
-var (
-	defaultCensor = []string{"childporn", "cp"}
-	urlRe         = regexp.MustCompile(`(?i)\b(?:https?://|www\.)\S+`)
-)
+var urlRe = regexp.MustCompile(`(?i)\b(?:https?://|www\.)\S+`)
 
 func (m *BasicModerator) init() {
 	m.once.Do(func() {
@@ -155,17 +172,6 @@ func (m *BasicModerator) init() {
 		}
 		if m.now == nil {
 			m.now = time.Now
-		}
-		words := m.CensorWords
-		if words == nil {
-			words = defaultCensor
-		}
-		if len(words) > 0 {
-			quoted := make([]string, len(words))
-			for i, w := range words {
-				quoted[i] = regexp.QuoteMeta(w)
-			}
-			m.censorRe = regexp.MustCompile(`(?i)\b(` + strings.Join(quoted, "|") + `)\b`)
 		}
 		m.recent = map[duplicateKey]time.Time{}
 		m.erased = map[subjectKey]bool{}
@@ -178,9 +184,6 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 	text := strings.TrimSpace(in.Title + "\n" + in.Text)
 	if !m.AllowLinks && urlRe.MatchString(text) {
 		return Verdict{Decision: DecisionReject, Reason: "links are not allowed", Model: basicModel}, nil
-	}
-	if m.censorRe != nil && m.censorRe.MatchString(text) {
-		return Verdict{Decision: DecisionReject, Reason: "content violates policy", Model: basicModel}, nil
 	}
 	if m.DupWindow > 0 && in.ItemID == "" {
 		actor := in.Actor.ID
@@ -213,12 +216,12 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 
 // --- review queue ---
 
-// HeldItem is one comment or post awaiting review.
+// HeldItem is one comment or content item awaiting review.
 type HeldItem struct {
-	Kind     string `json:"kind"`     // KindComment | KindPost
+	Kind     string `json:"kind"`     // KindComment, or a HeldSource's kind
 	Revision int64  `json:"revision"` // required when resolving this exact screened text
 	ID       string `json:"id"`
-	// Ref is the commented content, or the post's own reference.
+	// Ref is the commented content, or the held item's own reference.
 	Ref           contentref.ContentRef `json:"ref"`
 	AuthorID      string                `json:"author_id,omitempty"`
 	Author        *PublicUser           `json:"author,omitempty"`
@@ -249,11 +252,52 @@ type ReviewDecision struct {
 	Reason   string
 }
 
-// ListHeld pages this tenant's held comments or posts oldest-first; cursor is
-// the previous page's Next ("" = start). limit is clamped to [1, 100].
+// SetVerdict fills the screening provenance from a moderation_verdict.
+func (it *HeldItem) SetVerdict(meta []byte) {
+	var m verdictMeta
+	if len(meta) > 0 && json.Unmarshal(meta, &m) == nil {
+		it.Model, it.PromptVersion, it.Confidence, it.Error = m.Model, m.PromptVersion, m.Confidence, m.Error
+	}
+}
+
+// HeldSource is another module's held items in the review queue: the
+// catalog's content items, under catalog.HeldKind.
+type HeldSource interface {
+	// Held pages held items oldest first, after (after, afterID).
+	Held(ctx context.Context, after time.Time, afterID string, limit int) ([]HeldItem, error)
+	// ResolveHeld applies a reviewer's decision at the listed revision;
+	// ErrNotFound when the item is not held at it.
+	ResolveHeld(ctx context.Context, id string, d ReviewDecision) error
+}
+
+// AddHeldSource puts src's held items in the review queue under kind. Call it
+// before serving.
+func (rt *Runtime) AddHeldSource(kind string, src HeldSource) error {
+	if kind == "" || kind == KindComment || src == nil {
+		return fmt.Errorf("content: held source %q is reserved or nil", kind)
+	}
+	if _, dup := rt.held[kind]; dup {
+		return fmt.Errorf("content: held source %q added twice", kind)
+	}
+	rt.held[kind] = src
+	return nil
+}
+
+func (rt *Runtime) heldKinds() string {
+	out := KindComment
+	for k := range rt.held {
+		out += ", " + k
+	}
+	return out
+}
+
+// ListHeld pages this tenant's held comments, or a held source's items,
+// oldest first; cursor is the previous page's Next ("" = start). limit is
+// clamped to [1, 100].
 func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int) (HeldPage, error) {
-	if kind != KindComment && kind != KindPost {
-		return HeldPage{}, badRequest("kind must be %s or %s", KindComment, KindPost)
+	src, ok := rt.held[kind]
+	if kind != KindComment && !ok {
+		return HeldPage{}, badRequest("kind must be one of %s", rt.heldKinds())
 	}
 	if limit <= 0 {
 		limit = 20
@@ -264,50 +308,49 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 	if err != nil {
 		return HeldPage{}, err
 	}
-	var sql string
-	if kind == KindComment {
-		sql = `SELECT id::text, ` + keyCols + `, coalesce(user_id, ''), coalesce(anon_name, ''), '', body,
-			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
-			FROM ` + rt.store.t.comments + ` WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
-			ORDER BY created_at, id LIMIT $4`
-	} else {
-		sql = `SELECT id, tenant_id, '` + KindPost + `', id, '', author_id, '', title, body,
-			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
-			FROM ` + rt.store.t.posts + ` WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id) > ($2, $3)
-			ORDER BY created_at, id LIMIT $4`
-	}
-	rows, err := rt.store.pool.Query(ctx, sql, rt.tenant, after, afterID, limit+1)
-	if err != nil {
-		return HeldPage{}, err
-	}
-	defer rows.Close()
 	page := HeldPage{Items: []HeldItem{}}
-	for rows.Next() {
-		it := HeldItem{Kind: kind}
-		var k contentref.ContentKey
-		var meta []byte
-		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &it.AuthorID, &it.AnonName, &it.Title, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt, &it.Revision); err != nil {
+	if ok {
+		items, err := src.Held(ctx, after, afterID, limit+1)
+		if err != nil {
 			return HeldPage{}, err
 		}
-		it.Ref = k.Ref()
-		if len(meta) > 0 {
-			var m verdictMeta
-			if err := json.Unmarshal(meta, &m); err == nil {
-				it.Model, it.PromptVersion, it.Confidence, it.Error = m.Model, m.PromptVersion, m.Confidence, m.Error
-			}
-		}
-		page.Items = append(page.Items, it)
-	}
-	if err := rows.Err(); err != nil {
+		page.Items = append(page.Items, items...)
+	} else if err := rt.heldComments(ctx, &page, after, afterID, limit+1, nil); err != nil {
 		return HeldPage{}, err
 	}
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		last := page.Items[limit-1]
-		page.Next = strconv.FormatInt(last.CreatedAt.UnixMicro(), 10) + ":" + last.ID
-	}
+	page.trim(limit)
 	rt.enrichHeld(ctx, page.Items)
 	return page, nil
+}
+
+// heldComments pages held comments, of g and the content it owns when set.
+func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.OwnerGroup) error {
+	var kind, id string
+	if g != nil {
+		kind, id = g.Kind, g.ID
+	}
+	rows, err := rt.store.pool.Query(ctx, `SELECT id::text, `+keyCols+`, coalesce(user_id, ''), coalesce(anon_name, ''), body,
+			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
+			FROM `+rt.store.t.comments+` c WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
+			AND ($5 = '' OR c.content_kind = $5 AND c.content_id = $6 OR (c.content_kind, c.content_id) IN (
+			 SELECT i.kind, i.id FROM `+rt.store.t.items+` i WHERE i.tenant_id = $1 AND i.owner_group_id = $6))
+			ORDER BY created_at, id LIMIT $4`, rt.tenant, after, afterID, limit, kind, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		it := HeldItem{Kind: KindComment}
+		var k contentref.ContentKey
+		var meta []byte
+		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &it.AuthorID, &it.AnonName, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt, &it.Revision); err != nil {
+			return err
+		}
+		it.Ref = k.Ref()
+		it.SetVerdict(meta)
+		page.Items = append(page.Items, it)
+	}
+	return rows.Err()
 }
 
 // enrichHeld attaches the authors' display data; a failed lookup leaves bare ids.
@@ -340,7 +383,7 @@ func parseHeldCursor(cursor string) (time.Time, string, error) {
 }
 
 // Resolve writes a reviewer's final decision on a held item. Approve publishes
-// it (counts and, for posts, the keyword index follow); reject keeps it
+// it (counts follow, and a held source's own effects); reject keeps it
 // author-visible with the reason. A missing, foreign-tenant or not-held item
 // is ErrNotFound.
 func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d ReviewDecision) error {
@@ -357,14 +400,13 @@ func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d ReviewDecisio
 	if d.Decision == DecisionReject {
 		state = ModerationRejected
 	}
-	switch kind {
-	case KindComment:
+	if kind == KindComment {
 		return rt.comments.resolve(ctx, id, state, d)
-	case KindPost:
-		return rt.posts.resolve(ctx, id, state, d)
-	default:
-		return badRequest("kind must be %s or %s", KindComment, KindPost)
 	}
+	if src, ok := rt.held[kind]; ok {
+		return src.ResolveHeld(ctx, id, d)
+	}
+	return badRequest("kind must be one of %s", rt.heldKinds())
 }
 
 // resolve moves a held comment to its final state; approving publishes it
@@ -395,7 +437,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		moderated_by = $5, moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
 		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
-		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -417,61 +459,23 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 // reply_count for a reply, the reference's comment_count for a top-level one.
 func (c *comments) count(ctx context.Context, tx pgx.Tx, replyTo *string, k contentref.ContentKey, delta int) error {
 	if replyTo != nil {
-		_, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET reply_count = GREATEST(reply_count + $2, 0), updated_at = now() WHERE id = $1`, *replyTo, delta)
+		_, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET reply_count = GREATEST(reply_count + $2, 0), updated_at = now() WHERE tenant_id = $3 AND id = $1`, *replyTo, delta, c.s.tenant)
 		return err
 	}
 	return bumpCounts(ctx, tx, c.s, k, 0, 0, 0, delta)
-}
-
-// resolve moves a held post to its final state and re-queues its keyword
-// document (an approved post indexes; anything else drops the stale entry).
-func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision) error {
-	tx, err := p.s.beginMutation(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	var subject string
-	if err := tx.QueryRow(ctx, `SELECT coalesce(author_id,'') FROM `+p.s.t.posts+` WHERE id=$1 AND tenant_id=$2`, id, p.s.tenant).Scan(&subject); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-	if err := p.rt.guardErasedSubject(ctx, tx, subject); err != nil {
-		return err
-	}
-	var language string
-	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET published_content = CASE WHEN $3='approved' THEN NULL ELSE published_content END, moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
-		moderated_by = $5, moderated_at = now(), updated_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6 RETURNING language`,
-		id, p.s.tenant, state, d.Reason, d.Reviewer, d.Revision).Scan(&language)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if err := p.markDirty(ctx, tx, id, language, false); err != nil {
-		return err
-	}
-	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }
 
 // --- HTTP (ModerationReview-gated) ---
 
 var moderationRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/moderation/held", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
-		Doc: "Held comments or posts awaiting review, oldest first.",
-		Query: []httpapi.Param{httpapi.Text("kind", "comment or post"), httpapi.Text("cursor", "the previous page's next"),
+		Doc: "Held comments or content items awaiting review, oldest first.",
+		Query: []httpapi.Param{httpapi.Text("kind", "comment or content"), httpapi.Text("cursor", "the previous page's next"),
 			httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}},
 		Serve: httpapi.H((*Runtime).handleListHeld)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/moderation/{kind}/{id}/resolve", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
-		Doc:       "Approves (publishes) or rejects a held comment or post, at the revision the queue listed.",
+		Doc:       "Approves (publishes) or rejects a held comment or content item, at the revision the queue listed.",
 		Request:   ResolveInput{},
 		Responses: []httpapi.Reply{httpapi.OK(ReviewOutcome{})}, Errors: []string{CodeConflict, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleResolve)},

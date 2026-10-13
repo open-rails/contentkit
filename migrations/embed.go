@@ -16,7 +16,7 @@ import (
 //go:embed postgres/*.sql clickhouse/*.sql
 var files embed.FS
 
-// Postgres installs all content, keyword and taxonomy tables in one host schema.
+// Postgres installs ContentKit's tables in its own schema.
 var Postgres fs.FS = mustSubFS("postgres")
 
 // ClickHouse installs the signal-plane tables in the selected database.
@@ -30,8 +30,8 @@ func mustSubFS(dir string) fs.FS {
 	return sub
 }
 
-// ApplyPostgres applies ContentKit's migrations in schema under its ledger
-// identity. The schema may also hold the host's tables.
+// ApplyPostgres applies ContentKit's migrations in its schema under its
+// ledger identity and migration lock (contentkit.New calls it).
 func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if db == nil {
 		return fmt.Errorf("contentkit: DB is required")

@@ -1,8 +1,8 @@
 import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import type { BanScope, Decision, HeldKind, Reaction, Sort } from "../client/content/types.js";
+import type { BanScope, Decision, HeldKind, Reaction, Sort, Target } from "../client/content/types.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { AdminComment, BanInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, ReactionCounts, RefBody } from "../client/generated/wire.js";
+import type { AdminComment, BanInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, ReactionCounts } from "../client/generated/wire.js";
 import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -43,6 +43,8 @@ async function reactToComment(client: ContentKitClient, store: ResourceStore, sc
 
 export interface UseCommentsOptions {
   sort?: Sort;
+  /** One language's thread: the list shows it and new comments join it. */
+  language?: string;
   /** Top-level comments per page. Default 20. */
   pageSize?: number;
   client?: ContentKitClient;
@@ -60,17 +62,23 @@ export interface UseComments extends UseList<Comment> {
   restore: (id: string) => Promise<void>;
 }
 
-/** An item's top-level comments, a page at a time, with every write; new comments and replies land in place. */
-export function useComments(ref: RefBody, o: UseCommentsOptions = {}): UseComments {
+/** A target's top-level comments, a page at a time, with every write; new comments and replies land in place. */
+export function useComments(target: Target, o: UseCommentsOptions = {}): UseComments {
   const { client, store, scope } = useContentScope(o.client);
   const size = o.pageSize ?? 20;
   const sort = o.sort ?? "newest";
-  const key = keyOf("comments", scope, ref.kind, ref.id, sort, size);
-  const list = useList(store, key, { type: "comments", ref: { kind: ref.kind, id: ref.id } }, offsetPages(size, (q, signal) => client.comments.list(ref, { ...q, sort }, signal)));
-  const { kind, id } = ref;
+  const language = o.language || undefined;
+  const { type, id, version } = target;
+  const key = keyOf("comments", scope, type, id, version, language, sort, size);
+  const list = useList(
+    store,
+    key,
+    { type: "comments", target: { type, id, version } },
+    offsetPages(size, (q, signal) => client.comments.list({ type, id, version }, { ...q, sort, language }, signal)),
+  );
   const post = useCallback<UseComments["post"]>(
-    (body, p = {}) => client.comments.create({ kind, id }, { body, reply_to_id: p.replyTo, anon_name: p.anonName }),
-    [client, kind, id],
+    (body, p = {}) => client.comments.create({ type, id, version }, { body, reply_to_id: p.replyTo, anon_name: p.anonName, language: p.replyTo ? undefined : language }),
+    [client, type, id, version, language],
   );
   const edit = useCallback((cid: string, body: string) => client.comments.edit(cid, body), [client]);
   const remove = useCallback((cid: string) => client.comments.delete(cid), [client]);
@@ -87,11 +95,12 @@ export function useCommentReplies(id: string, o: { pageSize?: number; enabled?: 
   return useList(store, key, { type: "replies", id }, offsetPages(size, (q, signal) => client.comments.replies(id, q, signal)));
 }
 
-/** Whether the caller may comment on the item, the ban that stops it, and what it may do to others' comments. */
-export function useCanComment(ref: RefBody, o: { client?: ContentKitClient } = {}) {
+/** Whether the caller may comment on the target, the ban that stops it, and what it may do to others' comments. */
+export function useCanComment(target: Target, o: { client?: ContentKitClient } = {}) {
   const { client, store, scope } = useContentScope(o.client);
-  const r = useResource<CommentStanding>(store, keyOf("standing", scope, ref.kind, ref.id), { type: "standing", ref: { kind: ref.kind, id: ref.id } }, (s) =>
-    client.comments.standing(ref, s),
+  const { type, id, version } = target;
+  const r = useResource<CommentStanding>(store, keyOf("standing", scope, type, id, version), { type: "standing", target: { type, id, version } }, (s) =>
+    client.comments.standing({ type, id, version }, s),
   );
   return { standing: r.data ?? null, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
 }
@@ -132,7 +141,7 @@ export interface UseModerationQueue extends UseList<HeldItem> {
   resolve: (item: HeldItem, decision: Decision, reason?: string) => Promise<void>;
 }
 
-/** Staff: held comments or posts awaiting review, oldest first (ModerationReview). */
+/** Staff: held comments or content awaiting review, oldest first (ModerationReview). */
 export function useModerationQueue(o: { kind?: HeldKind; pageSize?: number; client?: ContentKitClient } = {}): UseModerationQueue {
   const { client, store, scope } = useContentScope(o.client);
   const kind = o.kind ?? "comment";

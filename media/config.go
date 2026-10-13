@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // Config is the app's media registry (NewRegistry).
@@ -56,8 +57,15 @@ type Kind struct {
 	Name string `json:"name"`
 	// Namespace is "" for Config.Namespace, or a shared one such as
 	// "accounts" whose items every app importing the kind serves.
-	Namespace string   `json:"namespace,omitempty"`
-	Uploads   []Upload `json:"uploads"`
+	Namespace string `json:"namespace,omitempty"`
+	// Versions marks a content kind (ForContent): its items are versions,
+	// {kind, content, version}, plus one content-level item per content,
+	// {kind, content}, which holds only the uploads marked Content.
+	Versions bool `json:"versions,omitempty"`
+	// Publish publishes a Versions kind's versions to viewers through
+	// immutable items of the kind {Name}.published (Publish).
+	Publish *Publish `json:"publish,omitempty"`
+	Uploads []Upload `json:"uploads"`
 	// KeepOriginals keeps an upload's blob once its private outputs exist;
 	// otherwise it is dropped (File.Gone). Public presets' sources are
 	// always kept, so unhiding can render them again.
@@ -82,15 +90,46 @@ type Kind struct {
 // same stem replaces it.
 type Upload struct {
 	Path     string   `json:"path"`
-	Types    []string `json:"types"`            // accepted content types
-	MaxBytes int64    `json:"max_bytes"`        // per file
-	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
-	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
-	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
+	Content  bool     `json:"content,omitempty"` // a Versions kind's content-level upload, e.g. its cover
+	Types    []string `json:"types"`             // accepted content types
+	MaxBytes int64    `json:"max_bytes"`         // per file
+	Max      int      `json:"max,omitempty"`     // uploads matching Path; 0 is unlimited
+	Frames   string   `json:"frames,omitempty"`  // may be grabbed from a frame of this video upload (the frame op)
+	Named    bool     `json:"named,omitempty"`   // the server names it ({name} is "i-{uuid}"): inline images
 	// Video bounds a video or audio upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`
 }
+
+// Publish is how a Versions kind's versions reach viewers: never through
+// their own items, which hold originals and archives, but through items of
+// the derived kind {Name}.published. Each segment of a version's pages (its
+// chapters, or one for all) is one such item holding each page's
+// Renditions; the version's audio is one playback item. Grants open one of
+// them at a time.
+type Publish struct {
+	// Pages is the {name} upload of the version's ordered pages:
+	// "originals/{name}".
+	Pages string `json:"pages"`
+	// Renditions are the private image presets from Pages a reader reads,
+	// the first at reading size: "low", "thumb".
+	Renditions []string `json:"renditions"`
+	// Previews is the public preset (First > 0, from a {name} WebP upload)
+	// that shows a locked version's leading released pages, filled with
+	// copies of their first rendition.
+	Previews string `json:"previews,omitempty"`
+	// Playback is the private Audio preset whose M4As make the version's
+	// playback item.
+	Playback string `json:"playback,omitempty"`
+	// Import is the {name} upload of page archives (application/zip),
+	// expanded into Pages in name order.
+	Import string `json:"import,omitempty"`
+	// Download is the HostOnly Zip preset the download route serves.
+	Download string `json:"download,omitempty"`
+}
+
+// PublishedSuffix names the derived kind of a Publish kind's viewer items.
+const PublishedSuffix = ".published"
 
 // VideoLimits bound what one video or audio upload may cost the worker; an
 // upload past them fails (video_too_long, video_too_large,
@@ -248,7 +287,7 @@ func Rung(n int) *MP4 { return &MP4{Rung: n} }
 type Hooks struct {
 	// Resolver says who may see an item: the read API, Expose and a new
 	// item's first commit (Uploads) use it, and both require it.
-	Resolver access.ContentResolver
+	Resolver resolve.Resolver
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
 	// PurgePublic hears of public URLs overwritten, deleted or first

@@ -1,7 +1,7 @@
 // Package contract renders ContentKit's route catalog (internal/httpapi) and
 // error-code registry as the files other tools read: api/openapi.json, the
-// browser SDK's generated route table, wire types and error codes, and
-// docs/api/routes.md. They are committed: `go generate ./internal/contract`
+// Go client's methods (client_gen.go), the browser SDK's generated route
+// table, wire types and error codes, and docs/api/routes.md. They are committed: `go generate ./internal/contract`
 // rewrites them and TestGeneratedContractIsFresh fails when one is stale.
 package contract
 
@@ -20,11 +20,17 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 
 	// The modules register their routes.
+	_ "github.com/open-rails/contentkit/catalog"
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
+	_ "github.com/open-rails/contentkit/discovery"
+	_ "github.com/open-rails/contentkit/groups"
+	_ "github.com/open-rails/contentkit/importer"
+	_ "github.com/open-rails/contentkit/internal/kindsroute"
 	_ "github.com/open-rails/contentkit/media"
+	_ "github.com/open-rails/contentkit/media/versions"
 	_ "github.com/open-rails/contentkit/notification"
-	_ "github.com/open-rails/contentkit/taxonomy"
+	_ "github.com/open-rails/contentkit/offers"
 )
 
 // Where each generated file lives, relative to the repository.
@@ -45,8 +51,13 @@ func Files(fsys fs.FS) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	client, err := m.goClient()
+	if err != nil {
+		return nil, err
+	}
 	return map[string][]byte{
 		OpenAPIFile:               openapi,
+		GoClientFile:              client,
 		RoutesDoc:                 m.routesMD(),
 		SDKDir + "routes.ts":      m.routesTS(),
 		SDKDir + "wire.ts":        m.wireTS(),

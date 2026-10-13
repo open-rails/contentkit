@@ -1,10 +1,16 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/de.js";
 import { social } from "./social/de.js";
+import { groups } from "./groups/de.js";
+import { discovery } from "./discovery/de.js";
+import { content } from "./content/de.js";
 
 export const de: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
+  ...groups,
+  ...discovery,
+  ...content,
   common: {
     cancel: "Abbrechen",
     close: "Schließen",
@@ -262,9 +268,12 @@ export const de: ContentKitUiMessageBundle = {
     resume_mismatch: "Der gespeicherte Upload gehört zu einer anderen Datei. Bitte wähle die Datei erneut.",
     moderation_rejected: "Dies wurde von der Moderation abgelehnt.",
     comment_banned: "Du kannst hier nicht kommentieren.",
+    comments_closed: "Die Kommentare sind hier geschlossen.",
+    limit_reached: "Du hast bereits so viele davon, wie erlaubt sind.",
     comment_too_long: "Dieser Kommentar ist zu lang.",
     commentTooLongBy: "Ein Kommentar hat höchstens {maxChars} Zeichen.",
     not_configured: "Diese Funktion ist auf dieser Website nicht verfügbar.",
+    no_membership: "Inhalte nur für Mitglieder brauchen eine Gruppe, der man beitreten oder die man kaufen kann. Lege zuerst ein Angebot für die Gruppe an.",
     tenant_mismatch: "Bei uns ist etwas schiefgelaufen. Bitte versuche es erneut.",
     gone: "Dieser Inhalt ist nicht mehr verfügbar.",
   },

@@ -9,7 +9,7 @@ import { MediaFolderEditor, type MediaFolderEditorHandle } from "../../src/index
 import { ContentKitProvider, useMediaFolder } from "../../src/react/index.js";
 import { bytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { client, fixture, harness, item, png, recorder, wait, type Recorder, NodeFile } from "./setup.js";
+import { client, fixture, harness, item, itemFolder, png, recorder, wait, type Recorder, NodeFile } from "./setup.js";
 
 const h = harness();
 let cfg: Config;
@@ -21,10 +21,7 @@ beforeAll(async () => {
 });
 
 /** An item of kind owned by owner: note (originals/{name}, PNG, at most 2) or album (images and videos). */
-async function folder(kind: "note" | "album"): Promise<RefBody> {
-  const { kind: k, id } = await item(h, kind, owner);
-  return { kind: k, id };
-}
+const folder = (kind: "note" | "album"): Promise<RefBody> => item(h, kind, owner);
 
 /** Bytes no decoder reads, declared as type: the worker refuses them. */
 const garbage = (name: string, type: string, seed = 1) => new NodeFile([bytes(4096, seed)], name, { type }) as unknown as File;
@@ -101,7 +98,7 @@ it("renames, crops, replaces and removes uploads, and shows each one's thumbnail
     await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(3), wait);
     const row = (path: string) => container.querySelector<HTMLElement>(`[data-ckui=upload-row][data-path="${path}"]`)!;
     // A processed photo shows its derived file, signed, from media-gateway.
-    await waitFor(() => expect(row("images/a.png").querySelector("img")).toHaveAttribute("src", expect.stringContaining(`${cfg.media}/v1/${cfg.namespace}/album/${ref.id}/private/`)), wait);
+    await waitFor(() => expect(row("images/a.png").querySelector("img")).toHaveAttribute("src", expect.stringContaining(`${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/`)), wait);
     expect(within(row("images/b.png")).getByText("Edited")).toBeInTheDocument();
     expect(row("videos/v.mp4")).toHaveTextContent(/Processing|Queued|Encoding/);
     expect(container.querySelectorAll("[data-ckui=folder-group] h4")[0]).toHaveTextContent("Images · 2 / 6");

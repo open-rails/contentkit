@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -85,7 +85,7 @@ func TestManifestCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.res.set(cid(1), access.Resolution{})
+	f.res.set(cid(1), resolve.Resolution{})
 	if err := jobs.Expose(ctx, g); err != nil || f.exists(cover) {
 		t.Fatalf("hide: %v, cover kept %v", err, f.exists(cover))
 	}
@@ -125,7 +125,7 @@ func TestOversizedManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.res.set(cid(1), access.Resolution{})
+	f.res.set(cid(1), resolve.Resolution{})
 	if err := jobs.Expose(ctx, g); err != nil || f.exists(cover) {
 		t.Fatalf("hide: %v, cover kept %v", err, f.exists(cover))
 	}
@@ -313,7 +313,7 @@ func TestHideFits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	f.res.set(cid(1), access.Resolution{})
+	f.res.set(cid(1), resolve.Resolution{})
 	if err := f.jobs.Expose(ctx, full); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestHideFits(t *testing.T) {
 	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(b.Bytes()), int64(b.Len()), media.PutOptions{ContentType: "application/gzip"}); err != nil {
 		t.Fatal(err)
 	}
-	f.res.set(cid(2), access.Resolution{})
+	f.res.set(cid(2), resolve.Resolution{})
 	if err := f.jobs.Expose(ctx, tight); !errors.Is(err, media.ErrManifestTooLarge) {
 		t.Fatalf("a hide that does not fit: %v", err)
 	}

@@ -13,6 +13,7 @@ name: images
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
     - 'cmd/*/Dockerfile'
+    - 'server/cmd/*/Dockerfile'
     - '.dockerignore'
     - '.github/workflows/images.yaml'
   workflow_dispatch:
@@ -40,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-gateway, media-worker]
+        name: [media-gateway, media-worker, server]
         arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
     steps:
     - uses: actions/checkout@v4
@@ -65,7 +66,7 @@ jobs:
       uses: docker/build-push-action@v6
       with:
         context: .
-        file: cmd/${{ matrix.name }}/Dockerfile
+        file: ${{ matrix.name == 'server' && 'server/cmd/contentkit/Dockerfile' || format('cmd/{0}/Dockerfile', matrix.name) }}
         platforms: linux/${{ matrix.arch }}
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -98,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-gateway, media-worker]
+        name: [media-gateway, media-worker, server]
     steps:
     - uses: actions/download-artifact@v4
       with:

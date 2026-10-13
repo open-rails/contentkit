@@ -1,10 +1,16 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/ja.js";
 import { social } from "./social/ja.js";
+import { groups } from "./groups/ja.js";
+import { discovery } from "./discovery/ja.js";
+import { content } from "./content/ja.js";
 
 export const ja: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
+  ...groups,
+  ...discovery,
+  ...content,
   common: {
     cancel: "キャンセル",
     close: "閉じる",
@@ -262,9 +268,12 @@ export const ja: ContentKitUiMessageBundle = {
     resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
     moderation_rejected: "モデレーションにより拒否されました。",
     comment_banned: "ここではコメントできません。",
+    comments_closed: "ここのコメントは締め切られています。",
+    limit_reached: "作成できる上限に達しています。",
     comment_too_long: "コメントが長すぎます。",
     commentTooLongBy: "コメントは {maxChars} 文字までです。",
     not_configured: "この機能はこのサイトでは利用できません。",
+    no_membership: "メンバー限定コンテンツには、参加または購入できるグループが必要です。先にグループにオファーを追加してください。",
     tenant_mismatch: "サーバー側で問題が発生しました。もう一度お試しください。",
     gone: "このコンテンツはもう利用できません。",
   },

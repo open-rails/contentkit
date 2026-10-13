@@ -23,7 +23,7 @@ func decodeErr(t *testing.T, body string) errorBody {
 	return e
 }
 
-func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
+func TestErrorMapping_PollIDs(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{})
 	h := rt.Handler()
 	ctx := context.Background()
@@ -32,24 +32,12 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, slug := range []string{"taken", "available"} {
-		rec := doJSON(t, h, admin, "POST", "/posts", PostInput{Title: ptr(slug), Body: ptr("body"), Slug: ptr(slug)})
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	var postID string
-	if err := rt.store.pool.QueryRow(ctx, "SELECT id FROM "+rt.store.t.posts+" WHERE tenant_id=$1 AND slug='available'", rt.tenant).Scan(&postID); err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range []struct {
 		name, method, path string
 		body               any
 		status             int
 		code               string
 	}{
-		{"duplicate slug create", "POST", "/posts", PostInput{Title: ptr("new"), Body: ptr("body"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
-		{"duplicate slug update", "PATCH", "/posts/" + postID, PostInput{Title: ptr("changed"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
 		{"malformed poll update", "PATCH", "/polls/not-a-uuid", PollUpdate{Question: ptr("changed")}, http.StatusNotFound, CodeNotFound},
 		{"malformed vote option", "POST", "/polls/" + poll.ID + "/vote", map[string]string{"option_id": "not-a-uuid"}, http.StatusBadRequest, CodeInvalidRequest},
 	} {
@@ -60,14 +48,6 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 				t.Errorf("got %d %s; want %d %s", rec.Code, rec.Body.String(), c.status, c.code)
 			}
 		})
-	}
-	var count int
-	var title, slug string
-	if err := rt.store.pool.QueryRow(ctx, "SELECT title,slug,(SELECT count(*) FROM "+rt.store.t.posts+" WHERE tenant_id=$2) FROM "+rt.store.t.posts+" WHERE id=$1 AND tenant_id=$2", postID, rt.tenant).Scan(&title, &slug, &count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 2 || title != "available" || slug != "available" {
-		t.Errorf("failed slug writes changed stored posts: count=%d title=%q slug=%q", count, title, slug)
 	}
 }
 
@@ -80,10 +60,8 @@ func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
 	}
-	post := insertPost(t, rt)
 	name := image("i-00000000-0000-4000-8000-000000000000")
-	for _, route := range []string{"PUT /posts/" + post + "/cover", "POST /posts/" + post + "/images", "PUT /polls/" + poll.ID + "/image",
-		"PUT /polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
+	for _, route := range []string{"PUT /polls/" + poll.ID + "/image", "PUT /polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
 		method, path, _ := strings.Cut(route, " ")
 		b, _ := json.Marshal(name)
 		req := httptest.NewRequest(method, path, bytes.NewReader(b))
@@ -108,12 +86,13 @@ func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 func TestErrorMapping_ForeignTenantRefIsSanitized500(t *testing.T) {
 	var logs bytes.Buffer
 	rt, _ := newTestRuntime(t, Options{
-		Resolver:     foreignResolver{},
-		ContentKinds: []string{"gallery"},
-		Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Resolver: foreignResolver{},
+		Kinds:    testKinds("gallery"),
+		Logger:   slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
+	storeTarget(t, rt, "gallery", cid(1))
 
-	req := httptest.NewRequest("GET", "/gallery/"+cid(1)+"/comments", nil)
+	req := httptest.NewRequest("GET", "/contents/"+cid(1)+"/comments", nil)
 	req = testauth.As(req, access.Actor{ID: "u1"})
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
@@ -146,22 +125,26 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 	res.set("gallery", cid(901), true, false)
 	var logs bytes.Buffer
 	rt, _ := newTestRuntime(t, Options{
-		Resolver:     res,
-		Auth:         testauth.Auth{Authz: denyAll{}},
-		ContentKinds: []string{"gallery"},
-		Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Resolver: res,
+		Auth:     testauth.Auth{Authz: denyAll{}},
+		Kinds:    testKinds("gallery"),
+		Logger:   slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
+	if _, err := rt.store.pool.Exec(t.Context(), `INSERT INTO `+rt.store.t.items+` (tenant_id, id, kind) VALUES ($1, $2, 'widget')`, rt.tenant, cid(78)); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name, method, path, body string
 		status                   int
 		code                     string
 	}{
-		{"unregistered kind", "GET", "/widget/" + cid(1) + "/comments", "", http.StatusNotFound, CodeNotFound},
-		{"not visible", "GET", "/gallery/" + cid(902) + "/comments", "", http.StatusNotFound, CodeNotFound},
-		{"not accessible", "POST", "/gallery/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
-		{"invalid body", "POST", "/gallery/" + cid(1) + "/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
-		{"denied perm", "POST", "/posts", `{"title":"t","body":"b"}`, http.StatusForbidden, CodeForbidden},
+		{"unknown target", "GET", "/contents/" + cid(77) + "/comments", "", http.StatusNotFound, CodeNotFound},
+		{"unregistered kind", "GET", "/contents/" + cid(78) + "/comments", "", http.StatusNotFound, CodeNotFound},
+		{"not visible", "GET", "/contents/" + cid(902) + "/comments", "", http.StatusNotFound, CodeNotFound},
+		{"not accessible", "POST", "/contents/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
+		{"invalid body", "POST", "/contents/" + cid(1) + "/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
+		{"denied perm", "POST", "/polls", `{"question":"q"}`, http.StatusForbidden, CodeForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,9 +174,9 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 func TestErrorMapping_ModerationRejection(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), Moderator: &fakeModerator{}})
 
-	req := httptest.NewRequest("POST", "/gallery/"+cid(1)+"/comments", strings.NewReader(`{"body":"spam"}`))
+	req := httptest.NewRequest("POST", "/contents/"+cid(1)+"/comments", strings.NewReader(`{"body":"spam"}`))
 	req = testauth.As(req, access.Actor{ID: "u1"})
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)

@@ -140,7 +140,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, http.StatusNotFound)
 		return
 	}
-	key := o.key(o.id)
+	key := o.key()
 	cacheControl := publicCacheControl
 	var dl *string // a private file's unsigned download name
 	if o.area == "private" {
@@ -158,8 +158,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil && missing(resp.StatusCode) && o.area == "public" {
 		if name := h.defaultName(o); name != "" {
 			_ = resp.Body.Close()
-			o.name = name
-			key = o.key(layout.DefaultID)
+			o.name, o.id, o.version = name, layout.DefaultID, ""
+			key = o.key()
 			resp, err = h.fetch(r, o.ns, key)
 		}
 	}
@@ -174,21 +174,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.relay(w, r, key, resp, cacheControl, dl)
 }
 
-type object struct{ ns, kind, id, area, name string }
+type object struct{ ns, kind, id, version, area, name string }
 
-func (o object) key(id string) string {
-	return o.ns + "/" + o.kind + "/" + id + "/" + o.area + "/" + o.name
+func (o object) key() string {
+	return layout.Prefix(o.ns, o.kind, o.id, o.version) + o.area + "/" + o.name
 }
 
-// parse accepts exactly /v1/{ns}/{kind}/{id}/{public|private}/{name},
+// parse accepts exactly /v1/{ns}/{kind}/{id}[/{version}]/{public|private}/{name},
 // unescaped, for a namespace served on the request's host.
 func (h *Handler) parse(r *http.Request) (object, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
 	p := strings.Split(rest, "/")
-	if !ok || r.URL.RawPath != "" || len(p) != 5 || slices.ContainsFunc(p[:4], func(s string) bool { return !layout.ValidSegment(s) }) {
+	if !ok || r.URL.RawPath != "" || len(p) < 5 || len(p) > 6 || slices.ContainsFunc(p[:len(p)-1], func(s string) bool { return !layout.ValidSegment(s) }) {
 		return object{}, false
 	}
-	o := object{p[0], p[1], p[2], p[3], p[4]}
+	o := object{ns: p[0], kind: p[1], id: p[2], area: p[len(p)-2], name: p[len(p)-1]}
+	if len(p) == 6 {
+		if o.version = p[3]; !layout.ValidVersion(o.version) {
+			return object{}, false
+		}
+	}
 	host := r.Host
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		host = hh

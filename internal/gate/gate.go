@@ -65,11 +65,39 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 	if perm == "" || actor.Anonymous {
 		return false, nil
 	}
+	if _, ok := actor.Verified.(hostVerified); ok {
+		return true, nil
+	}
 	root, err := RootScope(ctx, a)
 	if err != nil {
 		return false, err
 	}
 	return actor.Can(ctx, root, perm)
+}
+
+// GroupEditor reports whether actor edits a user-owned group, by its owner
+// and AuthKit scope (groups' owner_user_id and auth_scope): its owner, or a
+// holder of any of perms in the scope, under the authority of a's root
+// scope. Staff are the caller's to admit. An error never grants.
+func GroupEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
+	switch {
+	case actor.Anonymous:
+		return false, nil
+	case owner != "" && actor.Person() && owner == actor.ID:
+		return true, nil
+	case scope == "":
+		return false, nil
+	}
+	root, err := RootScope(ctx, a)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range perms {
+		if ok, err := actor.Can(ctx, auth.Scope{Authority: root.Authority, ID: scope}, p); err != nil || ok {
+			return ok, err
+		}
+	}
+	return false, nil
 }
 
 // RootScope is where a's root permissions are held, asked per check. An
@@ -108,6 +136,40 @@ func isNil(v any) bool {
 
 type actorKey struct{}
 
+type hostKey struct{}
+
+// HostSubject is the actor id of the engine's own in-process client.
+const HostSubject = "contentkit"
+
+// AsHost marks ctx as a request of the engine's in-process client: the gate
+// admits it as the host application holding every permission, with no
+// credential. Only in-process code can set it; nothing on the wire does.
+func AsHost(ctx context.Context) context.Context { return context.WithValue(ctx, hostKey{}, true) }
+
+// hostVerified is the in-process host's authority: holding the Engine is it.
+type hostVerified struct{}
+
+func (hostVerified) Identity() auth.Identity {
+	return auth.Identity{Subject: HostSubject, SubjectKind: auth.SubjectApplication}
+}
+
+func (hostVerified) Can(context.Context, auth.Scope, string) (bool, error) { return true, nil }
+
+// Host is the engine's own actor, holding every permission: what its
+// in-process client acts as, and its own cascades.
+func Host() access.Actor {
+	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
+}
+
+type siteKey struct{}
+
+// Site is the request host the gate bound to ctx: it picks the site whose
+// scope every read applies (kinds.Config.SiteFor). "" outside a request.
+func Site(ctx context.Context) string {
+	s, _ := ctx.Value(siteKey{}).(string)
+	return s
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
@@ -131,7 +193,7 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		if (s.Auth == httpapi.User || s.Auth == httpapi.Staff) && a.Anonymous {
+		if (s.Auth == httpapi.User || s.Auth == httpapi.Staff || s.Auth == httpapi.Editor) && a.Anonymous {
 			g.refuse(w, r, s, auth.ErrUnauthenticated)
 			return
 		}
@@ -151,7 +213,8 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, a)))
+		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), siteKey{}, r.Host)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -179,6 +242,9 @@ func (f fault) Error() string { return string(f) }
 // actor asks the Authenticator who r is: anonymous when it carries no
 // credential, else the Verified's subject.
 func (g *Gate) actor(r *http.Request) (access.Actor, error) {
+	if host, _ := r.Context().Value(hostKey{}).(bool); host {
+		return Host(), nil
+	}
 	v, err := g.authenticate(r)
 	switch {
 	case err == nil:
@@ -294,9 +360,18 @@ var (
 	_ auth.PermissionChecker   = (*memo)(nil)
 	_ auth.RecentSignInChecker = (*memo)(nil)
 	_ auth.Bound               = (*memo)(nil)
+	_ access.Entitled          = (*memo)(nil)
 )
 
 func (m *memo) Identity() auth.Identity { return m.v.Identity() }
+
+// Entitlements forwards the token's entitlement claims (access.Entitled).
+func (m *memo) Entitlements() []string {
+	if e, ok := m.v.(access.Entitled); ok {
+		return e.Entitlements()
+	}
+	return nil
+}
 
 func (m *memo) Can(ctx context.Context, scope auth.Scope, permission string) (ok bool, err error) {
 	key := canKey{scope, permission}

@@ -60,22 +60,25 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 // images fills out[at[n]] from j's projection.
 func (m *Manifests) images(ctx context.Context, j *PGJournal, qs []ImageQuery, at []int, out [][]PublicImage) error {
 	cols := make([][]string, 5)
+	var versions []*string
 	for _, i := range at {
 		q := qs[i]
 		for c, v := range []string{q.Ref.TenantID, q.Ref.ContentKind, q.Ref.ContentID, q.Name, q.Preset} {
 			cols[c] = append(cols[c], v)
 		}
+		versions = append(versions, q.Ref.ContentVersionID)
 	}
-	// Two arms keep a named lookup on the primary key's full prefix.
+	// Two arms keep a named lookup on the key's prefix.
 	const pick = `SELECT q.n, p.ordinal, p.upload_path, p.preset, p.renditions FROM q JOIN %[1]s p
-ON p.tenant_id = q.tenant_id AND p.content_kind = q.content_kind AND p.content_id = q.content_id`
+ON p.tenant_id = q.tenant_id AND p.content_kind = q.content_kind AND p.content_id = q.content_id
+AND p.content_version_id IS NOT DISTINCT FROM q.content_version_id`
 	t := j.publications
-	rows, err := j.pool.Query(ctx, `WITH q AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
-WITH ORDINALITY AS q(tenant_id, content_kind, content_id, upload_name, preset, n))
+	rows, err := j.pool.Query(ctx, `WITH q AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+WITH ORDINALITY AS q(tenant_id, content_kind, content_id, content_version_id, upload_name, preset, n))
 `+fmt.Sprintf(pick, t)+` AND p.upload_name = q.upload_name WHERE q.upload_name <> '' AND (q.preset = '' OR p.preset = q.preset)
 UNION ALL
 `+fmt.Sprintf(pick, t)+` WHERE q.upload_name = '' AND (q.preset = '' OR p.preset = q.preset)
-ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], cols[3], cols[4])
+ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], versions, cols[3], cols[4])
 	if err != nil {
 		return err
 	}
@@ -321,13 +324,13 @@ func (j *PGJournal) projectTx(ctx context.Context, tx pgx.Tx, p *projection) err
 	t := j.publications
 	_, err = tx.Exec(ctx, `WITH r AS (SELECT * FROM jsonb_to_recordset($4::jsonb)
 AS r(name text, path text, preset text, ordinal integer, generation uuid, renditions jsonb)),
-gone AS (DELETE FROM `+t+` p WHERE p.tenant_id = $1 AND p.content_kind = $2 AND p.content_id = $3
+gone AS (DELETE FROM `+t+` p WHERE p.tenant_id = $1 AND p.content_kind = $2 AND p.content_id = $3 AND p.content_version_id IS NOT DISTINCT FROM $5::text
 AND NOT EXISTS (SELECT 1 FROM r WHERE r.name = p.upload_name AND r.path = p.upload_path AND r.preset = p.preset))
-INSERT INTO `+t+` AS p (tenant_id, content_kind, content_id, upload_name, upload_path, preset, ordinal, generation, renditions)
-SELECT $1, $2, $3, r.name, r.path, r.preset, r.ordinal, r.generation, r.renditions FROM r
-ON CONFLICT (tenant_id, content_kind, content_id, upload_name, upload_path, preset) DO UPDATE
+INSERT INTO `+t+` AS p (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset, ordinal, generation, renditions)
+SELECT $1, $2, $3, $5, r.name, r.path, r.preset, r.ordinal, r.generation, r.renditions FROM r
+ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset) DO UPDATE
 SET ordinal = EXCLUDED.ordinal, generation = EXCLUDED.generation, renditions = EXCLUDED.renditions, updated_at = now()
 WHERE (p.ordinal, p.generation, p.renditions) IS DISTINCT FROM (EXCLUDED.ordinal, EXCLUDED.generation, EXCLUDED.renditions)`,
-		p.ref.TenantID, p.ref.ContentKind, p.ref.ContentID, body)
+		p.ref.TenantID, p.ref.ContentKind, p.ref.ContentID, body, p.ref.ContentVersionID)
 	return err
 }

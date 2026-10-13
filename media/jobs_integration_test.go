@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -484,7 +485,7 @@ func TestExpose(t *testing.T) {
 	if status, body, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 || body != string(png(199)) {
 		t.Fatalf("public cover %d %q", status, body)
 	}
-	f.res.set(cid(1), access.Resolution{})
+	f.res.set(cid(1), resolve.Resolution{})
 	if err := f.jobs.Expose(ctx, g); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +523,7 @@ func TestNewItemStartsHidden(t *testing.T) {
 	g := f.ref("gallery", 1)
 	item, _ := f.reg.Item(g)
 	cover, _ := item.Public("cover-460.webp")
-	f.res.set(cid(1), access.Resolution{}) // a draft
+	f.res.set(cid(1), resolve.Resolution{}) // a draft
 	if m, err := f.ms.Create(ctx, g); err != nil || !m.Hidden {
 		t.Fatalf("created %+v %v", m, err)
 	}
@@ -781,4 +782,68 @@ func TestHostRelays(t *testing.T) {
 		_, _, err := f.ms.Get(ctx, g)
 		return errors.Is(err, media.ErrNotFound)
 	})
+}
+
+// A content's item and its versions' are folders within one another; every
+// pass visits each as its own item and takes nothing of the others.
+func TestVersionFolderJobs(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds = append(c.Kinds, media.Kind{Name: "book", Versions: true, KeepOriginals: true, Uploads: []media.Upload{
+			{Path: "cover", Content: true, Types: images, MaxBytes: 1 << 20}, {Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}}})
+	})
+	f.visible(1)
+	ctx := context.Background()
+	refs := []contentref.ContentRef{}
+	for _, v := range []string{"", cid(11), cid(12)} {
+		ref, err := f.reg.VersionRef("book", cid(1), v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, ref)
+	}
+	f.put(refs[0], "cover.png", "image/png", png(1))
+	f.put(refs[1], "pages/a.png", "image/png", png(2))
+	f.put(refs[2], "pages/a.png", "image/png", png(3))
+	var strays, kept []string
+	for i, ref := range refs {
+		item, _ := f.reg.Item(ref)
+		stray, _ := item.Blob(blobOf([]byte(fmt.Sprintf("stray %d", i))))
+		f.object(stray, "stray")
+		strays = append(strays, stray)
+		m, _, _ := f.ms.Get(ctx, ref)
+		for _, b := range m.Blobs() {
+			key, _ := item.Blob(b)
+			kept = append(kept, key)
+		}
+	}
+	if err := f.later().SweepAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range strays {
+		if f.exists(k) {
+			t.Fatalf("stray %s kept", k)
+		}
+	}
+	for _, k := range kept {
+		if !f.exists(k) {
+			t.Fatalf("swept %s", k)
+		}
+	}
+	f.q.take()
+	if n, err := f.jobs.Regenerate(ctx, "book", ""); err != nil || n != 3 {
+		t.Fatalf("regenerate visited %d: %v", n, err)
+	}
+	rep, err := f.later().SweepOrphans(ctx, media.OrphanSweep{Kind: "book", Delete: true,
+		Exists: func(_ context.Context, ids []string) (map[string]bool, error) {
+			return map[string]bool{cid(1): true, cid(11): true}, nil
+		}})
+	if err != nil || rep.Folders != 3 || len(rep.Orphans) != 1 || rep.Orphans[0].ID != cid(12) || !rep.Orphans[0].Deleted {
+		t.Fatalf("orphans %+v %v", rep, err)
+	}
+	for i, ref := range refs {
+		m, _, err := f.ms.Get(ctx, ref)
+		if gone := err == nil && m.Deleted || errors.Is(err, media.ErrNotFound); gone != (i == 2) {
+			t.Fatalf("%s deleted %v (%v)", ref, gone, err)
+		}
+	}
 }

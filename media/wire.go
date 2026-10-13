@@ -9,10 +9,12 @@ import (
 // (Reader.Handler). The browser SDK's types are generated from them
 // (internal/contract). SHA-256 values are lowercase hex.
 
-// RefBody names an item of the handler's registry.
+// RefBody names an item of the handler's registry: of a Versions kind, one
+// version's, or ("") its content-level item.
 type RefBody struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
 }
 
 // PresignBody declares one upload: its path, type, size and whole-file
@@ -65,6 +67,18 @@ type PartBody struct {
 type PartsBody struct {
 	Ticket string     `json:"ticket"`
 	Parts  []PartBody `json:"parts"`
+}
+
+// CopyBody stages server-side copies of keys of the item's bucket outside
+// ContentKit's namespaces (an importer's), for one commit's puts.
+type CopyBody struct {
+	Ref   RefBody       `json:"ref"`
+	Files []CopyRequest `json:"files"`
+}
+
+// CopyReply is each copy's path to commit and staged blob, in order.
+type CopyReply struct {
+	Files []StagedCopy `json:"files"`
 }
 
 type TicketBody struct {

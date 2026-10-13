@@ -1,6 +1,6 @@
 // Package contentref defines the reference vocabulary every ContentKit package
-// and port shares: a tenant-scoped reference to host-owned content and the
-// identity of a generic taxonomy record.
+// and port shares: a tenant-scoped reference to content and the identity of a
+// group.
 package contentref
 
 import (
@@ -93,7 +93,7 @@ func (r ContentRef) String() string {
 }
 
 // ContentKey is the comparable form of a ContentRef; ContentVersionID is ""
-// for the work. Storage keys use the same encoding.
+// for the work, which storage keys hold as NULL (internal/versionid).
 type ContentKey struct {
 	TenantID         string
 	ContentKind      string
@@ -106,8 +106,7 @@ func (k ContentKey) Ref() ContentRef {
 	return New(k.TenantID, k.ContentKind, k.ContentID).WithVersion(k.ContentVersionID)
 }
 
-// TaxonomyID identifies a generic ContentKit catalog record (tag, artist,
-// series, creator, character, voice actor). Until the taxonomy module lands,
-// taxonomy records are indexed and referenced through ContentRef with the
-// taxonomy kind as ContentKind and the TaxonomyID as ContentID.
-type TaxonomyID string
+// GroupID identifies a group (tag, artist, series, character, channel, rail).
+// A group's search document and code use the group kind as ContentKind and
+// the GroupID as ContentID.
+type GroupID string

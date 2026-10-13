@@ -6,12 +6,10 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ContentKitClient, RefBody } from "../../src/client/index.js";
 import { ContentKitProvider, useMediaRead } from "../../src/react/index.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
+import { Accounts, client, content, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
 
 describe("useMediaRead against the real ContentKit", () => {
   const h = harness();
-  // The client sends a ref as given: only kind and id.
-  const bare = ({ kind, id }: { kind: string; id: string }) => ({ kind, id });
   const accounts = new Accounts(h);
   let cfg: Config;
   let alice: TestUser;
@@ -55,7 +53,7 @@ describe("useMediaRead against the real ContentKit", () => {
   }
 
   it("reads the item, refetches on reload, and shows a supplied read without fetching", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     await pages(ref, 1);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
@@ -69,7 +67,7 @@ describe("useMediaRead against the real ContentKit", () => {
   });
 
   it("shares one request per item and options; set() updates every reader; a commit reloads the item's reads", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = content(await item(h, "gallery", alice));
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
     const seeding = client(h, cfg, alice);
@@ -99,7 +97,7 @@ describe("useMediaRead against the real ContentKit", () => {
   });
 
   it("reads windows of a long item, keeps them, and merges their URLs", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     await pages(ref, 120);
     const r = recording();
     // A viewer: the derived pages (low-res/), each with its signed URL.
@@ -119,11 +117,11 @@ describe("useMediaRead against the real ContentKit", () => {
   }, 180_000);
 
   it("waits out a read rate limit before showing an error", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     await pages(ref, 1);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
-    const path = `/api/contentkit/media/gallery/${ref.id}`;
+    const path = `/api/contentkit/v1/media/gallery/${ref.id}`;
     await h.faults([{ fault: "api", path, method: "GET", status: 429, code: "rate_limited", error: "slow down", retry_after: 1, times: 1 }]);
     const { result } = renderHook(() => useMediaRead(ref, { client: c }));
     await waitFor(() => expect(result.current.read?.files).toHaveLength(1), { timeout: 5000 });
@@ -136,7 +134,7 @@ describe("useMediaRead against the real ContentKit", () => {
   }, 20_000);
 
   it("polls an editor read while uploads process, then stops", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     // The worker's storage requests for this item wait: its upload stays in processing.
     await h.faults([{ item: ref.id, fault: "hold" }]);
     const c = client(h, cfg, alice);
@@ -154,7 +152,7 @@ describe("useMediaRead against the real ContentKit", () => {
   });
 
   it("reads again shortly before the URLs expire; refresh() joins a read in flight", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     await pages(ref, 1);
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const r = recording();
@@ -178,7 +176,7 @@ describe("useMediaRead against the real ContentKit", () => {
   });
 
   it("reloads the item's viewer reads once a polled editor read shows its uploads processed", async () => {
-    const ref = bare(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     await h.faults([{ item: ref.id, fault: "hold" }]);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });

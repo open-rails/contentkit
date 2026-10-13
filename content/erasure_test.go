@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
@@ -32,15 +33,6 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	post := insertPost(t, rt)
-	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.posts+` SET is_draft=false WHERE id=$1`, post); err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range []access.Actor{u1, u2, anon} {
-		if _, err := rt.posts.react(ctx, a, post, 1); err != nil {
-			t.Fatal(err)
-		}
-	}
 	poll, err := rt.polls.create(ctx, pollAdmin, PollInput{Question: "q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +42,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +56,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatalf("source counters after erase%d: %+v", i, got)
 		}
 		var likes int
-		for _, q := range []string{`SELECT likes FROM ` + rt.store.t.comments + ` WHERE id='` + cm.ID + `'`, `SELECT total_likes FROM ` + rt.store.t.posts + ` WHERE id='` + post + `'`, `SELECT vote_count FROM ` + rt.store.t.pollOptions + ` WHERE id='` + poll.Options[0].ID + `'`} {
+		for _, q := range []string{`SELECT likes FROM ` + rt.store.t.comments + ` WHERE id='` + cm.ID + `'`, `SELECT vote_count FROM ` + rt.store.t.pollOptions + ` WHERE id='` + poll.Options[0].ID + `'`} {
 			if err := rt.store.pool.QueryRow(ctx, q).Scan(&likes); err != nil || likes != 2 {
 				t.Fatalf("own counter=%d err=%v", likes, err)
 			}
@@ -80,10 +72,9 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 		t.Fatalf("other tenant damaged: %+v", got)
 	}
 	for name, write := range map[string]func() error{
-		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", localeID(42, "en"), 1); return e },
-		"favorite":         func() error { return favErr(rt.favorites.add(ctx, u1, "gallery", localeID(42, "en"))) },
-		"unfavorite":       func() error { return favErr(rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en"))) },
-		"post reaction":    func() error { _, err := rt.posts.react(ctx, u1, post, 1); return err },
+		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, rt.Ref("gallery", localeID(42, "en")), 1); return e },
+		"favorite":         func() error { return favErr(rt.favorites.add(ctx, u1, rt.Ref("gallery", localeID(42, "en")))) },
+		"unfavorite":       func() error { return favErr(rt.favorites.remove(ctx, u1, rt.Ref("gallery", localeID(42, "en")))) },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
 	} {
@@ -117,9 +108,9 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			var err error
 			switch i % 3 {
 			case 0:
-				_, err = rt.reactions.react(ctx, actor, "gallery", localeID(42, "en"), 1)
+				_, err = rt.reactions.react(ctx, actor, rt.Ref("gallery", localeID(42, "en")), 1)
 			case 1:
-				err = favErr(rt.favorites.add(ctx, actor, "gallery", localeID(42, "en")))
+				err = favErr(rt.favorites.add(ctx, actor, rt.Ref("gallery", localeID(42, "en"))))
 			case 2:
 				_, err = rt.polls.vote(ctx, actor, poll.ID, poll.Options[0].ID)
 			}
@@ -188,10 +179,10 @@ func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Privileged restore loads old source/counters but retains the permanent fence.
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`',NULL,'gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`',NULL,'gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.counts+` SET likes=likes+1 WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='`+cid(42)+`'`, rt.tenant); err != nil {
@@ -270,7 +261,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: base.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: base.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +278,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, "gallery", localeID(42, "en"), 1)
+		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, rt.Ref("gallery", localeID(42, "en")), 1)
 		done <- err
 	}()
 	// Observe the writer's advisory-lock wait before committing the erasure.
@@ -314,66 +305,6 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 	var n int
 	if err := base.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+base.store.t.reactions+` WHERE user_id='gone'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("source resurrected after lock wait: %d %v", n, err)
-	}
-}
-
-func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
-	ctx := context.Background()
-	rt, _ := newPostRuntime(t, Options{})
-	author := access.Actor{ID: "gone"}
-	future := time.Now().Add(time.Hour)
-	for _, in := range []PostInput{
-		{Title: ptr("unpublished draft"), Body: ptr("draft secret"), Excerpt: ptr("draft excerpt"), IsDraft: ptr(true)},
-		{Title: ptr("scheduled"), Body: ptr("scheduled secret"), Excerpt: ptr("scheduled excerpt"), IsDraft: ptr(false), LiveAt: &future},
-	} {
-		rec := doJSON(t, rt.Handler(), author, "POST", "/posts", in)
-		if rec.Code != 201 {
-			t.Fatalf("create %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", PostInput{Title: ptr("published"), Body: ptr("retain public"), IsDraft: ptr(false)})
-	if rec.Code != 201 {
-		t.Fatal(rec.Body.String())
-	}
-	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
-		t.Fatal(err)
-	}
-	var unpublished, public int
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.posts+` WHERE deleted_at IS NOT NULL AND body='' AND title='' AND excerpt IS NULL AND moderation_verdict IS NULL`).Scan(&unpublished); err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.posts+` WHERE body='retain public' AND deleted_at IS NULL`).Scan(&public); err != nil {
-		t.Fatal(err)
-	}
-	if unpublished != 2 || public != 1 {
-		t.Fatalf("unpublished=%d public=%d", unpublished, public)
-	}
-}
-
-func TestErasureDoesNotRetainScheduledPostAsPublishedBackup(t *testing.T) {
-	ctx := context.Background()
-	rt := moderatedRuntime(t, &fakeModerator{})
-	actor := access.Actor{ID: "reviewer"}
-	future := time.Now().Add(time.Hour)
-	rec := doJSON(t, rt.Handler(), actor, "POST", "/posts", PostInput{Title: ptr("scheduled"), Body: ptr("unpublished scheduled original"), IsDraft: ptr(false), LiveAt: &future})
-	if rec.Code != 201 {
-		t.Fatal(rec.Body.String())
-	}
-	post := decodePost(t, rec)
-	rec = doJSON(t, rt.Handler(), actor, "PATCH", "/posts/"+post.ID, PostInput{Body: ptr("iffy scheduled replacement")})
-	if rec.Code != 202 {
-		t.Fatal(rec.Body.String())
-	}
-	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
-		t.Fatal(err)
-	}
-	var body string
-	var backup *string
-	if err := rt.store.pool.QueryRow(ctx, `SELECT body,published_content::text FROM `+rt.store.t.posts+` WHERE id=$1`, post.ID).Scan(&body, &backup); err != nil {
-		t.Fatal(err)
-	}
-	if body != "" || backup != nil {
-		t.Fatalf("neverpublished content retained: %q %v", body, backup)
 	}
 }
 
@@ -436,7 +367,7 @@ func (p *retainingPolicy) EraseSubjects(_ context.Context, tenant string, ids []
 
 func TestErasureRejectsUnconfiguredRetainingPolicy(t *testing.T) {
 	rt, pool := newTestRuntime(t, Options{})
-	_, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
+	_, err := New(context.Background(), Options{Kinds: testKinds("gallery"), Pool: pool, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
 	if err == nil {
 		t.Fatal("retaining classifier accepted without lifecycle eraser")
 	}
@@ -505,10 +436,10 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 	provider := &retainingPolicy{entered: make(chan struct{}), release: make(chan struct{})}
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
-	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, ContentKinds: []string{"gallery"}})
+	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, Kinds: testKinds("gallery")})
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "paused"})
+		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)), CommentInput{Body: "paused"})
 		done <- err
 	}()
 	<-provider.entered
@@ -565,32 +496,6 @@ func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	}
 }
 
-func TestErasurePreservesPublishedPostSnapshot(t *testing.T) {
-	ctx := context.Background()
-	rt := moderatedRuntime(t, &fakeModerator{})
-	author := access.Actor{ID: "reviewer"}
-	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", PostInput{Title: ptr("published"), Body: ptr("public body"), IsDraft: ptr(false)})
-	if rec.Code != 201 {
-		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
-	}
-	post := decodePost(t, rec)
-	rec = doJSON(t, rt.Handler(), author, "PATCH", "/posts/"+post.ID, PostInput{Body: ptr("iffy unpublished edit")})
-	if rec.Code != 202 {
-		t.Fatalf("hold edit: %d %s", rec.Code, rec.Body.String())
-	}
-	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
-		t.Fatal(err)
-	}
-	var body, title, state string
-	var deleted bool
-	if err := rt.store.pool.QueryRow(ctx, `SELECT title,body,moderation,deleted_at IS NOT NULL FROM `+rt.store.t.posts+` WHERE id=$1`, post.ID).Scan(&title, &body, &state, &deleted); err != nil {
-		t.Fatal(err)
-	}
-	if title != "published" || body != "public body" || state != ModerationRejected || deleted {
-		t.Fatalf("post cleanup lost publication or republished unpublished edit: %q %q %s %v", title, body, state, deleted)
-	}
-}
-
 func TestBasicModeratorCacheUsesTypedIdentityAndErasure(t *testing.T) {
 	m := &BasicModerator{}
 	ctx := context.Background()
@@ -623,12 +528,12 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}}
+	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery"), Moderator: &fakeModerator{}}
 	restarted, err := New(ctx, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
+	if _, err := restarted.comments.create(ctx, author, restarted.Ref("gallery", cid(1)), CommentInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("new runtime forgot source fence: %v", err)
 	}
 	if err := restarted.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: page.Items[0].Revision, Decision: DecisionApprove, Reviewer: "reviewer"}); err == nil {
@@ -639,7 +544,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "other tenant content"}); err != nil {
+	if _, err := other.comments.create(ctx, author, other.Ref("gallery", cid(1)), CommentInput{Body: "other tenant content"}); err != nil {
 		t.Fatalf("source fence crossed tenant runtime: %v", err)
 	}
 }
@@ -660,7 +565,7 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := New(ctx, Options{Pool: pool, Schema: schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}})
+	rt, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}

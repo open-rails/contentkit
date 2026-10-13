@@ -23,6 +23,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -114,7 +115,7 @@ func TestReadWithoutAccess(t *testing.T) {
 	if images, err := f.ms.PublicImages(ctx, g); err != nil || !reflect.DeepEqual(images, full.Public) {
 		t.Fatalf("host public listing: %+v, %v", images, err)
 	}
-	f.res.set(cid(1), access.Resolution{Visible: true})
+	f.res.set(cid(1), resolve.Resolution{Visible: true})
 	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.test", SigningKey: signKey}})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +185,7 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 	}
 	// Without access the file is listed locked: its path, type and size,
 	// and no blob name, source or editor field.
-	f.res.set(cid(1), access.Resolution{Visible: true})
+	f.res.set(cid(1), resolve.Resolution{Visible: true})
 	res, err = f.rd.Read(ctx, post, access.Actor{Anonymous: true, IP: "203.0.113.9"}, media.ReadOptions{Editor: true, Download: true})
 	if err != nil || len(res.Files) != 1 || !reflect.DeepEqual(res.Files[0], media.FileInfo{Path: p, Type: "image/png", Size: int64(len(png(1))), Locked: true}) {
 		t.Fatalf("locked listing %+v %v", res.Files, err)
@@ -320,7 +321,7 @@ func TestItemTokenIsAllOrNothing(t *testing.T) {
 		if _, err := g.HostURL("high/000.webp", false); !errors.Is(err, media.ErrNotAllowed) {
 			t.Fatalf("%s: HostURL for a listed preset: %v", mode, err)
 		}
-		f.res.set(cid(1), access.Resolution{Visible: true})
+		f.res.set(cid(1), resolve.Resolution{Visible: true})
 		none, err := rd.Grant(ctx, ref, f.editor)
 		if err != nil {
 			t.Fatal(err)
@@ -364,7 +365,7 @@ func TestReadEditor(t *testing.T) {
 		t.Fatalf("editor view served %d %q", status, body)
 	}
 	// Non-editors never get the editing state.
-	f.res.set(cid(1), access.Resolution{Visible: true, Accessible: true})
+	f.res.set(cid(1), resolve.Resolution{Visible: true, Accessible: true})
 	res, _ = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
 	if res.State != "" || len(res.Files) != 0 {
 		t.Fatalf("a viewer's editor read %+v", res)
@@ -460,7 +461,7 @@ func TestHLSPlaylists(t *testing.T) {
 		t.Fatalf("an unserved upload's playlist: %d", resp.StatusCode)
 	}
 	// Without access there is no playlist.
-	f.res.set(cid(1), access.Resolution{Visible: true})
+	f.res.set(cid(1), resolve.Resolution{Visible: true})
 	resp, _ = http.Get(srv.URL + "/video/" + cid(1) + "/hls/hls/master.m3u8")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
@@ -501,9 +502,9 @@ func TestIssuanceLimitOnReads(t *testing.T) {
 	f := newFixture(t)
 	viewer := access.Actor{ID: "viewer", Kind: "user"}
 	for n := 1; n <= 4; n++ {
-		f.res.set(cid(n), access.Resolution{Visible: true, Accessible: true})
+		f.res.set(cid(n), resolve.Resolution{Visible: true, Accessible: true})
 	}
-	f.res.set(cid(5), access.Resolution{Visible: true})
+	f.res.set(cid(5), resolve.Resolution{Visible: true})
 	actor := viewer
 	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey},
 		Issuance: media.Issuance{PerHour: 2, Exempt: func(a access.Actor) bool { return a.ID == "staff" }}})
@@ -612,7 +613,7 @@ func TestSharedIssuanceLimit(t *testing.T) {
 			a, b := replica(rdb), replica(rdb)
 			viewer := access.Actor{ID: "scraper", Kind: "user"}
 			for n := 1; n <= 6; n++ {
-				f.res.set(cid(n), access.Resolution{Visible: true, Accessible: true})
+				f.res.set(cid(n), resolve.Resolution{Visible: true, Accessible: true})
 			}
 			open := func(rd *media.Reader, who access.Actor, n int) error {
 				_, err := rd.Grant(ctx, f.ref("gallery", n), who)

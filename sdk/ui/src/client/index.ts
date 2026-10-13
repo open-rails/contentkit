@@ -13,17 +13,37 @@ export {
   type ContentKitErrorCode,
   type ContentKitErrorInit,
 } from "./errors.js";
-export { IMAGE_SCHEME, imageRef, imageRefs, PostsClient, type PostAdminQuery, type PostQuery } from "./content/posts.js";
+export { BODY_SUFFIX, IMAGE_SCHEME, imageRef, imageRefs, ContentsClient, type ManageQuery } from "./contents.js";
+export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";
-export { FavoritesClient } from "./content/favorites.js";
+export { FavoritesClient, type MineQuery } from "./content/favorites.js";
 export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from "./content/polls.js";
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
-export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
-export { TaxonomyClient, type NodeAssignmentQuery, type NodeQuery } from "./taxonomy.js";
+export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort, type Target } from "./content/types.js";
+export { GroupsClient, type GroupImageSlot, type GroupQuery, type MemberQuery, type MyGroupQuery } from "./groups.js";
+export {
+  DiscoveryClient,
+  type AccessMode,
+  type CardQuery,
+  type ContentFilterQuery,
+  type ContentQuery,
+  type HistoryQuery,
+  type ListSort,
+  type Period,
+  type RailQuery,
+  type ReaderQuery,
+  type RecentSearchesQuery,
+  type ReleaseDatesQuery,
+  type SearchQuery,
+  type TypeaheadQuery,
+} from "./discovery.js";
+export { VersionsClient, isPending } from "./versions.js";
+export { OffersClient } from "./offers.js";
+export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
+export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
-export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";
@@ -63,7 +83,7 @@ export {
 } from "./media/rules.js";
 export { READ_CHUNK, chunkOffsets, isProcessing, mergeReads, processing } from "./media/windows.js";
 export { defaultTransport, fetchTransport, xhrTransport, type Transport } from "./media/transport.js";
-export { checkRef, isContentId } from "./media/ref.js";
+export { checkRef, isContentId, itemKey, sameItem } from "./media/ref.js";
 export { encodeRemaining } from "./media/encode.js";
 export { sha256Hex } from "./media/hash.js";
 export { Pacer, type PacerOptions } from "./media/pacer.js";

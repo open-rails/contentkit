@@ -2,25 +2,20 @@ package contenturl_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
-	"testing/fstest"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/open-rails/migratekit"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/pgtest"
-	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 const tenant = "doujins"
@@ -198,57 +193,27 @@ CREATE OR REPLACE FUNCTION %[1]s.contentkit_content_code() RETURNS text LANGUAGE
 }
 
 func TestConcurrentPutsAgreeOnOneCode(t *testing.T) {
-	ctx, pool, _, s := setup(t)
+	ctx, _, _, s := setup(t)
 	const n = 8
 	var wg sync.WaitGroup
-	codes := make([]contenturl.Code, n)
+	got := make([]contenturl.Code, n)
 	errs := make([]error, n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer tx.Rollback(ctx)
-			links, err := s.WithTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: fmt.Sprint("t", i)})
+			links, err := s.Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: fmt.Sprint("t", i)})
 			if err == nil {
-				codes[i] = links[0].Code
-				err = tx.Commit(ctx)
+				got[i] = links[0].Code
 			}
 			errs[i] = err
 		}(i)
 	}
 	wg.Wait()
-	for i := range codes {
-		if errs[i] != nil || codes[i] != codes[0] {
-			t.Fatalf("put %d: %q %v (first %q)", i, codes[i], errs[i], codes[0])
+	for i := range got {
+		if errs[i] != nil || got[i] != got[0] {
+			t.Fatalf("put %d: %q %v (first %q)", i, got[i], errs[i], got[0])
 		}
-	}
-}
-
-func TestSQLTransactionRollsBack(t *testing.T) {
-	ctx, pool, _, s := setup(t)
-	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	link, err := s.WithSQLTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref("video", 1), Title: "draft", Titles: map[string]string{"es": "borrador"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.WithSQLTx(tx).Resolve(ctx, link[0].Code); err != nil || got.Slugs["es"] != "borrador" {
-		t.Fatalf("in-tx resolve %+v %v", got, err)
-	}
-	if err := tx.Rollback(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Resolve(ctx, link[0].Code); !errors.Is(err, contenturl.ErrNotFound) {
-		t.Fatalf("rolled-back code resolves: %v", err)
 	}
 }
 
@@ -289,20 +254,38 @@ func TestMergeRedirectsOneHop(t *testing.T) {
 	}
 }
 
-func TestAliases(t *testing.T) {
-	ctx, pool, _, s := setup(t)
-	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
-	aliases := []contenturl.Alias{
-		{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "folder-token", Key: "ab12cd34", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "object-token", Key: "zz99yy88", Locator: "7", ContentRef: ref("gallery", 1)},
-		{Source: "doujins-legacy", LegacyKind: "tag-name", Key: "Mother X Son", ContentRef: ref("gallery", 2)},
+// putAliases writes aliases as the bulk import does, committing even on a
+// refusal, which writes nothing.
+func putAliases(ctx context.Context, pool *pgxpool.Pool, schema string, aliases ...codes.Alias) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	if err := s.PutAliases(ctx, aliases...); err != nil {
+	err = codes.PutAliases(ctx, codes.Pgx(tx), pgx.Identifier{schema}.Sanitize(), tenant, aliases)
+	if cerr := tx.Commit(ctx); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func alias(source, kind, key, locator string, r contentref.ContentRef) codes.Alias {
+	return codes.Alias{Source: source, Kind: kind, Key: key, Locator: locator, Target: codes.Key{Kind: r.ContentKind, ID: r.ContentID}}
+}
+
+func TestAliases(t *testing.T) {
+	ctx, pool, schema, s := setup(t)
+	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
+	aliases := []codes.Alias{
+		alias("doujins-legacy", "folder", "12345", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder-token", "ab12cd34", "", ref("gallery", 1)),
+		alias("doujins-legacy", "object-token", "zz99yy88", "7", ref("gallery", 1)),
+		alias("doujins-legacy", "tag-name", "Mother X Son", "", ref("gallery", 2)),
+	}
+	if err := putAliases(ctx, pool, schema, aliases...); err != nil {
 		t.Fatal(err)
 	}
 	// An import re-run repeats its aliases: a no-op.
-	if err := s.PutAliases(ctx, aliases...); err != nil {
+	if err := putAliases(ctx, pool, schema, aliases...); err != nil {
 		t.Fatalf("idempotent re-run: %v", err)
 	}
 	if got, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "12345"); err != nil || got.Code != links[0].Code || got.Locator != "" {
@@ -316,12 +299,12 @@ func TestAliases(t *testing.T) {
 	}
 	// An alias never moves: other content, another locator, or a batch that
 	// disagrees with itself is ErrConflict and writes nothing.
-	for _, batch := range [][]contenturl.Alias{
-		{{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 2)}},
-		{{Source: "doujins-legacy", LegacyKind: "object-token", Key: "zz99yy88", Locator: "8", ContentRef: ref("gallery", 1)}},
-		{{Source: "doujins-legacy", LegacyKind: "folder", Key: "777", ContentRef: ref("gallery", 1)}, {Source: "doujins-legacy", LegacyKind: "folder", Key: "777", ContentRef: ref("gallery", 2)}},
+	for _, batch := range [][]codes.Alias{
+		{alias("doujins-legacy", "folder", "12345", "", ref("gallery", 2))},
+		{alias("doujins-legacy", "object-token", "zz99yy88", "8", ref("gallery", 1))},
+		{alias("doujins-legacy", "folder", "777", "", ref("gallery", 1)), alias("doujins-legacy", "folder", "777", "", ref("gallery", 2))},
 	} {
-		if err := s.PutAliases(ctx, batch...); !errors.Is(err, contenturl.ErrConflict) {
+		if err := putAliases(ctx, pool, schema, batch...); !errors.Is(err, contenturl.ErrConflict) {
 			t.Fatalf("PutAliases(%+v) = %v, want ErrConflict", batch, err)
 		}
 	}
@@ -329,25 +312,18 @@ func TestAliases(t *testing.T) {
 		t.Fatalf("conflicting batch left alias 777: %v", err)
 	}
 	// The refusal precedes any write, so even a caller that commits anyway keeps nothing.
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WithTx(tx).PutAliases(ctx,
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "776", ContentRef: ref("gallery", 1)},
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 2)},
+	if err := putAliases(ctx, pool, schema,
+		alias("doujins-legacy", "folder", "776", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder", "12345", "", ref("gallery", 2)),
 	); !errors.Is(err, contenturl.ErrConflict) {
 		t.Fatalf("in-tx conflict: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "776"); !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("refused batch wrote alias 776: %v", err)
 	}
-	err = s.PutAliases(ctx,
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "778", ContentRef: ref("gallery", 1)},
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "779", ContentRef: ref("gallery", 9)},
+	err := putAliases(ctx, pool, schema,
+		alias("doujins-legacy", "folder", "778", "", ref("gallery", 1)),
+		alias("doujins-legacy", "folder", "779", "", ref("gallery", 9)),
 	)
 	if !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("unregistered alias target: %v", err)
@@ -361,185 +337,9 @@ func TestAliases(t *testing.T) {
 	if got, _ := s.ResolveAlias(ctx, "doujins-legacy", "tag-name", "Mother X Son"); got.Code != links[0].Code {
 		t.Fatalf("alias does not follow the merge: %+v", got)
 	}
-	for _, bad := range []contenturl.Alias{
-		{Source: "legacy", LegacyKind: "Legacy", Key: "1", ContentRef: ref("gallery", 1)},
-		{Source: "legacy", LegacyKind: "legacy", Key: "", ContentRef: ref("gallery", 1)},
-	} {
-		if err := s.PutAliases(ctx, bad); !errors.Is(err, contenturl.ErrInvalid) {
+	for _, bad := range []codes.Alias{alias("legacy", "Legacy", "1", "", ref("gallery", 1)), alias("legacy", "legacy", "", "", ref("gallery", 1))} {
+		if err := putAliases(ctx, pool, schema, bad); !errors.Is(err, contenturl.ErrInvalid) {
 			t.Errorf("PutAliases(%+v) = %v", bad, err)
 		}
-	}
-}
-
-func TestTaxonomyNodesCarryCodes(t *testing.T) {
-	ctx, pool, schema, s := setup(t)
-	store, err := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: tenant, Kinds: []string{"artist", "series"}, Languages: []string{"en", "es"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodes, err := store.CreateNodes(ctx, []taxonomy.NodeInput{
-		{Kind: "artist", Slug: "artist-internal-1", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Hiroshi Tanaka"}, {Language: "ja", Kind: taxonomy.NameCanonical, Name: "田中"}}},
-		{Kind: "artist", Slug: "artist-internal-2", Names: []taxonomy.Name{{Language: "es", Kind: taxonomy.NameCanonical, Name: "Señor Pérez"}}},
-		{Kind: "series", Slug: "s", Names: nil},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	refs := []contentref.ContentRef{
-		contentref.New(tenant, "artist", string(nodes[0].TaxonomyID)),
-		contentref.New(tenant, "artist", string(nodes[1].TaxonomyID)),
-		contentref.New(tenant, "series", string(nodes[2].TaxonomyID)),
-	}
-	links, err := s.Links(ctx, refs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, b, c := links[refs[0].Key()], links[refs[1].Key()], links[refs[2].Key()]
-	if a.Slug != "hiroshi-tanaka" || len(a.Slugs) != 1 || b.Slug != "senor-perez" || b.Slugs["es"] != "senor-perez" || c.Code == "" || c.Slug != "" {
-		t.Fatalf("node links %+v %+v %+v", a, b, c)
-	}
-
-	if err := store.SetNames(ctx, nodes[0].TaxonomyID, []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Tanaka Hiroshi"}, {Language: "es", Kind: taxonomy.NameCanonical, Name: "Tanaka H."}}); err != nil {
-		t.Fatal(err)
-	}
-	renamed, _ := s.Resolve(ctx, a.Code)
-	if renamed.Code != a.Code || renamed.Slug != "tanaka-hiroshi" || renamed.Slugs["es"] != "tanaka-h" {
-		t.Fatalf("renamed node %+v", renamed)
-	}
-
-	// The code registry joins a host's SQL transaction with taxonomy.
-	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.WithSQLTx(tx).CreateNodes(ctx, []taxonomy.NodeInput{{Kind: "series", Slug: "rolled-back", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Gone"}}}}); err != nil {
-		t.Fatal(err)
-	}
-	_ = tx.Rollback()
-
-	if _, err := store.Merge(ctx, nodes[1].TaxonomyID, nodes[0].TaxonomyID); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.Resolve(ctx, b.Code); err != nil || got.Code != a.Code || got.Slug != "tanaka-hiroshi" {
-		t.Fatalf("merged node resolves to %+v %v", got, err)
-	}
-	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+schema+`.content_codes`).Scan(&n); err != nil || n != 3 {
-		t.Fatalf("%d codes, want 3 (the rolled-back node has none)", n)
-	}
-}
-
-func TestMigrationRefusesMergeCycles(t *testing.T) {
-	ctx := context.Background()
-	pool := pgtest.Pool(t, nil)
-	schema, db := migrateBefore0010(t, ctx, pool)
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
- ('doujins', '%[2]s', 'tag', 'a', 'merged'), ('doujins', '%[3]s', 'tag', 'b', 'merged');
-INSERT INTO %[1]s.content_edges (tenant_id, from_taxonomy_id, relation, to_taxonomy_id) VALUES
- ('doujins', '%[2]s', 'alias_of', '%[3]s'), ('doujins', '%[3]s', 'alias_of', '%[2]s')`, schema, id(1), id(2))); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.ApplyPostgres(ctx, db, schema); err == nil || !strings.Contains(err.Error(), "cycle") {
-		t.Fatalf("cyclic merges migrated: %v", err)
-	}
-}
-
-// migrateBefore0010 applies the chain up to 0009 the way a host's migrate
-// step does.
-func migrateBefore0010(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, *sql.DB) {
-	t.Helper()
-	schema := pgtest.EmptySchema(t, ctx, pool)
-	pgtest.EnsureExtensions(t, ctx, pool)
-	db := stdlib.OpenDBFromPool(pool)
-	t.Cleanup(func() { _ = db.Close() })
-	old := fstest.MapFS{}
-	entries, err := fs.ReadDir(migrations.Postgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Name() >= "0010" {
-			continue
-		}
-		b, err := fs.ReadFile(migrations.Postgres, e.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		old[e.Name()] = &fstest.MapFile{Data: b}
-	}
-	steps, err := migratekit.Load(old, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
-		t.Fatal(err)
-	}
-	return schema, db
-}
-
-// The migration backfills ContentKit's own records through the production
-// migratekit path: nodes slugged from their names (English first), merged
-// nodes redirected to their survivor, live posts.
-func TestMigrationBackfillsOwnRecords(t *testing.T) {
-	ctx := context.Background()
-	pool := pgtest.Pool(t, nil)
-	schema, db := migrateBefore0010(t, ctx, pool)
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`SET search_path TO %[1]s;
-INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
- ('doujins', '%[2]s', 'artist', 'a1', 'active'),
- ('doujins', '%[3]s', 'artist', 'a2', 'merged'),
- ('doujins', '%[4]s', 'tag', 't', 'active'),
- ('hentai0', '%[2]s', 'tag', 'h', 'active');
-INSERT INTO %[1]s.content_node_names (tenant_id, taxonomy_id, language, kind, name) VALUES
- ('doujins', '%[2]s', 'en', 'name', 'Café Ölmüller'),
- ('doujins', '%[2]s', 'de', 'name', 'Kaffee Ölmüller'),
- ('doujins', '%[2]s', 'en', 'alias', 'Coffee'),
- ('doujins', '%[3]s', 'en', 'name', 'Dup'),
- ('hentai0', '%[2]s', 'ja', 'name', 'タグ');
-INSERT INTO %[1]s.content_edges (tenant_id, from_taxonomy_id, relation, to_taxonomy_id) VALUES ('doujins', '%[3]s', 'alias_of', '%[2]s');
-INSERT INTO %[1]s.content_posts (id, tenant_id, author_id, title, slug, body) VALUES
- ('%[5]s', 'doujins', 'u', 'Hello World', NULL, 'b'),
- ('%[6]s', 'doujins', 'u', 'Ignored', 'My Custom Slug', 'b');
-INSERT INTO %[1]s.content_posts (id, tenant_id, author_id, title, body, deleted_at) VALUES ('%[7]s', 'doujins', 'u', 'Deleted', 'b', now());
-RESET search_path`, schema, id(1), id(2), id(3), id(4), id(5), id(6))); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
-		t.Fatal(err)
-	}
-
-	s := newStore(t, pool, schema, tenant)
-	links, err := s.Links(ctx, []contentref.ContentRef{ref("artist", 1), ref("artist", 2), ref("tag", 3), ref("post", 4), ref("post", 5), ref("post", 6)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a1 := links[ref("artist", 1).Key()]
-	if a1.Slug != "cafe-olmuller" || a1.Slugs["de"] != "kaffee-olmuller" || len(a1.Slugs) != 2 {
-		t.Fatalf("artist %+v", a1)
-	}
-	if a2 := links[ref("artist", 2).Key()]; a2.Code != a1.Code {
-		t.Fatalf("merged artist resolves to %+v, want %s", a2, a1.Code)
-	}
-	if tag := links[ref("tag", 3).Key()]; tag.Code == "" || tag.Slug != "" {
-		t.Fatalf("nameless tag %+v", tag)
-	}
-	if p := links[ref("post", 4).Key()]; p.Slug != "hello-world" {
-		t.Fatalf("post %+v", p)
-	}
-	if p := links[ref("post", 5).Key()]; p.Slug != "my-custom-slug" {
-		t.Fatalf("post with slug %+v", p)
-	}
-	if _, ok := links[ref("post", 6).Key()]; ok || len(links) != 5 {
-		t.Fatalf("deleted post registered or links missing: %+v", links)
-	}
-	h, err := newStore(t, pool, schema, "hentai0").Links(ctx, []contentref.ContentRef{contentref.New("hentai0", "tag", id(1))})
-	if err != nil || len(h) != 1 {
-		t.Fatalf("hentai0 tag %+v %v", h, err)
-	}
-	// New records after the backfill keep drawing codes from the same generator.
-	if got := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 7), Title: "new"})[0]; !codeRE.MatchString(string(got.Code)) {
-		t.Fatalf("post-migration code %q", got.Code)
 	}
 }

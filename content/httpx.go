@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/media"
@@ -69,6 +68,8 @@ const (
 	// CodeCommentBanned: the caller is banned from commenting on this target;
 	// the body's ban says the scope, reason and until. -> 403
 	CodeCommentBanned = "comment_banned"
+	// CodeCommentsClosed: the target's comments are closed or hidden. -> 403
+	CodeCommentsClosed = "comments_closed"
 	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
 	// details.max is the limit in characters. -> 422
 	CodeCommentTooLong = "comment_too_long"
@@ -154,6 +155,8 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusTooManyRequests, CodeRateLimited, "too many requests; try again later"
 	case errors.As(err, &banned):
 		return http.StatusForbidden, CodeCommentBanned, banned.Error()
+	case errors.Is(err, ErrCommentsClosed):
+		return http.StatusForbidden, CodeCommentsClosed, "comments are closed here"
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):
@@ -172,10 +175,6 @@ func classifyErr(err error) (status int, code, msg string) {
 	var rej RejectedError
 	if errors.As(err, &rej) {
 		return http.StatusUnprocessableEntity, CodeModerationRejected, rej.Reason
-	}
-	var pgerr *pgconn.PgError
-	if errors.As(err, &pgerr) && pgerr.Code == "23505" && pgerr.ConstraintName == "content_posts_slug_uq" {
-		return http.StatusConflict, CodeConflict, "slug is already in use"
 	}
 	return http.StatusInternalServerError, CodeInternal, "internal error"
 }

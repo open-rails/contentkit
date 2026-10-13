@@ -13,9 +13,8 @@ import (
 	"github.com/open-rails/authkit/iam"
 
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 // A user page reads the person's site-wide comment ban: none (404), the ban
@@ -24,10 +23,9 @@ import (
 func TestGlobalCommentBanOfUser(t *testing.T) {
 	w := newWorld(t)
 	staffUser, staff := w.person(w.staff)
-	o, owner := w.person(iam.Role{})
+	_, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	target := "/global-comment-bans/" + u.ID
 
 	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
@@ -65,9 +63,9 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	_, staff := w.person(w.staff)
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
-	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
-	item := "/gallery/" + cid(1)
+	f := serve(t, w.engine(nil))
+	g, _ := w.published(f, staff, "gallery", o.ID)
+	item := "/contents/" + g
 
 	var first, reply, gone content.Comment
 	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "one"}, &first)
@@ -94,7 +92,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 		t.Fatalf("by author: %s", ids(all))
 	}
 	for _, c := range all {
-		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != cid(1) {
+		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != g {
 			t.Fatalf("comment %s by %s (%+v) on %s/%s", c.ID, c.UserID, c.Author, c.ContentKind, c.ContentID)
 		}
 	}
@@ -121,65 +119,58 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/comments/admin?author="+u.ID, nil, nil)
 }
 
-// A node's page lists its contents: every assignment in either state, paged
-// by cursor in content order, by content kind and by relation.
-func TestTaxonomyNodeAssignments(t *testing.T) {
+// A group's page lists its memberships: content- and version-level, every
+// role and state, paged by cursor in member order.
+func TestGroupMembers(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
+	g1, _ := w.published(f, staff, "gallery")
+	g2, v2 := w.published(f, staff, "gallery")
+	g3, _ := w.published(f, staff, "gallery")
+	label := map[string]string{g1: "01", g2: "02", g3: "03", v2: "20"}
 
-	var nodes []taxonomy.Node
-	f.want(http.StatusCreated, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{
-		{Kind: "tag", Slug: "color", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Color"}}},
-		{Kind: "tag", Slug: "empty", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Empty"}}},
-	}, &nodes)
-	color, empty := string(nodes[0].TaxonomyID), string(nodes[1].TaxonomyID)
-	ref := func(kind string, n int) contentref.ContentRef {
-		return contentref.ContentRef{ContentKind: kind, ContentID: cid(n)}
-	}
-	version := ref("gallery", 2)
-	version.ContentVersionID = ptr(cid(20))
-	at := func(r contentref.ContentRef, relation string, state taxonomy.AssignmentState) taxonomy.Assignment {
-		return taxonomy.Assignment{ContentRef: r, TaxonomyID: taxonomy.TaxonomyID(color), Relation: relation, State: state}
-	}
-	f.want(http.StatusOK, staff, "POST", "/taxonomy/assignments", []taxonomy.Assignment{
-		at(ref("gallery", 3), "", ""), at(ref("gallery", 1), "", ""), at(version, "", ""), at(ref("gallery", 2), "", taxonomy.AssignmentProposed),
-		at(ref("post", 1), "", ""), at(ref("gallery", 1), "featured", ""),
+	var made []groups.Group
+	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
+		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
+		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
+	}, &made)
+	color, empty := string(made[0].ID), string(made[1].ID)
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/members", []groups.Membership{
+		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: groups.MembershipProposed},
+		{ContentID: g1, Role: "featured"},
 	}, nil)
 
-	page := func(id string, q url.Values) taxonomy.AssignmentPage {
+	page := func(id string, q url.Values) groups.MemberPage {
 		t.Helper()
-		var p taxonomy.AssignmentPage
-		f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+id+"/assignments?"+q.Encode(), nil, &p)
+		var p groups.MemberPage
+		f.want(http.StatusOK, staff, "GET", "/groups/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
-	key := func(as []taxonomy.Assignment) string {
+	key := func(ms []groups.Membership) string {
 		s := ""
-		for _, a := range as {
-			s += fmt.Sprintf("%s/%s", a.ContentKind, a.ContentID[len(a.ContentID)-2:])
-			if a.ContentVersionID != nil {
-				s += "@" + (*a.ContentVersionID)[len(*a.ContentVersionID)-2:]
+		for _, m := range ms {
+			s += label[m.ContentID]
+			if m.VersionID != "" {
+				s += "@" + label[m.VersionID]
 			}
-			s += ":" + a.Relation
-			if a.State == taxonomy.AssignmentProposed {
+			if m.Role != "" {
+				s += ":" + m.Role
+			}
+			if m.State == groups.MembershipProposed {
 				s += "?"
 			}
 			s += " "
 		}
 		return s
 	}
-	want := "gallery/01:featured gallery/01:tag gallery/02:tag? gallery/02@20:tag gallery/03:tag post/01:tag "
+	want := "01 01:featured 02? 02@20 03 "
 	var walked string
 	cursor := ""
 	for i := 0; ; i++ {
 		p := page(color, url.Values{"limit": {"2"}, "cursor": {cursor}})
-		for _, a := range p.Assignments {
-			if string(a.TaxonomyID) != color || a.TenantID != tenant {
-				t.Fatalf("assignment %+v", a)
-			}
-		}
-		walked += key(p.Assignments)
+		walked += key(p.Members)
 		if cursor = p.NextCursor; cursor == "" {
 			if i != 2 {
 				t.Fatalf("%d pages", i+1)
@@ -190,22 +181,16 @@ func TestTaxonomyNodeAssignments(t *testing.T) {
 	if walked != want {
 		t.Fatalf("walked\n %s\nwant\n %s", walked, want)
 	}
-	if got := key(page(color, nil).Assignments); got != want {
+	if got := key(page(color, nil).Members); got != want {
 		t.Fatalf("one page: %s", got)
 	}
-	if got := key(page(color, url.Values{"content_kind": {"post"}}).Assignments); got != "post/01:tag " {
-		t.Fatalf("by kind: %s", got)
+	if p := page(empty, nil); len(p.Members) != 0 || p.NextCursor != "" {
+		t.Fatalf("empty group: %+v", p)
 	}
-	if got := key(page(color, url.Values{"relation": {"featured"}}).Assignments); got != "gallery/01:featured " {
-		t.Fatalf("by relation: %s", got)
-	}
-	if p := page(empty, nil); len(p.Assignments) != 0 || p.NextCursor != "" {
-		t.Fatalf("empty node: %+v", p)
-	}
-	f.want(http.StatusNotFound, staff, "GET", "/taxonomy/nodes/"+uuid.Must(uuid.NewV7()).String()+"/assignments", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/not-an-id/assignments", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/"+color+"/assignments?cursor=%21", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/taxonomy/nodes/"+color+"/assignments", nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/not-an-id/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/"+color+"/members?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/groups/"+color+"/members", nil, nil)
 }
 
 // An item's editor (a writer, not exempt) regenerates its media: an upload
@@ -214,9 +199,11 @@ func TestTaxonomyNodeAssignments(t *testing.T) {
 func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
-	_, editor := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	ed, editor := w.person(iam.Role{})
+	_, staff := w.person(w.staff)
+	f := serve(t, w.engine(nil))
+	album, _ := w.published(f, staff, "album", ed.ID)
+	ref := media.RefBody{Kind: "album", ID: album}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +232,26 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 			t.Fatal(err)
 		}
 		return n
+	}
+	// Publishing exposes the album on the engine's River; the stand-in
+	// worker then finishes what is queued, so the regenerate's job is new.
+	q := func(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
+	deadline := time.Now().Add(time.Minute)
+	for {
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+q(w.schema+"_river")+` WHERE kind = 'contentkit_media_expose' AND finalized_at IS NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the album's exposure never ran")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE `+q(w.queue.Schema())+` SET state = 'completed', finalized_at = now() WHERE finalized_at IS NULL`); err != nil {
+		t.Fatal(err)
 	}
 	before := jobs()
 
@@ -277,7 +284,7 @@ func TestAdminPollsByStateAndSearch(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	create := func(question string, liveAt *time.Time) content.Poll {
 		var p content.Poll
 		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,

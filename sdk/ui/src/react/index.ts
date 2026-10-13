@@ -55,7 +55,60 @@ export {
 export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
-export { isPublished, usePost, usePosts, type PostFilter, type UsePost } from "./posts.js";
+export { useContent, useManagedContents, type ManageFilter, type UseContent } from "./contents.js";
+export { defaultVersion, liveVersions, useContentDetail, type UseContentDetail } from "./detail.js";
+export {
+  memberId,
+  useContentGroups,
+  useGroup,
+  useGroupMembers,
+  useGroups,
+  useKinds,
+  useMyGroups,
+  type GroupFilter,
+  type GroupSort,
+  type Member,
+  type UseContentGroups,
+  type UseGroup,
+  type UseGroupMembers,
+  type UseKinds,
+} from "./groups.js";
+export {
+  beaconsFor,
+  useBeacons,
+  useContentFilters,
+  useContents,
+  useExposure,
+  useHistory,
+  useMyFavorites,
+  useMyReactions,
+  useRecentSearches,
+  useRecommendations,
+  useReleaseDates,
+  useSearch,
+  useSimilar,
+  useTypeahead,
+  useViewSignal,
+  type ExposureOptions,
+  type MyInteraction,
+  type ReleaseDate,
+  type UseContentFilters,
+  type UseExposure,
+  type UseHistory,
+  type UseRail,
+  type UseRecentSearches,
+  type UseTypeahead,
+} from "./discovery.js";
+export {
+  nextRelease,
+  useReaderPlan,
+  useSegmentPages,
+  useVersionDownload,
+  type ReaderPage,
+  type UseReaderPlan,
+  type UseSegmentPages,
+  type UseVersionDownload,
+} from "./versions.js";
 export { useContentScope, usePaged, type UseList, type UsePaged } from "./use-resource.js";
 export { ResourceStore, resourcesFor, type Page, type Resource } from "./resources.js";
 export {

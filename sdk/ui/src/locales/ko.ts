@@ -1,10 +1,16 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/ko.js";
 import { social } from "./social/ko.js";
+import { groups } from "./groups/ko.js";
+import { discovery } from "./discovery/ko.js";
+import { content } from "./content/ko.js";
 
 export const ko: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
+  ...groups,
+  ...discovery,
+  ...content,
   common: {
     cancel: "취소",
     close: "닫기",
@@ -262,9 +268,12 @@ export const ko: ContentKitUiMessageBundle = {
     resume_mismatch: "저장된 업로드가 다른 파일의 것입니다. 파일을 다시 선택하세요.",
     moderation_rejected: "검토 결과 거부되었습니다.",
     comment_banned: "여기에는 댓글을 달 수 없습니다.",
+    comments_closed: "여기는 댓글이 닫혀 있습니다.",
+    limit_reached: "허용된 개수를 모두 사용했습니다.",
     comment_too_long: "댓글이 너무 깁니다.",
     commentTooLongBy: "댓글은 최대 {maxChars}자까지 쓸 수 있습니다.",
     not_configured: "이 사이트에서는 사용할 수 없는 기능입니다.",
+    no_membership: "회원 전용 콘텐츠에는 가입하거나 구매할 수 있는 그룹이 필요합니다. 먼저 그룹에 오퍼를 추가하세요.",
     tenant_mismatch: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
     gone: "이 콘텐츠는 더 이상 사용할 수 없습니다.",
   },

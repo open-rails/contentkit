@@ -10,6 +10,17 @@ name: media-video
     - 'go.mod'
     - 'go.sum'
     - '.github/workflows/media-video.yaml'
+  # Integration branches: lane PRs merge without waiting; each push runs the full
+  # suite once and a newer push cancels it.
+  push:
+    branches: ['next/**']
+    paths:
+    - 'media/**'
+    - '!media/image/**'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - '.github/workflows/media-video.yaml'
   workflow_call: {}
 permissions:
   contents: read

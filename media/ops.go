@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -54,10 +55,12 @@ type Op struct {
 	Takedown bool `json:"takedown,omitempty"`
 }
 
-// CopyFrom names an upload of an item of the same kind, including this item.
+// CopyFrom names an upload of an item of the same kind, including this item:
+// of a Versions kind, one version's, or ("") its content-level item's.
 type CopyFrom struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path"`
 }
 
 // NamedPrefix starts the names the server gives Named uploads.
@@ -142,9 +145,9 @@ func (op Op) metaLimit() int {
 
 // opRun applies commit ops to a manifest of kind k.
 type opRun struct {
-	k  *Kind
-	m  *Manifest
-	id string
+	k   *Kind
+	m   *Manifest
+	ref contentref.ContentRef
 	// objects are the put names, HEAD-checked in the item's folder.
 	objects map[string]Object
 	// copies are each copy op's source upload and outputs (by op index),
@@ -185,7 +188,7 @@ func (o *opRun) apply(n int, op Op) error {
 		return o.frame(op)
 	case OpCopy:
 		src := o.copies[n]
-		if op.From.ID == o.id {
+		if op.From.ID == o.ref.ContentID && op.From.Version == o.ref.Version() {
 			src = copyFiles(m, op.From.Path)
 		}
 		return o.copy(op, src)

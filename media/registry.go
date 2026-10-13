@@ -22,11 +22,14 @@ const maxFirst = 100
 
 // Registry is a validated Config.
 type Registry struct {
-	cfg   Config
-	kinds map[string]*Kind
+	cfg      Config
+	declared int // cfg.Kinds[:declared] are c's; the body kinds follow
+	kinds    map[string]*Kind
+	all      []*Kind // cfg.Kinds, then the published kinds
 }
 
-// NewRegistry validates c.
+// NewRegistry validates c and derives its kinds' body kinds (a Versions
+// kind with named content images: BodySuffix) and published kinds.
 func NewRegistry(c Config) (*Registry, error) {
 	if !layout.ValidSegment(c.Namespace) {
 		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
@@ -46,9 +49,19 @@ func NewRegistry(c Config) (*Registry, error) {
 	if err := c.Editor.validate(); err != nil {
 		return nil, fmt.Errorf("media: Editor: %w", err)
 	}
-	r := &Registry{cfg: c, kinds: make(map[string]*Kind, len(c.Kinds))}
-	r.cfg.Kinds = make([]Kind, len(c.Kinds))
-	for i, k := range c.Kinds {
+	kinds := slices.Clone(c.Kinds)
+	for _, k := range c.Kinds {
+		if _, ok := BodyOf(k.Name); ok {
+			return nil, fmt.Errorf("media: kind %q: %s names a content kind's body kind", k.Name, BodySuffix)
+		}
+		if body, ok := bodyKind(k); k.Versions && ok {
+			kinds = append(kinds, body)
+		}
+	}
+	r := &Registry{cfg: c, declared: len(c.Kinds), kinds: make(map[string]*Kind, len(kinds))}
+	r.cfg.Kinds = make([]Kind, len(kinds))
+	var derived []*Kind
+	for i, k := range kinds {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
@@ -60,8 +73,23 @@ func NewRegistry(c Config) (*Registry, error) {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
 		k.ns = cmpOr(k.Namespace, c.Namespace)
+		pub, err := k.levels()
+		if err != nil {
+			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
+		}
 		r.cfg.Kinds[i] = k
 		r.kinds[k.Name] = &r.cfg.Kinds[i]
+		r.all = append(r.all, &r.cfg.Kinds[i])
+		if pub != nil {
+			derived = append(derived, pub)
+		}
+	}
+	for _, k := range derived {
+		if _, dup := r.kinds[k.Name]; dup {
+			return nil, fmt.Errorf("media: kind %q is %s's published kind", k.Name, k.of.Name)
+		}
+		r.kinds[k.Name] = k
+		r.all = append(r.all, k)
 	}
 	if a := c.Avatars; a != (Avatars{}) {
 		k, ok := r.kinds[a.Kind]
@@ -94,11 +122,15 @@ func (r *Registry) Kind(name string) (*Kind, error) {
 	return k, nil
 }
 
+// Kinds are the registered kinds: the declared ones, then the published
+// kinds derived from them.
+func (r *Registry) Kinds() []*Kind { return slices.Clone(r.all) }
+
 // Namespaces are the namespaces the app's items live in: its own, then the
 // shared ones it imports.
 func (r *Registry) Namespaces() []string {
 	out := []string{r.cfg.Namespace}
-	for _, k := range r.cfg.Kinds {
+	for _, k := range r.all {
 		if !slices.Contains(out, k.ns) {
 			out = append(out, k.ns)
 		}
@@ -106,13 +138,20 @@ func (r *Registry) Namespaces() []string {
 	return out
 }
 
-// Ref is the ref of item id of kind, in the kind's namespace.
+// Ref is the ref of item id of kind, in the kind's namespace: a Versions
+// kind's content-level item.
 func (r *Registry) Ref(kind, id string) (contentref.ContentRef, error) {
+	return r.VersionRef(kind, id, "")
+}
+
+// VersionRef is the ref of version of a Versions kind's content id, or ("")
+// Ref.
+func (r *Registry) VersionRef(kind, id, version string) (contentref.ContentRef, error) {
 	k, err := r.Kind(kind)
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
-	ref := contentref.New(k.ns, kind, id)
+	ref := contentref.New(k.ns, kind, id).WithVersion(version)
 	_, err = r.Item(ref)
 	return ref, err
 }
@@ -125,20 +164,37 @@ type Item struct {
 	prefix string
 }
 
-// Item validates ref: a registered kind, its namespace and a UUIDv7 id,
-// without a version (an item is the host's version).
+// Item validates ref: a registered kind, its namespace and a UUIDv7 id. A
+// Versions kind's ref names a version (a UUIDv7) or its content-level item;
+// any other kind's has no version. Item.Kind is the kind as that item sees
+// it: a content-level item's uploads only, or a version's.
 func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	k, err := r.Kind(ref.ContentKind)
 	if err != nil {
 		return Item{}, err
 	}
-	if ref.TenantID != k.ns || ref.ContentVersionID != nil {
-		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q lives in namespace %q, without versions", ref, k.Name, k.ns)
+	if ref.TenantID != k.ns {
+		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q lives in namespace %q", ref, k.Name, k.ns)
 	}
 	if err := contentref.ValidateID(ref.ContentID); err != nil {
 		return Item{}, fmt.Errorf("media: invalid ref %s: %w", ref, err)
 	}
-	return Item{ref: ref, kind: k, prefix: layout.Prefix(k.ns, k.Name, ref.ContentID)}, nil
+	view, version := k, ref.Version()
+	switch {
+	case !k.Versions && ref.ContentVersionID != nil:
+		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q has no versions", ref, k.Name)
+	case k.Versions && version != "":
+		if err := contentref.ValidateID(version); err != nil {
+			return Item{}, fmt.Errorf("media: invalid ref %s: version: %w", ref, err)
+		}
+		view = k.version
+	case k.Versions:
+		view = k.content
+	}
+	if view == nil {
+		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q has no uploads at that level", ref, k.Name)
+	}
+	return Item{ref: ref, kind: view, prefix: layout.Prefix(k.ns, k.Name, ref.ContentID, version)}, nil
 }
 
 func (i Item) Ref() contentref.ContentRef { return i.ref }
@@ -177,27 +233,28 @@ func (i Item) Public(name string) (string, error) {
 
 // DefaultKey is the key of the kind's default public image name.
 func (k *Kind) DefaultKey(name string) string {
-	return layout.Prefix(k.ns, k.Name, layout.DefaultID) + layout.AreaPublic + "/" + name
+	return layout.Prefix(k.ns, k.Name, layout.DefaultID, "") + layout.AreaPublic + "/" + name
 }
 
 // NS is the namespace the kind's items live in.
 func (k *Kind) NS() string { return k.ns }
 
-// PublicURL is a public file's URL: {base}/v1/{namespace}/{kind}/{id}/public/{name}.
-func PublicURL(base, namespace, kind, id, name string) string {
-	return strings.TrimRight(base, "/") + layout.URLPrefix + layout.Prefix(namespace, kind, id) + layout.AreaPublic + "/" + name
+// PublicURL is a public file's URL:
+// {base}/v1/{namespace}/{kind}/{id}[/{version}]/public/{name}.
+func PublicURL(base string, ref contentref.ContentRef, name string) string {
+	return strings.TrimRight(base, "/") + layout.URLPrefix + layout.Prefix(ref.TenantID, ref.ContentKind, ref.ContentID, ref.Version()) +
+		layout.AreaPublic + "/" + name
 }
 
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
-	return PublicURL(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, name)
+	return PublicURL(r.cfg.BaseURL, ref, name)
 }
 
 // PresetRules lists every kind's public presets, in registry order.
 func (r *Registry) PresetRules() []PresetRule {
 	out := []PresetRule{}
-	for i := range r.cfg.Kinds {
-		k := &r.cfg.Kinds[i]
+	for _, k := range r.all {
 		for _, p := range k.Public {
 			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
 				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
@@ -207,9 +264,14 @@ func (r *Registry) PresetRules() []PresetRule {
 	return out
 }
 
-// MarshalJSON is the registry as data (no hooks, defaults or Choose): the
-// stock worker's MEDIA_KINDS_FILE.
-func (r *Registry) MarshalJSON() ([]byte, error) { return json.Marshal(r.cfg) }
+// MarshalJSON is the registry as data (no hooks, defaults, Choose or
+// derived kinds, which NewRegistry derives again): the stock worker's
+// MEDIA_KINDS_FILE.
+func (r *Registry) MarshalJSON() ([]byte, error) {
+	cfg := r.cfg
+	cfg.Kinds = cfg.Kinds[:r.declared]
+	return json.Marshal(cfg)
+}
 
 // ParseConfig reads a registry written by Registry.MarshalJSON; unknown
 // keys are ignored.

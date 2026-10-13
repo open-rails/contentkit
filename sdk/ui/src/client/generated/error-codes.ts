@@ -7,6 +7,7 @@ export type ErrorCode =
   | "checksum_mismatch"
   | "comment_banned"
   | "comment_too_long"
+  | "comments_closed"
   | "conflict"
   | "forbidden"
   | "gone"
@@ -16,7 +17,9 @@ export type ErrorCode =
   | "incomplete"
   | "internal_error"
   | "invalid_request"
+  | "limit_reached"
   | "moderation_rejected"
+  | "no_membership"
   | "not_configured"
   | "not_found"
   | "not_uploaded"
@@ -44,6 +47,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   checksum_mismatch: { status: 422, meaning: "The stored bytes differ from the declared SHA-256." },
   comment_banned: { status: 403, meaning: "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends." },
   comment_too_long: { status: 422, meaning: "The comment is longer than the site allows; `details.max` is the limit in characters." },
+  comments_closed: { status: 403, meaning: "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },
@@ -53,7 +57,9 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   incomplete: { status: 409, meaning: "A multipart upload is missing parts." },
   internal_error: { status: 500, meaning: "A server fault; the cause is in the server log." },
   invalid_request: { status: 400, meaning: "The request is malformed: its body, a query parameter or a path value." },
+  limit_reached: { status: 409, meaning: "The owner already has as many groups of the kind as the site allows (max_per_owner)." },
   moderation_rejected: { status: 422, meaning: "The moderator refused the text; `error` says why." },
+  no_membership: { status: 409, meaning: "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first." },
   not_configured: { status: 501, meaning: "The capability needs a port the host did not configure; retrying does not help." },
   not_found: { status: 404, meaning: "Nothing by that name, or nothing the actor may see." },
   not_uploaded: { status: 409, meaning: "A commit names an upload that has not landed; `blobs` lists the ones to upload again." },

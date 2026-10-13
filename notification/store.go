@@ -12,7 +12,7 @@ import (
 	"github.com/open-rails/helpers/notify/postgres"
 )
 
-// Options selects the host-owned pool, schema and ContentKit tenant.
+// Options selects the pool, ContentKit's schema and its tenant.
 type Options struct {
 	Pool           *pgxpool.Pool
 	Schema, Tenant string
@@ -23,10 +23,11 @@ type Options struct {
 // Embedded methods accept trusted host inputs; HTTP derives the user identity.
 type Store struct {
 	*postgres.Store
-	log *slog.Logger
+	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
-// New constructs the adapter over tables installed by contentkit.Migrate.
+// New constructs the adapter over tables contentkit.New installs.
 func New(opts Options) (*Store, error) {
 	if strings.TrimSpace(opts.Tenant) == "" {
 		return nil, fmt.Errorf("notification: Tenant is required")
@@ -39,5 +40,5 @@ func New(opts Options) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Store{Store: store, log: log}, nil
+	return &Store{Store: store, pool: opts.Pool, log: log}, nil
 }

@@ -1,9 +1,22 @@
 // Shared by the integration tests: the harness, named accounts, clients
 // against the real ContentKit, and a recorder of what a client sends.
 import { inject } from "vitest";
-import { createContentKitClient, fetchTransport, type CommitBody, type ContentKitClient, type MediaOptions, type Op, type PresignBody, type RefBody, type Transport } from "../../src/client/index.js";
+import {
+  createContentKitClient,
+  fetchTransport,
+  type CommitBody,
+  type Content,
+  type ContentKitClient,
+  type MediaOptions,
+  type Op,
+  type PresignBody,
+  type RefBody,
+  type Rule,
+  type Transport,
+  type VersionInput,
+} from "../../src/client/index.js";
 import { png as pngBytes } from "../support/bytes.js";
-import { Harness, type Config, type Role, type TestUser } from "../support/harness.js";
+import { Harness, mediaRef, type Config, type Role, type TestUser } from "../support/harness.js";
 
 // Node's modules at run time, not imported: vite externalizes Node built-ins
 // a jsdom file imports, for browser compatibility.
@@ -117,7 +130,7 @@ export interface ClientOptions {
 export function client(h: Harness, cfg: Config, user: TestUser | null, o: ClientOptions = {}): ContentKitClient {
   return createContentKitClient({
     baseUrl: `${h.origin}${cfg.api}`,
-    mounts: o.onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/media/upload` } : undefined,
+    mounts: o.onUpload ? { upload: `${h.origin}${cfg.on_upload_api}/v1/media/upload` } : undefined,
     token: () => user?.access_token,
     headers: (): Record<string, string> => (o.ip ? { "X-Forwarded-For": o.ip } : {}),
     fetch: o.record?.fetch,
@@ -125,11 +138,20 @@ export function client(h: Harness, cfg: Config, user: TestUser | null, o: Client
   });
 }
 
-/** An item the host knows, owned by owner. */
+/**
+ * A content item the host made through the catalog, owned by owner: the
+ * item its uploads go to, its version for a kind whose media are versions'.
+ * content(ref) is its content-level item (a gallery's cover).
+ */
 export async function item(h: Harness, kind: string, owner: TestUser | null, o: { access?: "full" | "none"; hidden?: boolean; title?: string } = {}): Promise<RefBody> {
-  const it = await h.item({ kind, owner: owner?.id, ...o });
-  return { kind: it.kind, id: it.id };
+  return mediaRef(await h.item({ kind, owner: owner?.id, ...o }));
 }
+
+/** The content-level item of a ref: where a content's cover lives. */
+export const content = ({ kind, id }: RefBody): RefBody => ({ kind, id });
+
+/** An item's storage folder as media URLs name it: "{kind}/{id}", a version's "{kind}/{id}/{version}". */
+export const itemFolder = (ref: RefBody) => (ref.version ? `${ref.kind}/${ref.id}/${ref.version}` : `${ref.kind}/${ref.id}`);
 
 /** A real PNG, each seed distinct, as Node's File (jsdom's Blob is no body Node's fetch can send). */
 export function png(name: string, seed = 1, w = 48, h = 32): File {
@@ -139,4 +161,33 @@ export function png(name: string, seed = 1, w = 48, h = 32): File {
 /** A fixture under e2e/fixtures as Node's File. */
 export function fixture(name: string, type: string, as = name): File {
   return new NodeFile([readFileSync(path.resolve(fixtures, name))], as, { type }) as unknown as File;
+}
+
+/** A content as tests create it through the catalog. */
+export interface SeedContent {
+  kind: string;
+  /** Titles by language. */
+  titles: Record<string, string>;
+  access?: Rule;
+  attributes?: Record<string, unknown>;
+  versions: VersionInput[];
+  /** Group ids, content-level memberships. */
+  groups?: string[];
+  /** The owner group's id (a channel). */
+  owner?: string;
+  /** Published now unless false (a draft). */
+  publish?: boolean;
+}
+
+/** Creates contents through the catalog's routes as staff: text, versions, groups, then published. */
+export async function seedContents(staff: ContentKitClient, items: SeedContent[]): Promise<Content[]> {
+  const out: Content[] = [];
+  for (const it of items) {
+    const text = Object.fromEntries(Object.entries(it.titles).map(([l, title]) => [l, { title }]));
+    let c = await staff.contents.create({ kind: it.kind, text, access: it.access, attributes: it.attributes, versions: it.versions, owner_group_id: it.owner });
+    if (it.groups?.length) await staff.groups.setOfContent(c.id, { memberships: it.groups.map((group_id) => ({ group_id })) });
+    if (it.publish !== false) c = await staff.contents.publish(c.id);
+    out.push(c);
+  }
+  return out;
 }

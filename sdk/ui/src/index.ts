@@ -41,17 +41,12 @@ export { HoverPreview, type HoverPreviewProps } from "./components/hover-preview
 export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
 export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
+export * from "./components/groups/index.js";
+export * from "./components/content/index.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
-export { PostManager, postStatus, usePostManagerAccess, type PostEditorProps, type PostManagerProps, type PostStatus } from "./components/admin/post-manager.js";
-export {
-  TaxonomyManager,
-  slugify,
-  useTaxonomyManagerAccess,
-  type TaxonomyKind,
-  type TaxonomyManagerProps,
-  type TaxonomyRelation,
-} from "./components/admin/taxonomy-manager.js";
+export { ContentEditor, ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
+export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./components/admin/group-manager.js";
 export { MediaItemPanel, type MediaItemPanelProps } from "./components/admin/media-item-panel.js";
 export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";

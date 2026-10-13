@@ -10,7 +10,7 @@ export interface HeldQuery {
   limit?: number;
 }
 
-/** The review queue of held comments and posts (ModerationReview). */
+/** The review queue of held comments and content (ModerationReview). */
 export class ModerationClient {
   constructor(private readonly http: Http) {}
 

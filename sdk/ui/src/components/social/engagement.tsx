@@ -5,7 +5,8 @@ import { useContext, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { ReactionCounts, RefBody } from "../../client/generated/wire.js";
+import type { Target } from "../../client/content/types.js";
+import type { ReactionCounts } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
@@ -19,7 +20,7 @@ import { contentError } from "./parts.js";
 const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
 export interface ReactionButtonsProps {
-  item: RefBody;
+  item: Target;
   /** Counts the host already has, used instead of reading them. */
   counts?: ReactionCounts;
   /** Offer dislike too. Default true. */
@@ -86,7 +87,7 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
 }
 
 export interface FavoriteButtonProps {
-  item: RefBody;
+  item: Target;
   /** Whether it is favorited and the item's count, as the host already has them: both given, nothing is read. */
   favorited?: boolean;
   count?: number;

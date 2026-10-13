@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,22 +16,21 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
+	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/notification"
 )
 
-// Reserved content kinds owned by this package: reactions on comments and
-// posts are keyed by them and never pass through the access.ContentResolver.
-const (
-	KindComment = "comment"
-	KindPost    = "post"
-)
+// KindComment is the reserved content kind of comments: reactions on comments
+// are keyed by it and never pass through the resolve.Resolver.
+const KindComment = "comment"
 
 // Options configures a Runtime. Pool, Schema, Tenant, Auth and Resolver are
 // mandatory; the rest fall back to documented defaults.
 type Options struct {
 	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
-	// Schema is the host-selected schema holding all ContentKit tables.
+	// Schema is ContentKit's schema.
 	Schema string
 	// Tenant scopes every row, index, cursor and result. Required.
 	Tenant string
@@ -48,22 +46,22 @@ type Options struct {
 	// ak.UserInfo()): authors' names and usernames, read once per response
 	// and never copied. Nil shows authors by id.
 	UserInfo userinfo.Lookup
-	// Resolver is the gating surface (access.ContentResolver). Required.
-	Resolver access.ContentResolver
+	// Resolver decides interaction targets: content items and their versions
+	// (the catalog's) and groups. Required.
+	Resolver resolve.Resolver
+	// Kinds is the site's content model: interactions target its content
+	// kinds and group kinds, and comments carry one of its languages.
+	Kinds kinds.Config
 
-	// Canonicalizer enables the preference boundary (preferences.go): the
-	// reaction/favorite row, the counts rollup and the export all use the
-	// reference it returns. nil = no preference export.
-	Canonicalizer ContentCanonicalizer
 	// PreferenceSyncOverlap bounds how long a preference write may take to
 	// commit and still be picked up by SyncPreferences.
 	// Default DefaultPreferenceSyncOverlap.
 	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
-	Processor         ContentProcessor // comments and post excerpts; default: strip tags
-	PostBodyProcessor ContentProcessor // post bodies; default: Processor
-	// Moderator screens comment/post writes; nil publishes everything.
+	Processor ContentProcessor // comments; default: strip tags
+	// Moderator screens comment writes, and the catalog's (Screen); nil
+	// publishes everything.
 	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
 	// ModeratorTimeout bounds one Screen call (default 5s); a slower
@@ -75,8 +73,8 @@ type Options struct {
 	// Classifier groups free-text poll answers; nil refuses free-text polls.
 	Classifier AnswerClassifier
 
-	// Media stores post and poll images in ContentKit media; nil refuses
-	// image writes with 501 not_configured. See Media.
+	// Media stores poll images in ContentKit media; nil refuses image writes
+	// with 501 not_configured. See Media.
 	Media *Media
 
 	// ProviderDataEraser is required when moderator/classifier ports retain
@@ -95,10 +93,6 @@ type Options struct {
 	// default DefaultCommentMaxLength.
 	CommentMaxLength int
 
-	// ContentKinds are the commentable/reactable/favoritable kinds the host
-	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
-	ContentKinds []string
-
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
 	Logger *slog.Logger
@@ -107,33 +101,33 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	// Notifications is this tenant's user inbox, shared with contentkit.Runtime.
-	Notifications     *notification.Store
-	store             *store
-	schema            string
-	tenant            string
-	guard             *gate.Gate
-	userInfo          userinfo.Lookup
-	resolver          access.ContentResolver
-	media             *Media
-	processor         ContentProcessor
-	postBodyProcessor ContentProcessor
-	moderator         ContentModerator
-	breaker           *moderatorBreaker
-	classifier        AnswerClassifier
-	providerEraser    ProviderDataEraser
-	anonymous         Anonymous
-	commentMax        int
-	log               *slog.Logger
-	kinds             map[string]struct{}
-	limiters          map[Action]*ratelimit.Limiter
+	// Notifications is this tenant's user inbox.
+	Notifications  *notification.Store
+	store          *store
+	schema         string
+	tenant         string
+	guard          *gate.Gate
+	userInfo       userinfo.Lookup
+	resolver       resolve.Resolver
+	media          *Media
+	processor      ContentProcessor
+	moderator      ContentModerator
+	breaker        *moderatorBreaker
+	classifier     AnswerClassifier
+	providerEraser ProviderDataEraser
+	anonymous      Anonymous
+	commentMax     int
+	log            *slog.Logger
+	cfg            kinds.Config
+	rules          *rules
+	limiters       map[Action]*ratelimit.Limiter
 
 	preferences *preferences
 	reactions   *reactions
 	polls       *polls
 	comments    *comments
-	posts       *posts
 	favorites   *favorites
+	held        map[string]HeldSource
 }
 
 // New constructs a Runtime over a schema the ContentKit baseline was applied to and wires the module services.
@@ -151,7 +145,14 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("content: Auth: %w", err)
 	}
 	if opts.Resolver == nil {
-		return nil, fmt.Errorf("content: the Resolver port is required")
+		return nil, fmt.Errorf("content: Resolver is required")
+	}
+	if err := opts.Kinds.Validate(); err != nil {
+		return nil, fmt.Errorf("content: Kinds: %w", err)
+	}
+	_, content := opts.Kinds.Kinds[KindComment]
+	if _, group := opts.Kinds.GroupKinds[KindComment]; content || group {
+		return nil, fmt.Errorf("content: kind %q is reserved", KindComment)
 	}
 	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
 		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
@@ -170,23 +171,23 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	processor := orDefault[ContentProcessor](opts.Processor, stripProcessor{})
 	rt := &Runtime{
-		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:            opts.Schema,
-		tenant:            opts.Tenant,
-		userInfo:          opts.UserInfo,
-		resolver:          opts.Resolver,
-		media:             media,
-		processor:         processor,
-		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
-		moderator:         opts.Moderator,
-		breaker:           newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
-		classifier:        opts.Classifier,
-		providerEraser:    opts.ProviderDataEraser,
-		anonymous:         opts.Anonymous,
-		commentMax:        orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
-		log:               log,
-		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
-		limiters:          limiters,
+		store:          newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:         opts.Schema,
+		tenant:         opts.Tenant,
+		userInfo:       opts.UserInfo,
+		resolver:       opts.Resolver,
+		media:          media,
+		processor:      processor,
+		moderator:      opts.Moderator,
+		breaker:        newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
+		classifier:     opts.Classifier,
+		providerEraser: opts.ProviderDataEraser,
+		anonymous:      opts.Anonymous,
+		commentMax:     orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
+		log:            log,
+		cfg:            opts.Kinds,
+		limiters:       limiters,
+		held:           map[string]HeldSource{},
 	}
 	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log})
 	if err != nil {
@@ -194,19 +195,16 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	rt.Notifications = notices
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
-	for _, k := range opts.ContentKinds {
-		rt.kinds[k] = struct{}{}
-	}
+	rt.rules = newRules(rt)
 	if err := rt.checkSchema(ctx); err != nil {
 		return nil, err
 	}
 	// preferences before the writers that resolve through it; reactions before
-	// comments and posts, which reuse its applyTx primitive.
-	rt.preferences = newPreferences(rt, opts.Canonicalizer, opts.PreferenceSyncOverlap)
+	// comments, which reuse its applyTx primitive.
+	rt.preferences = newPreferences(rt, opts.PreferenceSyncOverlap)
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
-	rt.posts = newPosts(rt)
 	rt.favorites = newFavorites(rt)
 	return rt, nil
 }
@@ -216,10 +214,11 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
-		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
+		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
-		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0`); err != nil {
-		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)
+		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0; SELECT language FROM `+rt.store.t.comments+` LIMIT 0;
+		SELECT action FROM `+rt.store.t.bannedWords+` LIMIT 0; SELECT network FROM `+rt.store.t.ipBans+` LIMIT 0`); err != nil {
+		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (contentkit.New applies it): %w", rt.schema, err)
 	}
 	return nil
 }
@@ -259,11 +258,11 @@ func (rt *Runtime) accessLog(next http.Handler) http.Handler {
 
 // --- shared helpers used by every module ---
 
-var contentKindRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-
+// isRegistered reports a content kind or group kind interactions target.
 func (rt *Runtime) isRegistered(kind string) bool {
-	_, ok := rt.kinds[kind]
-	return ok
+	_, content := rt.cfg.Kinds[kind]
+	_, group := rt.cfg.GroupKinds[kind]
+	return content || group
 }
 
 // checkRef pins a caller-supplied reference to this tenant.
@@ -278,10 +277,10 @@ func (rt *Runtime) checkRef(ref contentref.ContentRef) error {
 }
 
 // canonicalRef merges the resolver's verdict into the requested reference: a
-// zero Ref keeps the request (see routeKey), a foreign tenant is refused.
+// zero Ref keeps the request, a foreign tenant is refused.
 func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (contentref.ContentRef, error) {
 	if resolved.ContentID == "" {
-		return routeKey(requested)
+		return requested, nil
 	}
 	if resolved.TenantID == "" {
 		resolved.TenantID = rt.tenant
@@ -295,53 +294,30 @@ func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (cont
 	return resolved, nil
 }
 
-// routeKey admits a route id kept as the row key (an id or a host route id
-// such as "{id}:en") only in lower case, so a resolver that folds letter case
-// cannot turn one target into many keys.
-func routeKey(ref contentref.ContentRef) (contentref.ContentRef, error) {
-	if ref.ContentID != strings.ToLower(ref.ContentID) {
-		return contentref.ContentRef{}, badRequest("content id %q must be lower case", ref.ContentID)
-	}
-	return ref, nil
-}
-
-// gate resolves a route target and enforces the required access level. The
-// returned reference is the resolver's canonical identity; callers store and
-// query by it, never by the caller-supplied key, so aliases cannot fragment rows.
-func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	ref, _, err := rt.resolveTarget(ctx, kind, id, actor, needAccessible)
+// gate resolves a target and enforces the required access level. The
+// returned reference is the resolver's canonical identity (a merged group's
+// survivor); callers store and query by it, never by the requested one.
+func (rt *Runtime) gate(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
+	ref, _, err := rt.resolveTarget(ctx, requested, actor, needAccessible)
 	return ref, err
 }
 
 // resolveTarget is gate that also returns the resolution (its Owner).
-func (rt *Runtime) resolveTarget(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, access.Resolution, error) {
-	if !rt.routable(kind, id) {
-		return contentref.ContentRef{}, access.Resolution{}, ErrNotFound
+func (rt *Runtime) resolveTarget(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, resolve.Resolution, error) {
+	if !rt.routable(requested) {
+		return contentref.ContentRef{}, resolve.Resolution{}, ErrNotFound
 	}
-	requested := rt.Ref(kind, id)
 	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
 	if err != nil {
-		return contentref.ContentRef{}, access.Resolution{}, err
+		return contentref.ContentRef{}, resolve.Resolution{}, err
 	}
 	ref, err := rt.admit(requested, batch, needAccessible)
 	return ref, batch[requested.Key()], err
 }
 
-// gateRef authorizes an existing reference without dropping its stored version.
-func (rt *Runtime) gateRef(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	if !rt.routable(requested.ContentKind, requested.ContentID) {
-		return contentref.ContentRef{}, ErrNotFound
-	}
-	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
-	if err != nil {
-		return contentref.ContentRef{}, err
-	}
-	return rt.admit(requested, batch, needAccessible)
-}
-
 // admit applies requested's resolution from a batch: the canonical reference
 // if the target exists and is visible (and accessible when required).
-func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]access.Resolution, needAccessible bool) (contentref.ContentRef, error) {
+func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]resolve.Resolution, needAccessible bool) (contentref.ContentRef, error) {
 	res, ok := batch[requested.Key()]
 	if !ok {
 		return contentref.ContentRef{}, ErrNotFound
@@ -359,23 +335,22 @@ func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.C
 	return ref, nil
 }
 
-func (rt *Runtime) routable(kind, id string) bool {
-	return contentKindRe.MatchString(kind) && rt.isRegistered(kind) && id != ""
+func (rt *Runtime) routable(ref contentref.ContentRef) bool {
+	return ref.TenantID == rt.tenant && rt.isRegistered(ref.ContentKind) && ref.ContentID != ""
 }
 
-// canonical maps a caller-supplied key to the resolver's canonical one for
-// paths that must succeed even when the target is hidden (un-wishlisting
-// deleted content): a resolve failure falls back to the requested key.
-func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) (contentref.ContentRef, error) {
-	requested := rt.Ref(kind, id)
-	if rt.routable(kind, id) {
-		if res, err := access.ResolveOne(ctx, rt.resolver, requested, actor); err == nil {
+// canonical maps a requested target to the resolver's canonical one for
+// paths that must succeed even when the target is hidden (unfavoriting
+// deleted content): a resolve failure keeps the requested one.
+func (rt *Runtime) canonical(ctx context.Context, requested contentref.ContentRef, actor access.Actor) contentref.ContentRef {
+	if rt.routable(requested) {
+		if res, err := resolve.One(ctx, rt.resolver, requested, actor); err == nil {
 			if ref, err := rt.canonicalRef(requested, res.Ref); err == nil {
-				return ref, nil
+				return ref
 			}
 		}
 	}
-	return routeKey(requested)
+	return requested
 }
 
 // requirePerm asks the actor's Verified whether it holds perm in the

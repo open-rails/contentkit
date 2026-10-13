@@ -39,15 +39,20 @@ export type SocialOperation =
   | "poll.answer"
   | "poll.save"
   | "post.load"
-  | "post.save"
+  | "content.save"
   | "moderation.load"
   | "moderation.resolve"
-  | "taxonomy.load"
-  | "taxonomy.save"
   | "media.save"
   | "notifications.load"
   | "notifications.read"
-  | "notifications.dismiss";
+  | "notifications.dismiss"
+  | "group.load"
+  | "group.save"
+  | "membership.save"
+  | "history.forget"
+  | "filters.save"
+  | "offer.save"
+  | "membership.join";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -34,8 +34,8 @@ type HandlerOptions struct {
 	Limit RateLimit
 }
 
-// Handler serves the read API. contentkit.Runtime.Handler serves it at
-// /media; a host mounting it alone puts it under a prefix. It panics without
+// Handler serves the read API: the engine's media route group (/v1/media).
+// It panics without
 // HandlerOptions.Auth. Errors are ErrorReply: 400 invalid_request, 404 not_found
 // (also for what the viewer may not see), 429 rate_limited (Retry-After: too
 // many requests, or too many items opened this hour), 503 unavailable, 500
@@ -148,7 +148,7 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *G
 
 func (r *Reader) requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor, error) {
 	actor := gate.Actor(req.Context())
-	ref, err := r.reg.Ref(req.PathValue("kind"), req.PathValue("id"))
+	ref, err := r.reg.VersionRef(req.PathValue("kind"), req.PathValue("id"), req.PathValue("version"))
 	if err != nil {
 		return ref, actor, ErrNotVisible
 	}

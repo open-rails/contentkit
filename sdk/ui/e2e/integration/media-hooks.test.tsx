@@ -6,12 +6,10 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { ContentKitClient } from "../../src/client/index.js";
 import { ContentKitProvider, useEditorCrop, useMediaFolder, usePublicImage } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
-import { Accounts, client, harness, item, png, recorder, wait } from "./setup.js";
+import { Accounts, client, harness, item, png, recorder, wait, itemFolder } from "./setup.js";
 
 describe("usePublicImage, useEditorCrop and useMediaFolder against the real ContentKit", () => {
   const h = harness();
-  // The client sends a ref as given: only kind and id.
-  const bare = ({ kind, id }: { kind: string; id: string }) => ({ kind, id });
   const accounts = new Accounts(h);
   let cfg: Config;
 
@@ -31,7 +29,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     const ref = { kind: "user", id: alice.id };
     const r = recorder();
     const c = client(h, cfg, alice, { record: r });
-    const { result } = renderHook(() => usePublicImage("user", alice.id, "avatar"), { wrapper: wrap(c) });
+    const { result } = renderHook(() => usePublicImage({ kind: "user", id: alice.id }, "avatar"), { wrapper: wrap(c) });
     await waitFor(() => expect(result.current.loading).toBe(false), wait);
     // The harness's avatar preset declares no default: no URL that would 404.
     expect(result.current).toMatchObject({ image: null, isDefault: false, rule: { kind: "user", name: "avatar", from: "avatar", namespace: "accounts", widths: [64, 128, 256], aspect: "1:1", default: false } });
@@ -48,7 +46,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     expect(result.current.image).toMatchObject({ preset: "avatar", aspect: "1:1" });
 
     const reads = r.calls.filter((x) => x === "/read").length;
-    const listed = renderHook(() => usePublicImage("user", alice.id, "avatar", { image: { preset: "avatar", renditions: own } }), { wrapper: wrap(c) });
+    const listed = renderHook(() => usePublicImage({ kind: "user", id: alice.id }, "avatar", { image: { preset: "avatar", renditions: own } }), { wrapper: wrap(c) });
     expect(listed.result.current.image?.renditions).toEqual(own);
     expect(r.calls.filter((x) => x === "/read").length).toBe(reads);
   });
@@ -59,15 +57,15 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     await client(h, cfg, bob).media.put(png("avatar.png", 42, 300, 300), { ref, path: "avatar" });
     await client(h, cfg, bob).media.waitFor(ref, "avatar", wait);
     // A fresh client fetches the presets once: that request is refused.
-    await h.faults([{ fault: "api", path: "/api/contentkit/media/presets", method: "GET", status: 404, code: "not_found", times: 1 }]);
-    const { result } = renderHook(() => usePublicImage("user", bob.id, "avatar"), { wrapper: wrap(client(h, cfg, bob)) });
+    await h.faults([{ fault: "api", path: "/api/contentkit/v1/media/presets", method: "GET", status: 404, code: "not_found", times: 1 }]);
+    const { result } = renderHook(() => usePublicImage({ kind: "user", id: bob.id }, "avatar"), { wrapper: wrap(client(h, cfg, bob)) });
     await waitFor(() => expect(result.current.image?.renditions.length).toBeGreaterThan(0), wait);
     expect(result.current.rule).toBeUndefined();
     expect(result.current.isDefault).toBe(false);
   });
 
   it("useEditorCrop loads an upload's editor view and its edit, and commits a new edit", async () => {
-    const ref = bare(await item(h, "album", accounts.get("alice")));
+    const ref = await item(h, "album", accounts.get("alice"));
     const r = recorder();
     const c = client(h, cfg, accounts.get("alice"), { record: r });
     await c.media.put(png("a.png", 43, 400, 300), { ref, path: "images/a.png", edit: { rotate: 90 } });
@@ -79,7 +77,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     rerender();
     // The first editor read asks the worker for the view.
     await waitFor(() => expect(result.current.status).toBe("cropping"), wait);
-    expect(result.current).toMatchObject({ source: { url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/album/${ref.id}/private/sha256-`)), width: 400, height: 300 }, edit: { rotate: 90 } });
+    expect(result.current).toMatchObject({ source: { url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/sha256-`)), width: 400, height: 300 }, edit: { rotate: 90 } });
     await act(async () => {
       await result.current.save({ crop: { x: 0, y: 0, w: 100, h: 100 } });
     });
@@ -95,7 +93,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
 
   it("useMediaFolder moves within a path, refuses a taken name and reports update failures", async () => {
     const carol = accounts.get("carol");
-    const ref = bare(await item(h, "gallery", carol));
+    const ref = await item(h, "gallery", carol);
     const r = recorder();
     const c = client(h, cfg, carol, { record: r });
     const ups = await Promise.all([1, 2].map((n) => c.media.upload(png(`${n}.png`, 43 + n), { ref, path: `originals/${n}.png` })));

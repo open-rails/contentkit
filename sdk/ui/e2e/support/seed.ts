@@ -2,8 +2,8 @@
 // a host's own pages would, and waits for the worker's outputs.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createContentKitClient, type FileInfo, type RefBody } from "@openrails/contentkit-ui/client";
-import type { Harness, Item, TestUser } from "./harness.ts";
+import { createContentKitClient, type FileInfo, type RefBody, type Rule } from "@openrails/contentkit-ui/client";
+import { mediaRef, type Harness, type Item, type TestUser } from "./harness.ts";
 
 const fixtures = path.resolve(import.meta.dirname, "..", "fixtures");
 const TYPES: Record<string, string> = { ".jpg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4", ".vtt": "text/vtt" };
@@ -22,7 +22,7 @@ export function mediaClient(h: Harness, user: TestUser) {
 }
 
 const wait = { interval: 250, timeout: 180_000 };
-const refOf = (it: Item): RefBody => ({ kind: it.kind, id: it.id });
+const refOf = (it: Item): RefBody => mediaRef(it);
 
 /** Waits until every upload of the item is processed and its public files are published. */
 export async function processed(h: Harness, user: TestUser, ref: RefBody): Promise<FileInfo[]> {
@@ -99,7 +99,7 @@ export async function seedSocial(h: Harness, o: { viewer?: TestUser | null; lang
     h.user(), h.user(), h.user(), h.user(), h.user({ role: "editor" }), h.user({ role: "moderator" }), h.user(),
   ]);
   const it = await h.item({ kind: "video", owner: creator.id, title: "Night Before the Counteroffensive" });
-  const item = { kind: it.kind, id: it.id };
+  const item = { type: "contents" as const, id: it.id };
   const [b, c, e, ed] = [bob, carol, erin, editor].map((u) => contentKit(h, u!));
   const first = await b!.comments.create(item, { body: "First! This trailer looks great." });
   await c!.comments.create(item, { body: "Agreed, the soundtrack at 1:20 is the best part.\nCan't wait for the full episode.", reply_to_id: first.id });
@@ -135,7 +135,7 @@ export async function seedSocial(h: Harness, o: { viewer?: TestUser | null; lang
 export async function seedModeration(h: Harness) {
   const [owner, bob, carol, staff] = await Promise.all([h.user(), h.user(), h.user(), h.user({ role: "staff" })]);
   const it = await h.item({ kind: "video", owner: owner.id, title: "Moderated video" });
-  const item = { kind: it.kind, id: it.id };
+  const item = { type: "contents" as const, id: it.id };
   const tag = Math.random().toString(36).slice(2, 8);
   const b = contentKit(h, bob);
   for (const body of [`Bob one ${tag}`, `Bob two ${tag}`, `Bob three ${tag}`]) await b.comments.create(item, { body });
@@ -156,29 +156,20 @@ export async function seedPolls(h: Harness) {
   return { staff, tag };
 }
 
-/**
- * For TaxonomyManager: a series (English and Japanese names, registered as a
- * media item for its cover), two characters, and two tags assigned to
- * galleries (Color to two, Colour to one), each name carrying tag.
- */
-export async function seedTaxonomy(h: Harness) {
-  const staff = await h.user({ role: "staff" });
-  const ck = contentKit(h, staff);
-  const tag = Math.random().toString(36).slice(2, 8);
-  const name = (en: string, ja?: string) => [
-    { language: "en", kind: "name" as const, name: en, source_revision: 0 },
-    ...(ja ? [{ language: "ja", kind: "name" as const, name: ja, source_revision: 0 }] : []),
-  ];
-  const [series, aria, bram, color, colour] = await ck.taxonomy.createNodes([
-    { kind: "series", slug: `night-watch-${tag}`, names: name(`Night Watch ${tag}`, `夜警 ${tag}`), source_revision: 0 },
-    { kind: "character", slug: `aria-${tag}`, names: name(`Aria ${tag}`), source_revision: 0 },
-    { kind: "character", slug: `bram-${tag}`, names: name(`Bram ${tag}`), source_revision: 0 },
-    { kind: "tag", slug: `color-${tag}`, names: name(`Color ${tag}`), source_revision: 0 },
-    { kind: "tag", slug: `colour-${tag}`, names: name(`Colour ${tag}`), source_revision: 0 },
-  ]);
-  await h.item({ kind: "series", id: series!.taxonomy_id });
-  const galleries = await Promise.all([1, 2, 3].map(() => h.item({ kind: "gallery", owner: staff.id })));
-  const at = (g: Item, node: string) => ({ tenant_id: "", content_kind: "gallery", content_id: g.id, taxonomy_id: node, relation: "", source_revision: 0 });
-  await ck.taxonomy.assignments("add", [at(galleries[0]!, color!.taxonomy_id), at(galleries[1]!, color!.taxonomy_id), at(galleries[2]!, colour!.taxonomy_id)]);
-  return { staff, tag, series: series!, aria: aria!, bram: bram!, color: color!, colour: colour! };
+/** A published content made through the catalog's routes: titles by language, its versions, its groups. */
+export async function seedContent(
+  ck: ReturnType<typeof contentKit>,
+  o: {
+    kind: string;
+    titles: Record<string, string>;
+    versions: { languages: string[]; traits?: string[]; access?: Rule }[];
+    groups?: string[];
+    access?: Rule;
+    attributes?: Record<string, unknown>;
+  },
+) {
+  const text = Object.fromEntries(Object.entries(o.titles).map(([l, title]) => [l, { title }]));
+  const c = await ck.contents.create({ kind: o.kind, text, versions: o.versions, access: o.access, attributes: o.attributes });
+  if (o.groups?.length) await ck.groups.setOfContent(c.id, { memberships: o.groups.map((group_id) => ({ group_id })) });
+  return ck.contents.publish(c.id);
 }

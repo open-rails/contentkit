@@ -20,8 +20,7 @@ type Action string
 const (
 	ActionComment         Action = "comment"          // comment create, top-level or reply
 	ActionCommentReaction Action = "comment_reaction" // like, dislike, neutral on a comment
-	ActionPostReaction    Action = "post_reaction"    // like, dislike, neutral on a post
-	ActionReaction        Action = "reaction"         // like, dislike, neutral on host content
+	ActionReaction        Action = "reaction"         // like, dislike, neutral on content
 	ActionFavorite        Action = "favorite"         // favorite and unfavorite
 	ActionPollVote        Action = "poll_vote"        // multiple-choice votes and free-text answers
 )
@@ -39,7 +38,6 @@ type Rate struct {
 type Limits struct {
 	Comment         []Rate // default 5 per 5 minutes and 20 per hour
 	CommentReaction []Rate // default 30 per minute
-	PostReaction    []Rate // default 30 per minute
 	Reaction        []Rate // default 30 per minute
 	Favorite        []Rate // default 20 per minute
 	PollVote        []Rate // default 30 per minute
@@ -56,7 +54,6 @@ type Limits struct {
 var defaultLimits = map[Action][]Rate{
 	ActionComment:         {{5, 5 * time.Minute}, {20, time.Hour}},
 	ActionCommentReaction: {{30, time.Minute}},
-	ActionPostReaction:    {{30, time.Minute}},
 	ActionReaction:        {{30, time.Minute}},
 	ActionFavorite:        {{20, time.Minute}},
 	ActionPollVote:        {{30, time.Minute}},
@@ -87,7 +84,7 @@ func newLimiters(l Limits, tenant string, log *slog.Logger) (map[Action]*ratelim
 		return nil, nil
 	}
 	set := map[Action][]Rate{
-		ActionComment: l.Comment, ActionCommentReaction: l.CommentReaction, ActionPostReaction: l.PostReaction,
+		ActionComment: l.Comment, ActionCommentReaction: l.CommentReaction,
 		ActionReaction: l.Reaction, ActionFavorite: l.Favorite, ActionPollVote: l.PollVote,
 	}
 	prefix := l.KeyPrefix

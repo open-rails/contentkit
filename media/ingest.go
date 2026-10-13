@@ -83,8 +83,8 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, uploadErr(CodeInvalid, "ingest needs a path, a type and either a body or a copy source")
 	}
 	if req.From != "" {
-		if ns, _, _ := strings.Cut(req.From, "/"); slices.Contains(u.reg.Namespaces(), ns) {
-			return IngestResult{}, uploadErr(CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", req.From)
+		if err := u.copySource(req.From); err != nil {
+			return IngestResult{}, err
 		}
 		if req.Resume != nil || req.OnUpload != nil {
 			return IngestResult{}, uploadErr(CodeInvalid, "a copy has no multipart write to resume")
@@ -115,10 +115,10 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if !u.o.Store.Capabilities().ConditionalPut {
 		return IngestResult{}, ErrConditionalPutRequired
 	}
-	limited := u.o.Limiter != nil && !grant.Exempt
 	if req.From != "" {
-		return u.ingestCopy(ctx, actor, item, up, grant.Owner, limited, req)
+		return u.ingestCopy(ctx, actor, item, g, grant, req)
 	}
+	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited && req.Size == 0 {
 		return IngestResult{}, uploadErr(CodeInvalid, "a limited uploader must declare the size")
 	}
@@ -172,51 +172,129 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	return res, nil
 }
 
-// ingestCopy copies req.From to a fresh staged upload, so no byte passes
-// through this process, and commits it. A copy the commit did not adopt is
-// dropped at once: a retry copies again under a new name.
-func (u *Uploads) ingestCopy(ctx context.Context, actor access.Actor, item Item, up Upload, owner string, limited bool, req IngestRequest) (_ IngestResult, err error) {
-	src, err := u.o.Store.Head(ctx, req.From)
-	if errors.Is(err, ErrNotFound) {
-		return IngestResult{}, uploadErr(CodeNotFound, "copy source %q not found", req.From)
-	} else if err != nil {
-		return IngestResult{}, err
-	}
-	if req.Size > 0 && src.Size != req.Size {
-		return IngestResult{}, uploadErr(CodeInvalid, "copy source holds %d bytes; declared %d", src.Size, req.Size)
-	}
-	if err := allows(up, req.Type, src.Size); err != nil {
-		return IngestResult{}, err
-	}
-	temp := NewStaged()
-	key, _ := item.Staged(temp)
-	if err := u.o.Manifests.allocate(ctx, item, key); err != nil {
+// ingestCopy stages a copy of req.From and commits it; a copy the commit
+// did not adopt is dropped at once, so a retry copies again.
+func (u *Uploads) ingestCopy(ctx context.Context, actor access.Actor, item Item, g int, grant UploadGrant, req IngestRequest) (_ IngestResult, err error) {
+	s, err := u.stageCopy(ctx, actor, item, req.Path, g, grant, CopyRequest{Path: req.Path, Type: req.Type, From: req.From, Size: req.Size})
+	if err != nil {
 		return IngestResult{}, err
 	}
 	defer func() {
+		ctx := context.WithoutCancel(ctx)
 		if err != nil {
-			// Only an unadopted copy goes; a failed drop leaves it to the sweep.
-			_ = u.o.Manifests.DropUnreferenced(context.WithoutCancel(ctx), req.Ref, Unreferenced{Staged: []string{temp}})
+			_ = u.o.Manifests.DropUnreferenced(ctx, req.Ref, Unreferenced{Staged: []string{s.Blob}})
+		}
+		if u.o.Limiter != nil && !grant.Exempt {
+			key, _ := item.Staged(s.Blob)
+			_ = u.limiter(req.Ref.TenantID).Settle(ctx, Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
 		}
 	}()
-	if limited {
-		if err := u.limiter(req.Ref.TenantID).Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
-			Owner: owner, Key: key, Size: src.Size}); err != nil {
-			return IngestResult{}, err
-		}
-		defer func() {
-			_ = u.limiter(req.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
-		}()
-	}
-	obj, err := u.o.Store.Copy(ctx, req.From, key, CopyOptions{IfMatch: src.ETag, ContentType: req.Type})
-	if err != nil {
-		return IngestResult{}, fmt.Errorf("media: copy %s: %w", req.From, err)
-	}
-	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(s.Blob, "u-"), []Op{{Op: OpPut, Path: s.Path, Blob: s.Blob, Meta: req.Meta}})
 	if err != nil {
 		return IngestResult{}, err
 	}
-	return IngestResult{Staged: temp, Size: obj.Size, Manifest: man}, nil
+	return IngestResult{Staged: s.Blob, Size: s.Size, Manifest: man}, nil
+}
+
+// CopyRequest stages a server-side copy of From, a key of the item's bucket
+// outside ContentKit's namespaces, as an upload at Path.
+type CopyRequest struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+	From string `json:"from"`
+	Size int64  `json:"size,omitempty"` // checked when > 0
+}
+
+// StagedCopy is a staged copy for a commit's put: its path and blob.
+type StagedCopy struct {
+	Path string `json:"path"`
+	Blob string `json:"blob"`
+	Size int64  `json:"size"`
+}
+
+// StageCopies copies each request's From to a fresh staged upload of ref's
+// item, so no byte passes through this process; a commit's puts adopt them
+// as they do presigned uploads, and the sweep takes what none adopts.
+func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref contentref.ContentRef, reqs []CopyRequest) ([]StagedCopy, error) {
+	item, err := u.item(ref)
+	if err != nil {
+		return nil, err
+	}
+	if !u.o.Store.Capabilities().ConditionalPut {
+		return nil, ErrConditionalPutRequired
+	}
+	out := make([]StagedCopy, 0, len(reqs))
+	for _, r := range reqs {
+		if r.Path == "" || r.Type == "" || r.From == "" || r.Size < 0 {
+			return nil, uploadErr(CodeInvalid, "a copy needs a path, a type and a source")
+		}
+		if err := u.copySource(r.From); err != nil {
+			return nil, err
+		}
+		path, g, err := u.uploadPath(item.Kind(), r.Path, r.Type)
+		if err != nil {
+			return nil, err
+		}
+		stem, _ := splitExt(path)
+		grant, err := u.authorize(ctx, actor, UploadTarget{Ref: ref, Path: stem})
+		if err != nil {
+			return nil, err
+		}
+		s, err := u.stageCopy(ctx, actor, item, path, g, grant, r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// copySource refuses a source inside ContentKit's namespaces: an item's
+// upload copies with OpCopy.
+func (u *Uploads) copySource(from string) error {
+	if ns, _, _ := strings.Cut(from, "/"); slices.Contains(u.reg.Namespaces(), ns) {
+		return uploadErr(CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", from)
+	}
+	return nil
+}
+
+// stageCopy copies r.From to a fresh staged upload at path (Upload g),
+// reserved for grant's owner; a failed copy is dropped at once.
+func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, path string, g int, grant UploadGrant, r CopyRequest) (StagedCopy, error) {
+	src, err := u.o.Store.Head(ctx, r.From)
+	if errors.Is(err, ErrNotFound) {
+		return StagedCopy{}, uploadErr(CodeNotFound, "copy source %q not found", r.From)
+	} else if err != nil {
+		return StagedCopy{}, err
+	}
+	if r.Size > 0 && src.Size != r.Size {
+		return StagedCopy{}, uploadErr(CodeInvalid, "copy source holds %d bytes; declared %d", src.Size, r.Size)
+	}
+	if err := allows(item.Kind().Uploads[g], r.Type, src.Size); err != nil {
+		return StagedCopy{}, err
+	}
+	blob := NewStaged()
+	key, _ := item.Staged(blob)
+	tenant := item.Ref().TenantID
+	limited := u.o.Limiter != nil && !grant.Exempt
+	if limited {
+		if err := u.limiter(tenant).Reserve(ctx, Reservation{Tenant: tenant, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: src.Size}); err != nil {
+			return StagedCopy{}, err
+		}
+	}
+	if err = u.o.Manifests.allocate(ctx, item, key); err == nil {
+		var obj Object
+		if obj, err = u.o.Store.Copy(ctx, r.From, key, CopyOptions{IfMatch: src.ETag, ContentType: r.Type}); err == nil {
+			return StagedCopy{Path: path, Blob: blob, Size: obj.Size}, nil
+		}
+		// Only an unadopted copy goes; a failed drop leaves it to the sweep.
+		_ = u.o.Manifests.DropUnreferenced(context.WithoutCancel(ctx), item.Ref(), Unreferenced{Staged: []string{blob}})
+		err = fmt.Errorf("media: copy %s: %w", r.From, err)
+	}
+	if limited {
+		_ = u.limiter(tenant).Settle(context.WithoutCancel(ctx), Settlement{Tenant: tenant, Keys: []string{key}})
+	}
+	return StagedCopy{}, err
 }
 
 func (u *Uploads) ingestOne(ctx context.Context, up Upload, req IngestRequest, key string, body []byte) (IngestResult, error) {

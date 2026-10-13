@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so store
@@ -39,11 +40,14 @@ type tables struct {
 	pollOptions   string
 	pollVotes     string
 	pollAnswers   string
-	posts         string
 	favorites     string
 	counts        string
 	commentBans   string
 	codes         string
+	items         string
+	groups        string
+	bannedWords   string
+	ipBans        string
 
 	preferenceSync string
 }
@@ -62,11 +66,14 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			pollOptions:   q("content_poll_options"),
 			pollVotes:     q("content_poll_votes"),
 			pollAnswers:   q("content_poll_answers"),
-			posts:         q("content_posts"),
 			favorites:     q("content_favorites"),
 			counts:        q("content_interaction_counts"),
 			commentBans:   q("content_comment_bans"),
 			codes:         q("content_codes"),
+			items:         q("content_items"),
+			groups:        q("content_groups"),
+			bannedWords:   q("content_banned_words"),
+			ipBans:        q("content_ip_bans"),
 
 			preferenceSync: q("content_preference_sync"),
 		},
@@ -77,31 +84,32 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 // keyCols is the content key of every keyed interaction table.
 const keyCols = "tenant_id, content_kind, content_id, content_version_id"
 
-// keyPred renders the key predicate with placeholders $n..$n+3 (see keyArgs).
+// keyPred renders the key predicate with placeholders $n..$n+3 (see keyArgs);
+// no version is NULL.
 func keyPred(n int) string {
 	return "tenant_id = $" + strconv.Itoa(n) + " AND content_kind = $" + strconv.Itoa(n+1) +
-		" AND content_id = $" + strconv.Itoa(n+2) + " AND content_version_id = $" + strconv.Itoa(n+3)
+		" AND content_id = $" + strconv.Itoa(n+2) + " AND content_version_id IS NOT DISTINCT FROM $" + strconv.Itoa(n+3) + "::text"
 }
 
-// keyArgs are the bound values of keyPred, in order.
+// keyArgs are the bound values of keyPred and keyCols, in order.
 func keyArgs(k contentref.ContentKey) []any {
-	return []any{k.TenantID, k.ContentKind, k.ContentID, k.ContentVersionID}
+	return []any{k.TenantID, k.ContentKind, k.ContentID, versionid.Arg(k.ContentVersionID)}
 }
 
 // refColumns unzips references into positional arrays for unnest pairing.
-func refColumns(refs []contentref.ContentRef) (kinds, ids, versions []string) {
-	kinds, ids, versions = make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+func refColumns(refs []contentref.ContentRef) (kinds, ids []string, versions []*string) {
+	kinds, ids, versions = make([]string, len(refs)), make([]string, len(refs)), make([]*string, len(refs))
 	for i, r := range refs {
-		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
+		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.ContentVersionID
 	}
 	return kinds, ids, versions
 }
 
-// refsIn renders "(content_kind, content_id, content_version_id) IN (...)" over
+// refsIn is the predicate of rows keyed by one of the references in
 // positional arrays bound at $n..$n+2; tenant is bound separately.
 func refsIn(n int) string {
-	return "(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($" + strconv.Itoa(n) +
-		"::text[], $" + strconv.Itoa(n+1) + "::text[], $" + strconv.Itoa(n+2) + "::text[]))"
+	return "EXISTS (SELECT 1 FROM unnest($" + strconv.Itoa(n) + "::text[], $" + strconv.Itoa(n+1) + "::text[], $" + strconv.Itoa(n+2) +
+		"::text[]) AS r(kind, id, version) WHERE content_kind = r.kind AND content_id = r.id AND content_version_id IS NOT DISTINCT FROM r.version)"
 }
 
 // beginMutation fixes the isolation required by the source-fence protocol.

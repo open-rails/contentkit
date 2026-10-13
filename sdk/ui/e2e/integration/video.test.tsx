@@ -30,8 +30,7 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** A video item with the 12 s clip as its source (probed by the worker) and its poster the frame at 3 s. */
 async function video(): Promise<{ ref: RefBody; record: Recorder; c: ContentKitClient; duration: number }> {
-  const { kind, id } = await item(h, "video", owner);
-  const ref = { kind, id };
+  const ref = await item(h, "video", owner);
   const record = recorder();
   const c = client(h, cfg, owner, { record });
   await c.media.put(fixture("clip.mp4", "video/mp4", "v.mp4"), { ref, path: "source" });
@@ -127,8 +126,7 @@ it("VideoPosterPicker: upload an image, crop it, and return to automatic", async
 });
 
 it("VideoPosterPicker: a video not probed yet says so; errors are localized", async () => {
-  const { kind, id } = await item(h, "video", owner);
-  const ref = { kind, id };
+  const ref = await item(h, "video", owner);
   const c = client(h, cfg, owner);
   // The worker is held on the item: its source is never placed or probed.
   await h.faults([{ item: ref.id, fault: "hold", from: "worker" }]);

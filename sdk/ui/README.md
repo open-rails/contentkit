@@ -15,7 +15,7 @@ pnpm add @openrails/contentkit-ui@X.Y.Z
 | `@openrails/contentkit-ui/react` | `ContentKitProvider` and every hook | `react` |
 | `@openrails/contentkit-ui/client` | `createContentKitClient`, `ContentKitError`, generated wire types, crop/aspect/rendition/ABR/gallery math | nothing |
 | `@openrails/contentkit-ui/urls` | content codes, `[/{lang}]/{route}/{CODE}[/{slug}]` paths, `canonical` | nothing |
-| `@openrails/contentkit-ui/editor` | `RichTextEditor`, `richTextEditor` (PostManager's body editor) | the optional peers `@tiptap/core`, `@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extensions` (3.31+) |
+| `@openrails/contentkit-ui/editor` | `RichTextEditor`, `richTextEditor` (ContentManager's body editor) | the optional peers `@tiptap/core`, `@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extensions` (3.31+) |
 | `@openrails/contentkit-ui/locales/{de,es,ja,ko,zh}` | message bundles (English is built in) | |
 | `@openrails/contentkit-ui/styles.css` | the stylesheet, scoped under `.ckui` (the root entry also installs it) | |
 
@@ -31,7 +31,7 @@ import { ContentKitUiProvider } from "@openrails/contentkit-ui";
 import { createContentURLs } from "@openrails/contentkit-ui/urls";
 
 const contentkit = createContentKitClient({
-  baseUrl: "/api/v1/contentkit",            // where the host mounts ContentKit
+  baseUrl: "/api/contentkit",               // the host's contentkit.Routes.Prefix
   mounts: { upload: "/api/v1/user-uploads" }, // optional: modules mounted elsewhere (a string, or (ref) => string)
   fetch: auth.authFetch,                    // an authenticating transport
   token: () => auth.getAccessToken(),       // HLS playlists on the API origin (hls.js uses XHR)
@@ -72,8 +72,9 @@ The framework-free client exposes `setReadScope(key)` and passes that key as
 the second `subscribe` / `onChange` argument, or `null` when the scope changed during the
 operation. This does not change the operation's result or its authentication.
 
-- **Mounts.** Without `mounts`, modules live under `baseUrl`: content at the
-  root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/taxonomy`.
+- **Mounts.** Without `mounts`, modules live under `{baseUrl}/v1`: content,
+  groups and the content model at its root, `/media` (reads, HLS),
+  `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
   `xhrSetup` for players (`<MediaGallery xhrSetup={contentkit.media.xhrSetup} />`).
@@ -81,23 +82,25 @@ operation. This does not change the operation's result or its authentication.
   resumable multipart above (`onState`/`resume`). The bucket must allow CORS
   `PUT` from the app's origin with `Content-Type` and `x-amz-checksum-sha256`.
 - **Content modules**, one per resource, each method one route of the
-  generated route table with its generated types: `posts`, `comments`,
+  generated route table with its generated types: `contents`, `catalog`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
-  `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
-  queue a `cursor`); staff lists are `posts.adminList` (`q` searches,
-  `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList` (`state`, `q`),
-  `comments.adminList` (`contentKind`, `author`); `taxonomy.nodeAssignments(id)`
-  pages a node's contents.
-- **Images of posts and polls** go to the item's server-named upload path:
-  `media.uploadNamed(ref, file)` resolves the name content routes take;
-  `media.uploadInline(postId, file)` resolves a body image's reference
-  (`ref`, `contentkit:i-{uuid}`, what the body stores: `imageRef(name)`) and
-  a URL that shows it now; `posts.uploadCover`, `polls.uploadImage` and
+  `moderation`, `groups`, `codes`. Lists take `limit`/`offset` (the review
+  queue and group listings a `cursor`); `contents.manage` lists what the caller
+  manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
+  counts what is open; staff lists are `polls.adminList` (`state`, `q`),
+  `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
+  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's,
+  `groups.uploadCover(group, file)` its cover; `client.kinds()` the content model.
+- **Images of content and polls** go to the item's server-named upload path:
+  `media.uploadNamed(ref, file)` resolves the name content routes take
+  (`contents.setCover`); `media.uploadInline({kind, id}, file)` resolves a
+  body image's reference (`ref`, `contentkit:i-{uuid}`, what the body stores:
+  `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
-  post's `body` shows the images' current public files and `images` maps
-  each name to its URL. `folders` renames the post and poll media kinds. A
-  post's public image files exist only while it is published; `usePost`
-  shows an unpublished post's images to its editors (below).
+  content's `body` shows the images' current public files and `images` maps
+  each name to its URL. `folders` renames the poll media kind. Public image
+  files exist only while the item is live; `useContent` shows an unpublished
+  item's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by
@@ -145,23 +148,23 @@ const { poll, vote } = usePoll(null, { language }); // the newest live poll
 const editor = usePollEditor(pollId);                // staff
 ```
 
-A post editor puts `editorBody` in its rich-text field and inserts what
+A content editor puts `text.body` in its rich-text field and inserts what
 `uploadImage(file)` resolves: URLs that show the images now (the file for a
-fresh upload, public files, signed editor views of an unpublished post's
-images, read and refreshed as needed). `update({ body })` stores each of
-those URLs as the image's reference (`storedBody(html)` does the same for a
-host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
+fresh upload, public files, signed editor views of an unpublished item's
+images, read and refreshed as needed). `putText({ title, body })` stores each
+of those URLs as the image's reference (`storedBody(html)` does the same for
+a host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
 
 ```tsx
-const editor = usePost(postId);
-<RichText value={editor.editorBody} onImage={editor.uploadImage} onSave={(html) => editor.update({ body: html })} />
+const editor = useContent(id, "blog", "en");
+<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.putText({ title, body: html })} />
 <img src={editor.coverSrc} alt="" />
 ```
 
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
 `useCanComment` (may the caller comment, may signed-out visitors, the ban
 that stops it, and what it may do to others' comments), `useLatestComments`,
-`usePolls`, `usePosts` (staff: `admin`, `deleted`, `q`), `usePost` (with `restore`), and for staff `useAdminComments`
+`usePolls`, `useManagedContents` (`kind`, `state`, `q`), `useContent` (with `publish`, `restore`), and for staff `useAdminComments`
 (`contentKind`, `author`), `useModerationQueue`, `useCommentBans`, `useGlobalCommentBan` (one user's), and
 `useStaffAccess`, `useAdminLocation`, `useFlowClient` and `usePaged`, which the admin flows are built from.
 
@@ -226,7 +229,7 @@ op. Nothing is uploaded.
 ### usePublicImage
 
 ```tsx
-const { image, rule, isDefault } = usePublicImage("user", userId, "avatar");
+const { image, rule, isDefault } = usePublicImage({ kind: "user", id: userId }, "avatar");
 <SlotImage image={image} fallback={<Initials name={name} />} />
 ```
 
@@ -415,6 +418,37 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 <Poll language={lang} />
 ```
 
+## Groups
+
+Tags, artists, series, characters, channels and rails: the kinds the site's
+content model declares. `useKinds()` reads it (`GET /v1/kinds`); until that
+route is served, pass the host's model as `initial` (and `kinds` to the
+components below).
+
+```tsx
+const { items, hasMore, loadMore } = useGroups({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
+const g = useGroup(id);           // g.group: names, text, attributes, parent, scope, children, edges, counts
+await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, edges, merge, remove, restore
+await g.uploadCover(file);         // into the group kind's folder (cover/{name}), then selected
+const members = useGroupMembers(id);       // add, remove, reorder
+const content = useContentGroups(contentId); // content.set(memberships, kinds)
+```
+
+- **`GroupDirectory`**: one kind's groups with A–Z buckets (`letter` and
+  `onLetterChange` to keep it in the URL), content counts, `layout` list or
+  grid, paged. **`GroupHeader`**: a group page's cover, names, description,
+  typed attributes, parent, scope and sub-groups. Links go to each group's
+  canonical path (`href` overrides) through the provider's `navigate`.
+- **`GroupEditor`** (staff): create, or edit slug, parent, scope, declared
+  attributes, names and aliases per language, description and sort key per
+  language, cover, related groups; `GroupMergeDialog`; delete and restore.
+- **`MembershipEditor`** (staff): a content's groups per group kind, with the
+  version (`versions`), role, position and window each kind allows; one save.
+  **`GroupMembers`**: a group's members, reordered, windowed, used as cover.
+- `labels` names kinds, attributes, roles and values by identifier; others
+  show humanized. Covers render `cover.renditions`; `renderCover` stands in
+  until group reads carry them.
+
 ## Admin flows
 
 Drop-in staff screens for a host's own admin area: each makes its own reads
@@ -448,7 +482,7 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   `userHref`, `sections`, `pageSize`. `useCommentModerationAccess()`.
 
   ```tsx
-  <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "post"]} />
+  <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "blog"]} />
   ```
 
 - **`PollManager`**: every poll by language, month or day, state (live,
@@ -461,38 +495,22 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   <PollManager client={contentkit} basePath="/admin/polls" navigation={nav} languages={["en", "ja"]} />
   ```
 
-- **`PostManager`**: every post by language, draft state and text, deleted
-  ones to restore; title, slug, language, excerpt, schedule, cover and body
-  with inline images; draft or publish; the moderation state. Props:
-  `languages`, `renderEditor` (`richTextEditor` from `/editor`, or the
-  host's; a plain HTML field without it), `postHref`, `pageSize`.
-  `usePostManagerAccess()`.
+- **`ContentManager`**: the items of one `kind` the caller manages, by
+  state and text, deleted ones to restore; title, slug, description,
+  schedule, cover and body with inline images per language; publish or
+  unpublish; the moderation state. Props: `kind`, `languages`,
+  `renderEditor` (`richTextEditor` from `/editor`, or the host's; a plain
+  HTML field without it), `contentHref`, `pageSize`.
+  `useContentManagerAccess()`.
 
   ```tsx
   import { richTextEditor } from "@openrails/contentkit-ui/editor";
-  <PostManager client={contentkit} basePath="/admin/posts" navigation={nav} renderEditor={richTextEditor} />
+  <ContentManager kind="blog" client={contentkit} basePath="/admin/blog" navigation={nav} renderEditor={richTextEditor} />
   ```
 
   `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
-
-- **`TaxonomyManager`**: the taxonomy per kind (`kinds`: `kind`, `label`,
-  `relations` such as a character `member_of` a series, `cover` in a media
-  kind). Each kind's nodes by name, state, language, minimum count and order
-  at `basePath/{kind}`; a node at `basePath/{kind}/{id}`: slug, names and
-  aliases per language, host fields (`renderFields`), relations with a
-  typeahead (both directions), cover, counts and assigned contents
-  (`renderContent`); create, delete, restore, and merge with a typed
-  confirmation. Props: `kinds`, `languages`, `contentKind`, `renderFields`,
-  `renderContent`, `pageSize`. `useTaxonomyManagerAccess()`. Host-owned
-  fields stay in host tables.
-
-  ```tsx
-  <TaxonomyManager client={contentkit} basePath="/admin/taxonomy" navigation={nav} languages={["en", "ja"]}
-    kinds={[{ kind: "tag", label: "Tags" }, { kind: "series", label: "Series", cover: { kind: "series" } },
-      { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series" }] }]} />
-  ```
 
 - **`MediaItemPanel`**: one video item for its editors: encode state and
   progress, failures with their reason, replace the source, subtitle
@@ -517,6 +535,16 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 
   The per-item queue engine behind `useUploadQueue` is `ItemUploadQueue` in
   `/client`.
+
+- **`GroupManager`**: groups per kind (tabs at `basePath/{kind}`): by
+  letter, order and language; a new group at `basePath/{kind}/new`; a group
+  at `basePath/{kind}/{id}` with `GroupEditor` and `GroupMembers`. Props:
+  `groupKinds` (default the model's site-owned ones), `kinds`, `labels`,
+  `contentKind`, `renderContent`, `pageSize`. `useGroupManagerAccess()`.
+
+  ```tsx
+  <GroupManager client={contentkit} basePath="/admin/groups" navigation={nav} labels={{ artist: "Artists" }} />
+  ```
 
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
   ban (ban, replace, lift) and their recent comments (delete, restore). Props:
@@ -569,7 +597,7 @@ pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
 ```
 
 The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
-`contentkit.Runtime` (content, taxonomy, codes, media upload and read) with
+ContentKit's engine (content, groups, codes, media upload and read) with
 AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
 media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
 the stack up under its own project name and takes it down; the server exits

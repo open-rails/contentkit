@@ -7,7 +7,7 @@ import { client, dark, item, q, theme, viewer } from "./session";
 // A thread and a poll the spec seeded (e2e/support/seed.ts seedSocial):
 // ?item= (a video), ?poll=; ?view=staff the staff screens, ?lang= the UI,
 // ?mount=members the ContentKit that takes nothing from signed-out visitors.
-const video = item("item", "video")!;
+const video = { type: "contents" as const, id: item("item", "video")!.id };
 const poll = q.get("poll")!;
 const view = q.get("view") ?? "public";
 const lang = q.get("lang") ?? "en";
@@ -46,7 +46,7 @@ function Staff() {
       <ContentKitUiProvider appearance={{ theme }} language={lang}>
         <main style={{ maxWidth: 900, margin: "0 auto", padding: 16, display: "grid", gap: 20 }}>
           <section data-demo="moderation" style={panel}>
-            <CommentModeration contentKinds={[{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }]} itemHref={(i) => `#${i.kind}/${i.id}`} />
+            <CommentModeration contentKinds={[{ value: "video", label: "Videos" }, { value: "blog", label: "Posts" }]} itemHref={(i) => `#${i.kind}/${i.id}`} />
           </section>
           <section data-demo="poll-editor" style={panel}>
             <PollEditor languages={[{ value: "en", label: "English" }, { value: "ja", label: "日本語" }]} freeText />

@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -480,7 +481,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
 		prior = m.Clone()
-		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies, exempt: grant.Exempt}
+		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt}
 		keys = keys[:0]
 		var names []string
 		for _, op := range ops {
@@ -635,20 +636,24 @@ func removesPending(m *Manifest, ops []Op) bool {
 // authorizeOps checks every op's target once; the grants must agree on the
 // quota owner. A copy also needs the right to write its source.
 func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Item, ops []Op) (UploadGrant, error) {
-	seen := map[UploadTarget]bool{}
+	type target struct {
+		ref  contentref.ContentKey
+		path string
+	}
+	seen := map[target]bool{}
 	var grant *UploadGrant
 	check := func(t UploadTarget) error {
-		if seen[t] {
+		if seen[target{t.Ref.Key(), t.Path}] {
 			return nil
 		}
-		seen[t] = true
+		seen[target{t.Ref.Key(), t.Path}] = true
 		g, err := u.authorize(ctx, actor, t)
 		if err != nil {
 			return err
 		}
 		if grant == nil {
 			grant = &g
-		} else if t.Ref == item.Ref() && (g.Owner != grant.Owner || g.Exempt != grant.Exempt) {
+		} else if t.Ref.Equal(item.Ref()) && (g.Owner != grant.Owner || g.Exempt != grant.Exempt) {
 			return uploadErr(CodeForbidden, "the commit's paths have different owners")
 		}
 		return nil
@@ -659,7 +664,7 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 			t.Path, _ = splitExt(op.Path)
 		}
 		if op.Op == OpCopy {
-			src, err := u.reg.Ref(item.Kind().Name, op.From.ID)
+			src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 			if err != nil {
 				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: %v", op.From.ID, err)
 			}
@@ -686,7 +691,7 @@ func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	res, err := access.ResolveOne(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
+	res, err := resolve.One(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
 	if err != nil {
 		return nil, fmt.Errorf("media: resolve %s: %w", item.Ref(), err)
 	}
@@ -771,11 +776,11 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		if op.Op != OpCopy {
 			continue
 		}
-		src, err := u.reg.Ref(item.Kind().Name, op.From.ID)
+		src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 		if err != nil {
 			return nil, nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
 		}
-		if src == item.Ref() {
+		if src.Equal(item.Ref()) {
 			continue // read the source under the destination's manifest lock
 		}
 		from, _ := u.reg.Item(src)

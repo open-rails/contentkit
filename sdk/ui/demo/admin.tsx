@@ -1,16 +1,14 @@
-import { CommentModeration, MediaItemPanel, PollManager, PostManager, TaxonomyManager, UploadQueue, UserCommentStanding, type AdminNavigation, type TaxonomyKind } from "@openrails/contentkit-ui";
+import { CommentModeration, ContentManager, GroupManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import type { RefBody } from "@openrails/contentkit-ui/client";
+import type { Membership, RefBody } from "@openrails/contentkit-ui/client";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
-// UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
-// (with the package's rich-text editor), /admin/taxonomy/* TaxonomyManager
-// (tags; series with covers; characters, members of series),
-// /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* ContentManager of blog posts
+// (with the package's rich-text editor), /admin/groups/* GroupManager, /admin/media/{kind}/{id}[/{version}] MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -29,19 +27,9 @@ style.textContent = `:root { ${css(light)} } .dark { ${css(darkVars)} } body { b
 document.head.append(style);
 document.documentElement.classList.toggle("dark", dark);
 
-const kinds = [{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }];
+const kinds = [{ value: "video", label: "Videos" }, { value: "blog", label: "Posts" }];
 const languages = [{ value: "en", label: "English" }, { value: "ja", label: "日本語" }];
-const postHref = (p: { code: string; url_slug: string }) => `#/blog/${p.code}/${p.url_slug}`;
-const taxonomyKinds: TaxonomyKind[] = [
-  { kind: "tag", label: "Tags" },
-  { kind: "series", label: "Series", cover: { kind: "series" } },
-  { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series", inverseLabel: "Characters" }] },
-];
-const restricted = (n: { taxonomy_id: string }) => (
-  <label data-demo="host-field" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-    <input type="checkbox" /> Restricted (host field of {n.taxonomy_id.slice(0, 8)})
-  </label>
-);
+const contentHref = (c: { path: string }) => `#${c.path}`;
 const subtitleLanguages = [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }];
 const createItem = async (): Promise<RefBody> => {
   const res = await fetch("/__test/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: q.get("kind") ?? "file", owner: viewer }) });
@@ -59,8 +47,8 @@ const createItem = async (): Promise<RefBody> => {
 function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
 }
-const contentLink = (ref: { content_kind: string; content_id: string }) => <a href={`#${ref.content_kind}/${ref.content_id}`}>{`${ref.content_kind} ${ref.content_id.slice(0, 8)}`}</a>;
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
+const member = (m: Membership) => <span data-demo="member">{m.content_id}</span>;
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -84,16 +72,16 @@ function Alone() {
       ) : at.startsWith("/admin/polls") ? (
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
       ) : at.startsWith("/admin/media/") ? (
-        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]! }} languages={subtitleLanguages} />
+        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]!, version: at.split("/")[5] || undefined }} languages={subtitleLanguages} />
       ) : at.startsWith("/admin/uploads") ? (
         <>
           <Created />
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
-      ) : at.startsWith("/admin/taxonomy") ? (
-        <TaxonomyManager {...common} basePath="/admin/taxonomy" kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} />
+      ) : at.startsWith("/admin/groups") ? (
+        <GroupManager {...common} basePath="/admin/groups" renderContent={member} />
       ) : at.startsWith("/admin/posts") ? (
-        <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
+        <ContentManager {...common} kind="blog" basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} contentHref={contentHref} />
       ) : (
         <CommentModeration {...common} basePath="/admin/comments" contentKinds={kinds} itemHref={itemHref} />
       )}
@@ -112,7 +100,7 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
-        <Link to="/admin/taxonomy/series">Series</Link>
+        <Link to="/admin/groups">Groups</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -123,7 +111,7 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
-        <Route path="/admin/media/:kind/:id" element={<MediaPage />} />
+        <Route path="/admin/media/:kind/:id/:version?" element={<MediaPage />} />
         <Route
           path="/admin/uploads"
           element={
@@ -134,15 +122,13 @@ function Hosted() {
           }
         />
         <Route
-          path="/admin/taxonomy/*"
-          element={
-            <TaxonomyManager client={client} basePath="/admin/taxonomy" navigation={navigation} kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} pageSize={size} language={lang} />
-          }
+          path="/admin/groups/*"
+          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} renderContent={member} pageSize={size} language={lang} />}
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
           path="/admin/posts/*"
-          element={<PostManager client={client} basePath="/admin/posts" navigation={navigation} languages={languages} renderEditor={richTextEditor} postHref={postHref} pageSize={size} language={lang} />}
+          element={<ContentManager client={client} kind="blog" basePath="/admin/posts" navigation={navigation} languages={languages} renderEditor={richTextEditor} contentHref={contentHref} pageSize={size} language={lang} />}
         />
       </Routes>
     </Page>
@@ -150,8 +136,8 @@ function Hosted() {
 }
 
 function MediaPage() {
-  const { kind, id } = useParams();
-  return <MediaItemPanel client={client} item={{ kind: kind!, id: id! }} languages={subtitleLanguages} language={lang} />;
+  const { kind, id, version } = useParams();
+  return <MediaItemPanel client={client} item={{ kind: kind!, id: id!, version }} languages={subtitleLanguages} language={lang} />;
 }
 
 function UserPage() {

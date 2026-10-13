@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // Expose brings an item's public files to its visibility, resolved for an
@@ -129,7 +130,7 @@ func (j *Jobs) deletePublic(ctx context.Context, item Item) error {
 }
 
 func (j *Jobs) hidden(ctx context.Context, ref contentref.ContentRef) (bool, error) {
-	res, err := access.ResolveOne(ctx, j.cfg.Registry.cfg.Hooks.Resolver, ref, access.Actor{Anonymous: true})
+	res, err := resolve.One(ctx, j.cfg.Registry.cfg.Hooks.Resolver, ref, access.Actor{Anonymous: true})
 	if err != nil {
 		return false, fmt.Errorf("media: resolve %s for exposure: %w", ref, err)
 	}

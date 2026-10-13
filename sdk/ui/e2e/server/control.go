@@ -14,12 +14,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/helpers/notify"
 
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/contenturl"
+	contentkit "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/notification"
 )
+
+// mount serves an engine's route groups under prefix.
+func mount(e *contentkit.Engine, prefix string, groups contentkit.RouteGroups) http.Handler {
+	routes, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: groups})
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	for _, r := range routes {
+		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
+	}
+	return mux
+}
 
 // routes is the app origin: AuthKit, ContentKit at apiPrefix, the bucket's
 // presigned uploads, the test-control surface and the built demo apps.
@@ -28,10 +44,9 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(apiPrefix, h.rt.Handler()))))
-	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(membersPrefix, h.members.Handler()))))
-	upload := media.UploadHandler(h.onUpload, media.UploadHandlerOptions{Auth: h.auth.Authenticator()})
-	mux.Handle(onUploadPrefix+"/media/upload/", h.faults.api(behindProxy(http.StripPrefix(onUploadPrefix+"/media/upload", upload))))
+	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(mount(h.ck, apiPrefix, h.ck.RouteGroups()))))
+	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(mount(h.members, membersPrefix, h.members.RouteGroups()))))
+	mux.Handle(onUploadPrefix+"/", h.faults.api(behindProxy(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)
 	mux.Handle("/"+h.bucket, bucket)
@@ -43,6 +58,8 @@ func (h *harness) routes(static string) http.Handler {
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
+	mux.HandleFunc("GET /__test/publication", h.publication)
+	mux.HandleFunc("POST /__test/recount", h.recount)
 	mux.HandleFunc("GET /__test/outbox", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, h.outbox.Messages("", r.URL.Query().Get("to")))
 	})
@@ -121,8 +138,9 @@ func (h *harness) createUser(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusCreated, u)
 }
 
-// createItem: {kind, id?, owner?, access?, hidden?, title?} → the item, with
-// a content code when title is given.
+// createItem: {kind, owner?, access?, hidden?, title?} → the item, a
+// content item of kind made through the catalog by the host: owner its
+// creator, access "none" pay-per-view, published unless hidden.
 func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		item
@@ -133,44 +151,56 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it := in.item
-	if it.ID == "" {
-		it.ID = contentref.NewID()
-	}
 	if it.Access == "" {
 		it.Access = "full"
 	}
-	if it.Access != "full" && it.Access != "none" {
-		fail(w, http.StatusBadRequest, fmt.Errorf("access %q: full or none", it.Access))
+	if it.ID != "" || (it.Access != "full" && it.Access != "none") {
+		fail(w, http.StatusBadRequest, fmt.Errorf("the catalog names items; access %q: full or none", it.Access))
 		return
 	}
-	ref, err := h.ref(it.Kind, it.ID)
+	title := in.Title
+	if title == "" {
+		title = it.Kind + " " + uuid.NewString()[:8]
+	}
+	input := catalog.ContentInput{Kind: it.Kind, Text: map[string]catalog.Text{"en": {Title: title}}, Access: itemRule(it.Access)}
+	if it.Kind != blogKind {
+		input.Versions = []catalog.VersionInput{{Languages: []string{"en"}}}
+	}
+	if it.Owner != "" {
+		input.Creators = &[]catalog.Creator{{UserID: it.Owner}}
+	}
+	ck := h.ck.Client()
+	c, err := ck.PostContents(r.Context(), input)
+	if err == nil && !it.Hidden {
+		c, err = ck.PostContentPublish(r.Context(), c.ID, catalog.PublishInput{})
+	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	if in.Title != "" {
-		links, err := h.urls.Put(r.Context(), contenturl.Entry{ContentRef: contentref.New(tenant, it.Kind, it.ID), Title: in.Title})
-		if err != nil {
-			fail(w, http.StatusBadRequest, err)
-			return
-		}
-		it.Code = string(links[0].Code)
-		if p, ok := h.router.Path(links[0], ""); ok {
-			it.Path = p
-		}
+	it.ID = c.ID
+	if len(c.Versions) > 0 {
+		it.Version = c.Versions[0].ID
 	}
-	h.items.put(ref.Key(), it)
+	if in.Title != "" {
+		it.Code, it.Path = c.Code, c.Path
+	}
+	h.items.put(itemKey(it.Kind, it.ID), it)
 	reply(w, http.StatusCreated, it)
+}
+
+// itemRule is an item's access as a catalog rule.
+func itemRule(open string) *access.Rule {
+	if open == "none" {
+		return &access.Rule{Level: access.PPV}
+	}
+	return &access.Rule{Level: access.Public}
 }
 
 // updateItem: {access?, hidden?} changes what viewers may do.
 func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
-	ref, err := h.ref(r.PathValue("kind"), r.PathValue("id"))
-	if err != nil {
-		fail(w, http.StatusBadRequest, err)
-		return
-	}
-	it, ok := h.items.get(ref.Key())
+	key := itemKey(r.PathValue("kind"), r.PathValue("id"))
+	it, ok := h.items.get(key)
 	if !ok {
 		fail(w, http.StatusNotFound, errors.New("no such item"))
 		return
@@ -183,13 +213,28 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
+	ck := h.ck.Client()
 	if in.Access != nil {
+		if _, err := ck.PatchContent(r.Context(), it.ID, catalog.ContentPatch{Access: itemRule(*in.Access)}); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
 		it.Access = *in.Access
 	}
-	if in.Hidden != nil {
+	if in.Hidden != nil && *in.Hidden != it.Hidden {
+		var err error
+		if *in.Hidden {
+			_, err = ck.PostContentUnpublish(r.Context(), it.ID)
+		} else {
+			_, err = ck.PostContentPublish(r.Context(), it.ID, catalog.PublishInput{})
+		}
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
 		it.Hidden = *in.Hidden
 	}
-	h.items.put(ref.Key(), it)
+	h.items.put(key, it)
 	reply(w, http.StatusOK, it)
 }
 
@@ -212,7 +257,7 @@ func (h *harness) addFaults(w http.ResponseWriter, r *http.Request) {
 // of the stored bytes; 404 when absent.
 func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ref, err := h.ref(q.Get("kind"), q.Get("id"))
+	ref, err := h.reg.VersionRef(q.Get("kind"), q.Get("id"), q.Get("version"))
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
@@ -247,6 +292,41 @@ func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]any{"size": n, "sha256": hex.EncodeToString(sum.Sum(nil))})
 }
 
+// publication: ?kind&id&version → the version's publication jobs, its
+// publications and its item's files, for a test that waits on them.
+func (h *harness) publication(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ref, err := h.reg.VersionRef(q.Get("kind"), q.Get("id"), q.Get("version"))
+	if err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	out := map[string]any{}
+	collect := func(name, sql string, args ...any) {
+		rows, err := h.pool.Query(r.Context(), sql, args...)
+		if err != nil {
+			out[name] = err.Error()
+			return
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowToMap)
+		if err != nil {
+			out[name] = err.Error()
+			return
+		}
+		out[name] = got
+	}
+	collect("jobs", `SELECT kind, queue, state, attempt, errors, scheduled_at FROM `+riverSchema+`.river_job
+ WHERE args->>'version' = $1 OR args->>'Version' = $1 ORDER BY id`, q.Get("version"))
+	collect("publications", `SELECT id, kind, state, created_at, ready_at FROM `+schema+`.content_version_publications
+ WHERE version_id = $1 ORDER BY created_at`, q.Get("version"))
+	if m, _, err := h.manifests.Get(r.Context(), ref); err != nil {
+		out["files"] = err.Error()
+	} else {
+		out["files"] = m.Files
+	}
+	reply(w, http.StatusOK, out)
+}
+
 func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string, error) {
 	m, _, err := h.manifests.Get(ctx, it.Ref())
 	if err != nil {
@@ -276,10 +356,14 @@ func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 	if in.Origin.System == "" {
 		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
 	}
-	item, err := h.rt.Notifications.Publish(r.Context(), in)
+	published, err := h.ck.Client().PostNotificationsPublish(r.Context(), notification.Publication{Notifications: []notify.Input{in}})
+	items := published.Items
+	if err == nil && len(items) == 0 {
+		err = errors.New("the recipient was erased")
+	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	reply(w, http.StatusCreated, item)
+	reply(w, http.StatusCreated, items[0])
 }

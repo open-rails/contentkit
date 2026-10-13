@@ -2,132 +2,224 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (86). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`, catalog `/catalog`, notifications `/notifications`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (153). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
-**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
+**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
-## Content: config, posts, comments, reactions, favorites, polls, bans, moderation (`/`)
+## The site's content model (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
-| GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
-| GET | `/posts/admin` | staff `root:posts:write` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
-| GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders. |
-| POST | `/posts` | staff `root:posts:write` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
-| PATCH | `/posts/{id}` | staff `root:posts:write` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
-| DELETE | `/posts/{id}` | staff `root:posts:write` | — | 204 — | Deletes a post. |
-| POST | `/posts/{id}/restore` | staff `root:posts:write` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
-| PUT | `/posts/{id}/cover` | staff `root:posts:write` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
-| POST | `/posts/{id}/images` | staff `root:posts:write` | `ImageInput` | 200 `InlineImage` | The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now. |
-| GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
-| POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
-| GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
-| GET | `/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
-| POST | `/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
-| GET | `/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
-| PATCH | `/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
-| DELETE | `/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
-| POST | `/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
-| POST | `/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
-| DELETE | `/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
-| POST | `/{kind}/{id}/like` | public | — | 200 `ReactionCounts` | Likes a target. |
-| POST | `/{kind}/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a target. |
-| DELETE | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a target. |
-| GET | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | A target's like and dislike counts and the caller's own reaction. |
-| GET | `/favorites` | user | — | 200 `FavoriteItem[]` | The caller's favorites, newest first. Query: `limit`, `offset`. |
-| POST | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count. |
-| DELETE | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count. |
-| GET | `/{kind}/{id}/favorite` | public | — | 200 `FavoriteState` | A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible). |
-| GET | `/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
-| GET | `/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
-| GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
-| POST | `/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
-| PATCH | `/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
-| DELETE | `/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
-| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
-| POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |
-| PUT | `/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
-| POST | `/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
-| PATCH | `/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
-| DELETE | `/polls/{id}/options/{oid}` | staff `root:polls:write` | — | 204 — | Removes an option and its votes; a poll keeps at least two. |
-| PUT | `/polls/{id}/options/{oid}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
-| GET | `/comment-bans` | user | — | 200 `CommentBan[]` | The bans the caller placed on commenters of its own content, newest first, expired ones included. Query: `limit`, `offset`. |
-| PUT | `/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end. |
-| DELETE | `/comment-bans/{user}` | user | — | 204 — | Lifts the caller's ban on a user. |
-| GET | `/global-comment-bans` | staff `root:comments:ban` | — | 200 `CommentBan[]` | The tenant-wide comment bans, newest first, expired ones included. Query: `limit`, `offset`. |
-| GET | `/global-comment-bans/{user}` | staff `root:comments:ban` | — | 200 `CommentBan` | A user's tenant-wide comment ban, expired or not; 404 when they have none. |
-| PUT | `/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
-| DELETE | `/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
-| GET | `/{kind}/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a target, and the ban that stops it. |
-| GET | `/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or posts awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
-| POST | `/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or post, at the revision the queue listed. |
+| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes. |
 
-## Media uploads (`/media/upload`)
+## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| POST | `/media/upload/presign` | user | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
-| POST | `/media/upload/parts` | user | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
-| POST | `/media/upload/parts/list` | user | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
-| POST | `/media/upload/complete` | user | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
-| POST | `/media/upload/abort` | user | `TicketBody` | 204 — | Abandons a multipart upload. |
-| POST | `/media/upload/commit` | user | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
-| GET | `/media/upload/frame` | user | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `path`, `t`, `w`. |
+| GET | `/v1/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
+| GET | `/v1/contents/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a content item or one of its versions with reply counts; the caller also sees its own held and rejected ones. Query: `version`, `language`, `sort`, `limit`, `offset`. |
+| POST | `/v1/contents/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a content item or one of its versions in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. Query: `version`. |
+| GET | `/v1/groups/{id}/comments` | public | — | 200 `Comment[]` | The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones. Query: `language`, `sort`, `limit`, `offset`. |
+| POST | `/v1/groups/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
+| GET | `/v1/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `language`, `limit`, `offset`. |
+| GET | `/v1/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
+| POST | `/v1/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
+| GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
+| PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
+| DELETE | `/v1/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
+| POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
+| POST | `/v1/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
+| DELETE | `/v1/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
+| POST | `/v1/comments/{cid}/hold` | user | — | 204 — | Holds a published comment for review: out of its thread, shown to its author only, until released or deleted. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
+| POST | `/v1/comments/{cid}/release` | user | — | 204 — | Publishes a held comment, as a reviewer's approval does. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
+| POST | `/v1/contents/{id}/like` | public | — | 200 `ReactionCounts` | Likes a content item or one of its versions. Query: `version`. |
+| POST | `/v1/contents/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a content item or one of its versions. Query: `version`. |
+| DELETE | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a content item or one of its versions. Query: `version`. |
+| GET | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a content item or one of its versions and the caller's own reaction. Query: `version`. |
+| POST | `/v1/groups/{id}/like` | public | — | 200 `ReactionCounts` | Likes a group. |
+| POST | `/v1/groups/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a group. |
+| DELETE | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a group. |
+| GET | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a group and the caller's own reaction. |
+| POST | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a content item or one of its versions the caller sees; favoriting again is a no-op. Answers the state with its favorite count. Query: `version`. |
+| DELETE | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a content item or one of its versions, also one no longer visible. Answers the state with its favorite count. Query: `version`. |
+| GET | `/v1/contents/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible). Query: `version`. |
+| POST | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count. |
+| DELETE | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a group, also one no longer visible. Answers the state with its favorite count. |
+| GET | `/v1/groups/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible). |
+| GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
+| GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
+| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
+| POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
+| PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
+| DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
+| POST | `/v1/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
+| POST | `/v1/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply. |
+| PUT | `/v1/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
+| POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
+| PATCH | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
+| DELETE | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | — | 204 — | Removes an option and its votes; a poll keeps at least two. |
+| PUT | `/v1/polls/{id}/options/{oid}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
+| GET | `/v1/comment-bans` | user | — | 200 `CommentBan[]` | The bans the caller placed on commenters of its own content, newest first, expired ones included. Query: `limit`, `offset`. |
+| PUT | `/v1/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end. |
+| DELETE | `/v1/comment-bans/{user}` | user | — | 204 — | Lifts the caller's ban on a user. |
+| GET | `/v1/global-comment-bans` | staff `root:comments:ban` | — | 200 `CommentBan[]` | The tenant-wide comment bans, newest first, expired ones included. Query: `limit`, `offset`. |
+| GET | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 200 `CommentBan` | A user's tenant-wide comment ban, expired or not; 404 when they have none. |
+| PUT | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
+| DELETE | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
+| GET | `/v1/groups/{id}/held-comments` | user | — | 200 `HeldPage` | Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators. Query: `cursor`, `limit`. |
+| GET | `/v1/groups/{id}/comment-bans` | user | — | 200 `CommentBan[]` | The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators. Query: `limit`, `offset`. |
+| PUT | `/v1/groups/{id}/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators. |
+| DELETE | `/v1/groups/{id}/comment-bans/{user}` | user | — | 204 — | Lifts a user's ban on a user-owned group and its content. |
+| GET | `/v1/contents/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a content item or one of its versions, and the ban that stops it. Query: `version`. |
+| GET | `/v1/groups/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a group, and the ban that stops it. |
+| GET | `/v1/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or content items awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
+| POST | `/v1/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or content item, at the revision the queue listed. |
+| GET | `/v1/moderation/banned-words` | staff `root:comments:moderate` | — | 200 `BannedWord[]` | The banned words and what each does. |
+| POST | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `BannedWordInput[]` | 200 `BannedWord[]` | Bans words, or changes what banned ones do: mask (the default) or reject. |
+| DELETE | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `string[]` | 204 — | Unbans words. |
+| GET | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | — | 200 `IPBan[]` | The IP bans, newest first, expired ones included. |
+| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting and answering polls, or replaces their bans. |
+| DELETE | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `string[]` | 204 — | Lifts the bans of addresses or networks. |
 
-## Media reads and playback (`/media`)
+## Contents: content items, versions, catalog totals (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
-| GET | `/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
-| GET | `/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
+| GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
+| GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state. Query: `language`. |
+| GET | `/v1/contents/{id}/versions/{vid}` | public | — | 200 `Version` | One version of a content item as the viewer sees it, with its segments and access decision. Query: `language`. |
+| GET | `/v1/manage/contents` | public | — | 200 `Content[]` | Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit. Query: `kind`, `state`, `owner_group`, `q`, `language`, `limit`, `offset`. |
+| POST | `/v1/contents` | public | `ContentInput` | 201 `Content` | Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it. |
+| PATCH | `/v1/contents/{id}` | public | `ContentPatch` | 200 `Content` | Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}` | public | — | 204 — | Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| POST | `/v1/contents/{id}/restore` | public | — | 200 `Content` | Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| POST | `/v1/contents/{id}/publish` | public | `PublishInput` | 200 `Content`<br>202 `Content` | Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| POST | `/v1/contents/{id}/unpublish` | public | — | 200 `Content` | Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/text/{language}` | public | `CatalogText` | 200 `Content`<br>202 `Content` | Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}/text/{language}` | public | — | 200 `Content` | Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/creators` | public | `CreatorsInput` | 200 `Content` | Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| POST | `/v1/contents/{id}/images` | public | `ImageInput` | 200 `InlineImage` | The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| POST | `/v1/contents/{id}/versions` | public | `VersionInput` | 201 `Version` | Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/versions/order` | public | `OrderInput` | 200 `Content` | Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| PATCH | `/v1/contents/{id}/versions/{vid}` | public | `VersionInput` | 200 `Version` | Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| DELETE | `/v1/contents/{id}/versions/{vid}` | public | — | 204 — | Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
+| PUT | `/v1/contents/{id}/versions/{vid}/segments` | public | `SegmentsInput` | 200 `Version` | Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
 
-## Content codes (`/codes`)
-
-| Method | Path | Tier | Request | Response | Description |
-|---|---|---|---|---|---|
-| GET | `/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
-
-## Taxonomy admin (`/taxonomy`)
-
-| Method | Path | Tier | Request | Response | Description |
-|---|---|---|---|---|---|
-| GET | `/taxonomy/nodes` | staff `root:taxonomy:write` | — | 200 `NodePage` | Lists nodes: filtered, ordered and paged. Query: `kind`, `state`, `id`, `slug`, `language`, `language_mode`, `name_prefix`, `q`, `content_kind`, `min_count`, `sort`, `cursor`, `offset`, `limit`. |
-| POST | `/taxonomy/nodes` | staff `root:taxonomy:write` | `NodeInput[]` | 201 `Node[]` | Creates nodes with their names. |
-| GET | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `NodeDetail` | A node with its names and edges. |
-| PATCH | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | `NodeUpdate` | 200 `Node` | Updates a node's given fields. |
-| DELETE | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `Node` | Marks a node deleted. |
-| PUT | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Replaces a node's names. |
-| POST | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Adds names to a node. |
-| DELETE | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Removes names from a node. |
-| GET | `/taxonomy/nodes/{id}/assignments` | staff `root:taxonomy:write` | — | 200 `AssignmentPage` | The contents assigned to a node, paged. Query: `content_kind`, `relation`, `cursor`, `limit`. |
-| POST | `/taxonomy/nodes/{id}/merge` | staff `root:taxonomy:write` | `MergeInput` | 200 `MergeReport` | Merges a node into another: its assignments, names and edges move, and its URL redirects. |
-| POST | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Adds edges. |
-| DELETE | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Removes edges. |
-| POST | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Assigns nodes to contents. Query: `suppress_counts`. |
-| DELETE | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Removes assignments. Query: `suppress_counts`. |
-| POST | `/taxonomy/effective` | staff `root:taxonomy:write` | `ContentRef[]` | 200 `EffectiveTagsOf[]` | The effective tags (work and version) of each content. |
-| GET | `/taxonomy/counts` | staff `root:taxonomy:write` | — | 200 `Record<string, Count[]>` | Content counts of nodes, by taxonomy id. Query: `taxonomy_id`. |
-| POST | `/taxonomy/counts/rebuild` | staff `root:taxonomy:write` | — | 200 `CountsRebuilt` | Recomputes every count, after bulk loads written with suppress_counts. |
-
-## Public catalog (`/catalog`)
+## Media uploads (`/v1/media/upload`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/catalog/totals` | open | — | 200 `Totals` | Each kind's works, in all and per language: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes. Query: `kinds`, `languages`. |
+| POST | `/v1/media/upload/presign` | editor `root:content:write` | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
+| POST | `/v1/media/upload/copy` | staff `root:import:write` | `CopyBody` | 200 `CopyReply` | Stages server-side copies of keys of the item's bucket outside ContentKit's namespaces, for one commit's puts (an importer's files). |
+| POST | `/v1/media/upload/parts` | editor `root:content:write` | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
+| POST | `/v1/media/upload/parts/list` | editor `root:content:write` | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
+| POST | `/v1/media/upload/complete` | editor `root:content:write` | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
+| POST | `/v1/media/upload/abort` | editor `root:content:write` | `TicketBody` | 204 — | Abandons a multipart upload. |
+| POST | `/v1/media/upload/commit` | editor `root:content:write` | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
+| GET | `/v1/media/upload/frame` | editor `root:content:write` | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
 
-## Notifications (`/notifications`)
+## Media reads and playback (`/v1/media`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/notifications/inbox` | user | — | 200 `Page` | The signed-in person's inbox, newest first. Query: `limit`, `cursor`, `unread`, `dismissed`. |
-| PUT | `/notifications/{id}/read` | user | — | 200 `Item` | Marks one of the signed-in person's notices read locally. |
-| DELETE | `/notifications/{id}/read` | user | — | 200 `Item` | Marks one of the signed-in person's notices unread locally. |
-| PUT | `/notifications/{id}/dismiss` | user | — | 200 `Item` | Archives this receipt without changing its read or workflow state. |
-| DELETE | `/notifications/{id}/dismiss` | user | — | 200 `Item` | Restores an archived receipt to this user's inbox. |
+| GET | `/v1/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
+| GET | `/v1/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
+| GET | `/v1/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
+| GET | `/v1/media/{kind}/{id}/versions/{version}` | public | — | 200 `ReadResult` | A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
+| GET | `/v1/media/{kind}/{id}/versions/{version}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's. Query: `audio`, `subs`. |
+
+## Content codes (`/v1/codes`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
+
+## Groups: listings, pages, writes and memberships (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/groups` | public | — | 200 `GroupPage` | Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged. Query: `kind`, `parent`, `scope`, `slug`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
+| GET | `/v1/groups/{id}` | public | — | 200 `GroupDetail` | An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor. Query: `language`. |
+| GET | `/v1/me/groups` | user | — | 200 `MyGroupPage` | The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them. Query: `kind`, `language`, `sort`, `cursor`, `limit`. |
+| POST | `/v1/groups` | editor `root:groups:write` | `GroupInput[]` | 201 `Group[]` | Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
+| PATCH | `/v1/groups/{id}` | editor `root:groups:write` | `GroupUpdate` | 200 `Group` | Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
+| DELETE | `/v1/groups/{id}` | editor `root:groups:write` | — | 200 `Group` | Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
+| PUT | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Replaces a group's names and aliases. |
+| POST | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Adds names and aliases to a group; a new canonical name demotes the old one to an alias. |
+| DELETE | `/v1/groups/{id}/names` | staff `root:groups:write` | `Name[]` | 200 `Name[]` | Removes names and aliases from a group. |
+| POST | `/v1/groups/{id}/edges` | staff `root:groups:write` | `EdgeInput[]` | 200 `Edge[]` | Adds edges from a group. |
+| DELETE | `/v1/groups/{id}/edges` | staff `root:groups:write` | `EdgeInput[]` | 200 `Edge[]` | Removes edges from a group. |
+| POST | `/v1/groups/{id}/merge` | staff `root:groups:write` | `MergeInput` | 200 `MergeReport` | Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects. |
+| GET | `/v1/groups/{id}/members` | staff `root:groups:write` | — | 200 `MemberPage` | A group's memberships in member order, paged. Query: `cursor`, `limit`. |
+| POST | `/v1/groups/{id}/members` | staff `root:groups:write` | `Membership[]` | 200 `Written` | Adds contents or versions to a group, or updates their position, window and state. |
+| DELETE | `/v1/groups/{id}/members` | staff `root:groups:write` | `Membership[]` | 200 `Written` | Removes contents or versions from a group. |
+| PUT | `/v1/groups/{id}/members/order` | staff `root:groups:write` | `Order` | 200 `Written` | Orders an ordered group: the listed members first, in list order. |
+| GET | `/v1/contents/{id}/groups` | staff `root:groups:write` | — | 200 `ContentMemberships` | A content's memberships, its versions' included, with the groups they name. Query: `language`. |
+| PUT | `/v1/contents/{id}/groups` | staff `root:groups:write` | `ContentGroups` | 200 `ContentMemberships` | Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default). Query: `language`. |
+
+## Notifications (`/v1/notifications`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/notifications/inbox` | user | — | 200 `Page` | The signed-in person's inbox, newest first. Query: `limit`, `cursor`, `unread`, `dismissed`. |
+| PUT | `/v1/notifications/{id}/read` | user | — | 200 `Item` | Marks one of the signed-in person's notices read locally. |
+| DELETE | `/v1/notifications/{id}/read` | user | — | 200 `Item` | Marks one of the signed-in person's notices unread locally. |
+| PUT | `/v1/notifications/{id}/dismiss` | user | — | 200 `Item` | Archives this receipt without changing its read or workflow state. |
+| DELETE | `/v1/notifications/{id}/dismiss` | user | — | 200 `Item` | Restores an archived receipt to this user's inbox. |
+| POST | `/v1/notifications/publish` | staff `root:notifications:publish` | `Publication` | 200 `Published` | Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped. |
+
+## Content versions: reader plan, reader metadata, forks, downloads (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/contents/{id}/versions/{version}/reader` | public | — | 200 `ReaderPlan`<br>202 `Pending` | A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication. |
+| PUT | `/v1/contents/{id}/versions/{version}/reader` | user | `ReaderMeta` | 204 — | Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads. |
+| POST | `/v1/contents/{id}/versions/{version}/fork` | user | `ForkBody` | 202 `Pending` | Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job. |
+| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `application/zip`<br>202 `Pending` | A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared. |
+
+## Offers, free group joins and the library (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| PUT | `/v1/contents/{id}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| DELETE | `/v1/contents/{id}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| PUT | `/v1/contents/{id}/versions/{vid}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| DELETE | `/v1/contents/{id}/versions/{vid}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
+| PUT | `/v1/groups/{id}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
+| DELETE | `/v1/groups/{id}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
+| POST | `/v1/groups/{id}/join` | user | — | 200 `GroupJoin` | Joins a group free to join: grants the viewer its key. |
+| DELETE | `/v1/groups/{id}/join` | user | — | 200 `GroupJoin` | Leaves a group joined free; a bought membership stays. |
+| GET | `/v1/me/library` | user | — | 200 `LibraryPage` | The content the viewer bought, newest first, deleted content included. Query: `language`, `cursor`, `limit`. |
+| GET | `/v1/offers` | staff `root:offers:write` | — | 200 `OfferPage` | Offers, newest first, with their OpenRails sync state. Query: `state`, `unsynced`, `cursor`, `limit`. |
+
+## Discovery: lists, search, similar and recommended contents, release dates, content filters, history and signals (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/v1/contents` | public | — | 200 `ContentPage` | Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `cursor`, `limit`. |
+| GET | `/v1/search` | public | — | 200 `ContentPage` | Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise. Query: `q`, `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `sort`, `card_groups`, `personalize`, `session`, `cursor`, `limit`. |
+| GET | `/v1/typeahead` | public | — | 200 `Typeahead` | Suggests contents and groups while the reader types, tolerating typos and partial words. Query: `q`, `kind`, `group_kinds`, `language`, `display_language`, `mode`, `limit`. |
+| GET | `/v1/contents/{id}/similar` | public | — | 200 `ContentPage` | Contents like this one (co-engagement, or the configured source), of its kind unless kind names another. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/recommendations` | user | — | 200 `ContentPage` | Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out. Query: `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `card_groups`, `limit`. |
+| GET | `/v1/release-dates` | public | — | 200 `ReleaseDates` | The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free. Query: `by`, `kind`, `groups`, `exclude_groups`, `owner_group`, `traits`, `attribute`, `released_on`, `tz`, `view_status`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
+| GET | `/v1/me/content-filters` | user | — | 200 `ContentFilters` | The reader's content filters: each configured filter's group, default and setting; every read applies them. Query: `language`. |
+| PUT | `/v1/me/content-filters` | user | `ContentFiltersUpdate` | 200 `ContentFilters` | Replaces the reader's content filter settings and whether lists include deleted content they hold. Query: `language`. |
+| GET | `/v1/me/history` | user | — | 200 `ContentPage` | The contents the reader engaged with, most recent first, with their progress. Query: `kind`, `status`, `card_groups`, `language`, `display_language`, `mode`, `cursor`, `limit`. |
+| DELETE | `/v1/me/history` | user | — | 204 — | Erases the reader's history: of one content item, one kind or everything. Query: `kind`, `content_id`. |
+| POST | `/v1/signals` | public | `Signals` | 204 — | Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version. |
+| POST | `/v1/exposures` | public | `Exposures` | 204 — | Records result lists a client served, rendered or showed, for click attribution. |
+| GET | `/v1/me/favorites` | user | — | 200 `InteractionPage` | The content items (as their listing shows them) or groups the reader favorited, most recent first. Query: `target`, `kind`, `card_groups`, `cursor`, `limit`, `language`, `display_language`, `mode`. |
+| GET | `/v1/me/reactions` | user | — | 200 `InteractionPage` | The content items or groups the reader liked or disliked, most recent first: tag affinities and preferences. Query: `value`, `target`, `kind`, `card_groups`, `cursor`, `limit`, `language`, `display_language`, `mode`. |
+| GET | `/v1/me/searches` | public | — | 200 `RecentSearches` | The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session. Query: `session`, `limit`. |
+| DELETE | `/v1/me/searches` | public | — | 204 — | Clears the reader's recent searches: one query, or every one so far. Query: `session`, `query`. |
+
+## Bulk import (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| POST | `/v1/import` | staff `root:import:write` | `Batch` | 200 `Result` | Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued. |
 
 ## Error codes
 
@@ -141,6 +233,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
+| `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |
@@ -150,7 +243,9 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `incomplete` | 409 | A multipart upload is missing parts. |
 | `internal_error` | 500 | A server fault; the cause is in the server log. |
 | `invalid_request` | 400 | The request is malformed: its body, a query parameter or a path value. |
+| `limit_reached` | 409 | The owner already has as many groups of the kind as the site allows (max_per_owner). |
 | `moderation_rejected` | 422 | The moderator refused the text; `error` says why. |
+| `no_membership` | 409 | Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first. |
 | `not_configured` | 501 | The capability needs a port the host did not configure; retrying does not help. |
 | `not_found` | 404 | Nothing by that name, or nothing the actor may see. |
 | `not_uploaded` | 409 | A commit names an upload that has not landed; `blobs` lists the ones to upload again. |

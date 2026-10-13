@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// Source reads one tenant's canonical window projections; contentkit.Hub
+// Source reads one tenant's canonical window projections; the engine's hub
 // satisfies it. Every reference the Ranker builds carries Source.Tenant().
 type Source interface {
 	Tenant() string
@@ -22,30 +22,30 @@ type Source interface {
 	Metrics(ctx context.Context, refs []signal.ContentRef, window signal.Window) (map[signal.ContentKey]signal.ContentMetrics, error)
 }
 
-// Catalog is the host join port taxonomy popularity derives from: which
-// taxonomy records (artist, series, tag, creator, character, season, ...) a
-// work is assigned to. ContentKit never records a signal against a taxonomy
-// id; a taxonomy record ranks by its member works. Assignments returns, per
-// work id, the taxonomy ids of taxonomyKind effective on the work (work ∪ its
-// versions); ids without assignments are absent.
+// Catalog is the join group popularity derives from: which groups (artist,
+// series, tag, character, season, ...) content is in. ContentKit never
+// records a signal against a group; a group ranks by its member contents.
+// Memberships returns, per content id, the ids of the groups of groupKind
+// effective on the content (it or any version); contents in none are
+// absent. *groups.Store implements it.
 type Catalog interface {
-	Assignments(ctx context.Context, tenant, contentKind, taxonomyKind string, contentIDs []string) (map[string][]contentref.TaxonomyID, error)
+	Memberships(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error)
 }
 
 // CatalogFunc adapts a function to Catalog.
-type CatalogFunc func(ctx context.Context, tenant, contentKind, taxonomyKind string, contentIDs []string) (map[string][]contentref.TaxonomyID, error)
+type CatalogFunc func(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error)
 
-func (f CatalogFunc) Assignments(ctx context.Context, tenant, contentKind, taxonomyKind string, contentIDs []string) (map[string][]contentref.TaxonomyID, error) {
-	return f(ctx, tenant, contentKind, taxonomyKind, contentIDs)
+func (f CatalogFunc) Memberships(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error) {
+	return f(ctx, tenant, contentKind, groupKind, contentIDs)
 }
 
-// DefaultTaxonomyCandidateLimit bounds the ranked works a taxonomy listing
+// DefaultGroupCandidateLimit bounds the ranked works a group listing
 // aggregates; see docs/popularity-policy.md for what the bound means.
-const DefaultTaxonomyCandidateLimit = 2000
+const DefaultGroupCandidateLimit = 2000
 
 // DefaultMaxDepth is the deepest rank Popular serves by default; it equals
-// DefaultTaxonomyCandidateLimit, the deepest prefix Taxonomy reads.
-const DefaultMaxDepth = DefaultTaxonomyCandidateLimit
+// DefaultGroupCandidateLimit, the deepest prefix Groups reads.
+const DefaultMaxDepth = DefaultGroupCandidateLimit
 
 // minReadDepth is the shallowest ranking prefix Popular reads.
 const minReadDepth = 64
@@ -59,30 +59,30 @@ const DefaultCacheTTL = 5 * time.Minute
 type Config struct {
 	Source Source
 	Policy Policy
-	// Catalog enables Taxonomy. Optional.
+	// Catalog enables Groups. Optional.
 	Catalog Catalog
-	// Cache memoizes Popular and Taxonomy under policy-named keys. Optional.
+	// Cache memoizes Popular and Groups under policy-named keys. Optional.
 	Cache    Cache
 	CacheTTL time.Duration // default DefaultCacheTTL
-	// TaxonomyCandidateLimit is the ranked-work bound of Taxonomy (default
-	// DefaultTaxonomyCandidateLimit). Part of the cache key.
-	TaxonomyCandidateLimit int
+	// GroupCandidateLimit is the ranked-work bound of Groups (default
+	// DefaultGroupCandidateLimit). Part of the cache key.
+	GroupCandidateLimit int
 	// MaxDepth is the deepest rank Popular serves (default DefaultMaxDepth,
-	// or TaxonomyCandidateLimit when larger); a larger limit is clamped, so a
+	// or GroupCandidateLimit when larger); a larger limit is clamped, so a
 	// listing ends there. It bounds the rows one read returns and one cache
-	// entry holds. Must be at least TaxonomyCandidateLimit.
+	// entry holds. Must be at least GroupCandidateLimit.
 	MaxDepth int
 }
 
 // Ranker applies one policy to one tenant's signal plane.
 type Ranker struct {
-	source             Source
-	policy             Policy
-	catalog            Catalog
-	cache              Cache
-	cacheTTL           time.Duration
-	taxonomyCandidates int
-	maxDepth           int
+	source          Source
+	policy          Policy
+	catalog         Catalog
+	cache           Cache
+	cacheTTL        time.Duration
+	groupCandidates int
+	maxDepth        int
 }
 
 // New validates the policy and returns the Ranker.
@@ -94,18 +94,18 @@ func New(cfg Config) (*Ranker, error) {
 		return nil, err
 	}
 	r := &Ranker{source: cfg.Source, policy: cfg.Policy, catalog: cfg.Catalog, cache: cfg.Cache, cacheTTL: cfg.CacheTTL,
-		taxonomyCandidates: cfg.TaxonomyCandidateLimit, maxDepth: cfg.MaxDepth}
+		groupCandidates: cfg.GroupCandidateLimit, maxDepth: cfg.MaxDepth}
 	if r.cacheTTL <= 0 {
 		r.cacheTTL = DefaultCacheTTL
 	}
-	if r.taxonomyCandidates <= 0 {
-		r.taxonomyCandidates = DefaultTaxonomyCandidateLimit
+	if r.groupCandidates <= 0 {
+		r.groupCandidates = DefaultGroupCandidateLimit
 	}
 	if r.maxDepth <= 0 {
-		r.maxDepth = max(DefaultMaxDepth, r.taxonomyCandidates)
+		r.maxDepth = max(DefaultMaxDepth, r.groupCandidates)
 	}
-	if r.taxonomyCandidates > r.maxDepth {
-		return nil, fmt.Errorf("popularity: TaxonomyCandidateLimit %d exceeds MaxDepth %d", r.taxonomyCandidates, r.maxDepth)
+	if r.groupCandidates > r.maxDepth {
+		return nil, fmt.Errorf("popularity: GroupCandidateLimit %d exceeds MaxDepth %d", r.groupCandidates, r.maxDepth)
 	}
 	return r, nil
 }
@@ -132,10 +132,10 @@ func (h Hit) MeanEngagement() float64 {
 	return float64(h.ScoreSum) / (100 * float64(h.Views))
 }
 
-// TaxonomyHit is one ranked taxonomy record, derived from its member works.
-type TaxonomyHit struct {
-	TaxonomyID   contentref.TaxonomyID
-	TaxonomyKind string
+// GroupHit is one ranked group, derived from its member works.
+type GroupHit struct {
+	GroupID      contentref.GroupID
+	GroupKind    string
 	Score        float64 // summed member scores
 	ContentCount uint64  // ranked members inside the candidate bound
 	Viewers      uint64  // summed member viewers (a subject viewing two members counts twice)
@@ -236,48 +236,48 @@ func (r *Ranker) Scores(ctx context.Context, contentKind string, ids []string, w
 	return out, nil
 }
 
-// Taxonomy ranks the taxonomy records of one kind by the window popularity
+// Groups ranks the groups of one kind by the window popularity
 // of their member works, joined through the Catalog over the top
-// TaxonomyCandidateLimit ranked works: score = summed member scores. The
+// GroupCandidateLimit ranked works: score = summed member scores. The
 // listing is approximate: a record with no member in that slice is absent and
 // counts describe only the slice.
-func (r *Ranker) Taxonomy(ctx context.Context, contentKind, taxonomyKind string, window signal.Window) ([]TaxonomyHit, error) {
+func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, window signal.Window) ([]GroupHit, error) {
 	if r.catalog == nil {
-		return nil, fmt.Errorf("popularity: taxonomy ranking needs a Catalog")
+		return nil, fmt.Errorf("popularity: group ranking needs a Catalog")
 	}
-	if strings.TrimSpace(taxonomyKind) == "" {
-		return nil, fmt.Errorf("popularity: taxonomyKind is required")
+	if strings.TrimSpace(groupKind) == "" {
+		return nil, fmt.Errorf("popularity: groupKind is required")
 	}
-	key := r.cacheKey("taxonomy", contentKind, taxonomyKind, window.String(), strconv.Itoa(r.taxonomyCandidates))
-	var out []TaxonomyHit
+	key := r.cacheKey("groups", contentKind, groupKind, window.String(), strconv.Itoa(r.groupCandidates))
+	var out []GroupHit
 	if r.cached(ctx, key, &out) {
 		return out, nil
 	}
-	works, err := r.Popular(ctx, contentKind, window, r.taxonomyCandidates)
+	works, err := r.Popular(ctx, contentKind, window, r.groupCandidates)
 	if err != nil {
 		return nil, err
 	}
-	out = []TaxonomyHit{}
+	out = []GroupHit{}
 	if len(works) > 0 {
 		ids := make([]string, 0, len(works))
 		for _, w := range works {
 			ids = append(ids, w.ContentID)
 		}
-		assignments, err := r.catalog.Assignments(ctx, r.source.Tenant(), contentKind, taxonomyKind, ids)
+		memberships, err := r.catalog.Memberships(ctx, r.source.Tenant(), contentKind, groupKind, ids)
 		if err != nil {
-			return nil, fmt.Errorf("popularity: %s assignments: %w", taxonomyKind, err)
+			return nil, fmt.Errorf("popularity: %s memberships: %w", groupKind, err)
 		}
-		byID := map[contentref.TaxonomyID]*TaxonomyHit{}
+		byID := map[contentref.GroupID]*GroupHit{}
 		for _, w := range works {
-			seen := map[contentref.TaxonomyID]struct{}{}
-			for _, tid := range assignments[w.ContentID] {
+			seen := map[contentref.GroupID]struct{}{}
+			for _, tid := range memberships[w.ContentID] {
 				if _, dup := seen[tid]; dup || tid == "" {
 					continue
 				}
 				seen[tid] = struct{}{}
 				e := byID[tid]
 				if e == nil {
-					e = &TaxonomyHit{TaxonomyID: tid, TaxonomyKind: taxonomyKind}
+					e = &GroupHit{GroupID: tid, GroupKind: groupKind}
 					byID[tid] = e
 				}
 				e.ContentCount++
@@ -293,7 +293,7 @@ func (r *Ranker) Taxonomy(ctx context.Context, contentKind, taxonomyKind string,
 			if out[i].Score != out[j].Score {
 				return out[i].Score > out[j].Score
 			}
-			return out[i].TaxonomyID < out[j].TaxonomyID
+			return out[i].GroupID < out[j].GroupID
 		})
 	}
 	r.store(ctx, key, out)

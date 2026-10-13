@@ -1,9 +1,15 @@
 import { admin } from "./admin/en.js";
 import { social } from "./social/en.js";
+import { groups } from "./groups/en.js";
+import { discovery } from "./discovery/en.js";
+import { content } from "./content/en.js";
 
 export const en = {
   ...social,
   ...admin,
+  ...groups,
+  ...discovery,
+  ...content,
   common: {
     cancel: "Cancel",
     close: "Close",
@@ -261,9 +267,12 @@ export const en = {
     resume_mismatch: "The saved upload is for a different file. Please pick the file again.",
     moderation_rejected: "This was rejected by moderation.",
     comment_banned: "You can't comment here.",
+    comments_closed: "Comments are closed here.",
+    limit_reached: "You already have as many of these as allowed.",
     comment_too_long: "This comment is too long.",
     commentTooLongBy: "A comment is at most {maxChars} characters.",
     not_configured: "This feature isn't available on this site.",
+    no_membership: "Members-only content needs a group that people can join or buy. Add an offer to the group first.",
     tenant_mismatch: "Something went wrong on our end. Please try again.",
     gone: "This content is no longer available.",
   },
