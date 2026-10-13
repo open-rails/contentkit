@@ -34,7 +34,7 @@ test("a blog item's body images show through publish, unpublish and publish", as
   await reader.goto(at("post.html", null, { post: post.id }));
   await expect(reader.locator("[data-demo=missing]")).toHaveText("not_found", { timeout: 30_000 });
 
-  /** The reader's image source once the published item's images load, other than not. */
+  /** The reader's image source once the published item's public images load, other than not. */
   const shown = async (not?: string | null) => {
     let src: string | null = null;
     await expect
@@ -43,7 +43,7 @@ test("a blog item's body images show through publish, unpublish and publish", as
           await reader.reload();
           if (!(await reader.locator("[data-demo=post]").isVisible({ timeout: 10_000 }).catch(() => false))) return false;
           src = await reader.locator("[data-demo=post] img").first().getAttribute("src");
-          return src !== not && (await loaded(reader, "[data-demo=post]"));
+          return src !== not && /\/public\//.test(src ?? "") && (await loaded(reader, "[data-demo=post]"));
         },
         { timeout: 90_000, intervals: [1000] },
       )
