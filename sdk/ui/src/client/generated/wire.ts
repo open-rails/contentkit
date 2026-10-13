@@ -42,6 +42,13 @@ export interface AdminComment {
   deleted_at?: string;
 }
 
+export interface AliasRecord {
+  kind: string;
+  key: string;
+  locator?: string;
+  target: TargetRef;
+}
+
 export interface Anchor {
   id: string;
   page: string;
@@ -59,6 +66,14 @@ export interface AnswerGroup {
   id: string;
   label: string;
   count: number;
+}
+
+export interface AnswerRecord {
+  poll: Ref;
+  user_id: string;
+  text: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Attribute {
@@ -92,6 +107,24 @@ export interface BanNotice {
   scope: string;
   reason?: string;
   until?: string;
+}
+
+export interface Batch {
+  source: string;
+  preference_floor?: number;
+  provision_scopes?: boolean;
+  groups?: GroupRecord[];
+  contents?: ContentRecord[];
+  memberships?: MembershipSet[];
+  offers?: OfferRecord[];
+  aliases?: AliasRecord[];
+  comments?: CommentRecord[];
+  reactions?: ReactionRecord[];
+  favorites?: FavoriteRecord[];
+  polls?: PollRecord[];
+  votes?: VoteRecord[];
+  answers?: AnswerRecord[];
+  signals?: SignalRecord[];
 }
 
 export interface Card {
@@ -189,6 +222,20 @@ export interface CommentInput {
   body: string;
   reply_to_id?: string;
   anon_name?: string;
+}
+
+export interface CommentRecord {
+  external_id: string;
+  id?: string;
+  target: TargetRef;
+  language?: string;
+  reply_to?: Ref;
+  user_id?: string;
+  anon_name?: string;
+  body: string;
+  deleted_at?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CommentStanding {
@@ -330,6 +377,28 @@ export interface ContentPatch {
   revision?: number;
 }
 
+export interface ContentRecord {
+  external_id: string;
+  id?: string;
+  kind: string;
+  state: string;
+  publish_at?: string;
+  published_at?: string;
+  deleted_at?: string;
+  listing?: string;
+  access?: Rule;
+  restrictions?: string[];
+  attributes?: Record<string, unknown>;
+  owner_group?: Ref;
+  cover?: string;
+  creators?: Creator[];
+  text?: Record<string, CatalogText>;
+  versions?: VersionRecord[];
+  code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ContentRef {
   tenant_id: string;
   content_kind: string;
@@ -397,6 +466,11 @@ export interface Edge {
 export interface EdgeInput {
   relation: string;
   to: string;
+}
+
+export interface EdgeRecord {
+  relation: string;
+  to: Ref;
 }
 
 export interface Edit {
@@ -476,6 +550,12 @@ export interface FavoriteItem {
   content_id: string;
   content_version_id?: string;
   created_at: string;
+}
+
+export interface FavoriteRecord {
+  target: TargetRef;
+  user_id: string;
+  created_at?: string;
 }
 
 export interface FavoriteState {
@@ -666,6 +746,28 @@ export interface GroupPage {
   next_cursor?: string;
 }
 
+export interface GroupRecord {
+  external_id: string;
+  id?: string;
+  kind: string;
+  slug: string;
+  scope?: Ref;
+  parent?: Ref;
+  state?: string;
+  names?: Name[];
+  text?: GroupsText[];
+  attributes?: Record<string, unknown>;
+  cover_image?: string;
+  cover_content?: Ref;
+  avatar?: string;
+  owner_user_id?: string;
+  auth_scope?: string;
+  edges?: EdgeRecord[];
+  code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface GroupRef {
   kind: string;
   slug: string;
@@ -818,6 +920,22 @@ export interface Membership {
   state?: "active" | "proposed";
 }
 
+export interface MembershipRecord {
+  group: Ref;
+  version?: Ref;
+  role?: string;
+  position?: number;
+  active_from?: string;
+  active_until?: string;
+  state?: string;
+}
+
+export interface MembershipSet {
+  content: Ref;
+  kinds: string[];
+  memberships: MembershipRecord[];
+}
+
 export interface MergeInput {
   into: string;
 }
@@ -887,6 +1005,11 @@ export interface Offer {
 export interface OfferPage {
   offers: Offer[];
   next_cursor?: string;
+}
+
+export interface OfferRecord {
+  target: TargetRef;
+  terms: Terms;
 }
 
 export interface Op {
@@ -1057,6 +1180,28 @@ export interface PollOptionPatch {
   position?: number;
 }
 
+export interface PollOptionRecord {
+  external_id: string;
+  id?: string;
+  label: string;
+  position: number;
+}
+
+export interface PollRecord {
+  external_id: string;
+  id?: string;
+  kind?: string;
+  question: string;
+  language?: string;
+  active?: boolean;
+  live_at?: string;
+  closes_at?: string;
+  deleted_at?: string;
+  created_at?: string;
+  updated_at?: string;
+  options?: PollOptionRecord[];
+}
+
 export interface PollUpdate {
   question?: string;
   is_active?: boolean;
@@ -1142,6 +1287,15 @@ export interface ReactionCounts {
   mine: number;
 }
 
+export interface ReactionRecord {
+  target: TargetRef;
+  user_id?: string;
+  ip?: string;
+  value: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ReadResult {
   access: Access;
   expires: number;
@@ -1184,6 +1338,19 @@ export interface ReaderPlan {
 export interface Recipient {
   audience: string;
   id: string;
+}
+
+export interface RecordFailure {
+  section: string;
+  index: number;
+  external_id?: string;
+  code: string;
+  error: string;
+}
+
+export interface Ref {
+  id?: string;
+  external_id?: string;
 }
 
 export interface RefBody {
@@ -1229,6 +1396,13 @@ export interface Resolved {
 
 export interface Restored {
   restored: boolean;
+}
+
+export interface Result {
+  written: Record<string, number>;
+  skipped?: Record<string, number>;
+  failed: RecordFailure[];
+  ids: Record<string, Record<string, string>>;
 }
 
 export interface ReviewOutcome {
@@ -1278,6 +1452,19 @@ export interface SignalInput {
   position?: number;
 }
 
+export interface SignalRecord {
+  target: TargetRef;
+  user_id?: string;
+  anon_key?: string;
+  type: string;
+  event_id: string;
+  revision?: number;
+  occurred_at: string;
+  duration_s?: number;
+  progress?: number;
+  resume?: string;
+}
+
 export interface Signals {
   session?: string;
   signals: SignalInput[];
@@ -1287,6 +1474,13 @@ export interface Target {
   kind: "content" | "group" | "version";
   id: string;
   content_id?: string;
+}
+
+export interface TargetRef {
+  content?: Ref;
+  version?: Ref;
+  group?: Ref;
+  comment?: Ref;
 }
 
 export interface Terms {
@@ -1382,6 +1576,25 @@ export interface VersionInput {
   fork?: VersionFork;
 }
 
+export interface VersionRecord {
+  external_id: string;
+  id?: string;
+  languages: string[];
+  traits?: string[];
+  label?: string;
+  state?: string;
+  publish_at?: string;
+  published_at?: string;
+  deleted_at?: string;
+  access?: Rule;
+  attributes?: Record<string, unknown>;
+  ordinal?: number;
+  text?: Record<string, VersionText>;
+  segments?: Segment[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface VersionRules {
   languages: string;
   traits?: string[];
@@ -1408,6 +1621,14 @@ export interface ViewerState {
   progress_max: number;
   resume?: string;
   last_view_at?: string;
+}
+
+export interface VoteRecord {
+  poll: Ref;
+  option: Ref;
+  user_id?: string;
+  ip?: string;
+  created_at?: string;
 }
 
 export interface Written {

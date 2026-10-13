@@ -11,9 +11,11 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -129,6 +131,26 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		parts = append(parts, e.offers.RiverJobs())
 	}
 	return riverhelpers.Group(parts...)
+}
+
+// rebuild queues the jobs that rebuild what an import changed: search
+// documents, group counts and covers, listing counts and, after signals,
+// popularity. Before Start their periodic first runs do it.
+func (e *Engine) rebuild(ctx context.Context, signals bool) error {
+	c := e.jobs.bound()
+	if c == nil {
+		return nil
+	}
+	opts := func(queue string) *river.InsertOpts {
+		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+	}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)},
+		{Args: catalog.RefreshCountsJob(), InsertOpts: opts(catalog.Queue)}}
+	if signals && e.hub.SignalPlane() {
+		params = append(params, river.InsertManyParams{Args: popularityArgs{}, InsertOpts: opts(QueueContentKit)})
+	}
+	_, err := c.InsertMany(ctx, params)
+	return err
 }
 
 type searchSyncArgs struct{}

@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (126). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (127). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -90,13 +90,13 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| POST | `/v1/media/upload/presign` | user | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
-| POST | `/v1/media/upload/parts` | user | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
-| POST | `/v1/media/upload/parts/list` | user | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
-| POST | `/v1/media/upload/complete` | user | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
-| POST | `/v1/media/upload/abort` | user | `TicketBody` | 204 — | Abandons a multipart upload. |
-| POST | `/v1/media/upload/commit` | user | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
-| GET | `/v1/media/upload/frame` | user | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
+| POST | `/v1/media/upload/presign` | editor `root:content:write` | `PresignBody` | 200 `PresignReply` | Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket. |
+| POST | `/v1/media/upload/parts` | editor `root:content:write` | `PartsBody` | 200 `PartsReply` | Presigns multipart parts, each bound to its SHA-256. |
+| POST | `/v1/media/upload/parts/list` | editor `root:content:write` | `TicketBody` | 200 `PartsReply` | The parts of a multipart upload that landed, to resume it. |
+| POST | `/v1/media/upload/complete` | editor `root:content:write` | `TicketBody` | 200 `CompleteReply` | Assembles a multipart upload; blob is its staged name. |
+| POST | `/v1/media/upload/abort` | editor `root:content:write` | `TicketBody` | 204 — | Abandons a multipart upload. |
+| POST | `/v1/media/upload/commit` | editor `root:content:write` | `CommitBody` | 200 `CommitReply` | Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them. |
+| GET | `/v1/media/upload/frame` | editor `root:content:write` | — | 200 `image/jpeg` | A JPEG still of a video upload, for the frame picker (UploadOptions.Frames). Query: `kind`, `id`, `version`, `path`, `t`, `w`. |
 
 ## Media reads and playback (`/v1/media`)
 
@@ -188,6 +188,12 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/v1/me/history` | user | — | 204 — | Erases the reader's history: of one content item, one kind or everything. Query: `kind`, `content_id`. |
 | POST | `/v1/signals` | public | `Signals` | 204 — | Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version. |
 | POST | `/v1/exposures` | public | `Exposures` | 204 — | Records result lists a client served, rendered or showed, for click attribution. |
+
+## Bulk import (`/v1`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| POST | `/v1/import` | staff `root:import:write` | `Batch` | 200 `Result` | Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued. |
 
 ## Error codes
 

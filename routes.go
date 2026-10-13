@@ -58,9 +58,12 @@ const (
 	// contents, release dates, the reader's content filters and history,
 	// signals and exposures (/v1/contents, /v1/search, /v1/me/history, ...).
 	DiscoveryRoutes
+	// ImportRoutes: the bulk import a legacy importer writes through
+	// (/v1/import).
+	ImportRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | OfferRoutes | DiscoveryRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | OfferRoutes | DiscoveryRoutes | ImportRoutes
 )
 
 var groupModules = []struct {
@@ -76,10 +79,11 @@ var groupModules = []struct {
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
 	{OfferRoutes, []httpapi.Module{httpapi.Offers}, "offers"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
+	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "groups", "notifications", "offers", "discovery" or "all"), as a server's configuration
+// "codes", "groups", "notifications", "offers", "discovery", "import" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups

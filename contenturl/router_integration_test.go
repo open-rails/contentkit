@@ -13,7 +13,7 @@ import (
 )
 
 func TestRouterCanonicalizes(t *testing.T) {
-	ctx, _, _, s := setup(t)
+	ctx, pool, schema, s := setup(t)
 	links := put(t, s,
 		contenturl.Entry{ContentRef: ref("video", 1), Title: "Night Before the Counteroffensive", Titles: map[string]string{"es": "La noche antes"}},
 		contenturl.Entry{ContentRef: ref("gallery", 2), Title: "Hidden Gallery"},
@@ -118,11 +118,11 @@ func TestRouterCanonicalizes(t *testing.T) {
 		}
 	}
 
-	if err := s.PutAliases(ctx,
-		contenturl.Alias{Source: "hentai0-legacy", LegacyKind: "video", Key: "346791971", ContentRef: ref("video", 1)},
-		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "object-token", Key: "ab12cd34", Locator: "12", ContentRef: ref("video", 1)},
-		contenturl.Alias{Source: "hentai0-legacy", LegacyKind: "video", Key: "5", ContentRef: ref("gallery", 5)},
-		contenturl.Alias{Source: "hentai0-legacy", LegacyKind: "video", Key: "2", ContentRef: ref("gallery", 2)},
+	if err := putAliases(ctx, pool, schema,
+		alias("hentai0-legacy", "video", "346791971", "", ref("video", 1)),
+		alias("doujins-legacy", "object-token", "ab12cd34", "12", ref("video", 1)),
+		alias("hentai0-legacy", "video", "5", "", ref("gallery", 5)),
+		alias("hentai0-legacy", "video", "2", "", ref("gallery", 2)),
 	); err != nil {
 		t.Fatal(err)
 	}
