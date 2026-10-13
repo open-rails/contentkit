@@ -11,6 +11,14 @@ const h = harness();
 const run = () => Math.random().toString(36).slice(2, 8);
 const name = (language: string, n: string, kind: "name" | "alias" = "name") => ({ language, kind, name: n });
 
+/** Waits until typeahead suggests each group: search documents trail their writes. */
+async function suggested(ck: ReturnType<typeof contentKit>, groups: readonly { id: string; kind: string }[], names: readonly string[]) {
+  for (const [i, g] of groups.entries())
+    await expect
+      .poll(async () => (await ck.discovery.typeahead({ q: names[i]!, group_kinds: [g.kind] })).groups.map((x) => x.id), { timeout: 60_000, intervals: [250, 500, 1000] })
+      .toContain(g.id);
+}
+
 async function staffClient() {
   const staff = await h.user({ role: "staff" });
   return { staff, ck: contentKit(h, staff) };
@@ -91,6 +99,7 @@ test("membership editor: a content's groups with roles, positions and versions",
     { kind: "series", slug: `saga-${r}`, names: [name("en", `Saga ${r}`)] },
     { kind: "voice_actor", slug: `voice-${r}`, names: [name("en", `Voice ${r}`)] },
   ])) as [Group, Group, Group];
+  await suggested(ck, [artist, series, voice], [`Publisher ${r}`, `Saga ${r}`, `Voice ${r}`]);
   await page.goto(demo("groups.html", staff, { content: content.id, content_kind: "comic", versions: `${content.versions[0]!.id}:English,${ja}:Japanese` }));
   const editor = page.locator("[data-ckui=membership-editor]");
   const kind = (k: string) => editor.locator(`[data-ckui=membership-kind][data-group-kind=${k}]`);
@@ -180,6 +189,7 @@ for (const [mode, theme] of [
 
     // Merge into another artist: the flow moves to the survivor.
     const [target] = await ck.groups.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
+    await suggested(ck, [target!], [`Target ${r}`]);
     await flow.getByRole("button", { name: "Merge" }).click();
     const dialog = page.locator("[data-ckui=group-merge-dialog]");
     await dialog.getByRole("combobox", { name: "Merge into" }).fill(`Target ${r}`);

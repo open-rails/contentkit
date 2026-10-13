@@ -123,6 +123,8 @@ describe("discovery against the real ContentKit", () => {
       ["signed in", client(h, cfg, await h.user())],
       ["signed out", client(h, cfg, null)],
     ] as const) {
+      // This file's other searches share the tab's session.
+      await c.discovery.clearSearches();
       await c.discovery.search({ q: `first ${r}` });
       await c.discovery.search({ q: `second ${r}` });
       const { result } = renderHook(() => useRecentSearches({ limit: 5 }), { wrapper: wrap(c) });
