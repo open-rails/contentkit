@@ -150,13 +150,25 @@ func (a adapter) CreatePrices(ctx context.Context, prices []access.NewPrice) ([]
 			return nil, err
 		}
 		res, err := a.c.CreatePrice(ctx, billing.CreatePriceParams{ProductID: id, Key: p.Key, UnitAmount: p.Amount, Currency: p.Currency,
-			AccessDurationHours: p.AccessHours, BillingIntervalHours: p.IntervalHours, PSPs: p.PSPs})
+			AccessDurationHours: p.AccessHours, BillingIntervalHours: p.IntervalHours, PSPs: psps(p.PSPs)})
 		if err != nil {
 			return nil, fmt.Errorf("create price %s on %s: %w", p.Key, p.ProductID, err)
 		}
 		out = append(out, price(*res))
 	}
 	return out, nil
+}
+
+// psps sells a price on each PSP with no per-PSP settings.
+func psps(keys []string) map[string]map[string]string {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(keys))
+	for _, k := range keys {
+		out[k] = map[string]string{}
+	}
+	return out
 }
 
 func (a adapter) ArchivePrices(ctx context.Context, ids []string) error {
