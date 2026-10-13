@@ -273,7 +273,6 @@ export const de: ContentKitUiMessageBundle = {
     comment_too_long: "Dieser Kommentar ist zu lang.",
     commentTooLongBy: "Ein Kommentar hat höchstens {maxChars} Zeichen.",
     not_configured: "Diese Funktion ist auf dieser Website nicht verfügbar.",
-    no_membership: "Inhalte nur für Mitglieder brauchen eine Gruppe, der man beitreten oder die man kaufen kann. Lege zuerst ein Angebot für die Gruppe an.",
     tenant_mismatch: "Bei uns ist etwas schiefgelaufen. Bitte versuche es erneut.",
     gone: "Dieser Inhalt ist nicht mehr verfügbar.",
   },

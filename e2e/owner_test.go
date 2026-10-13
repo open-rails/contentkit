@@ -110,16 +110,11 @@ func TestOwnerGroupEditors(t *testing.T) {
 	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
 	membersOnly := catalog.ContentInput{Kind: "blog", OwnerGroupID: ch, Access: &access.Rule{Level: access.GroupLevel, Group: ch},
 		Text: map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}
-	var refusal struct{ Code string }
-	f.want(http.StatusConflict, creatorToken, "POST", "/contents", membersOnly, &refusal)
-	if refusal.Code != "no_membership" {
-		t.Fatalf("members-only on a channel selling nothing answered %q", refusal.Code)
-	}
-	monthly := 720
-	f.want(http.StatusOK, creatorToken, "PUT", "/groups/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
-
+	// Members-only needs no offer yet: the channel may sell one later.
 	var members, draft, gallery catalog.Content
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", membersOnly, &members)
+	monthly := 720
+	f.want(http.StatusOK, creatorToken, "PUT", "/groups/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
 		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
