@@ -21,6 +21,7 @@ import (
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
@@ -361,4 +362,99 @@ func TestChannelPostReads(t *testing.T) {
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+post.ID, nil, nil)
 	f.want(http.StatusNotFound, writerToken, "GET", "/contents/"+draft.ID, nil, nil)
 	f.want(http.StatusServiceUnavailable, writerToken, "PATCH", "/contents/"+draft.ID, catalog.ContentPatch{}, nil)
+}
+
+// A channel's comment moderators (channel:comments:moderate, and its owner)
+// moderate comments on its posts, asked only when they act: they delete
+// anyone's, hold one out of its thread and release it, list what is held,
+// and ban a commenter from the channel's content only; nobody else does,
+// nor a moderator of another channel. They find the channel among their
+// groups as its moderator.
+func TestChannelCommentModeration(t *testing.T) {
+	w := newWorld(t)
+	_, creatorToken := w.person(iam.Role{})
+	moderator, moderatorToken := w.person(iam.Role{})
+	commenter, commenterToken := w.person(iam.Role{})
+	_, strangerToken := w.person(iam.Role{})
+	_, otherToken := w.person(iam.Role{})
+	_, staff := w.person(w.staff)
+	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
+		c.Content.GroupKinds["channel"] = channel
+		d.Scopes = ckauthkit.Scopes(w.ak)
+	}))
+	var made []groups.Group
+	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	ch := made[0]
+	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(moderator.ID), w.channelModerator)
+	f.want(http.StatusCreated, otherToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "other"}}, nil)
+	var post catalog.Content
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID),
+		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, &post)
+	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
+	elsewhere, _ := w.published(f, staff, "blog")
+	item := "/contents/" + post.ID + "/comments"
+	comment := func(token, target, body string) content.Comment {
+		t.Helper()
+		var c content.Comment
+		f.want(http.StatusCreated, token, "POST", target, content.CommentInput{Body: body}, &c)
+		return c
+	}
+	listed := func(id string) bool {
+		t.Helper()
+		var list []content.Comment
+		f.want(http.StatusOK, "", "GET", item, nil, &list)
+		for _, c := range list {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	rude := comment(commenterToken, item, "rude")
+	f.want(http.StatusForbidden, strangerToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusForbidden, otherToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusNoContent, moderatorToken, "DELETE", "/comments/"+rude.ID, nil, nil)
+	f.want(http.StatusForbidden, moderatorToken, "PATCH", "/comments/"+comment(commenterToken, item, "mine").ID, content.CommentEdit{Body: "theirs"}, nil)
+
+	doubtful := comment(commenterToken, item, "doubtful")
+	f.want(http.StatusForbidden, commenterToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	f.want(http.StatusNoContent, moderatorToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	f.want(http.StatusConflict, moderatorToken, "POST", "/comments/"+doubtful.ID+"/hold", nil, nil)
+	if listed(doubtful.ID) {
+		t.Fatal("a held comment stays in its thread")
+	}
+	var held content.HeldPage
+	f.want(http.StatusForbidden, strangerToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, nil)
+	f.want(http.StatusOK, creatorToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, &held)
+	if len(held.Items) != 1 || held.Items[0].ID != doubtful.ID {
+		t.Fatalf("the channel's held comments %+v", held.Items)
+	}
+	f.want(http.StatusNoContent, moderatorToken, "POST", "/comments/"+doubtful.ID+"/release", nil, nil)
+	if !listed(doubtful.ID) {
+		t.Fatal("a released comment is not back in its thread")
+	}
+
+	bans := "/groups/" + string(ch.ID) + "/comment-bans"
+	f.want(http.StatusForbidden, strangerToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
+	f.want(http.StatusOK, moderatorToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
+	var refusal struct{ Code string }
+	f.want(http.StatusForbidden, commenterToken, "POST", item, content.CommentInput{Body: "again"}, &refusal)
+	if refusal.Code != "comment_banned" {
+		t.Fatalf("a banned commenter answered %q", refusal.Code)
+	}
+	comment(commenterToken, "/contents/"+elsewhere+"/comments", "elsewhere")
+	var list []content.CommentBan
+	f.want(http.StatusOK, creatorToken, "GET", bans, nil, &list)
+	if len(list) != 1 || list[0].UserID != commenter.ID || list[0].Scope != content.GroupScope(string(ch.ID)) {
+		t.Fatalf("the channel's bans %+v", list)
+	}
+	f.want(http.StatusNoContent, moderatorToken, "DELETE", bans+"/"+commenter.ID, nil, nil)
+	comment(commenterToken, item, "again")
+
+	var mine groups.MyGroupPage
+	f.want(http.StatusOK, moderatorToken, "GET", "/me/groups", nil, &mine)
+	if g := mine.Groups; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
+		t.Fatalf("the moderator's groups %+v", mine)
+	}
 }

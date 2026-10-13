@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // Comment bans hold current state only: who is banned, in which scope, why
@@ -26,11 +27,16 @@ const (
 	// ScopeGlobal is the whole tenant, managed by holders of root:comments:ban.
 	ScopeGlobal = "global"
 	ownerScope  = "owner:"
+	groupScope  = "group:"
 )
 
 // OwnerScope is the scope of content whose Resolution.Owner is ownerID,
 // managed by that owner.
 func OwnerScope(ownerID string) string { return ownerScope + ownerID }
+
+// GroupScope is the scope of a user-owned group and the content it owns
+// (Resolution.OwnerGroup), managed by the group's comment moderators.
+func GroupScope(groupID string) string { return groupScope + groupID }
 
 const (
 	maxBanReason = 500 // runes
@@ -79,15 +85,19 @@ type BanInput struct {
 	Until  *time.Time `json:"until"`
 }
 
-// checkCommentBan refuses userID's comment on content owned by ownerID ("" for
-// none) when a live ban applies; of several, the one lasting longest.
-func (rt *Runtime) checkCommentBan(ctx context.Context, userID, ownerID string) error {
+// checkCommentBan refuses userID's comment on a target resolved as res when a
+// live ban applies (global, its owner's, its owner group's); of several, the
+// one lasting longest.
+func (rt *Runtime) checkCommentBan(ctx context.Context, userID string, res resolve.Resolution) error {
 	if userID == "" {
 		return nil // anonymous commenters have no identity to ban
 	}
 	scopes := []string{ScopeGlobal}
-	if ownerID != "" {
-		scopes = append(scopes, OwnerScope(ownerID))
+	if res.Owner != "" {
+		scopes = append(scopes, OwnerScope(res.Owner))
+	}
+	if g := res.OwnerGroup; g != nil {
+		scopes = append(scopes, GroupScope(g.ID))
 	}
 	var n BanNotice
 	err := rt.store.pool.QueryRow(ctx, `SELECT scope, reason, until FROM `+rt.store.t.commentBans+`
@@ -220,7 +230,7 @@ func (rt *Runtime) enrichBans(ctx context.Context, bans []CommentBan) {
 // --- HTTP ---
 
 func banRoutes() []httpapi.Route[*Runtime] {
-	out := append([]httpapi.Route[*Runtime](nil), userBanRoutes...)
+	out := append(append([]httpapi.Route[*Runtime](nil), userBanRoutes...), groupModerationRoutes...)
 	for _, typ := range TargetTypes {
 		out = append(out, httpapi.Route[*Runtime]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
 			Doc: "Whether the caller may comment on " + targetNoun(typ) + ", and the ban that stops it.", Query: targetQuery(typ),
@@ -394,7 +404,7 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, ta
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{},
 		Comments: cmp.Or(res.Comments, CommentsOpen)}
 	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
-	err = rt.checkCommentBan(ctx, viewerID(actor), res.Owner)
+	err = rt.checkCommentBan(ctx, viewerID(actor), res)
 	if err == nil {
 		err = rt.checkIPBan(ctx, actor)
 	}

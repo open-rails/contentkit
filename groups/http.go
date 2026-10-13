@@ -65,7 +65,7 @@ var routes = []httpapi.Route[handler]{
 		Doc:   "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/groups", Resource: "groups", Auth: httpapi.User,
-		Doc: "The viewer's active groups: those they own, edit ({kind}:settings:manage) or write content of ({kind}:content:write) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
+		Doc: "The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
 		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
 			httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(MyGroupPage{})}}, Serve: httpapi.H(handler.mine)},

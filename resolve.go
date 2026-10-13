@@ -131,7 +131,11 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 		if g.State != groups.StateActive {
 			continue
 		}
-		out[ref.Key()] = resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
+		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
+		if cfg.GroupKinds[g.Kind].Owner == "user" {
+			res.OwnerGroup = &resolve.OwnerGroup{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
+		}
+		out[ref.Key()] = res
 	}
 	return out, nil
 }

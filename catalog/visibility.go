@@ -514,7 +514,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerGroup: o.group}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -528,12 +528,18 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	return out, nil
 }
 
-// ownership is a content item's first creator and comments setting.
-type ownership struct{ creator, comments string }
+// ownership is a content item's first creator, comments setting and active
+// user-owned owner group.
+type ownership struct {
+	creator, comments string
+	group             *resolve.OwnerGroup
+}
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
- AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), '') FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
+ AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+ FROM `+s.t.items+` c LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
+ WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -542,8 +548,12 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 	for rows.Next() {
 		var id string
 		var o ownership
-		if err := rows.Scan(&id, &o.comments, &o.creator); err != nil {
+		var g resolve.OwnerGroup
+		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
+		}
+		if g.ID != "" && s.cfg.GroupKinds[g.Kind].Owner == "user" {
+			o.group = &g
 		}
 		out[id] = o
 	}

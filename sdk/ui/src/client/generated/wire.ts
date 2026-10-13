@@ -1017,6 +1017,7 @@ export interface MyGroup {
   owner: boolean;
   editor: boolean;
   writer: boolean;
+  moderator: boolean;
   member: boolean;
 }
 

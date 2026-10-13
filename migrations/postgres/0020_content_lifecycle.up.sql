@@ -52,3 +52,9 @@ CREATE INDEX content_groups_purge_idx ON content_groups (tenant_id, deleted_at) 
 ALTER TABLE content_facets ADD COLUMN free_applied boolean DEFAULT false NOT NULL;
 UPDATE content_facets SET free_applied = true WHERE access_free_after <= now();
 CREATE INDEX content_facets_free_idx ON content_facets (tenant_id, access_free_after) WHERE ((NOT free_applied) AND (access_free_after IS NOT NULL));
+
+-- A user-owned group's comment moderators ban commenters from the group and
+-- the content it owns: scope 'group:<group id>'.
+ALTER TABLE content_comment_bans DROP CONSTRAINT content_comment_bans_scope_ck;
+ALTER TABLE content_comment_bans ADD CONSTRAINT content_comment_bans_scope_ck
+    CHECK (scope = 'global' OR (scope LIKE 'owner:%' AND length(scope) > 6) OR (scope LIKE 'group:%' AND length(scope) > 6));

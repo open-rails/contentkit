@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // Moderation states stored in content_comments.moderation and
@@ -313,23 +314,26 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 			return HeldPage{}, err
 		}
 		page.Items = append(page.Items, items...)
-	} else if err := rt.heldComments(ctx, &page, after, afterID, limit+1); err != nil {
+	} else if err := rt.heldComments(ctx, &page, after, afterID, limit+1, nil); err != nil {
 		return HeldPage{}, err
 	}
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		last := page.Items[limit-1]
-		page.Next = strconv.FormatInt(last.CreatedAt.UnixMicro(), 10) + ":" + last.ID
-	}
+	page.trim(limit)
 	rt.enrichHeld(ctx, page.Items)
 	return page, nil
 }
 
-func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int) error {
+// heldComments pages held comments, of g and the content it owns when set.
+func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.OwnerGroup) error {
+	var kind, id string
+	if g != nil {
+		kind, id = g.Kind, g.ID
+	}
 	rows, err := rt.store.pool.Query(ctx, `SELECT id::text, `+keyCols+`, coalesce(user_id, ''), coalesce(anon_name, ''), body,
 			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
-			FROM `+rt.store.t.comments+` WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
-			ORDER BY created_at, id LIMIT $4`, rt.tenant, after, afterID, limit)
+			FROM `+rt.store.t.comments+` c WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
+			AND ($5 = '' OR c.content_kind = $5 AND c.content_id = $6 OR (c.content_kind, c.content_id) IN (
+			 SELECT i.kind, i.id FROM `+rt.store.t.items+` i WHERE i.tenant_id = $1 AND i.owner_group_id = $6))
+			ORDER BY created_at, id LIMIT $4`, rt.tenant, after, afterID, limit, kind, id)
 	if err != nil {
 		return err
 	}

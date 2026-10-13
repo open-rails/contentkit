@@ -275,6 +275,16 @@ func (c *Client) DeleteCommentReaction(ctx context.Context, cid string) (content
 	return out, err
 }
 
+// PostCommentHold is POST /v1/comments/{cid}/hold (user). Holds a published comment for review: out of its thread, shown to its author only, until released or deleted. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope).
+func (c *Client) PostCommentHold(ctx context.Context, cid string) error {
+	return c.call(ctx, http.MethodPost, expand("/v1/comments/{cid}/hold", "{cid}", url.PathEscape(cid)), nil, nil, nil)
+}
+
+// PostCommentRelease is POST /v1/comments/{cid}/release (user). Publishes a held comment, as a reviewer's approval does. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope).
+func (c *Client) PostCommentRelease(ctx context.Context, cid string) error {
+	return c.call(ctx, http.MethodPost, expand("/v1/comments/{cid}/release", "{cid}", url.PathEscape(cid)), nil, nil, nil)
+}
+
 // PostContentLikeQuery is the query of PostContentLike.
 type PostContentLikeQuery struct {
 	// one version of the content item; the item itself by default
@@ -717,6 +727,70 @@ func (c *Client) PutGlobalCommentBan(ctx context.Context, user string, body cont
 // DeleteGlobalCommentBan is DELETE /v1/global-comment-bans/{user} (staff). Lifts a tenant-wide comment ban.
 func (c *Client) DeleteGlobalCommentBan(ctx context.Context, user string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/global-comment-bans/{user}", "{user}", url.PathEscape(user)), nil, nil, nil)
+}
+
+// GetGroupHeldCommentsQuery is the query of GetGroupHeldComments.
+type GetGroupHeldCommentsQuery struct {
+	// the previous page's next
+	Cursor string
+	// page size: 20 by default, at most 100
+	Limit int
+}
+
+func (q GetGroupHeldCommentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetGroupHeldComments is GET /v1/groups/{id}/held-comments (user). Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.
+func (c *Client) GetGroupHeldComments(ctx context.Context, id string, q GetGroupHeldCommentsQuery) (content.HeldPage, error) {
+	var out content.HeldPage
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/held-comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetGroupCommentBansQuery is the query of GetGroupCommentBans.
+type GetGroupCommentBansQuery struct {
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetGroupCommentBansQuery) values() url.Values {
+	v := url.Values{}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetGroupCommentBans is GET /v1/groups/{id}/comment-bans (user). The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) GetGroupCommentBans(ctx context.Context, id string, q GetGroupCommentBansQuery) ([]content.CommentBan, error) {
+	var out []content.CommentBan
+	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/comment-bans", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PutGroupCommentBan is PUT /v1/groups/{id}/comment-bans/{user} (user). Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) PutGroupCommentBan(ctx context.Context, id string, user string, body content.BanInput) (content.CommentBan, error) {
+	var out content.CommentBan
+	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, body, &out)
+	return out, err
+}
+
+// DeleteGroupCommentBan is DELETE /v1/groups/{id}/comment-bans/{user} (user). Lifts a user's ban on a user-owned group and its content.
+func (c *Client) DeleteGroupCommentBan(ctx context.Context, id string, user string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
 // GetContentCanCommentQuery is the query of GetContentCanComment.
@@ -1406,7 +1480,7 @@ func (q GetMeGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit ({kind}:settings:manage) or write content of ({kind}:content:write) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.
+// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.
 func (c *Client) GetMeGroups(ctx context.Context, q GetMeGroupsQuery) (groups.MyGroupPage, error) {
 	var out groups.MyGroupPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/groups", q.values(), nil, &out)

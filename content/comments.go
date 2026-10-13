@@ -102,7 +102,7 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 	loggedIn := actor.ID != "" && !actor.Anonymous
 	var userID, anonName any
 	if loggedIn {
-		if err := c.rt.checkCommentBan(ctx, actor.ID, res.Owner); err != nil {
+		if err := c.rt.checkCommentBan(ctx, actor.ID, res); err != nil {
 			return Comment{}, err
 		}
 		userID = actor.ID
@@ -574,7 +574,7 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Co
 // moderator; an owner banned in the content's scope may not. 404 if missing
 // or soft-deleted.
 func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody string) (Comment, error) {
-	target, err := c.loadForWrite(ctx, actor, cid)
+	target, err := c.loadForWrite(ctx, actor, cid, false)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -589,7 +589,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 		return Comment{}, err
 	}
 	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
-		if err := c.rt.checkCommentBan(ctx, author, res.Owner); err != nil {
+		if err := c.rt.checkCommentBan(ctx, author, res); err != nil {
 			return Comment{}, err
 		}
 	}
@@ -652,7 +652,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 // reply_count / the reference's comment_count when a published comment is
 // deleted.
 func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid string) error {
-	if _, err := c.loadForWrite(ctx, actor, cid); err != nil {
+	if _, err := c.loadForWrite(ctx, actor, cid, true); err != nil {
 		return err
 	}
 	tx, err := c.s.beginMutation(ctx)
@@ -688,8 +688,26 @@ type writeTarget struct {
 	ref      contentref.ContentRef
 }
 
-// loadForWrite resolves a live comment and authorizes actor as owner-or-moderator.
-func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid string) (writeTarget, error) {
+// loadForWrite resolves a live comment and authorizes actor as its author or
+// a moderator: a root:comments:moderate holder, and with group its target's
+// group comment moderators (moderates), asked only then.
+func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid string, group bool) (writeTarget, error) {
+	t, err := c.loadComment(ctx, cid)
+	if err != nil {
+		return t, err
+	}
+	if t.ownerID != nil && actor.ID != "" && !actor.Anonymous && actor.ID == *t.ownerID {
+		return t, nil
+	}
+	err = c.rt.requirePerm(ctx, actor, access.CommentsModerate)
+	if err == nil || !group || !errors.Is(err, errForbidden) {
+		return t, err
+	}
+	return t, c.rt.moderates(ctx, actor, t.ref)
+}
+
+// loadComment reads a live comment's write target.
+func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, error) {
 	if !uuidRe.MatchString(cid) {
 		return writeTarget{}, ErrNotFound
 	}
@@ -707,12 +725,6 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 		return writeTarget{}, ErrNotFound
 	}
 	t.ref = k.Ref()
-	if t.ownerID != nil && actor.ID != "" && !actor.Anonymous && actor.ID == *t.ownerID {
-		return t, nil
-	}
-	if err := c.rt.requirePerm(ctx, actor, access.CommentsModerate); err != nil {
-		return writeTarget{}, err
-	}
 	return t, nil
 }
 
@@ -825,7 +837,7 @@ func commentRoutes() []httpapi.Route[*comments] {
 				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 				Serve: func(c *comments) http.HandlerFunc { return c.handleCreate(typ) }})
 	}
-	return append(out, otherCommentRoutes...)
+	return append(append(out, otherCommentRoutes...), commentModerationRoutes...)
 }
 
 var languageParam = httpapi.Text("language", "only this language's comments; every language by default")

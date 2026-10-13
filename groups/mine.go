@@ -19,6 +19,9 @@ type MyGroup struct {
 	Editor bool `json:"editor"`
 	// Writer: the viewer holds its kind's access.GroupContentWrite there.
 	Writer bool `json:"writer"`
+	// Moderator: the viewer holds its kind's access.GroupCommentsModerate
+	// there, or owns it.
+	Moderator bool `json:"moderator"`
 	// Member: the viewer holds its key.
 	Member bool `json:"member"`
 }
@@ -48,7 +51,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 			return out, err
 		}
 	}
-	type mine struct{ owner, editor, writer, member bool }
+	type mine struct{ owner, editor, writer, moderator, member bool }
 	rel := map[GroupID]mine{}
 	err = s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, kind, coalesce(auth_scope, ''), coalesce(owner_user_id, '') = $2, coalesce(id = ANY($4::text[]), false)
@@ -67,7 +70,8 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 			}
 			held := scopes[scope]
 			m.editor, m.writer = slices.Contains(held, access.GroupSettingsManage(kind)), slices.Contains(held, access.GroupContentWrite(kind))
-			if m.owner || m.editor || m.writer || m.member {
+			m.moderator = m.owner || slices.Contains(held, access.GroupCommentsModerate(kind))
+			if m.owner || m.editor || m.writer || m.moderator || m.member {
 				rel[id] = m
 			}
 		}
@@ -101,7 +105,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 	}
 	for _, g := range page.Groups {
 		m := rel[g.ID]
-		out.Groups = append(out.Groups, MyGroup{GroupCard: g, Owner: m.owner, Editor: m.editor, Writer: m.writer, Member: m.member})
+		out.Groups = append(out.Groups, MyGroup{GroupCard: g, Owner: m.owner, Editor: m.editor, Writer: m.writer, Moderator: m.moderator, Member: m.member})
 	}
 	out.NextCursor = page.NextCursor
 	return out, nil
