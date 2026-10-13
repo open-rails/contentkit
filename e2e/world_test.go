@@ -179,7 +179,7 @@ func (w *world) billing() access.Billing {
 		_, _ = w.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	})
 	engine, err := openrails.New(ctx, openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema},
-		TestMode: openrails.Sandbox, ProviderWriteMode: openrails.ProviderWritesReadOnly,
+		ProviderWriteMode: openrails.ProviderWritesReadOnly,
 		Merchants: map[string]openrails.MerchantDeclaration{w.tenant: {DisplayName: "E2E"}}}, openrails.Deps{Postgres: w.pool})
 	if err != nil {
 		w.t.Fatal(err)
