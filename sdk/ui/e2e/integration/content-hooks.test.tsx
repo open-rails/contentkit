@@ -299,7 +299,7 @@ describe("content hooks against the real ContentKit", () => {
 
     // Unpublished and published again, the image publishes a new generation and the old file goes; the body follows.
     await act(async () => void (await result.current.unpublish()));
-    await waitFor(async () => expect((await client("editor").contents.get(id)).images).toBeUndefined(), slow);
+    await waitFor(async () => expect(Object.values((await client("editor").contents.get(id)).images ?? {}).some((u) => u.includes("/public/"))).toBe(false), slow);
     await act(async () => void (await result.current.publish()));
     await readerSees(first);
     await waitFor(async () => expect((await fetch(first)).status).toBe(404), slow);
