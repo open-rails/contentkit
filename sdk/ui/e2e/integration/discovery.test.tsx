@@ -4,7 +4,7 @@ import { act, render, renderHook, screen, waitFor } from "@testing-library/react
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Beacons, type ContentKitClient, type GroupCard } from "../../src/client/index.js";
-import { ContentRail } from "../../src/index.js";
+import { ContentGrid, ContentRail } from "../../src/index.js";
 import {
   ContentKitProvider,
   useContentFilters,
@@ -189,6 +189,38 @@ describe("discovery against the real ContentKit", () => {
     expect(screen.getByRole("heading", { name: "Featured" })).toBeTruthy();
     await waitFor(() => expect(document.querySelectorAll("[data-ckui=content-rail]")).toHaveLength(2), wait);
     expect(screen.queryByRole("heading", { name: "Continue watching" })).toBeNull();
+  });
+
+  it("owner_group: a group's own feed, and each card's owner chip", async () => {
+    const r = run();
+    const [owner] = await staff.groups.create([{ kind: "artist", slug: `owner-${r}`, names: [{ language: "en", kind: "name", name: `Studio ${r}` }] }]);
+    const t = await tag(`owned-${r}`);
+    const [owned] = await seedContents(staff, [
+      { kind: "comic", titles: { en: `Owned ${r}` }, owner: owner!.id, groups: [t.id], versions: [{ languages: ["en"] }] },
+      { kind: "comic", titles: { en: `Other ${r}` }, groups: [t.id], versions: [{ languages: ["en"] }] },
+    ]);
+    const c = client(h, cfg, null);
+    const { result } = renderHook(() => useContents({ kind: "comic", owner_group: owner!.id }), { wrapper: wrap(c, { viewer: null, language: "en" }) });
+    await waitFor(() => expect(result.current.items.map((x) => x.id)).toEqual([owned!.id]), wait);
+    expect(result.current.items[0]!.owner).toMatchObject({ id: owner!.id, kind: "artist", name: `Studio ${r}` });
+
+    const { container } = render(
+      <>
+        <section data-test="tag">
+          <ContentGrid query={{ kind: "comic", groups: [t.id], sort: "title" }} />
+        </section>
+        <section data-test="feed">
+          <ContentGrid query={{ kind: "comic", owner_group: owner!.id }} owner={false} />
+        </section>
+      </>,
+      { wrapper: wrap(c, { viewer: null, language: "en" }) },
+    );
+    const titles = (s: string) => [...container.querySelectorAll(`[data-test=${s}] [data-ckui=card-title]`)].map((x) => x.textContent);
+    await waitFor(() => expect([titles("tag"), titles("feed")]).toEqual([[`Other ${r}`, `Owned ${r}`], [`Owned ${r}`]]), wait);
+    const chips = container.querySelectorAll("[data-test=tag] [data-ckui=card-owner]");
+    // The avatar's initial, then the name.
+    expect([...chips].map((x) => [x.getAttribute("data-id"), x.textContent])).toEqual([[owner!.id, `SStudio ${r}`]]);
+    expect(container.querySelectorAll("[data-test=feed] [data-ckui=card-owner]")).toHaveLength(0);
   });
 
   it("without the signal plane: rails leave themselves out, history says so, beacons turn off", async () => {

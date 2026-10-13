@@ -28,34 +28,34 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto(demo("content.html", null, { view: "listing", kind: "comic", groups: tag!.id, theme }));
     const listing = page.locator("[data-ckui=content-listing]");
     const titles = listing.locator("[data-ckui=card-title]");
-    // The kind's sort (newest) by default; a locked card says so.
-    await expect(titles).toHaveText([`Cherry ${r}`, `Banana ${r}`, `Apple ${r}`], { timeout: 30_000 });
+    // The kind's sort (newest) by default; a locked card names its tier.
+    await expect(titles).toHaveText([`Cherry ${r} (Premium)`, `Banana ${r}`, `Apple ${r}`], { timeout: 30_000 });
     await expect(listing.locator("[data-ckui=content-card][data-locked]")).toHaveCount(1);
     await page.screenshot({ path: `${dir}/content-listing-${theme}-${info.project.name}.png`, fullPage: true });
 
     await listing.getByRole("combobox", { name: "Sort" }).click();
     await page.getByRole("option", { name: "Title" }).click();
     await expect(page).toHaveURL(/sort=title/);
-    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r}`]);
+    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r} (Premium)`]);
 
     await listing.getByRole("button", { name: "Colored" }).click();
     await expect(page).toHaveURL(/traits=colored/);
     await expect(titles).toHaveText([`Apple ${r}`]);
     await expect(listing.getByRole("button", { name: "Colored" })).toHaveAttribute("aria-pressed", "true");
     await listing.getByRole("button", { name: "Clear filters" }).click();
-    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r}`]);
+    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r} (Premium)`]);
 
     await listing.getByRole("combobox", { name: "Format" }).click();
     await page.getByRole("option", { name: "Doujin" }).click();
     await expect(page).toHaveURL(/attribute=format%3Adoujin/);
     await expect(titles).toHaveText([`Banana ${r}`]);
     await page.goBack();
-    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r}`]);
+    await expect(titles).toHaveText([`Apple ${r}`, `Banana ${r}`, `Cherry ${r} (Premium)`]);
 
     await listing.getByRole("combobox", { name: "Language" }).click();
     await page.getByRole("option", { name: "Japanese" }).click();
     await expect(page).toHaveURL(/language=ja/);
-    await expect(titles).toHaveText([`Cherry ${r}`]);
+    await expect(titles).toHaveText([`Cherry ${r} (Premium)`]);
   });
 }
 
