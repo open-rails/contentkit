@@ -36,13 +36,14 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   const r = useResource<ReaderPlan | Pending>(store, key, { type: "reader-plan", id: version ?? undefined }, (s) => client.versions.reader(content!, version!, s));
   const pending = isPending(r.data);
   const plan = r.data && !pending ? (r.data as ReaderPlan) : null;
-  const { reload } = r;
+  const { data, reload } = r;
+  // Every answer schedules the next look: a pending one polls, a plan waits for its next release.
   useEffect(() => {
-    const at = pending ? Date.now() + (o.poll ?? 5000) : nextRelease(plan);
+    const at = isPending(data) ? Date.now() + (o.poll ?? 5000) : nextRelease(data ? (data as ReaderPlan) : null);
     if (at === null) return;
     const t = setTimeout(reload, Math.min(MAX_DELAY, Math.max(0, at - Date.now()) + 500));
     return () => clearTimeout(t);
-  }, [pending, plan, reload, o.poll]);
+  }, [data, reload, o.poll]);
   return { plan, pending, loading: !!key && (r.loading || !r.loaded), error: r.error, reload };
 }
 
