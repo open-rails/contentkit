@@ -11,6 +11,10 @@ const h = harness();
 const run = () => Math.random().toString(36).slice(2, 8);
 const name = (language: string, n: string, kind: "name" | "alias" = "name") => ({ language, kind, name: n });
 
+/** Waits until the typeahead finds a group just made: search documents follow writes within a moment. */
+const searchable = (ck: ReturnType<typeof contentKit>, kind: string, text: string) =>
+  expect.poll(async () => (await ck.discovery.typeahead({ q: text, group_kinds: [kind] })).groups.length, { timeout: 30_000 }).toBeGreaterThan(0);
+
 async function staffClient() {
   const staff = await h.user({ role: "staff" });
   return { staff, ck: contentKit(h, staff) };
@@ -96,6 +100,7 @@ test("membership editor: a content's groups with roles, positions and versions",
   const kind = (k: string) => editor.locator(`[data-ckui=membership-kind][data-group-kind=${k}]`);
   await expect(kind("artist")).toBeVisible({ timeout: 30_000 });
 
+  await searchable(ck, "artist", `Publisher ${r}`);
   await kind("artist").getByRole("combobox", { name: "Add: Artist" }).fill(`Publisher ${r}`);
   await page.getByRole("option", { name: new RegExp(`Publisher ${r}`) }).click();
   await kind("artist").getByRole("combobox", { name: `Role in Publisher ${r}` }).click();
@@ -180,6 +185,7 @@ for (const [mode, theme] of [
 
     // Merge into another artist: the flow moves to the survivor.
     const [target] = await ck.groups.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
+    await searchable(ck, "artist", `Target ${r}`);
     await flow.getByRole("button", { name: "Merge" }).click();
     const dialog = page.locator("[data-ckui=group-merge-dialog]");
     await dialog.getByRole("combobox", { name: "Merge into" }).fill(`Target ${r}`);
