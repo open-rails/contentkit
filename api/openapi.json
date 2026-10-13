@@ -3156,6 +3156,19 @@
             }
           },
           {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -7138,6 +7151,19 @@
             }
           },
           {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -7440,6 +7466,19 @@
             }
           },
           {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "traits",
             "in": "query",
             "description": "version traits every listed version has",
@@ -7601,6 +7640,19 @@
             "name": "exclude_groups",
             "in": "query",
             "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -7778,6 +7830,19 @@
             "name": "exclude_groups",
             "in": "query",
             "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -8541,6 +8606,9 @@
               }
             }
           },
+          "owner": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
           "counts": {
             "$ref": "#/components/schemas/Counts"
           },
@@ -9011,6 +9079,9 @@
           },
           "owner_group_id": {
             "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/GroupCard"
           },
           "creators": {
             "type": "array",

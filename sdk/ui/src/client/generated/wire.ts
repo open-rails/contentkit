@@ -104,6 +104,7 @@ export interface Card {
   cover: PublicRendition[];
   version: CardVersion;
   groups: Record<string, Chip[]>;
+  owner?: GroupCard;
   counts: Counts;
   access: CardAccess;
   viewer?: ViewerState;
@@ -243,6 +244,7 @@ export interface Content {
   restrictions: string[];
   attributes: Record<string, unknown>;
   owner_group_id?: string;
+  owner?: GroupCard;
   creators: Creator[];
   groups: GroupSummary[];
   versions: Version[];

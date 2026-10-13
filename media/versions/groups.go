@@ -184,22 +184,22 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 	var at []int
 	for i, c := range covers {
 		q := media.ImageQuery{Preset: media.CoverPreset, Name: c.Image}
+		kind := c.Kind
 		var err error
 		if c.Preset == media.AvatarPreset {
-			if k, kerr := s.reg.Kind(c.Kind); kerr != nil || !slices.ContainsFunc(k.Public, func(p media.Public) bool { return p.Name == media.AvatarPreset }) {
-				continue // a host-declared kind without avatars
-			}
 			q.Preset = media.AvatarPreset
 			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
 		} else if c.Image != "" {
 			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
 		} else if f, ok := found[targets[i]]; ok {
+			kind = f.kind
 			q.Ref, err = s.reg.Ref(f.kind, targets[i])
 			q.Name = f.image
 		} else {
 			continue
 		}
-		if err != nil {
+		// A kind without the preset (no covers, no avatars) shows none.
+		if k, kerr := s.reg.Kind(kind); err != nil || kerr != nil || !slices.ContainsFunc(k.Public, func(p media.Public) bool { return p.Name == q.Preset }) {
 			continue
 		}
 		qs, at = append(qs, q), append(at, i)

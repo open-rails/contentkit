@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/openrails"
 	"github.com/open-rails/openrails/billing"
 
 	"github.com/open-rails/contentkit/access"
@@ -18,7 +19,8 @@ import (
 // paywall requires) and takes a member's. Once the rule is plain PPV the
 // requirement goes.
 func TestGroupPPVRequiresMembershipIntegration(t *testing.T) {
-	s := newShop(t)
+	// Orders need provider writes; nothing here reaches a provider.
+	s := newShop(t, func(c *openrails.Config) { c.ProviderWriteMode = openrails.ProviderWritesLimited })
 	ctx := t.Context()
 	owner, member, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)

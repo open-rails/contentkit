@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/open-rails/openrails"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
@@ -30,10 +32,10 @@ type shop struct {
 	catalogAPI, discoveryAPI *httptest.Server
 }
 
-func newShop(t *testing.T) *shop {
+func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	t.Helper()
 	ctx := t.Context()
-	s := &shop{world: newWorld(t), staff: testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})}
+	s := &shop{world: newWorld(t, edits...), staff: testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})}
 	var err error
 	if s.groups, err = groups.New(groups.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
