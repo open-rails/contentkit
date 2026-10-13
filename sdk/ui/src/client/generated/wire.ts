@@ -620,6 +620,33 @@ export interface Exposures {
   exposures: ExposureInput[];
 }
 
+export interface ExternalID {
+  external_id: string;
+  id: string;
+  deleted: boolean;
+}
+
+export interface ExternalIDList {
+  entity: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ExternalIDPage {
+  entity: string;
+  ids: ExternalID[];
+  next_cursor?: string;
+}
+
+export interface ExternalIDs {
+  lists: ExternalIDPage[];
+}
+
+export interface ExternalIDsQuery {
+  source: string;
+  lists: ExternalIDList[];
+}
+
 export interface Failure {
   of: string;
   message: string;
@@ -983,6 +1010,7 @@ export interface Kind {
   groups?: string[];
   attributes?: Record<string, Attribute>;
   sort?: string;
+  preview?: Preview;
   draft_ttl?: number;
 }
 
