@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -516,9 +515,9 @@ func sameJSON(a, b any) bool {
 
 // fill brings a published item to files, each row at its index in its
 // upload group, and reports it complete: every file there, at its position,
-// with its bytes. Missing files are copied server-side into new allocations
-// and put, with the order, in one commit: nothing is staged, so the worker
-// has nothing to place. A complete item takes no commit. A file already
+// with its bytes. Missing files are copied from src's outputs (OpCopy, a
+// server-side copy: nothing is staged, so the worker has nothing to place)
+// and ordered in one commit; a complete item takes none. A file already
 // there with other bytes retires nothing here; the item is left to its
 // publication's retirement.
 func (s *Service) fill(ctx context.Context, src, dst contentref.ContentRef, files [][]rendition) (bool, error) {
@@ -529,11 +528,19 @@ func (s *Service) fill(ctx context.Context, src, dst contentref.ContentRef, file
 	if complete(m, files) {
 		return true, nil
 	}
-	var (
-		order   []media.Op
-		missing []rendition
-		sums    [][]byte
-	)
+	from, _, err := s.m.Manifests.Get(ctx, src)
+	if errors.Is(err, media.ErrNotFound) {
+		return false, fmt.Errorf("%w: %s is gone", errRetired, src)
+	} else if err != nil {
+		return false, err
+	}
+	outputs := map[string]string{} // blob -> its output's path in src
+	for _, f := range from.Files {
+		if !f.IsUpload() && f.Blob != "" && !f.Gone {
+			outputs[f.Blob] = f.Path
+		}
+	}
+	var copies, order []media.Op
 	for i, row := range files {
 		for _, r := range row {
 			at := i
@@ -546,44 +553,14 @@ func (s *Service) fill(ctx context.Context, src, dst contentref.ContentRef, file
 					continue
 				}
 			}
-			sum, ok := layout.BlobDigest(r.Blob)
+			path, ok := outputs[r.Blob]
 			if !ok {
-				return false, fmt.Errorf("versions: invalid rendition blob %q", r.Blob)
+				return false, fmt.Errorf("%w: %s no longer holds %s", errRetired, src, r.Blob)
 			}
-			missing, sums = append(missing, r), append(sums, sum)
+			copies = append(copies, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: src.ContentID, Version: src.Version(), Path: path}, To: r.Path})
 		}
 	}
-	from, err := s.reg.Item(src)
-	if err != nil {
-		return false, err
-	}
-	to, err := s.reg.Item(dst)
-	if err != nil {
-		return false, err
-	}
-	names, err := s.m.Manifests.NewBlobs(ctx, dst, sums)
-	if err != nil {
-		return false, err
-	}
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	ops := make([]media.Op, 0, len(missing)+len(order))
-	for i, r := range missing {
-		ops = append(ops, media.Op{Op: media.OpPut, Path: r.Path, Blob: names[i]})
-		g.Go(func() error {
-			srcKey, _ := from.Blob(r.Blob)
-			dstKey, _ := to.Blob(names[i])
-			_, err := s.m.Manifests.Store().Copy(gctx, srcKey, dstKey, media.CopyOptions{})
-			if errors.Is(err, media.ErrNotFound) {
-				return fmt.Errorf("%w: %s is gone", errRetired, srcKey)
-			}
-			return err
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return false, err
-	}
-	for batch := range slices.Chunk(append(ops, order...), 1000) {
+	for batch := range slices.Chunk(append(copies, order...), 1000) {
 		if m, err = s.m.Uploads.Commit(ctx, system, dst, uuid.NewString(), batch); err != nil {
 			return false, err
 		}

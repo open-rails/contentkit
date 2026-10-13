@@ -664,7 +664,7 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 			t.Path, _ = splitExt(op.Path)
 		}
 		if op.Op == OpCopy {
-			src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
+			src, err := u.reg.VersionRef(copyKind(item.Kind()).Name, op.From.ID, op.From.Version)
 			if err != nil {
 				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: %v", op.From.ID, err)
 			}
@@ -761,22 +761,31 @@ func (u *Uploads) current(ctx context.Context, item Item) (*Manifest, error) {
 // grace period, at most 1 h.
 func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
 
-// copies reads each copy op's source upload and outputs from the other item
-// and copies their blobs into fresh destination allocations, keyed by op index.
-// Each copy op that
-// moves bytes is reserved once, like an upload of its source (rate limits
-// and pending quota; the commit charges it), so a failed commit leaves no
-// unmetered bytes; it returns the reserved keys.
+// copies reads each copy op's source files from the other item and copies
+// their blobs into fresh destination allocations, all allocated in one step,
+// keyed by op index. Each copy op that moves bytes is reserved once, like an
+// upload of its source (rate limits and pending quota; the commit charges
+// it), so a failed commit leaves no unmetered bytes; it returns the reserved
+// keys.
 func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGrant, item Item, ops []Op) (map[int][]File, []string, error) {
-	out := map[int][]File{}
-	var reserved []string
-	copiedNames := map[string]string{}
-	limited := u.o.Limiter != nil && !grant.Exempt
+	type source struct {
+		n     int
+		from  Item
+		files []File
+		todo  []string // blobs this op copies first
+	}
+	var (
+		sources  []source
+		sums     [][]byte
+		srcKeys  []string
+		manifest = map[contentref.ContentKey]*Manifest{}
+		names    = map[string]string{} // source key -> allocation in item
+	)
 	for n, op := range ops {
 		if op.Op != OpCopy {
 			continue
 		}
-		src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
+		src, err := u.reg.VersionRef(copyKind(item.Kind()).Name, op.From.ID, op.From.Version)
 		if err != nil {
 			return nil, nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
 		}
@@ -784,13 +793,16 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			continue // read the source under the destination's manifest lock
 		}
 		from, _ := u.reg.Item(src)
-		m, _, err := u.o.Manifests.Get(ctx, src)
-		if errors.Is(err, ErrNotFound) {
-			return nil, nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
-		} else if err != nil {
-			return nil, nil, err
+		m, ok := manifest[src.Key()]
+		if !ok {
+			if m, _, err = u.o.Manifests.Get(ctx, src); errors.Is(err, ErrNotFound) {
+				return nil, nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
+			} else if err != nil {
+				return nil, nil, err
+			}
+			manifest[src.Key()] = m
 		}
-		files := copyFiles(m, op.From.Path)
+		files := copySource(item.Kind(), m, op.From.Path)
 		if len(files) == 0 {
 			return nil, nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}
@@ -799,56 +811,73 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		if to != group || op.Edit != nil {
 			files = files[:1]
 		}
-		var todo []string
-		var sums [][]byte
+		sc := source{n: n, from: from, files: files}
 		for _, b := range fileBlobs(files) {
 			srcKey, _ := from.Blob(b)
-			if _, seen := copiedNames[srcKey]; seen || slices.Contains(todo, b) {
+			if _, seen := names[srcKey]; seen {
 				continue
 			}
 			sum, ok := layout.BlobDigest(b)
 			if !ok {
 				return nil, nil, fmt.Errorf("media: invalid copy source %q", b)
 			}
-			todo, sums = append(todo, b), append(sums, sum)
+			names[srcKey] = ""
+			sc.todo, sums, srcKeys = append(sc.todo, b), append(sums, sum), append(srcKeys, srcKey)
 		}
-		names, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), sums)
-		if err != nil {
-			return nil, nil, err
-		}
-		for i, b := range todo {
-			srcKey, _ := from.Blob(b)
-			copiedNames[srcKey] = names[i]
-		}
+		sources = append(sources, sc)
+	}
+	allocated, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), sums)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i, key := range srcKeys {
+		names[key] = allocated[i]
+	}
+	var reserved []string
+	if u.o.Limiter != nil && !grant.Exempt {
 		// One reservation per copy, for the upload's bytes: what the commit
 		// charges (outputs are not charged).
-		if limited && len(todo) > 0 {
-			key, _ := item.Blob(copiedNames[from.PrivatePrefix()+todo[0]])
+		for _, sc := range sources {
+			if len(sc.todo) == 0 {
+				continue
+			}
+			key, _ := item.Blob(names[sc.from.PrivatePrefix()+sc.todo[0]])
 			if err := u.limiter(item.Ref().TenantID).Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
-				Owner: grant.Owner, Key: key, Size: files[0].Size}); err != nil {
-				return nil, nil, err
+				Owner: grant.Owner, Key: key, Size: sc.files[0].Size}); err != nil {
+				return nil, reserved, err
 			}
 			reserved = append(reserved, key)
 		}
-		for _, b := range todo {
-			srcKey, _ := from.Blob(b)
-			dstKey, _ := item.Blob(copiedNames[srcKey])
-			if _, err := u.o.Store.Copy(ctx, srcKey, dstKey, CopyOptions{}); err != nil {
-				return nil, nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for i, srcKey := range srcKeys {
+		g.Go(func() error {
+			dstKey, _ := item.Blob(allocated[i])
+			if _, err := u.o.Store.Copy(gctx, srcKey, dstKey, CopyOptions{}); err != nil {
+				return fmt.Errorf("media: copy %s: %w", srcKey, err)
 			}
-		}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, reserved, err
+	}
+	out := make(map[int][]File, len(sources))
+	for _, sc := range sources {
+		files := sc.files
 		for i := range files {
 			files[i].Editor = nil // editor views belong to their original item's allocation
 			if !files[i].Gone && files[i].Blob != "" {
-				files[i].Blob = copiedNames[from.PrivatePrefix()+files[i].Blob]
+				files[i].Blob = names[sc.from.PrivatePrefix()+files[i].Blob]
 			}
 			if files[i].Track != nil && files[i].Track.Index != "" {
 				track := *files[i].Track
-				track.Index = copiedNames[from.PrivatePrefix()+track.Index]
+				track.Index = names[sc.from.PrivatePrefix()+track.Index]
 				files[i].Track = &track
 			}
 		}
-		out[n] = files
+		out[sc.n] = files
 	}
 	return out, reserved, nil
 }
