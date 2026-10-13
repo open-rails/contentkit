@@ -11005,6 +11005,9 @@
               "$ref": "#/components/schemas/Version"
             }
           },
+          "views": {
+            "type": "integer"
+          },
           "editor": {
             "type": "boolean"
           },
@@ -11060,6 +11063,7 @@
           "creators",
           "groups",
           "versions",
+          "views",
           "editor",
           "revision",
           "created_at",

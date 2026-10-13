@@ -73,8 +73,8 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		}
 		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
 			Access: it.access, Restrictions: it.restrictions, Attributes: it.attributes, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
-			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt, UpdatedAt: it.updatedAt,
-			DeletedAt: it.deletedAt}
+			Groups: []GroupSummary{}, Versions: []Version{}, Views: it.views, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
+			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
 		shown := texts[id]
 		if !iv.editor && it.moderation != "approved" && it.snapshot != nil {
@@ -347,13 +347,15 @@ type itemRow struct {
 	everSold                          bool
 	publishAt, publishedAt, deletedAt *time.Time
 	createdAt, updatedAt              time.Time
-	revision                          int64
+	revision, views                   int64
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, kind, state, listing, coalesce(owner_group_id, ''), moderation, coalesce(moderation_reason, ''), access,
- restrictions, attributes, cover, published_snapshot, ever_sold, publish_at, published_at, deleted_at, created_at, updated_at, revision, comments
- FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, c.listing, coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
+ c.access, c.restrictions, c.attributes, c.cover, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
+ c.revision, c.comments, c.view_baseline + coalesce((SELECT max((f.popularity->>'views')::bigint) FROM `+s.t.facets+` f
+  WHERE f.tenant_id = c.tenant_id AND f.content_id = c.id), 0)
+ FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +366,8 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var r itemRow
 		var access, attrs, cover, snapshot []byte
 		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
-			&attrs, &cover, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
+			&attrs, &cover, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments,
+			&r.views); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(access, &r.access); err != nil {

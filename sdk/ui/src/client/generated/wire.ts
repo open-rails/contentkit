@@ -336,6 +336,7 @@ export interface Content {
   creators: Creator[];
   groups: GroupSummary[];
   versions: Version[];
+  views: number;
   editor: boolean;
   text?: Record<string, CatalogText>;
   moderation?: ModerationState;

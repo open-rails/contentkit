@@ -172,6 +172,9 @@ type Content struct {
 	Creators []Creator         `json:"creators"`
 	Groups   []GroupSummary    `json:"groups"`
 	Versions []Version         `json:"versions"`
+	// Views counts its distinct viewers of all time plus its imported legacy
+	// view count, as cards' counts.views do.
+	Views int64 `json:"views"`
 	// Editor: the viewer may edit it; the fields below are theirs.
 	Editor           bool            `json:"editor"`
 	Text             map[string]Text `json:"text,omitempty"`

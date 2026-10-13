@@ -232,8 +232,8 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, "", "POST", "/codes/aliases", contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("Video", "1")}}, nil)
 
-	if item.Comments != content.CommentsClosed {
-		t.Fatalf("comments %q", item.Comments)
+	if item.Comments != content.CommentsClosed || item.Views != 5000 {
+		t.Fatalf("detail comments %q, views %d", item.Comments, item.Views)
 	}
 	f.want(http.StatusForbidden, user, "POST", "/contents/"+g1+"/comments", content.CommentInput{Body: "late"}, nil)
 	f.want(http.StatusCreated, user, "POST", "/contents/"+g2+"/comments", content.CommentInput{Body: "open"}, nil)
