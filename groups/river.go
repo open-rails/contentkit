@@ -13,7 +13,8 @@ import (
 )
 
 // ReconcileInterval is how often the engine syncs every group whose scope or
-// owned content does not match its state yet.
+// owned content does not match its state yet, and purges deleted groups'
+// media past the retention.
 const ReconcileInterval = time.Minute
 
 type syncArgs struct {
@@ -89,7 +90,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		if err := river.AddWorkerSafely(cfg.Workers, &reconcileWorker{s: s}); err != nil {
 			return err
 		}
-		if s.scopes != nil || s.purge != nil {
+		if s.scopes != nil || s.owned != nil || s.folders != nil {
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(ReconcileInterval),
 				func() (river.JobArgs, *river.InsertOpts) {
 					return reconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,

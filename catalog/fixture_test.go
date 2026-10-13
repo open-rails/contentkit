@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -151,6 +152,16 @@ func (f *fixture) group(kind, slug string) string {
 		f.t.Fatal(err)
 	}
 	return string(got[0].ID)
+}
+
+// sell puts an active offer on a group, as the offers module stores one:
+// it sells a membership.
+func (f *fixture) sell(group string) {
+	f.t.Helper()
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+pgx.Identifier{f.schema, "content_offers"}.Sanitize()+` (tenant_id, id, target_kind, target_id, terms)
+ VALUES ($1, $2, 'group', $3, '{"amount": 1000000, "currency": "USD"}')`, tenant, contentref.NewID(), group); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // join adds content (or one version) to a group through the groups module,

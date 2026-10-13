@@ -11,7 +11,7 @@ import (
 )
 
 // Content items are keyword documents of their own: one per item and
-// language it has text in (content_version_id ""), built by the search worker
+// language it has text in (no version), built by the search worker
 // from that text (its last approved text while an edit awaits review) with
 // the names of the item's groups as keywords. Drafts and deleted items have
 // none; whom a document shows to is the visibility rule's, at query time

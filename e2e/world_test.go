@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -53,15 +54,15 @@ type world struct {
 	staff iam.Role
 	// channelEditor is the channel persona's role holding every group
 	// permission (access.GroupPermissions); channelWriter only
-	// channel:content:write.
-	channelEditor, channelWriter iam.Role
-	pool                         *pgxpool.Pool
-	schema                       string
-	tenant                       string // the media namespace too
-	env                          *mediatest.Env
-	reg                          *media.Registry
-	jobs                         *media.Jobs
-	queue                        *workqueue.Queue
+	// channel:content:write, channelModerator channel:comments:moderate.
+	channelEditor, channelWriter, channelModerator iam.Role
+	pool                                           *pgxpool.Pool
+	schema                                         string
+	tenant                                         string // the media namespace too
+	env                                            *mediatest.Env
+	reg                                            *media.Registry
+	jobs                                           *media.Jobs
+	queue                                          *workqueue.Queue
 }
 
 func newWorld(t *testing.T) *world {
@@ -84,6 +85,7 @@ func newWorld(t *testing.T) *world {
 	}
 	w.channelEditor = channel.Role("editor", editing...)
 	w.channelWriter = channel.Role("writer", perms[0])
+	w.channelModerator = channel.Role("moderator", perms[slices.Index(access.GroupPermissions("channel"), access.GroupCommentsModerate("channel"))])
 	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
 	var err error
 	if w.scope, err = w.ak.Scope(ctx, iam.RootGroup()); err != nil {

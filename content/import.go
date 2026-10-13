@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // Errors of the bulk import's writes; match with errors.Is.
@@ -102,7 +103,7 @@ type ImportAnswer struct {
 type keyRow struct {
 	Kind    string `json:"kind"`
 	ID      string `json:"id"`
-	Version string `json:"version"`
+	Version string `json:"version,omitempty"`
 }
 
 func (rt *Runtime) importRef(r contentref.ContentRef) (keyRow, error) {
@@ -152,7 +153,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []ImportCom
 		ID        string     `json:"id"`
 		Kind      string     `json:"kind"`
 		ContentID string     `json:"content_id"`
-		Version   string     `json:"version"`
+		Version   string     `json:"version,omitempty"`
 		Language  string     `json:"language"`
 		ReplyTo   *string    `json:"reply_to"`
 		UserID    *string    `json:"user_id"`
@@ -242,7 +243,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []ImportCom
 	for res.Next() {
 		var id string
 		var c stored
-		if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, &c.key.Version); err != nil {
+		if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
 			res.Close()
 			return err
 		}
@@ -483,10 +484,10 @@ func (rt *Runtime) recount(ctx context.Context, tx pgx.Tx, keys map[keyRow]bool)
 	s := rt.store
 	if _, err := tx.Exec(ctx, `WITH k AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS k(kind text, id text, version text)),
 n AS (SELECT k.kind, k.id, k.version,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id = k.version AND r.value = 1)::int AS likes,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id = k.version AND r.value = -1)::int AS dislikes,
- (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.content_kind = k.kind AND f.content_id = k.id AND f.content_version_id = k.version AND f.value = 1)::int AS favorites,
- (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id = k.version
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = 1)::int AS likes,
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = -1)::int AS dislikes,
+ (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.content_kind = k.kind AND f.content_id = k.id AND f.content_version_id IS NOT DISTINCT FROM k.version AND f.value = 1)::int AS favorites,
+ (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id IS NOT DISTINCT FROM k.version
    AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved')::int AS comments
  FROM k)
 INSERT INTO `+s.t.counts+` AS x (tenant_id, content_kind, content_id, content_version_id, likes, dislikes, favorites, comment_count)
@@ -507,8 +508,8 @@ WHERE (x.likes, x.dislikes, x.favorites, x.comment_count) IS DISTINCT FROM (EXCL
 		return nil
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.comments+` c SET likes = n.likes, dislikes = n.dislikes FROM (SELECT x.id,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id = '' AND r.value = 1)::int AS likes,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id = '' AND r.value = -1)::int AS dislikes
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = 1)::int AS likes,
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = -1)::int AS dislikes
  FROM unnest($2::text[]) AS x(id)) n
  WHERE c.tenant_id = $1 AND c.id = n.id::uuid AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, KindComment)
 	return err

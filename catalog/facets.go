@@ -95,7 +95,8 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
   deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
-  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes, updated_at = EXCLUDED.updated_at`,
+  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes, updated_at = EXCLUDED.updated_at,
+  free_applied = f.free_applied AND f.access_free_after IS NOT DISTINCT FROM EXCLUDED.access_free_after`,
 		s.tenant, ids, string(data)); err != nil {
 		return err
 	}
@@ -124,7 +125,7 @@ func effectiveRule(content, override []byte) (access.Rule, error) {
 func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) error {
 	rows, err := q.Query(ctx, `SELECT c.kind, c.id, l.language FROM `+s.t.items+` c CROSS JOIN LATERAL (
  SELECT t.language FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
- UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id = '') l
+ UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return err

@@ -19,6 +19,7 @@ export type ErrorCode =
   | "invalid_request"
   | "limit_reached"
   | "moderation_rejected"
+  | "no_membership"
   | "not_configured"
   | "not_found"
   | "not_uploaded"
@@ -58,6 +59,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   invalid_request: { status: 400, meaning: "The request is malformed: its body, a query parameter or a path value." },
   limit_reached: { status: 409, meaning: "The owner already has as many groups of the kind as the site allows (max_per_owner)." },
   moderation_rejected: { status: 422, meaning: "The moderator refused the text; `error` says why." },
+  no_membership: { status: 409, meaning: "Members-only content (group or group_ppv) names a group without an active offer, paid or free to join: put one on the group first." },
   not_configured: { status: 501, meaning: "The capability needs a port the host did not configure; retrying does not help." },
   not_found: { status: 404, meaning: "Nothing by that name, or nothing the actor may see." },
   not_uploaded: { status: 409, meaning: "A commit names an upload that has not landed; `blobs` lists the ones to upload again." },

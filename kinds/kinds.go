@@ -70,6 +70,9 @@ type Kind struct {
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
+	// DraftTTL expires drafts that never went live this long after their
+	// creation: they are deleted, media included. Zero keeps them.
+	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
 }
 
 // VersionRules shape a kind's versions.
@@ -239,6 +242,9 @@ func (c Config) Validate() error {
 		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
 			return err
+		}
+		if k.DraftTTL < 0 {
+			return fmt.Errorf("%w: kind %s draft_ttl is negative", ErrInvalid, name)
 		}
 	}
 	for _, r := range c.groupRefs() {

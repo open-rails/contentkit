@@ -49,6 +49,9 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		t.Fatal(err)
 	}
 	studio := string(made[0].ID)
+	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.GroupTarget, ID: studio}}}); err != nil { // members-only needs a membership
+		t.Fatal(err)
+	}
 	post := func(title string, listing string, rule access.Rule, languages ...string) string {
 		t.Helper()
 		in := catalog.ContentInput{Kind: "post", Listing: listing, Access: &rule, Text: map[string]catalog.Text{"en": {Title: title}}}

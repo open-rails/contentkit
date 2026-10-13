@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/helpers/notify"
 )
 
@@ -155,7 +156,7 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	s := rt.store
 	rows, err := tx.Query(ctx, `SELECT id::text FROM `+s.t.comments+` WHERE tenant_id=$1 AND (
    (user_id=ANY($2) AND moderation IN ('held','rejected')) OR id::text IN (
-    SELECT content_id FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) AND content_kind=$3 AND content_version_id=''))
+    SELECT content_id FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) AND content_kind=$3 AND content_version_id IS NULL))
    ORDER BY id FOR UPDATE`, rt.tenant, ids, KindComment)
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	for rows.Next() {
 		var k contentref.ContentKey
 		var value int16
-		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &value); err != nil {
+		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &value); err != nil {
 			rows.Close()
 			return err
 		}
@@ -200,7 +201,7 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	for rows.Next() {
 		var k contentref.ContentKey
 		var value int16
-		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &value); err != nil {
+		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &value); err != nil {
 			rows.Close()
 			return err
 		}

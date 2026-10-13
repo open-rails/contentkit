@@ -18,6 +18,8 @@ func TestPaywallOffersIntegration(t *testing.T) {
 	ctx := t.Context()
 	owner, creator, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)
+	month := 720
+	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{Amount: 4_990_000, RenewHours: &month})
 	credits := []catalog.Creator{{UserID: creator.ID}}
 	none := []catalog.Creator{}
 	ppv := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.PPV}, Creators: &credits,
@@ -37,11 +39,9 @@ func TestPaywallOffersIntegration(t *testing.T) {
 	}
 	ja := read(s.staff, ppv).Versions[1].ID
 
-	month := 720
 	s.sell(offers.Target{Kind: offers.ContentTarget, ID: ppv}, offers.Terms{Amount: 2_990_000, AccessHours: &month})
 	s.sell(offers.Target{Kind: offers.VersionTarget, ID: ja, Content: ppv}, offers.Terms{Amount: 990_000})
 	s.sell(offers.Target{Kind: offers.ContentTarget, ID: owned}, offers.Terms{Amount: 1_990_000})
-	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{Amount: 4_990_000, RenewHours: &month})
 	priceOf := func(key string) string {
 		_, prices := s.product(key)
 		if live := live(prices); len(live) == 1 {

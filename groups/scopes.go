@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
@@ -20,9 +21,9 @@ type Scopes interface {
 	Provision(ctx context.Context, scopes []Scope) error
 	// Retire stops each scope resolving and granting.
 	Retire(ctx context.Context, ids []string) error
-	// Holding lists the live scopes of the kinds' personas in which user
-	// holds the kind's access.GroupSettingsManage.
-	Holding(ctx context.Context, user string, kinds []string) ([]string, error)
+	// Holding answers, per live scope of the kinds' personas user belongs
+	// to, the kind's access.GroupPermissions user holds there.
+	Holding(ctx context.Context, user string, kinds []string) (map[string][]string, error)
 }
 
 // Scope is one group's AuthKit scope: ContentKit keys it by the group's id.
@@ -32,8 +33,11 @@ type Scope struct {
 	Owner string
 }
 
-// Folders deletes groups' media folders in a writing transaction.
+// Folders brings groups' media folders in line with their state in a
+// writing transaction: ExposeTx hides a deleted group's and shows a restored
+// one's, DeleteTx deletes them.
 type Folders interface {
+	ExposeTx(ctx context.Context, tx pgx.Tx, groups []Ref) error
 	DeleteTx(ctx context.Context, tx pgx.Tx, groups []Ref) error
 }
 
@@ -62,7 +66,7 @@ func (s *Store) unscoped(gs []Group) []string {
 func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 	client := s.river.bound()
 	tx, ok := q.(pgx.Tx)
-	if s.scopes == nil && s.purge == nil || client == nil || !ok || len(ids) == 0 {
+	if s.scopes == nil && s.owned == nil || client == nil || !ok || len(ids) == 0 {
 		return nil
 	}
 	_, err := client.InsertTx(ctx, tx, syncArgs{Tenant: s.tenant, Groups: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
@@ -73,7 +77,7 @@ func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 // queued job retries), and answers gs as they then stand. Bound to a
 // caller's transaction it leaves them to the job.
 func (s *Store) syncAfter(ctx context.Context, gs []Group, changed []string) ([]Group, error) {
-	if s.tx != nil || len(changed) == 0 || s.scopes == nil && s.purge == nil {
+	if s.tx != nil || len(changed) == 0 || s.scopes == nil && s.owned == nil {
 		return gs, nil
 	}
 	ids := make([]GroupID, len(changed))
@@ -101,9 +105,9 @@ func (s *Store) syncAfter(ctx context.Context, gs []Group, changed []string) ([]
 }
 
 // Sync brings what follows from each group's state in line with it: its
-// AuthKit scope (SyncScopes) and, for a deleted user-owned group, the
-// deletion of the content it owns (Options.DeleteContents). Repeating it
-// changes nothing.
+// AuthKit scope (SyncScopes) and the content a user-owned group owns,
+// deleted with it and restored with it (Options.Owned). Repeating it changes
+// nothing.
 func (s *Store) Sync(ctx context.Context, ids []GroupID) error {
 	if err := s.SyncScopes(ctx, ids); err != nil {
 		return err
@@ -112,7 +116,22 @@ func (s *Store) Sync(ctx context.Context, ids []GroupID) error {
 	if err != nil {
 		return err
 	}
-	return s.cascade(ctx, list)
+	return s.followOwned(ctx, list)
+}
+
+// followOwned deletes and restores the content groups own as they stand;
+// nil is every group.
+func (s *Store) followOwned(ctx context.Context, groups []string) error {
+	if s.owned == nil {
+		return nil
+	}
+	if err := s.owned.DeleteOwned(ctx, groups); err != nil {
+		return fmt.Errorf("groups: delete owned content: %w", err)
+	}
+	if err := s.owned.RestoreOwned(ctx, groups); err != nil {
+		return fmt.Errorf("groups: restore owned content: %w", err)
+	}
+	return nil
 }
 
 // SyncScopes brings AuthKit in line with each group: an active group of an
@@ -199,34 +218,54 @@ func (s *Store) userKinds() []string {
 	return out
 }
 
-// cascade deletes the live content owned by those of groups that are
-// deleted user-owned groups (every one with nil groups), through
-// Options.DeleteContents, a batch at a time.
-func (s *Store) cascade(ctx context.Context, groups []string) error {
-	if s.purge == nil {
-		return nil
+// PurgeFolders deletes the media folders of user-owned groups deleted for
+// longer than the retention (Options.DeletedRetention), once: a restore
+// after it finds them empty. It returns how many it purged.
+func (s *Store) PurgeFolders(ctx context.Context) (int, error) {
+	if s.folders == nil {
+		return 0, nil
 	}
-	for after := ""; ; {
-		rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT c.id FROM %s c JOIN %s g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id
- WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2::text[]) AND ($3::text[] IS NULL OR g.id = ANY($3::text[]))
-   AND c.state <> 'deleted' AND c.id > $4 ORDER BY c.id LIMIT %d`, s.table("content_items"), s.table("content_groups"), syncBatch),
-			s.tenant, s.userKinds(), groups, after)
-		if err != nil {
+	total := 0
+	for {
+		n := 0
+		err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id, kind FROM %s WHERE tenant_id = $1 AND state = 'deleted' AND media_purged_at IS NULL
+ AND deleted_at < $2 AND kind = ANY($3::text[]) ORDER BY id LIMIT %d FOR UPDATE SKIP LOCKED`, s.table("content_groups"), syncBatch),
+				s.tenant, time.Now().Add(-s.keep), s.userKinds())
+			if err != nil {
+				return err
+			}
+			var refs []Ref
+			var ids []string
+			for rows.Next() {
+				var r Ref
+				if err := rows.Scan(&r.ID, &r.Kind); err != nil {
+					rows.Close()
+					return err
+				}
+				refs, ids = append(refs, r), append(ids, string(r.ID))
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil || len(refs) == 0 {
+				return err
+			}
+			if err := s.folders.DeleteTx(ctx, tx, refs); err != nil {
+				return err
+			}
+			n = len(refs)
+			_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET media_purged_at = now() WHERE tenant_id = $1 AND id = ANY($2::text[])`,
+				s.table("content_groups")), s.tenant, ids)
 			return err
+		})
+		if total += n; err != nil || n == 0 {
+			return total, err
 		}
-		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		if err != nil || len(ids) == 0 {
-			return err
-		}
-		if err := s.purge(ctx, ids); err != nil {
-			return fmt.Errorf("groups: delete owned content: %w", err)
-		}
-		after = ids[len(ids)-1]
 	}
 }
 
 // Reconcile syncs every group what follows from its state does not match
-// yet: those whose job was lost, or whose sync keeps failing.
+// yet: those whose job was lost, or whose sync keeps failing. It purges the
+// media of groups deleted past the retention too (PurgeFolders).
 func (s *Store) Reconcile(ctx context.Context) error {
 	var errs []error
 	if s.scopes != nil {
@@ -257,12 +296,13 @@ func (s *Store) Reconcile(ctx context.Context) error {
 			after = string(ids[len(ids)-1])
 		}
 	}
-	return errors.Join(append(errs, s.cascade(ctx, nil))...)
+	_, err := s.PurgeFolders(ctx)
+	return errors.Join(append(errs, s.followOwned(ctx, nil), err)...)
 }
 
-// heldScopes is the live scopes of user-owned auth_scope kinds (of kind,
-// when set) in which user holds the kind's settings permission.
-func (s *Store) heldScopes(ctx context.Context, user, kind string) ([]string, error) {
+// heldScopes is, per live scope of user-owned auth_scope kinds (of kind,
+// when set) user belongs to, the group permissions user holds there.
+func (s *Store) heldScopes(ctx context.Context, user, kind string) (map[string][]string, error) {
 	if s.scopes == nil {
 		return nil, nil
 	}

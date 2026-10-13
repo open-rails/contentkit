@@ -19,6 +19,7 @@ func TestVisibilityIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	yaoi, gore, red := f.group("tag", "yaoi"), f.group("tag", "gore"), f.group("tag", "red")
 	studio := f.group("channel", "studio")
+	f.sell(studio)
 	f.editor("studio", "ed")
 
 	item := func(title string, edit func(*ContentInput), languages ...string) string {

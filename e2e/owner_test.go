@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/authtest"
@@ -12,10 +13,12 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
+	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // A channel's post carries its channel as owner on cards and on its page:
@@ -82,59 +85,118 @@ func TestOwnerChip(t *testing.T) {
 }
 
 // A channel's editors (channel:content:write, not the author) open its
-// members-only posts: editor and the body on the page, open cards, its
-// drafts in its feed. A non-member who edits nothing stays locked out.
+// members-only posts and are offered nothing of it: editor and the body on
+// the page, every version of its gallery open without a sale, open cards
+// without offers, its drafts in its feed, the channel's page with no
+// membership offer, and the channel among their groups as its writer. A
+// non-member who edits nothing stays locked out and is offered it all.
+// Members-only posts need the channel to sell a membership first.
 func TestOwnerGroupEditors(t *testing.T) {
 	w := newWorld(t)
+	ctx := t.Context()
 	_, creatorToken := w.person(iam.Role{})
 	writer, writerToken := w.person(iam.Role{})
 	_, strangerToken := w.person(iam.Role{})
-	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
+	merchant := channelBilling(w)
+	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
 		c.Content.GroupKinds["channel"] = channel
-		d.Scopes = ckauthkit.Scopes(w.ak)
-	}))
+		d.Billing, d.Scopes = ckopenrails.Billing(merchant), ckauthkit.Scopes(w.ak)
+	})
+	f := serve(t, e)
 	var made []groups.Group
 	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := string(made[0].ID)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
-	var members, draft catalog.Content
-	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
-		Access: &access.Rule{Level: access.GroupLevel, Group: ch},
-		Text:   map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}, &members)
+	membersOnly := catalog.ContentInput{Kind: "blog", OwnerGroupID: ch, Access: &access.Rule{Level: access.GroupLevel, Group: ch},
+		Text: map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}
+	var refusal struct{ Code string }
+	f.want(http.StatusConflict, creatorToken, "POST", "/contents", membersOnly, &refusal)
+	if refusal.Code != "no_membership" {
+		t.Fatalf("members-only on a channel selling nothing answered %q", refusal.Code)
+	}
+	monthly := 720
+	f.want(http.StatusOK, creatorToken, "PUT", "/groups/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
+
+	var members, draft, gallery catalog.Content
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", membersOnly, &members)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
 		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
+	// A gallery whose first version is free and second sold on its own.
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "gallery", OwnerGroupID: ch,
+		Text:     map[string]catalog.Text{"en": {Title: "Sketches"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"ja"}, Access: &access.Rule{Level: access.PPV}}}}, &gallery)
+	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+gallery.ID+"/publish", catalog.PublishInput{}, nil)
+	f.want(http.StatusOK, creatorToken, "PUT", "/contents/"+gallery.ID+"/versions/"+gallery.Versions[1].ID+"/offer",
+		offers.Terms{Amount: 1_990_000, Currency: "USD"}, nil)
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		list, err := e.Client().GetOffers(ctx, contentkit.GetOffersQuery{Unsynced: ptr(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(list.Offers) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("offers never synced: %+v", list.Offers)
+		}
+	}
 
 	var d catalog.Content
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
-	if !d.Editor || !d.Decision.Allowed || d.Body != "Members words" {
+	if !d.Editor || !d.Decision.Allowed || len(d.Decision.Sell) > 0 || len(d.Decision.Offers) > 0 || d.Body != "Members words" {
 		t.Fatalf("the channel's writer reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
 	}
 	d = catalog.Content{}
 	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
-	if d.Editor || d.Decision.Allowed || d.Body != "" {
+	if d.Editor || d.Decision.Allowed || d.Body != "" || len(d.Decision.Offers) != 1 || d.Decision.Offers[0].PriceID == "" {
 		t.Fatalf("a stranger reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
 	}
+	d = catalog.Content{}
+	f.want(http.StatusOK, writerToken, "GET", "/contents/"+gallery.ID, nil, &d)
+	for _, v := range d.Versions {
+		if !v.Decision.Allowed || len(v.Decision.Sell) > 0 || len(v.Decision.Offers) > 0 {
+			t.Fatalf("the writer is offered the channel's gallery: version %s %+v", v.ID, v.Decision)
+		}
+	}
+	d = catalog.Content{}
+	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+gallery.ID, nil, &d)
+	if len(d.Versions) != 2 || !d.Versions[0].Decision.Allowed || d.Versions[1].Decision.Allowed || len(d.Versions[1].Decision.Offers) != 1 {
+		t.Fatalf("a stranger's gallery %+v", d.Versions)
+	}
 
-	cards := func(token, path string) map[string]bool {
+	cards := func(token, path string) map[string]discovery.CardAccess {
 		t.Helper()
 		var page discovery.ContentPage
 		f.want(http.StatusOK, token, "GET", path, nil, &page)
-		out := map[string]bool{}
+		out := map[string]discovery.CardAccess{}
 		for _, c := range page.Contents {
-			out[c.ID] = c.Access.Allowed
+			out[c.ID] = c.Access
 		}
 		return out
 	}
 	feed := "/contents?kind=blog&language=en&owner_group=" + ch
-	if got := cards(writerToken, feed); len(got) != 2 || !got[members.ID] || !got[draft.ID] {
-		t.Fatalf("the writer's feed %v", got)
+	if got := cards(writerToken, feed); len(got) != 2 || !got[members.ID].Allowed || len(got[members.ID].Offers) > 0 || !got[draft.ID].Allowed {
+		t.Fatalf("the writer's feed %+v", got)
 	}
-	if got := cards(strangerToken, feed); len(got) != 1 || got[members.ID] {
-		t.Fatalf("a stranger's feed %v", got)
+	if got := cards(strangerToken, feed); len(got) != 1 || got[members.ID].Allowed || len(got[members.ID].Offers) != 1 {
+		t.Fatalf("a stranger's feed %+v", got)
 	}
-	if got := cards(writerToken, "/contents?kind=blog&language=en"); len(got) != 1 || !got[members.ID] {
-		t.Fatalf("the writer's list %v", got)
+	if got := cards(writerToken, "/contents?kind=blog&language=en"); len(got) != 1 || !got[members.ID].Allowed {
+		t.Fatalf("the writer's list %+v", got)
+	}
+
+	for token, editor := range map[string]bool{creatorToken: true, writerToken: true, strangerToken: false} {
+		var page groups.GroupDetail
+		f.want(http.StatusOK, token, "GET", "/groups/"+ch, nil, &page)
+		if a := page.Access; a == nil || a.Editor != editor || (a.Offer == nil) != editor {
+			t.Fatalf("the channel's page as an editor (%v): access %+v", editor, a)
+		}
+	}
+	var mine groups.MyGroupPage
+	f.want(http.StatusOK, writerToken, "GET", "/me/groups", nil, &mine)
+	if len(mine.Groups) != 1 || string(mine.Groups[0].ID) != ch || !mine.Groups[0].Writer || mine.Groups[0].Editor || mine.Groups[0].Owner {
+		t.Fatalf("the writer's groups %+v", mine)
 	}
 }

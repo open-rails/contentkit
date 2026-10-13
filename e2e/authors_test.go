@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
@@ -19,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/signal"
 )
 
 // directory is AuthKit's directory, counting its reads.
@@ -36,6 +38,7 @@ func (d *directory) Get(ctx context.Context, ids []string) (map[string]userinfo.
 // ContentKit's own media: a person's own published avatar,
 // the preset's default for one without, nothing for a deleted account. A
 // person uploads their own avatar through the gate; another may not.
+// Erasing a person deletes their avatar: their comments show the default.
 func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -43,7 +46,8 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	bob, bobToken := w.person(iam.Role{})
 	gone, goneToken := w.person(iam.Role{})
 	dir := &directory{Lookup: w.ak.UserInfo()}
-	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Users = dir }))
+	e := w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Users = dir })
+	f := serve(t, e)
 	_, staff := w.person(w.staff)
 	g, _ := w.published(f, staff, "gallery")
 	item := "/contents/" + g
@@ -103,6 +107,37 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	}
 	if a, ok := by[gone.ID]; !ok || a != nil {
 		t.Fatalf("a deleted account: %+v", a)
+	}
+
+	if report, err := e.EraseSubjects(ctx, []signal.Subject{{UserID: alice.ID}}); err != nil || !report.Complete() {
+		t.Fatalf("erasing alice: %+v %v", report, err)
+	}
+	avatars, err := w.reg.Item(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		left := 0
+		for obj, err := range w.env.Store.List(ctx, avatars.Prefix()) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obj.Key != avatars.ManifestKey() { // the deletion's tombstone
+				left++
+			}
+		}
+		if left == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("alice's avatar folder keeps %d objects after her erasure", left)
+		}
+	}
+	f.want(http.StatusOK, "", "GET", item+"/comments", nil, &list)
+	for _, c := range list {
+		if c.UserID == alice.ID && c.Author != nil && c.Author.Avatar != "https://media.test/v1/accounts/user/"+alice.ID+"/public/avatar-64.webp" {
+			t.Fatalf("alice after erasure %+v", c.Author)
+		}
 	}
 }
 

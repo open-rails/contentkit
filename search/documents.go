@@ -73,7 +73,7 @@ type documentRow struct {
 	TenantID         string   `json:"tenant_id"`
 	ContentKind      string   `json:"content_kind"`
 	ContentID        string   `json:"content_id"`
-	ContentVersionID string   `json:"content_version_id"`
+	ContentVersionID *string  `json:"content_version_id"`
 	Language         string   `json:"language"`
 	Title            string   `json:"title,omitempty"`
 	Aliases          []string `json:"aliases"`
@@ -82,7 +82,7 @@ type documentRow struct {
 }
 
 func keyRow(k DocumentKey) documentRow {
-	return documentRow{TenantID: k.TenantID, ContentKind: k.ContentKind, ContentID: k.ContentID, ContentVersionID: k.Version(), Language: k.Language}
+	return documentRow{TenantID: k.TenantID, ContentKind: k.ContentKind, ContentID: k.ContentID, ContentVersionID: k.ContentVersionID, Language: k.Language}
 }
 
 const rowColumns = `(tenant_id text,content_kind text,content_id text,content_version_id text,language text,title text,aliases text[],keywords text[],raw text)`
@@ -153,7 +153,7 @@ func DeleteKeywordDocuments(ctx context.Context, db Executor, schema string, key
 		return err
 	}
 	_, err = db.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_documents sd USING jsonb_to_recordset($1::jsonb) AS r%s
-   WHERE sd.tenant_id=r.tenant_id AND sd.content_kind=r.content_kind AND sd.content_id=r.content_id AND sd.content_version_id=r.content_version_id AND sd.language=r.language`, qs, rowColumns), data)
+   WHERE sd.tenant_id=r.tenant_id AND sd.content_kind=r.content_kind AND sd.content_id=r.content_id AND sd.content_version_id IS NOT DISTINCT FROM r.content_version_id AND sd.language=r.language`, qs, rowColumns), data)
 	return err
 }
 

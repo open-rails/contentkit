@@ -62,7 +62,7 @@ func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor
 		return nil
 	}
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND content_kind='comment' AND content_id=$2 AND content_version_id='' AND user_id=$3`, c.s.tenant, cid, actor.ID).Scan(&revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT revision FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND content_kind='comment' AND content_id=$2 AND content_version_id IS NULL AND user_id=$3`, c.s.tenant, cid, actor.ID).Scan(&revision); err != nil {
 		return fmt.Errorf("content: resolve like revision: %w", err)
 	}
 	return c.publishNotice(ctx, tx, recipient, "comment.liked", fmt.Sprintf("comment.liked:%d", revision), commentNotice{ContentRef: ref, ActorID: actor.ID, CommentID: cid})

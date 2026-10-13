@@ -76,7 +76,7 @@ func workerOptions(pool *pgxpool.Pool, schema string, build buildFunc) Options {
 // markDirty is a host write with a fixed timestamp: the queue trigger, not
 // updated_at, must fence generations.
 func markDirty(ctx context.Context, pool *pgxpool.Pool, schema string) error {
-	_, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,updated_at) VALUES($1,'gallery',$2,'','en','2020-01-01')
+	_, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,updated_at) VALUES($1,'gallery',$2,NULL,'en','2020-01-01')
  ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET updated_at=EXCLUDED.updated_at`, tenant, cid(1))
 	return err
 }
@@ -320,8 +320,8 @@ func TestIntegrationInvalidDocumentDoesNotBlockDirtyQueue(t *testing.T) {
 	ctx, pool, schema := workerFixture(t)
 	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty
  (tenant_id,content_kind,content_id,content_version_id,language,updated_at)
- VALUES ($1,'gallery',$2,'','en','2020-01-01'),
-        ($1,'gallery',$3,'','en','2020-01-02')`, tenant, cid(1), cid(2)); err != nil {
+ VALUES ($1,'gallery',$2,NULL,'en','2020-01-01'),
+        ($1,'gallery',$3,NULL,'en','2020-01-02')`, tenant, cid(1), cid(2)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -546,8 +546,8 @@ func TestIntegrationInvalidDirtyIDDoesNotBlockValidDocument(t *testing.T) {
 	const invalidID = "10000000-0000-4000-8000-000000000001"
 	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty
  (tenant_id,content_kind,content_id,content_version_id,language,updated_at)
- VALUES ($1,'gallery',$2,'','en','2020-01-01'),
-        ($1,'gallery',$3,'','en','2020-01-02')`, tenant, invalidID, cid(2)); err != nil {
+ VALUES ($1,'gallery',$2,NULL,'en','2020-01-01'),
+        ($1,'gallery',$3,NULL,'en','2020-01-02')`, tenant, invalidID, cid(2)); err != nil {
 		t.Fatal(err)
 	}
 	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
