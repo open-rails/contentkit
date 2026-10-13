@@ -269,11 +269,17 @@ deleted account) has no author; a directory or media failure is logged and
 leaves bare ids, never failing the response. The avatar needs
 `content.Options.Media`; without `UserInfo` authors are bare ids.
 
-**Content and poll images.** A content item's cover and body images are its
-content-level media item's (`{tenant}/{kind}/{id}/`, uploads marked
-`Content`); poll images live in `{tenant}/poll/{poll_id}/`. Each is a
-`Named` upload (the server names it `i-{uuid}`) with a public preset. The
-catalog and the content module answer their uploads and reads.
+**Content and poll images.** A content item's cover is its content-level
+media item's (`{tenant}/{kind}/{id}/`, uploads marked `Content`); its body
+images are its body item's (`{tenant}/{kind}.body/{id}/`, `media.BodySuffix`,
+derived by `media.ForContent` from the kind's `Named` `Content` uploads and
+their public presets). A body item shows only to viewers who open the item
+(and its editors): a locked item's body images have no public files and are
+never listed or signed to anyone else, while a buyer's body shows them
+through the item token (a private `{preset}-open` rendition); an item anyone
+opens keeps public files. Poll images live in `{tenant}/poll/{poll_id}/`.
+Each is a `Named` upload (the server names it `i-{uuid}`) with a public
+preset. The catalog and the content module answer their uploads and reads.
 
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body

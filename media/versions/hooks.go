@@ -24,11 +24,13 @@ type resolver struct{ s *Service }
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	s := r.s
 	out := map[contentref.ContentKey]resolve.Resolution{}
-	var owned, published, grouped, others []contentref.ContentRef
+	var owned, published, grouped, bodies, others []contentref.ContentRef
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
 		switch {
 		case err != nil || ref.TenantID != k.NS():
+		case s.bodyOf(k.Name) != "":
+			bodies = append(bodies, ref)
 		case k.Versions:
 			owned = append(owned, ref)
 		case k.Of() != nil:
@@ -45,6 +47,9 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		return nil, err
 	}
 	if err := s.resolvePublished(ctx, published, actor, out); err != nil {
+		return nil, err
+	}
+	if err := s.resolveBodies(ctx, bodies, actor, out); err != nil {
 		return nil, err
 	}
 	if err := s.resolveGroups(ctx, grouped, actor, out); err != nil {
@@ -117,6 +122,50 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		k, _ := s.reg.Kind(ref.ContentKind)
 		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
 			Accessible: r.Accessible && ref.Version() != "" && k.VersionKind().Publish == nil}
+	}
+	return nil
+}
+
+// bodyOf is the content kind of a body kind, "" for any other kind.
+func (s *Service) bodyOf(kind string) string {
+	base, ok := media.BodyOf(kind)
+	if k, err := s.reg.Kind(base); !ok || err != nil || !k.Versions {
+		return ""
+	}
+	return base
+}
+
+// resolveBodies decides body items: one shows, and opens, only to a viewer
+// who opens its content or edits it, so a locked item's body images reach
+// nobody else and have public files only while anyone opens it.
+func (s *Service) resolveBodies(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	contents := make([]contentref.ContentRef, len(refs))
+	for i, ref := range refs {
+		contents[i] = contentref.New(ref.TenantID, s.bodyOf(ref.ContentKind), ref.ContentID)
+	}
+	found, err := s.existing(ctx, contents)
+	if err != nil || len(found) == 0 {
+		return err
+	}
+	var asked []contentref.ContentRef
+	for _, c := range contents {
+		if _, ok := found[c.Key()]; ok && c.Version() == "" {
+			asked = append(asked, c)
+		}
+	}
+	res, err := s.o.Resolver.Resolve(ctx, asked, actor)
+	if err != nil {
+		return err
+	}
+	for i, ref := range refs {
+		r, ok := res[contents[i].Key()]
+		if ref.ContentVersionID != nil || !ok || !r.Visible || !r.Accessible && !r.Editor {
+			continue
+		}
+		out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: r.Editor, Owner: r.Owner}
 	}
 	return nil
 }
@@ -219,10 +268,18 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	switch {
 	case err != nil || t.Ref.TenantID != k.NS():
 		return media.UploadGrant{}, nil
-	case isSystem(actor) && (k.Versions || k.Of() != nil):
+	case isSystem(actor) && (k.Versions || k.Of() != nil || s.bodyOf(k.Name) != ""):
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
 	case k.Of() != nil:
 		return media.UploadGrant{}, nil
+	case s.bodyOf(k.Name) != "":
+		// A body item is written by its content's editors.
+		if t.Ref.ContentVersionID != nil {
+			return media.UploadGrant{}, nil
+		}
+		base, _ := s.reg.Kind(s.bodyOf(k.Name))
+		t.Ref = contentref.New(t.Ref.TenantID, base.Name, t.Ref.ContentID)
+		return s.canEdit(ctx, actor, base, t)
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)
 	case s.isGroupKind(k.Name):

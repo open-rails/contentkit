@@ -21,6 +21,8 @@ export const IMAGE_SCHEME = "contentkit:";
  * the image's current public file (`Content.images`).
  */
 export const imageRef = (name: string) => IMAGE_SCHEME + name;
+/** A content kind's body kind: the media folder of a content item's body images ({kind}.body, id), opened with the item. */
+export const BODY_SUFFIX = ".body";
 
 /** Matches every image reference; the name is group 1. */
 export const imageRefs = () => /contentkit:(i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;

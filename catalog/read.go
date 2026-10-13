@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -97,7 +98,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			images.add(it.kind, id, it.cover.Image)
 		}
 		for _, name := range imageNames(c.Body) {
-			images.add(it.kind, id, name)
+			images.add(it.kind+media.BodySuffix, id, name)
 		}
 		if l, ok := links[id]; ok {
 			c.Code = string(l.Code)
@@ -138,8 +139,21 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 				c.images()[c.Cover.Image] = u
 			}
 		}
+		var locked []string
 		for _, name := range imageNames(c.Body) {
-			if u, ok := images.url(c.Kind, id, name); ok {
+			if u, ok := images.url(c.Kind+media.BodySuffix, id, name); ok {
+				c.images()[name] = u
+			} else {
+				locked = append(locked, name)
+			}
+		}
+		// Body images without public files are the opened item's alone.
+		if len(locked) > 0 && s.media != nil && s.media.Reader != nil {
+			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind+media.BodySuffix, id), v.actor, locked)
+			if err != nil {
+				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
+			}
+			for name, u := range urls {
 				c.images()[name] = u
 			}
 		}

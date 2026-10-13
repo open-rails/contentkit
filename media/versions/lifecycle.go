@@ -97,6 +97,9 @@ LEFT JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.content_id = c.id AND (t.
 		}
 		if whole {
 			add(kind, id, "")
+			if _, err := s.reg.Kind(kind + media.BodySuffix); err == nil {
+				add(kind+media.BodySuffix, id, "")
+			}
 		}
 		if version != "" {
 			add(kind, id, version)
