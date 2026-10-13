@@ -236,6 +236,7 @@ export const ko: ContentKitUiMessageBundle = {
     incomplete: "업로드가 완료되지 않았습니다. 다시 시도해 주세요.",
     not_uploaded: "업로드가 만료되었습니다. 이미지를 다시 선택해 주세요.",
     too_large: "파일이 너무 큽니다.",
+    limit_reached: "이 사이트에서 허용하는 최대 개수에 도달했습니다.",
     quota_exceeded: "저장 공간 한도에 도달했습니다.",
     type_not_allowed: "이 파일 형식은 여기에서 지원되지 않습니다.",
     checksum_mismatch: "업로드 중 파일이 변경되었습니다. 다시 시도해 주세요.",

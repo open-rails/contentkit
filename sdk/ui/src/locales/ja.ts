@@ -236,6 +236,7 @@ export const ja: ContentKitUiMessageBundle = {
     incomplete: "アップロードが完了しませんでした。もう一度お試しください。",
     not_uploaded: "アップロードの有効期限が切れました。画像を選び直してください。",
     too_large: "ファイルが大きすぎます。",
+    limit_reached: "このサイトで作成できる上限に達しています。",
     quota_exceeded: "ストレージの上限に達しました。",
     type_not_allowed: "このファイル形式はここでは使用できません。",
     checksum_mismatch: "アップロード中にファイルが変更されました。もう一度お試しください。",

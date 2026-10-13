@@ -235,6 +235,7 @@ export const en = {
     incomplete: "The upload didn't finish. Please try again.",
     not_uploaded: "The upload expired. Please pick the image again.",
     too_large: "This file is too large.",
+    limit_reached: "You already have as many of these as the site allows.",
     quota_exceeded: "You've reached your storage limit.",
     type_not_allowed: "This file type isn't supported here.",
     checksum_mismatch: "The file changed during upload. Please try again.",

@@ -236,6 +236,7 @@ export const zh: ContentKitUiMessageBundle = {
     incomplete: "上传未完成，请重试。",
     not_uploaded: "上传已过期，请重新选择图片。",
     too_large: "文件过大。",
+    limit_reached: "你已达到本站允许的数量上限。",
     quota_exceeded: "已达到存储空间上限。",
     type_not_allowed: "此处不支持该文件类型。",
     checksum_mismatch: "上传过程中文件发生了变化，请重试。",

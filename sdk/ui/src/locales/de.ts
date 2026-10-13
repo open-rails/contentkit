@@ -236,6 +236,7 @@ export const de: ContentKitUiMessageBundle = {
     incomplete: "Der Upload wurde nicht abgeschlossen. Bitte versuche es erneut.",
     not_uploaded: "Der Upload ist abgelaufen. Bitte wähle das Bild erneut.",
     too_large: "Diese Datei ist zu groß.",
+    limit_reached: "Du hast bereits so viele davon, wie die Seite erlaubt.",
     quota_exceeded: "Du hast dein Speicherlimit erreicht.",
     type_not_allowed: "Dieser Dateityp wird hier nicht unterstützt.",
     checksum_mismatch: "Die Datei hat sich während des Uploads geändert. Bitte versuche es erneut.",

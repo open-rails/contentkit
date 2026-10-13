@@ -236,6 +236,7 @@ export const es: ContentKitUiMessageBundle = {
     incomplete: "La subida no terminó. Inténtalo de nuevo.",
     not_uploaded: "La subida caducó. Vuelve a elegir la imagen.",
     too_large: "Este archivo es demasiado grande.",
+    limit_reached: "Ya tienes tantos como permite el sitio.",
     quota_exceeded: "Has alcanzado tu límite de almacenamiento.",
     type_not_allowed: "Este tipo de archivo no se admite aquí.",
     checksum_mismatch: "El archivo cambió durante la subida. Inténtalo de nuevo.",
