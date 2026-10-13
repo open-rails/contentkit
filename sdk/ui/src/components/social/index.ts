@@ -4,3 +4,4 @@ export { FavoriteButton, ReactionButtons, type FavoriteButtonProps, type Reactio
 export { Poll, type PollProps } from "./poll.js";
 export { PollEditor, type PollEditorProps } from "./poll-editor.js";
 export { CommentModeration, useCommentModerationAccess, type CommentModerationProps, type ModerationSection } from "./moderation.js";
+export { BannedWords, IPBans, type ModerationRulesProps } from "./rules.js";

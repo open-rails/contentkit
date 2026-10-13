@@ -14,9 +14,11 @@ export class VersionsClient {
   reader(content: string, version: string, signal?: AbortSignal): Promise<ReaderPlan | Pending> {
     return call(this.http, "GET", "/contents/{id}/versions/{version}/reader", { params: { id: content, version }, signal });
   }
-  /** Editors: the version's anchors and audio cues. */
-  setReader(content: string, version: string, meta: ReaderMeta): Promise<void> {
-    return call(this.http, "PUT", "/contents/{id}/versions/{version}/reader", { params: { id: content, version }, body: meta });
+  /** Editors: replaces the version's reader metadata (anchors, audio cues, defaults). */
+  async setReader(content: string, version: string, meta: ReaderMeta): Promise<void> {
+    const emit = this.http.captureChanges();
+    await call(this.http, "PUT", "/contents/{id}/versions/{version}/reader", { params: { id: content, version }, body: meta });
+    emit({ type: "reader.changed", content, version });
   }
   /** Editors: fills a version without media from a sibling, in a durable job. */
   fork(content: string, version: string, body: ForkBody): Promise<Pending> {

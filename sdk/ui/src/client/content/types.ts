@@ -30,6 +30,9 @@ export type BanScope = CommentStanding["ban_scopes"][number];
 /** What the review queue holds: comments and content items. */
 export type HeldKind = "comment" | "content";
 
+/** The moderation rules: banned words or IP bans. */
+export type RuleSet = "words" | "ips";
+
 /** A reviewer's decision on a held item. */
 export type Decision = Exclude<ResolveInput["decision"], "review">;
 
@@ -57,6 +60,10 @@ export type ContentChange =
   | { type: "ban.saved"; scope: BanScope; ban: CommentBan }
   | { type: "ban.lifted"; scope: BanScope; user: string }
   | { type: "moderation.resolved"; kind: HeldKind; id: string; decision: Decision }
+  /** Banned words or IP bans changed. */
+  | { type: "rules.changed"; rules: RuleSet }
+  /** A version's reader metadata changed: its reader plan reads again. */
+  | { type: "reader.changed"; content: string; version: string }
   | { type: "groups.changed" }
   /** The reader's content filters changed: every list reads again. */
   | { type: "contentFilters.changed" }

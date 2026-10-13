@@ -206,6 +206,33 @@ describe("content modules against the real ContentKit", () => {
     expect((await ck("erin").comments.list(video)).find((c) => c.id === b.id)).toMatchObject({ moderation: "rejected", moderation_reason: "off topic" });
   });
 
+  it("moderation rules: banned words mask or refuse new comments; an IP ban refuses its network, moderators exempt", async () => {
+    const video = await item();
+    const mod = ck("moderator");
+    await expect(ck("alice").moderation.bannedWords()).rejects.toEqual(code("forbidden"));
+    const word = `zorp${randomUUID().replaceAll("-", "").slice(0, 6)}`;
+    expect(await mod.moderation.banWords([{ word }])).toContainEqual(expect.objectContaining({ word, action: "mask", created_by: acc.id("moderator") }));
+    expect(changes).toContainEqual({ type: "rules.changed", rules: "words" });
+    // A whole word is masked, with what it is written with; inside a longer word it is not.
+    const masked = await ck("alice").comments.create(video, { body: `well ${word}, ${word}ed` });
+    expect(masked.body).toBe(`well ${"*".repeat(word.length + 1)} ${word}ed`);
+    await mod.moderation.banWords([{ word, action: "reject" }]);
+    await expect(ck("alice").comments.create(video, { body: `${word}!` })).rejects.toEqual(code("moderation_rejected"));
+    await mod.moderation.unbanWords([word]);
+    expect((await mod.moderation.bannedWords()).map((w) => w.word)).not.toContain(word);
+    expect((await ck("alice").comments.create(video, { body: `${word} again` })).body).toBe(`${word} again`);
+
+    const net = "10.77.0.0/24";
+    const bans = await mod.moderation.banIPs([{ network: net, reason: "spam wave" }]);
+    expect(bans.find((b) => b.network === net)).toMatchObject({ reason: "spam wave", banned_by: acc.id("moderator"), expired: false });
+    await expect(ck("alice", "10.77.0.9").comments.create(video, { body: "hi" })).rejects.toEqual(code("comment_banned"));
+    await ck("moderator", "10.77.0.9").comments.create(video, { body: "moderators are exempt" });
+    await mod.moderation.liftIPBans([net]);
+    expect(changes).toContainEqual({ type: "rules.changed", rules: "ips" });
+    expect((await mod.moderation.ipBans()).map((b) => b.network)).not.toContain(net);
+    await ck("alice", "10.77.0.9").comments.create(video, { body: "hi again" });
+  });
+
   it("bans: an owner's and the site's, with the notice a refused comment carries", async () => {
     const video = await item();
     const troll = await h.user();
