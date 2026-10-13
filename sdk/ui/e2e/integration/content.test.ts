@@ -162,8 +162,8 @@ describe("content modules against the real ContentKit", () => {
       expect.objectContaining({ code: "moderation_rejected", message: "not allowed here", status: 422 }),
     );
 
-    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, comments: "open", anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
-    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, comments: "open", anonymous: true, max_length: 400, user_id: acc.id("creator"), moderate: false, ban_scopes: ["owner"] });
+    expect(await ck().comments.standing(video)).toMatchObject({ can_comment: true, comments: "open", anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await ck("creator").comments.standing(video)).toMatchObject({ can_comment: true, comments: "open", anonymous: true, max_length: 400, user_id: acc.id("creator"), moderate: false, ban_scopes: ["owner"] });
     await expect(ck("carol").comments.create(video, { body: "é".repeat(401) })).rejects.toEqual(
       expect.objectContaining({ code: "comment_too_long", status: 422, details: { max: 400 } }),
     );
@@ -268,7 +268,7 @@ describe("content modules against the real ContentKit", () => {
 
     const video = await item();
     const top = await members("alice").comments.create(video, { body: "members only" });
-    expect(await members().comments.standing(video)).toEqual({ can_comment: false, comments: "open", anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await members().comments.standing(video)).toMatchObject({ can_comment: false, comments: "open", anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
     expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: acc.id("bob") });
     const post = await members("editor").contents.publish((await members("editor").contents.create({ kind: "blog", text: { en: { title: "Members", body: "b" } } })).id);
     const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });

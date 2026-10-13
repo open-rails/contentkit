@@ -335,7 +335,7 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
     return (
       <Section title={t("contentEditor.media")} ckui="version-media">
         {spec.segments && <SegmentsEditor content={content} version={only} {...p} />}
-        {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: only.id }} label={t("contentEditor.media")} />}
+        {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: only.id }} label={t("contentEditor.media")} client={p.client} onError={p.onError} />}
       </Section>
     );
   }
@@ -519,7 +519,7 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
       />
       <ErrorLine error={offer.error} />
       {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
-      {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: v.id }} label={t("contentEditor.media")} />}
+      {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: v.id }} label={t("contentEditor.media")} client={p.client} onError={p.onError} />}
       {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
     </div>
   );

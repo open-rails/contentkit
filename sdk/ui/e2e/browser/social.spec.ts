@@ -109,7 +109,7 @@ test("staff: the review queue, bans and the poll editor", async ({ page }, info)
   await held.getByRole("button", { name: "Reject" }).click();
   await expect(held).toHaveCount(0);
 
-  await mod.getByRole("tab", { name: "Bans" }).click();
+  await mod.getByRole("tab", { name: "Bans", exact: true }).click();
   const bans = mod.locator("[data-ckui=comment-bans]");
   const troll = await h.user();
   await bans.getByRole("textbox", { name: "User id" }).fill(troll.id);
