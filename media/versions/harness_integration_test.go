@@ -316,7 +316,11 @@ func newSite(t *testing.T, o siteOptions) *site {
 			t.Error(err)
 		}
 	})
-	t.Cleanup(func() { s.dumpJobs() })
+	t.Cleanup(func() {
+		if t.Failed() {
+			s.dumpJobs()
+		}
+	})
 	mux := http.NewServeMux()
 	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(s.uploads, media.UploadHandlerOptions{Auth: authn})))
 	mux.Handle("/media/", http.StripPrefix("/media", s.reader.Handler(media.HandlerOptions{Auth: authn, Limit: media.RateLimit{Disabled: true}})))
@@ -376,33 +380,35 @@ FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize()
 	}
 }
 
-// dumpJobs logs every River job of the worker and the host (#132 diagnostics).
+// dumpJobs logs the worker's and the host's River jobs: what a timed-out
+// wait was waiting on.
 func (s *site) dumpJobs() {
-	for _, schema := range []string{s.workers, s.host} {
+	at := func(t *time.Time) string {
+		if t == nil {
+			return "-"
+		}
+		return t.Format("15:04:05.000")
+	}
+	for name, schema := range map[string]string{"worker": s.workers, "host": s.host} {
 		rows, err := s.pool.Query(context.Background(), `SELECT id, kind, state, attempt, args::text, coalesce(errors[array_length(errors, 1)]::text, ''),
 	created_at, attempted_at, finalized_at FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()+` ORDER BY id`)
 		if err != nil {
-			s.t.Logf("jobs %s: %v", schema, err)
+			s.t.Logf("%s jobs: %v", name, err)
 			continue
 		}
 		for rows.Next() {
 			var (
-				id, attempt          int64
-				kind, state, args, e string
-				created              time.Time
-				attempted, finalized *time.Time
+				id, attempt                int64
+				kind, state, args, lastErr string
+				created                    time.Time
+				attempted, finalized       *time.Time
 			)
-			if err := rows.Scan(&id, &kind, &state, &attempt, &args, &e, &created, &attempted, &finalized); err != nil {
-				s.t.Logf("jobs: %v", err)
+			if err := rows.Scan(&id, &kind, &state, &attempt, &args, &lastErr, &created, &attempted, &finalized); err != nil {
+				s.t.Logf("%s jobs: %v", name, err)
 				break
 			}
-			at := func(t *time.Time) string {
-				if t == nil {
-					return "-"
-				}
-				return t.Format("15:04:05.000")
-			}
-			s.t.Logf("job %s %d %s %s a=%d c=%s r=%s f=%s %s %.200s", schema[:12], id, kind, state, attempt, created.Format("15:04:05.000"), at(attempted), at(finalized), args, e)
+			s.t.Logf("%s job %d %s %s attempt=%d created=%s attempted=%s finalized=%s %s %.200s", name, id, kind, state, attempt,
+				at(&created), at(attempted), at(finalized), args, lastErr)
 		}
 		rows.Close()
 	}

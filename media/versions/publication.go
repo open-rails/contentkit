@@ -320,24 +320,15 @@ VALUES ($1, $2, $3, $4, $5, $6)`, s.o.Tenant, contentref.NewID(), id, sp.Segment
 	return id, false, nil
 }
 
-// promoteTx makes build id current, retiring the one it replaces; false when
-// the build is gone (an edit retired it meanwhile). Promoting the current one
-// changes nothing, so publishers that raced to build it agree.
+// promoteTx (TEMP #132: the old promotion, to show the race in CI).
 func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind, id string) (bool, error) {
-	var state string
-	err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, id).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	} else if err != nil || state == "current" {
-		return err == nil, err
-	}
+	var old []string
 	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = $2 AND kind = $3 AND state = 'current'`,
 		s.o.Tenant, v.Version, kind)
 	if err != nil {
 		return false, err
 	}
-	old, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
+	if old, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
 		return false, err
 	}
 	if err := s.retireTx(ctx, tx, k, old); err != nil {
