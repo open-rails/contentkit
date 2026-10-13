@@ -571,12 +571,17 @@ that fits the reader (`display_language` first, then position).
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
   `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
   `most_viewed` (all-time viewers plus an imported `view_baseline`),
-  `position` in the first of `groups`, `random`), `cursor`, `limit`.
+  `position` in the first of `groups`, which must be of an ordered group
+  kind, `random`), `cursor`, `limit`. A reader's content filters never hide
+  a group's content from a list requiring that group: a hidden tag's page
+  shows what its count counts, while other lists leave it out.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
   signed-in reader, or any list sort of the best 1000 matches), `GET
   /typeahead` (contents and groups).
 - `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
   (co-engagement by default), admitted through the reader's visibility.
+  Recommendations fill from the last 30 days' popularity, then all-time,
+  then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
 - `GET|PUT /me/content-filters`: the configured `content_filters`, each the
@@ -646,10 +651,13 @@ layouts.
   a version's media writes its pages, duration, size and
   audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
   kind reaches viewers only through `{kind}.published` items: one per
-  segment of its pages, a locked version's previews, and one playback item,
+  segment of its pages, a locked version's previews (its rule's, else its
+  kind's `preview`), and one playback item,
   planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Forks, page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
-  complete it.
+  complete it. A content with no cover of its own gets its first live
+  version's leading released page as its cover (an upload marked
+  `auto_cover`); a cover an editor uploads replaces it for good.
 - **Manifest.** An ordered virtual file system over the item's private
   blobs: each Upload's files in natural order unless an op reorders them,
   then each private preset's outputs in their uploads' order. A derived file
