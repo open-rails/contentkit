@@ -166,14 +166,11 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("%w: body: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %s", ErrInvalid, httpapi.BodyError(err))
 	}
 	var extra json.RawMessage
 	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%w: body: multiple JSON values", ErrInvalid)
-		}
-		return fmt.Errorf("%w: body: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: the body holds more than one JSON value", ErrInvalid)
 	}
 	return nil
 }
@@ -209,17 +206,10 @@ func fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, auth.ErrUnavailable), errors.Is(err, access.ErrUnavailable):
 		status, code = http.StatusServiceUnavailable, httpapi.CodeUnavailable
 	}
-	msg := "internal error"
-	switch status {
-	case http.StatusInternalServerError:
-	case http.StatusUnauthorized, http.StatusServiceUnavailable:
-		msg = code
-	default:
-		msg = err.Error()
-		var ce constraintError
-		if errors.As(err, &ce) {
-			msg = ce.sentinel.Error()
-		}
+	msg := httpapi.Message(code)
+	var ce constraintError
+	if code == httpapi.CodeInvalidRequest && !errors.As(err, &ce) {
+		msg = httpapi.Rule(err, code)
 	}
 	if sw, ok := w.(*statusWriter); ok {
 		sw.cause = err

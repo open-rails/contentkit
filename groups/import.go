@@ -200,9 +200,9 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 	}
 	if err := codes.Reserve(ctx, codes.Pgx(q), s.qs, s.tenant, keep); err != nil {
 		if errors.Is(err, codes.ErrConflict) {
-			return fmt.Errorf("%w: %v", ErrConflict, err)
+			return fmt.Errorf("%w: %w", ErrConflict, err)
 		}
-		return fmt.Errorf("%w: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	var list []string
 	var renamed []Ref

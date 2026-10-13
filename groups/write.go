@@ -184,7 +184,7 @@ func (s *Store) fields(gk kinds.GroupKind, kind string, g *groupRow) error {
 	}
 	attrs, err := kinds.ValidateAttributes(gk.Attributes, g.Attributes)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	g.Attributes = attrs
 	return nil

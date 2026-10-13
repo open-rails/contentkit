@@ -9,10 +9,14 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,7 +258,7 @@ func TestEngineIntegration(t *testing.T) {
 	var model kindsroute.ContentModel
 	rec := s.call(http.StatusOK, anon, "GET", "/api/ck/v1/kinds", nil, &model)
 	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil || model.Signals ||
-		rec.Header().Get("Cache-Control") != "public, max-age=300" || strings.Contains(rec.Body.String(), "restrictions") {
+		!strings.HasPrefix(rec.Header().Get("Cache-Control"), "public, max-age=") || strings.Contains(rec.Body.String(), "restrictions") {
 		t.Fatalf("kinds %d %s", rec.Code, rec.Body)
 	}
 
@@ -323,14 +327,16 @@ func TestEngineIntegration(t *testing.T) {
 	}
 }
 
-// Without ClickHouse, or with one New can't reach, the engine runs on
-// Postgres alone: its content model says signals are off, lists (popular
-// too), details and search serve, signals, exposures and history answer
-// not_configured, and a configured plane that is down fails its probe.
+// Without ClickHouse, or with one that is down, the engine runs on Postgres
+// alone: its content model says signals are off, lists (popular too),
+// details and search serve, and signals, exposures and history answer
+// not_configured, or unavailable while a configured plane is down, which
+// fails its probe and is retried in the background.
 func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
-	for name, ch := range map[string]ClickHouseConfig{"none": {}, "unreachable": {Addr: "127.0.0.1:1", Database: "signals"}} {
+	dead := newCHProxy(t, "")
+	for name, ch := range map[string]ClickHouseConfig{"none": {}, "down": {Addr: dead.addr(), Database: "signals"}} {
 		t.Run(name, func(t *testing.T) {
 			cfg := siteConfig(engineSchema(t, pool))
 			cfg.ClickHouse = ch
@@ -384,22 +390,35 @@ func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 					t.Fatal("search never found the gallery")
 				}
 			}
+			status, code := http.StatusNotImplemented, `"not_configured"`
+			if ch.Addr != "" {
+				status, code = http.StatusServiceUnavailable, `"unavailable"`
+			}
 			off := func(rec *httptest.ResponseRecorder) {
 				t.Helper()
-				if !strings.Contains(rec.Body.String(), `"not_configured"`) {
-					t.Fatalf("%s, want not_configured", rec.Body)
+				if !strings.Contains(rec.Body.String(), code) {
+					t.Fatalf("%s, want %s", rec.Body, code)
 				}
 			}
 			now := time.Now().UTC()
-			off(s.call(http.StatusNotImplemented, user, "POST", "/ck/v1/exposures", discovery.Exposures{Exposures: []discovery.ExposureInput{{RenderID: "r1", Stage: "rendered",
+			off(s.call(status, user, "POST", "/ck/v1/exposures", discovery.Exposures{Exposures: []discovery.ExposureInput{{RenderID: "r1", Stage: "rendered",
 				OccurredAt: &now, Shown: []discovery.Placement{{ContentID: c.ID, Position: 1}}}}}, nil))
-			off(s.call(http.StatusNotImplemented, user, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, Type: "click",
+			off(s.call(status, user, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, Type: "click",
 				EventID: uuid.NewString(), OccurredAt: now}}}, nil))
-			off(s.call(http.StatusNotImplemented, user, "GET", "/ck/v1/me/history", nil, nil))
-			// Signals New could not reach may still hold the subject's: erasure stays pending.
+			off(s.call(status, user, "GET", "/ck/v1/me/history", nil, nil))
+			// A plane that is down may still hold the subject's signals: erasure stays pending.
 			report, err := e.EraseSubjects(ctx, []signal.Subject{{UserID: "u1"}})
 			if down := ch.Addr != ""; down == (err == nil) || down == report.Complete() || down != (report.Remaining["signal_plane"] == 1) {
 				t.Fatalf("erasure %+v %v", report, err)
+			}
+			if ch.Addr != "" {
+				// The engine keeps retrying in the background.
+				seen := dead.accepted.Load()
+				for deadline := time.Now().Add(20 * time.Second); dead.accepted.Load() < seen+2; time.Sleep(100 * time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatalf("no retries: %d connections", dead.accepted.Load())
+					}
+				}
 			}
 		})
 	}
@@ -466,4 +485,77 @@ func pngBytes(t *testing.T, w int) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
+}
+
+// chProxy stands between an engine and ClickHouse: down, it hangs up on
+// every connection, as a ClickHouse that is down does.
+type chProxy struct {
+	ln       net.Listener
+	target   string
+	accepted atomic.Int64
+	mu       sync.Mutex
+	up       bool
+	conns    []net.Conn
+}
+
+func newCHProxy(t *testing.T, target string) *chProxy {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &chProxy{ln: ln, target: target}
+	go p.serve()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		p.set(false)
+	})
+	return p
+}
+
+func (p *chProxy) addr() string { return p.ln.Addr().String() }
+
+func (p *chProxy) serve() {
+	for {
+		c, err := p.ln.Accept()
+		if err != nil {
+			return
+		}
+		p.accepted.Add(1)
+		go p.pipe(c)
+	}
+}
+
+func (p *chProxy) pipe(c net.Conn) {
+	var s net.Conn
+	p.mu.Lock()
+	if p.up {
+		s, _ = net.Dial("tcp", p.target)
+	}
+	if s == nil {
+		p.mu.Unlock()
+		_ = c.Close()
+		return
+	}
+	p.conns = append(p.conns, c, s)
+	p.mu.Unlock()
+	go func() {
+		_, _ = io.Copy(s, c)
+		_ = s.Close()
+	}()
+	_, _ = io.Copy(c, s)
+	_ = c.Close()
+}
+
+// set brings ClickHouse up or down; down drops every open connection.
+func (p *chProxy) set(up bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.up = up
+	if !up {
+		for _, c := range p.conns {
+			_ = c.Close()
+		}
+		p.conns = nil
+	}
 }

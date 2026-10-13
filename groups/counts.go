@@ -20,8 +20,8 @@ const liveListed = `NOT f.deleted AND f.listing = 'listed' AND f.live_from IS NO
 // Recount rebuilds content_group_counts from content_facets, whose rows are
 // versions: per active group, content kind and language, the distinct live,
 // listed contents it holds or owns. It also re-picks every automatic cover:
-// the most-favorited live, listed member. It is an engine job; counts may
-// lag writes until it runs.
+// the most-favorited live, listed content it holds or owns. It is an engine
+// job; counts may lag writes until it runs.
 func (s *Store) Recount(ctx context.Context) error {
 	return s.run(ctx, func(q Querier) error {
 		if _, err := q.Exec(ctx, fmt.Sprintf(`WITH c AS (
@@ -42,8 +42,8 @@ DELETE FROM %[3]s gc WHERE gc.tenant_id = $1
 		}
 		_, err := q.Exec(ctx, fmt.Sprintf(`WITH best AS (
  SELECT DISTINCT ON (gid) gid AS group_id, f.content_id
- FROM %[1]s f CROSS JOIN LATERAL unnest(f.group_ids) AS gid
- WHERE f.tenant_id = $1 AND %[3]s
+ FROM %[1]s f CROSS JOIN LATERAL unnest(array_append(f.group_ids, f.owner_group_id)) AS gid
+ WHERE f.tenant_id = $1 AND gid IS NOT NULL AND %[3]s
  ORDER BY gid, f.favorites DESC, f.published_at DESC NULLS LAST, f.content_id),
 auto AS (
  SELECT g.id, CASE WHEN b.content_id IS NULL THEN NULL ELSE jsonb_build_object('content_id', b.content_id, 'auto', true) END AS cover

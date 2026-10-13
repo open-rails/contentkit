@@ -301,8 +301,8 @@ func (s *Service) viewStatus(ctx context.Context, q *sel, actor access.Actor, ki
 	if !actor.Person() {
 		return fmt.Errorf("%w: view_status needs a signed-in reader", ErrInvalid)
 	}
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	subject := signal.Subject{UserID: actor.ID}
 	var ids []string

@@ -130,7 +130,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		if err != nil || len(pop) != 2 || pop[0].TenantID != tenant {
 			t.Fatalf("%s popular: %+v %v", tenant, pop, err)
 		}
-		co, err := h.store.CoEngaged(ctx, tenant, g1, signal.CoEngagedOptions{})
+		co, err := h.Signals().CoEngaged(ctx, tenant, g1, signal.CoEngagedOptions{})
 		if err != nil || len(co) != 1 || co[0].TenantID != tenant {
 			t.Fatalf("%s co-engagement: %+v %v", tenant, co, err)
 		}
@@ -139,11 +139,11 @@ func TestTenantIsolationIntegration(t *testing.T) {
 			t.Fatalf("%s attribution: %+v %v", tenant, page, err)
 		}
 	}
-	negA, err := hubs[a].store.NegativeIDs(ctx, a, u, nil)
+	negA, err := hubs[a].Signals().NegativeIDs(ctx, a, u, nil)
 	if err != nil || len(negA) != 1 {
 		t.Fatalf("A preferences: %+v %v", negA, err)
 	}
-	negB, err := hubs[b].store.NegativeIDs(ctx, b, u, nil)
+	negB, err := hubs[b].Signals().NegativeIDs(ctx, b, u, nil)
 	if err != nil || len(negB) != 0 {
 		t.Fatalf("B must not see A's dislike: %+v %v", negB, err)
 	}

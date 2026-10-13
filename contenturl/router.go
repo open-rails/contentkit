@@ -363,7 +363,7 @@ func (r *Router) aliases(w http.ResponseWriter, req *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, req.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody{Error: "body: " + err.Error(), Code: "invalid_request"})
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: httpapi.BodyError(err), Code: httpapi.CodeInvalidRequest})
 		return
 	}
 	if len(in.Aliases) > MaxAliases {
@@ -373,7 +373,7 @@ func (r *Router) aliases(w http.ResponseWriter, req *http.Request) {
 	out, err := r.resolveAliases(req, in.Aliases, lang)
 	switch {
 	case errors.Is(err, ErrInvalid):
-		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error(), Code: "invalid_request"})
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: httpapi.Rule(err, httpapi.CodeInvalidRequest), Code: httpapi.CodeInvalidRequest})
 	case err != nil:
 		r.log.ErrorContext(req.Context(), "contenturl: resolve aliases", "err", err)
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "internal error", Code: "internal_error"})

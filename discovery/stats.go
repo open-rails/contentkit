@@ -124,8 +124,8 @@ func (s *Service) Activity(ctx context.Context, kind string, days int) (Activity
 	case days > 90:
 		return out, fmt.Errorf("%w: days is at most 90", ErrInvalid)
 	}
-	if s.recs == nil {
-		return out, ErrNoSignals
+	if err := s.signals(); err != nil {
+		return out, err
 	}
 	got, err := s.o.Hub.Activity(ctx, kind, signal.LastDays(days, s.o.Now()))
 	if err != nil {
@@ -183,8 +183,8 @@ func (s *Service) Top(ctx context.Context, o TopOptions) (TopContents, error) {
 	var ranked []RankedContent
 	switch cmpOr(o.Metric, MetricViews) {
 	case MetricViews:
-		if s.recs == nil {
-			return out, ErrNoSignals
+		if err := s.signals(); err != nil {
+			return out, err
 		}
 		hits, err := s.o.Hub.Popular(ctx, o.Kind, signal.PopularOptions{Window: window, Limit: topCandidates, RankExpr: "toFloat64(views)"})
 		if err != nil {
@@ -284,7 +284,7 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 		&out.Comments, &out.CommentLikes, &out.CommentDislikes); err != nil {
 		return out, err
 	}
-	if s.recs == nil {
+	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
 	subject := signal.Subject{UserID: actor.ID}

@@ -37,6 +37,9 @@ var (
 	// ErrNoSignals is a read or write that needs the signal plane, which the
 	// engine runs without.
 	ErrNoSignals = errors.New("discovery: no signal plane")
+	// ErrSignalsDown is ErrNoSignals while the configured signal plane is
+	// down: retry later.
+	ErrSignalsDown = fmt.Errorf("%w: ClickHouse is down", ErrNoSignals)
 )
 
 // Options configure a Service.
@@ -59,8 +62,8 @@ type Options struct {
 	// Sales fills cards' paywall offers; nil leaves them out.
 	Sales Sales
 	// Hub is the keyword search client and the signal plane. Without a
-	// signal plane, history, signals, exposures, view_status, similar,
-	// recommendations and popularity are unavailable.
+	// signal plane, or while it is down, history, signals, exposures,
+	// view_status, similar, recommendations and popularity are unavailable.
 	Hub *hub.Hub
 	// Candidates sources similar and recommendations; nil is co-engagement
 	// over the signal plane.
@@ -73,9 +76,8 @@ type Options struct {
 
 // Service serves discovery for one tenant.
 type Service struct {
-	o    Options
-	t    tables
-	recs *Recommender // nil without a signal plane
+	o Options
+	t tables
 }
 
 type tables struct {
@@ -111,16 +113,39 @@ func New(o Options) (*Service, error) {
 		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments: q("content_comments")}}
-	if store := o.Hub.Signals(); store != nil {
-		c := o.Candidates
-		if c == nil {
-			c = Engagement{Store: store, Tenant: o.Tenant}
-		}
-		s.recs = &Recommender{Candidates: c, Store: store, Tenant: o.Tenant}
-	} else if o.Candidates != nil {
+	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
 		return nil, errors.New("discovery: Candidates needs the signal plane")
 	}
 	return s, nil
+}
+
+// signals is nil while the signal plane is up, else ErrNoSignals or, for a
+// configured one that is down, ErrSignalsDown.
+func (s *Service) signals() error {
+	switch {
+	case s.o.Hub.SignalPlane():
+		return nil
+	case s.o.Hub.SignalsConfigured():
+		return ErrSignalsDown
+	}
+	return ErrNoSignals
+}
+
+// recommender ranks similar and "for you" lists over the signal plane as it
+// is now.
+func (s *Service) recommender() (*Recommender, error) {
+	store := s.o.Hub.Signals()
+	if store == nil {
+		if err := s.signals(); err != nil {
+			return nil, err
+		}
+		return nil, ErrSignalsDown
+	}
+	c := s.o.Candidates
+	if c == nil {
+		c = Engagement{Store: store, Tenant: s.o.Tenant}
+	}
+	return &Recommender{Candidates: c, Store: store, Tenant: s.o.Tenant}, nil
 }
 
 // languages is the configured languages, the fallback order of text.

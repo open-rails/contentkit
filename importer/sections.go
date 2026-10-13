@@ -62,7 +62,7 @@ func (run *batchRun) sections() []section {
 		out[3].write = typed(s.o.Offers.PutTx)
 	}
 	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
-		out[len(out)-2].skip = "no signal plane"
+		out[len(out)-2].skip = "no signal plane, or it is down"
 	}
 	return out
 }

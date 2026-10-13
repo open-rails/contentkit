@@ -3,6 +3,7 @@ package versions
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -142,7 +143,7 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return errors.Join(ErrInvalid, err)
+		return fmt.Errorf("%w: %s", ErrInvalid, httpapi.BodyError(err))
 	}
 	return nil
 }
@@ -162,7 +163,7 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrForbidden):
 		writeJSON(w, http.StatusForbidden, errorReply{Error: "not allowed", Code: httpapi.CodeForbidden})
 	case errors.Is(err, ErrInvalid):
-		writeJSON(w, http.StatusBadRequest, errorReply{Error: err.Error(), Code: httpapi.CodeInvalidRequest})
+		writeJSON(w, http.StatusBadRequest, errorReply{Error: httpapi.Rule(err, httpapi.CodeInvalidRequest), Code: httpapi.CodeInvalidRequest})
 	default:
 		h.log.ErrorContext(r.Context(), "versions: request failed", "path", r.URL.Path, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorReply{Error: "internal error", Code: httpapi.CodeInternal})

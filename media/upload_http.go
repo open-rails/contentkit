@@ -230,7 +230,7 @@ func (h uploadHandler) read(w http.ResponseWriter, r *http.Request, v any) (acce
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "invalid JSON body: " + err.Error(), Code: CodeInvalid})
+		writeJSON(w, http.StatusBadRequest, ErrorReply{Error: httpapi.BodyError(err), Code: CodeInvalid})
 		return actor, false
 	}
 	return actor, true

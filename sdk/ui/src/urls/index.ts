@@ -49,7 +49,7 @@ export function slugFor(link: Pick<ContentLink, "slug" | "slugs">, language = ""
 export type QueryInit = string | URLSearchParams | Record<string, string | number | boolean | null | undefined>;
 
 export interface PathOptions {
-  /** Language prefix segment; omitted when empty. */
+  /** The page's language: contentPath prefixes any; ContentURLs leave the site's default unprefixed. */
   language?: string;
   /** Query string for sub-pages, e.g. { p: 12 }. Null and undefined values are dropped. */
   query?: QueryInit;
@@ -70,6 +70,15 @@ function queryString(query: QueryInit | undefined): string {
   return s ? `?${s}` : "";
 }
 
+/**
+ * The path prefix of pages in language on a site of languages, its default
+ * first: none for the default language, which pages serve unprefixed, and
+ * the language for the others. Mirrors Go's contenturl.Prefix.
+ */
+export function languagePrefix(languages: readonly string[], language = ""): string {
+  return language === languages[0] ? "" : language;
+}
+
 /** Joins [/{language}]/{route}/{code}[/{slug}][?query]. */
 export function contentPath(route: string, code: string, slug = "", options: PathOptions = {}): string {
   const prefix = options.language ? `/${options.language}` : "";
@@ -79,7 +88,11 @@ export function contentPath(route: string, code: string, slug = "", options: Pat
 export interface ContentURLConfig {
   /** Content kind -> the host's route segment ({ video: "watch", gallery: "g" }). */
   routes: Record<string, string>;
-  /** Language segments a path may start with; kept in canonical paths. */
+  /**
+   * The site's languages, its default first (the content model's): the
+   * segments a path may start with. path(), url() and hreflang() leave the
+   * default unprefixed; canonical() keeps a location's own prefix.
+   */
   languages?: string[];
   /** The site's origin ("https://example.com") for absolute URLs (canonical links, og:url). */
   origin?: string;
@@ -108,7 +121,7 @@ export interface CanonicalResult {
 export interface HreflangOptions {
   /** Languages the content exists in; default every configured language. */
   languages?: readonly string[];
-  /** The language x-default points at. */
+  /** The language x-default points at; default the site's default language. */
   defaultLanguage?: string;
   /** The origin for absolute URLs; default the configured one (throws without either). */
   origin?: string;
@@ -119,7 +132,7 @@ export interface ContentURLs {
   readonly languages: readonly string[];
   /** The configured origin, without a trailing slash. */
   readonly origin?: string;
-  /** The canonical path of link; throws when its kind has no route. */
+  /** The canonical path of link in a language (none for the default); throws when its kind has no route. */
   path(link: ContentLink, options?: PathOptions): string;
   /** path() on the configured origin; throws without one. */
   url(link: ContentLink, options?: PathOptions): string;
@@ -198,7 +211,7 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
   const path = (link: ContentLink, options: PathOptions = {}): string => {
     const route = routes[link.content_kind];
     if (route === undefined) throw new Error(`contentkit-ui/urls: no route for kind ${JSON.stringify(link.content_kind)}`);
-    return contentPath(route, link.code, slugFor(link, options.language), options);
+    return contentPath(route, link.code, slugFor(link, options.language), { ...options, language: languagePrefix(languages, options.language) });
   };
 
   return {
@@ -227,7 +240,7 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       const out: Record<string, string> = {};
       const langs = (options.languages ?? languages).filter((l) => languages.includes(l));
       for (const language of langs) out[language] = base + path(link, { language });
-      const def = options.defaultLanguage;
+      const def = options.defaultLanguage ?? languages[0];
       if (def && out[def]) out["x-default"] = out[def];
       return out;
     },

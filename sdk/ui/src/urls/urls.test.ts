@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import vectors from "../../../../contenturl/testdata/vectors.json" with { type: "json" };
-import { type ContentLink, canonicalURL, contentPath, createContentURLs, isCode, parseCode, slugFor } from "./index.js";
+import { type ContentLink, canonicalURL, contentPath, createContentURLs, isCode, languagePrefix, parseCode, slugFor } from "./index.js";
 
 describe("codes (shared vectors)", () => {
   for (const c of vectors.codes) {
@@ -47,6 +47,15 @@ describe("building", () => {
     expect(slugFor(link, "fr")).toBe("a-title");
   });
 
+  it("leaves the site's default language unprefixed, as the server does", () => {
+    expect(urls.path(link, { language: "en" })).toBe("/g/G4VRQ3ZQ5/a-title");
+    expect(urls.path({ ...link, slugs: { en: "en-title" } }, { language: "en" })).toBe("/g/G4VRQ3ZQ5/en-title");
+    expect(urls.path(link, { language: "fr" })).toBe("/fr/g/G4VRQ3ZQ5/a-title");
+    expect([languagePrefix(["en", "es"], "en"), languagePrefix(["en", "es"], "es"), languagePrefix([], "es"), languagePrefix(["en"])]).toEqual(["", "es", "es", ""]);
+    // A location's own /{default}/ prefix stays canonical: hosts routing /:lang/... don't loop.
+    expect(urls.canonical("/en/g/G4VRQ3ZQ5/a-title", link)).toEqual({ path: "/en/g/G4VRQ3ZQ5/a-title", location: "/en/g/G4VRQ3ZQ5/a-title", redirect: false });
+  });
+
   it("ignores a hash and keeps the query when canonicalizing", () => {
     expect(urls.canonical("/g/g4vrq3zq5?p=3#top", link)).toEqual({
       path: "/g/G4VRQ3ZQ5/a-title",
@@ -64,7 +73,7 @@ describe("building", () => {
   });
 
   it("builds absolute URLs on the configured origin", () => {
-    const site = createContentURLs({ routes: { gallery: "g" }, languages: ["es"], origin: "https://example.com/" });
+    const site = createContentURLs({ routes: { gallery: "g" }, languages: ["en", "es"], origin: "https://example.com/" });
     expect(site.url(link, { language: "es" })).toBe("https://example.com/es/g/G4VRQ3ZQ5/un-titulo");
     expect(() => urls.url(link)).toThrow(/origin/);
   });
@@ -75,12 +84,13 @@ describe("hreflang and canonical URLs", () => {
   const urls = createContentURLs({ routes: { video: "watch" }, languages: ["en", "es", "ja"], origin: "https://example.com/" });
 
   it("lists each language's URL with its own slug, and x-default", () => {
-    expect(urls.hreflang(link, { defaultLanguage: "en" })).toEqual({
-      en: "https://example.com/en/watch/G4VRQ3ZQ5/night-run",
+    expect(urls.hreflang(link)).toEqual({
+      en: "https://example.com/watch/G4VRQ3ZQ5/night-run",
       es: "https://example.com/es/watch/G4VRQ3ZQ5/carrera-nocturna",
       ja: "https://example.com/ja/watch/G4VRQ3ZQ5/night-run",
-      "x-default": "https://example.com/en/watch/G4VRQ3ZQ5/night-run",
+      "x-default": "https://example.com/watch/G4VRQ3ZQ5/night-run",
     });
+    expect(urls.hreflang(link, { defaultLanguage: "es" })["x-default"]).toBe("https://example.com/es/watch/G4VRQ3ZQ5/carrera-nocturna");
     expect(urls.hreflang(link, { languages: ["es", "fr"], origin: "https://other.test" })).toEqual({ es: "https://other.test/es/watch/G4VRQ3ZQ5/carrera-nocturna" });
     expect(() => createContentURLs({ routes: { video: "watch" } }).hreflang(link)).toThrow(/origin/);
     expect(urls.languages).toEqual(["en", "es", "ja"]);

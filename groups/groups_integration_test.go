@@ -435,8 +435,23 @@ func TestRecountOwnedContent(t *testing.T) {
 	f.content("video", 3, live("en"))
 	f.exec(`UPDATE {s}.content_facets SET owner_group_id = $1 WHERE content_id = ANY($2)`, string(ch.ID), []string{cid(1), cid(2)})
 	f.add(Membership{GroupID: ch.ID, ContentID: cid(2)}, Membership{GroupID: ch.ID, ContentID: cid(3)})
+	solo := f.create(GroupInput{Kind: "channel", Slug: "solo", OwnerUserID: "owner"})[0]
+	f.content("video", 4, live("en"))
+	f.exec(`UPDATE {s}.content_facets SET owner_group_id = $1 WHERE content_id = $2`, string(solo.ID), cid(4))
+	f.exec(`UPDATE {s}.content_facets SET favorites = 5 WHERE content_id = $1`, cid(1))
 	if err := f.s.Recount(f.ctx); err != nil {
 		t.Fatal(err)
+	}
+	// Automatic covers pick from owned content too: a channel with no members has one.
+	covers, err := f.s.Groups(f.ctx, []GroupID{ch.ID, solo.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := covers[0].Cover; c == nil || c.ContentID != cid(1) || !c.Auto {
+		t.Fatalf("channel cover %+v", c)
+	}
+	if c := covers[1].Cover; c == nil || c.ContentID != cid(4) || !c.Auto {
+		t.Fatalf("owned-only channel cover %+v", c)
 	}
 	d, err := f.s.Detail(f.ctx, ch.ID, "")
 	if err != nil {
@@ -449,7 +464,7 @@ func TestRecountOwnedContent(t *testing.T) {
 	if got != "video/=3 video/en=3 video/es=2 " {
 		t.Fatalf("counts %s", got)
 	}
-	page, err := f.s.List(f.ctx, ListOptions{Kind: "channel"})
+	page, err := f.s.List(f.ctx, ListOptions{Kind: "channel", Slug: "studio"})
 	if err != nil || len(page.Groups) != 1 || page.Groups[0].Count != 3 {
 		t.Fatalf("card %+v %v", page.Groups, err)
 	}

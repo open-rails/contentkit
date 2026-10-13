@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/hub"
 )
 
 // Handler serves the discovery routes: lists, search, typeahead, similar and
@@ -316,10 +317,10 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("%w: body: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %s", ErrInvalid, httpapi.BodyError(err))
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return fmt.Errorf("%w: body: one JSON value", ErrInvalid)
+		return fmt.Errorf("%w: the body holds more than one JSON value", ErrInvalid)
 	}
 	return nil
 }
@@ -343,19 +344,27 @@ func (h handler) done(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
-	code, msg := httpapi.CodeInternal, "internal error"
+	code, msg, failed := httpapi.CodeInternal, "", true
 	switch {
 	case errors.Is(err, ErrInvalid):
-		code, msg = httpapi.CodeInvalidRequest, err.Error()
+		code, msg, failed = httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest), false
 	case errors.Is(err, ErrNotFound):
-		code, msg = httpapi.CodeNotFound, "not found"
-	case errors.Is(err, ErrNoSignals):
-		code, msg = "not_configured", "this read needs the signal plane, which this site runs without"
+		code, failed = httpapi.CodeNotFound, false
+	case errors.Is(err, ErrSignalsDown), errors.Is(err, hub.ErrSignalPlaneDown):
+		// The engine warns once while the plane is down, not per refusal.
+		code, msg, failed = httpapi.CodeUnavailable, "Signals are unavailable right now; try again later.", false
+	case errors.Is(err, ErrNoSignals), errors.Is(err, hub.ErrSignalPlaneDisabled):
+		code, msg, failed = "not_configured", "This site records no signals.", false
 	case errors.Is(err, access.ErrUnavailable), errors.Is(err, auth.ErrUnavailable):
-		code, msg = httpapi.CodeUnavailable, "billing or auth unavailable; retry"
+		code = httpapi.CodeUnavailable
 	}
-	if code == httpapi.CodeInternal || code == httpapi.CodeUnavailable {
+	if msg == "" {
+		msg = httpapi.Message(code)
+	}
+	if failed {
 		h.s.o.Logger.ErrorContext(r.Context(), "discovery: request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	} else {
+		h.s.o.Logger.DebugContext(r.Context(), "discovery: request refused", "method", r.Method, "path", r.URL.Path, "code", code, "err", err)
 	}
 	c, _ := httpapi.LookupErrorCode(code)
 	w.Header().Set("Content-Type", "application/json")

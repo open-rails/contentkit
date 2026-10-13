@@ -43,19 +43,18 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	err := dec.Decode(&b)
-	if err == nil {
-		if _, extra := dec.Token(); extra != io.EOF {
-			err = errors.New("multiple JSON values")
-		}
-	}
 	if err != nil {
-		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, "body: "+err.Error())
+		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.BodyError(err))
+		return
+	}
+	if _, extra := dec.Token(); extra != io.EOF {
+		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, "the body holds more than one JSON value")
 		return
 	}
 	res, err := s.Import(r.Context(), b)
 	switch {
 	case errors.Is(err, ErrInvalid):
-		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, err.Error())
+		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest))
 	case err != nil:
 		s.o.Logger.ErrorContext(r.Context(), "contentkit: import failed", "err", err)
 		reply(w, http.StatusInternalServerError, httpapi.CodeInternal, "internal error")

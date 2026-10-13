@@ -91,7 +91,7 @@ func putOffer(target func(*http.Request) Target) func(handler, http.ResponseWrit
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&terms); err != nil {
-			h.fail(w, r, fmt.Errorf("%w: %w", ErrInvalid, err))
+			h.fail(w, r, fmt.Errorf("%w: %s", ErrInvalid, httpapi.BodyError(err)))
 			return
 		}
 		if err := h.s.Authorize(r.Context(), h.auth, gate.Actor(r.Context()), []Target{t}); err != nil {
@@ -195,25 +195,31 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
-	code, msg := httpapi.CodeInternal, "internal error"
+	code := httpapi.CodeInternal
 	switch {
 	case errors.Is(err, ErrInvalid):
-		code, msg = httpapi.CodeInvalidRequest, err.Error()
+		code = httpapi.CodeInvalidRequest
 	case errors.Is(err, ErrNotFound):
-		code, msg = httpapi.CodeNotFound, "not found"
+		code = httpapi.CodeNotFound
 	case errors.Is(err, ErrForbidden):
-		code, msg = httpapi.CodeForbidden, "forbidden"
+		code = httpapi.CodeForbidden
 	case errors.Is(err, ErrNotJoinable):
-		code, msg = codeNotJoinable, err.Error()
+		code = codeNotJoinable
 	case errors.Is(err, ErrConflict):
-		code, msg = httpapi.CodeConflict, err.Error()
+		code = httpapi.CodeConflict
 	case errors.Is(err, access.ErrUnavailable), errors.Is(err, auth.ErrUnavailable):
-		code, msg = httpapi.CodeUnavailable, "billing or auth unavailable; retry"
+		code = httpapi.CodeUnavailable
 	case errors.Is(err, auth.ErrUnauthenticated):
-		code, msg = httpapi.CodeUnauthorized, "authentication required"
+		code = httpapi.CodeUnauthorized
+	}
+	msg := httpapi.Message(code)
+	if code == httpapi.CodeInvalidRequest {
+		msg = httpapi.Rule(err, code)
 	}
 	if code == httpapi.CodeInternal || code == httpapi.CodeUnavailable {
 		h.s.log.ErrorContext(r.Context(), "offers: request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	} else {
+		h.s.log.DebugContext(r.Context(), "offers: request refused", "method", r.Method, "path", r.URL.Path, "code", code, "err", err)
 	}
 	c, _ := httpapi.LookupErrorCode(code)
 	w.Header().Set("Content-Type", "application/json")

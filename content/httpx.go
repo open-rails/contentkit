@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/authkit/auth"
 
+	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -225,7 +226,7 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return badRequest("invalid JSON body: %v", err)
+		return badRequest("%s", httpapi.BodyError(err))
 	}
 	return nil
 }
