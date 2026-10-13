@@ -10,10 +10,10 @@ name: media-video
     - 'go.mod'
     - 'go.sum'
     - '.github/workflows/media-video.yaml'
-  # Integration branches: lane PRs merge without waiting; each push runs the full
-  # suite once and a newer push cancels it.
+  # master and integration branches: PRs merge without waiting, so each push runs
+  # the suite once (master's health) and a newer push to the same ref cancels it.
   push:
-    branches: ['next/**']
+    branches: [master, 'next/**']
     paths:
     - 'media/**'
     - '!media/image/**'
@@ -25,7 +25,7 @@ name: media-video
 permissions:
   contents: read
 concurrency:
-  group: media-video-${{ github.event.pull_request.number || github.ref }}
+  group: media-video-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   media-video:
