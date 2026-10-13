@@ -24,6 +24,7 @@ export interface AdminComment {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -109,6 +110,18 @@ export interface BanNotice {
   until?: string;
 }
 
+export interface BannedWord {
+  word: string;
+  action: "mask" | "reject";
+  created_by: string;
+  created_at: string;
+}
+
+export interface BannedWordInput {
+  word: string;
+  action?: "mask" | "reject";
+}
+
 export interface Batch {
   source: string;
   preference_floor?: number;
@@ -190,6 +203,7 @@ export interface Comment {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -222,6 +236,7 @@ export interface CommentInput {
   body: string;
   reply_to_id?: string;
   anon_name?: string;
+  language?: string;
 }
 
 export interface CommentRecord {
@@ -240,6 +255,7 @@ export interface CommentRecord {
 
 export interface CommentStanding {
   can_comment: boolean;
+  comments: string;
   ban?: BanNotice;
   anonymous: boolean;
   max_length: number;
@@ -284,6 +300,7 @@ export interface Content {
   cover?: CatalogCover;
   state: ContentState;
   listing: Listing;
+  comments: string;
   publish_at?: string;
   published_at?: string;
   live: boolean;
@@ -340,6 +357,7 @@ export interface ContentInput {
   kind: string;
   text?: Record<string, CatalogText>;
   listing?: Listing;
+  comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
@@ -369,6 +387,7 @@ export interface ContentPage {
 
 export interface ContentPatch {
   listing?: Listing;
+  comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
@@ -420,6 +439,7 @@ export interface Count {
 
 export interface Counts {
   likes: number;
+  dislikes: number;
   favorites: number;
   views: number;
 }
@@ -544,14 +564,6 @@ export interface Failure {
   details?: ErrorDetails;
 }
 
-export interface FavoriteItem {
-  tenant_id: string;
-  content_kind: string;
-  content_id: string;
-  content_version_id?: string;
-  created_at: string;
-}
-
 export interface FavoriteRecord {
   target: TargetRef;
   user_id: string;
@@ -568,6 +580,7 @@ export interface FeedItem {
   reply_to_id?: string;
   user_id?: string;
   anon_name?: string;
+  language?: string;
   body: string;
   deleted: boolean;
   likes: number;
@@ -831,6 +844,21 @@ export interface HeldPage {
   next?: string;
 }
 
+export interface IPBan {
+  network: string;
+  reason?: string;
+  until?: string;
+  banned_by: string;
+  banned_at: string;
+  expired: boolean;
+}
+
+export interface IPBanInput {
+  network: string;
+  reason?: string;
+  until?: string;
+}
+
 export interface ImageInput {
   image?: string;
 }
@@ -849,6 +877,18 @@ export interface Input {
   status?: string;
   action_requested?: boolean;
   severity?: string;
+}
+
+export interface Interaction {
+  content?: Card;
+  group?: GroupCard;
+  value: number;
+  at: string;
+}
+
+export interface InteractionPage {
+  items: Interaction[];
+  next_cursor?: string;
 }
 
 export interface Item {
@@ -1333,6 +1373,16 @@ export interface ReaderPlan {
   previews: PlanPreview[];
   playback?: PlanPlayback;
   reader?: ReaderMeta;
+}
+
+export interface RecentSearch {
+  query: string;
+  results: number;
+  searched_at: string;
+}
+
+export interface RecentSearches {
+  searches: RecentSearch[];
 }
 
 export interface Recipient {
