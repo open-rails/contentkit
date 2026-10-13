@@ -606,11 +606,15 @@ by kind, likes, dislikes, favorites and all-time viewers, the access decision
 reader's favorite and progress, `published_at` and attributes. Content
 detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
 `viewer` standing on the item and each version, to resume from. Without a
-signal plane (no ClickHouse, or one `New` can't reach, which fails the
-`contentkit_clickhouse` probe) the engine runs on Postgres: `GET /v1/kinds`
-says `"signals": false`, contentkit-ui sends no signals or exposures, popular
-sorts use what `content_facets` holds, and signal reads and writes answer 501
-`not_configured`.
+signal plane (no ClickHouse, or one that is down, which fails the
+`contentkit_clickhouse` probe with the cause) the engine runs on Postgres:
+`GET /v1/kinds` says `"signals": false`, contentkit-ui sends no signals or
+exposures, popular sorts use what `content_facets` holds, and signal reads
+and writes answer 501 `not_configured`, or 503 `unavailable` while a
+configured one is down. The engine retries a down ClickHouse in the
+background (migrations, connection, schema) and checks a live one every ten
+seconds; signals come back on without a restart, and contentkit-ui reads the
+model again a minute after it last found them off.
 
 ## Search job
 
