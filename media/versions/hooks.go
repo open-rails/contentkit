@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
@@ -39,7 +40,14 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		case s.isGroupKind(k.Name):
 			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
-			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: actor.Person() && actor.ID == ref.ContentID}
+			editor := actor.Person() && actor.ID == ref.ContentID
+			if !editor {
+				var err error
+				if editor, err = s.avatarsWriter(ctx, actor); err != nil {
+					return nil, err
+				}
+			}
+			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: editor}
 		default:
 			others = append(others, ref)
 		}
@@ -286,7 +294,11 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case s.isGroupKind(k.Name):
 		return s.canEditGroup(ctx, actor, t)
 	case k.Name == s.reg.Config().Avatars.Kind:
-		return media.UploadGrant{Allowed: actor.Person() && actor.ID == t.Ref.ContentID, Owner: actor.ID}, nil
+		if actor.Person() && actor.ID == t.Ref.ContentID {
+			return media.UploadGrant{Allowed: true, Owner: actor.ID}, nil
+		}
+		writer, err := s.avatarsWriter(ctx, actor)
+		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer}, err
 	case s.o.Others != nil:
 		return s.o.Others.CanUpload(ctx, actor, t)
 	}
@@ -392,4 +404,10 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 
 func (s *Service) failed(ctx context.Context, ref contentref.ContentRef, path string, err error) {
 	s.o.Logger.WarnContext(ctx, "versions: media upload cannot be processed", "ref", ref.String(), "path", path, "error", err)
+}
+
+// avatarsWriter reports a holder of root:avatars:write: staff, or a site
+// forwarding its people's avatars.
+func (s *Service) avatarsWriter(ctx context.Context, actor access.Actor) (bool, error) {
+	return gate.Can(ctx, s.o.Auth, actor, string(access.AvatarsWrite))
 }

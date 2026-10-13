@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute.",
+        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
         "responses": {
           "200": {
             "description": "OK",
@@ -11843,6 +11843,9 @@
           },
           "signals": {
             "type": "boolean"
+          },
+          "avatars": {
+            "$ref": "#/components/schemas/PresetRule"
           }
         },
         "required": [
@@ -14884,6 +14887,9 @@
             "type": "integer"
           },
           "default": {
+            "type": "boolean"
+          },
+          "stable": {
             "type": "boolean"
           }
         },

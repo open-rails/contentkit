@@ -35,11 +35,15 @@ const (
 	// ImportWrite: bulk-import content, groups, interactions and signals (a
 	// legacy importer).
 	ImportWrite Permission = "root:import:write"
+	// AvatarsWrite: upload, edit and remove anyone's avatar on the avatar
+	// primary, exempt from limits: staff, and another site forwarding its
+	// people's (AvatarsConfig.Key).
+	AvatarsWrite Permission = "root:avatars:write"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish, ImportWrite}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }

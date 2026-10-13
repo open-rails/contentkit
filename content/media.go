@@ -13,7 +13,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Media connects poll images, and authors' avatars, to ContentKit media. The
+// Media connects poll images to ContentKit media. The
 // browser uploads an image to a Named upload path of the poll's item (the
 // host's media registry declares it and its public preset), and hands its
 // name ("i-{uuid}") to ContentKit, which stores it. Reads resolve names to the
@@ -29,11 +29,15 @@ type Media struct {
 }
 
 // MediaImages answers image queries from the current publications in one
-// read, and people's avatars (media.Config.Avatars) in another;
-// *media.Manifests implements it.
+// read; *media.Manifests implements it.
 type MediaImages interface {
 	Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error)
-	Avatars(ctx context.Context, ids ...string) ([]media.PublicImage, error)
+}
+
+// Avatars are people's avatars, built from their ids without a lookup;
+// *media.Registry implements it.
+type Avatars interface {
+	Avatars(ids ...string) []media.PublicImage
 }
 
 // MediaReader reads an item as the media read API does; *media.Reader

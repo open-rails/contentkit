@@ -10,14 +10,16 @@ import { ContentKitUiRoot } from "../scope.js";
 import type { PublicPreset } from "../client/public.js";
 import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import { presetFor } from "../client/media/rules.js";
+import { useKinds } from "../react/groups.js";
 import { usePresets } from "../react/public.js";
+import { useContentScope } from "../react/use-resource.js";
 import { Button } from "#ckui/ui/button";
 import { SlotEditError, SlotEditor, useSlotEditor } from "./slot-editor.js";
 import { SlotImage } from "./slot-image.js";
 
 export interface SlotUploadProps {
-  /** The item that owns the upload. */
-  item: RefBody;
+  /** The item that owns the upload; an AvatarUpload's default is the viewer's avatar (the content model's `avatars`), on whichever site holds it. */
+  item?: RefBody;
   /** The upload path; default "avatar" or "cover". */
   path?: string;
   /** The public preset showing it. */
@@ -62,11 +64,17 @@ export function CoverUpload(p: SlotUploadProps) {
 function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
   const path = p.path ?? variant;
   const { presets } = usePresets({ client: p.client });
-  const rule = presetFor(presets, p.item.kind, path, p.image?.preset);
+  const { kinds } = useKinds({ client: p.client });
+  const { viewer } = useContentScope(p.client);
+  // Another site's avatars: the site forwards their writes, and its presets lack the kind.
+  const avatars = variant === "avatar" ? kinds?.avatars : undefined;
+  const item = p.item ?? (avatars && viewer ? { kind: avatars.kind, id: viewer } : undefined);
+  const rule = item && (presetFor(presets, item.kind, path, p.image?.preset) ?? (avatars?.kind === item.kind ? avatars : undefined));
+  if (!item) return null;
   return (
     <ContentKitUiRoot className={cn("text-sm", p.className)} data-ckui={variant === "avatar" ? "avatar-upload" : "cover-upload"}>
       <SlotEditor
-        item={p.item}
+        item={item}
         path={path}
         image={p.image}
         client={p.client}

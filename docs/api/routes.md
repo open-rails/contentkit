@@ -12,7 +12,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute. |
+| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute. |
 
 ## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 

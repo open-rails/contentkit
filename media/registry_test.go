@@ -110,19 +110,20 @@ func TestRegistryRefuses(t *testing.T) {
 		"svg to a preset":    {Name: "k", Uploads: []media.Upload{{Path: "cover", Types: []string{"image/svg+xml"}, MaxBytes: 1}}, Public: []media.Public{{Name: "c", From: "cover", To: "c.webp"}}},
 		"bmp to a preset":    {Name: "k", Uploads: []media.Upload{{Path: "a/{name}", Types: []string{"image/png", "image/bmp"}, MaxBytes: 1}}, Private: []media.Private{{Name: "p", From: "a/{name}", To: "b/{name}.webp", Image: &media.Image{}}}},
 		"widths, lone width": {Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c-{w}.webp", Widths: []int{100}, Image: media.Image{Width: 100}}}},
+		"stable per upload":  {Name: "k", Uploads: []media.Upload{{Path: "a/{name}", Types: []string{"image/png"}, MaxBytes: 1, Named: true}}, Public: []media.Public{{Name: "c", From: "a/{name}", To: "{name}.webp", Stable: true}}},
 	} {
 		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{k}}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	withCover := media.Kind{Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c.webp"}}}
-	for _, a := range []media.Avatars{{Kind: "nope", Preset: "c"}, {Kind: "k", Preset: "nope"}, {Kind: "k"}} {
+	withCover := media.Kind{Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c.webp", Stable: true}, {Name: "d", From: "cover", To: "d.webp"}}}
+	for _, a := range []media.Avatars{{Kind: "nope", Preset: "c"}, {Kind: "k", Preset: "nope"}, {Kind: "k"}, {Kind: "k", Preset: "d"}} {
 		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{withCover}, Avatars: a}); err == nil {
 			t.Errorf("Avatars %+v: accepted", a)
 		}
 	}
 	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{withCover}, Avatars: media.Avatars{Kind: "k", Preset: "c"}}); err != nil {
-		t.Errorf("Avatars of a kind's public preset refused: %v", err)
+		t.Errorf("Avatars of a kind's Stable public preset refused: %v", err)
 	}
 	svg := media.Kind{Name: "k", Uploads: []media.Upload{{Path: "logo", Types: []string{"image/svg+xml"}, MaxBytes: 1}}}
 	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{svg}}); err != nil {

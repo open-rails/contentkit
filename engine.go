@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -81,6 +82,7 @@ type Engine struct {
 	discover *discovery.Service
 	importer *importer.Service
 	media    *engineMedia
+	avatars  *engineAvatars
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
 	probes   []Probe
@@ -151,6 +153,9 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		if e.media, err = e.newMedia(ctx, deps, now); err != nil {
 			return nil, err
 		}
+		if e.avatars, err = e.newAvatars(deps); err != nil {
+			return nil, err
+		}
 		if err := e.catalog.BindMedia(catalog.Media{Images: e.media.jobs.Manifests(), Reader: e.media.reader, Versions: e.media.versions}); err != nil {
 			return nil, err
 		}
@@ -219,6 +224,19 @@ func (e *Engine) validate(deps Deps) error {
 		}
 		if deps.Store == nil {
 			return errors.New("contentkit: Config.Media needs Deps.Store")
+		}
+	}
+	if a := cfg.Avatars; a != nil {
+		if cfg.Media == nil {
+			return errors.New("contentkit: Config.Avatars needs Config.Media")
+		}
+		if a.Primary != "" {
+			if u, err := url.Parse(a.Primary); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
+				return fmt.Errorf("contentkit: Config.Avatars.Primary %q is not an http(s) URL", a.Primary)
+			}
+			if strings.TrimSpace(a.Key) == "" {
+				return errors.New("contentkit: Config.Avatars.Primary needs Key")
+			}
 		}
 	}
 	if (deps.ClickHouse != nil || cfg.ClickHouse.Addr != "") && strings.TrimSpace(cfg.ClickHouse.Database) == "" {
@@ -420,6 +438,9 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	if e.media != nil {
 		o.Media = &content.Media{Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
 	}
+	if e.avatars != nil {
+		o.Avatars = e.avatars.urls
+	}
 	return o
 }
 
@@ -434,6 +455,10 @@ func (e *Engine) mount(deps Deps) error {
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit})
+		if a := e.avatars; a != nil && a.forward != nil {
+			e.modules[httpapi.Upload] = a.forward.wrap(httpapi.Upload, e.modules[httpapi.Upload])
+			e.modules[httpapi.Media] = a.forward.wrap(httpapi.Media, e.modules[httpapi.Media])
+		}
 		if e.modules[httpapi.Versions], err = m.versions.Handler(e.auth, e.log); err != nil {
 			return err
 		}
@@ -446,7 +471,11 @@ func (e *Engine) mount(deps Deps) error {
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
 	}
-	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane); err != nil {
+	var avatars *media.PresetRule
+	if e.avatars != nil {
+		avatars = e.avatars.rule
+	}
+	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
 		return err
 	}
 	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Groups: e.groups,
@@ -643,7 +672,9 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 }
 
 // EraseSubjects erases subjects from every plane: signals, interaction data,
-// recent searches, inboxes, people's avatars (media.Config.Avatars) and data
+// recent searches, inboxes, people's avatars (on the avatar primary only:
+// another site's people's avatars are the primary's, which its own
+// EraseSubjects erases; see AvatarsConfig) and data
 // retained by moderation and classifier providers; approved authored content
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish

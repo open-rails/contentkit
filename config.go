@@ -1,10 +1,12 @@
 package contentkit
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/avatar"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
@@ -38,6 +41,8 @@ type Config struct {
 	// Media is the media registry and how it is served; nil runs without
 	// media (no upload or media route groups, no post and poll images).
 	Media *MediaConfig `yaml:"media" json:"media"`
+	// Avatars are people's avatars; nil: people have none. Needs Media.
+	Avatars *AvatarsConfig `yaml:"avatars" json:"avatars"`
 	// ClickHouse is the signal plane: signals, exposures, history,
 	// preferences, popularity and recommendations from signals. Unset, or
 	// while a configured one is down, they are off: the content model says
@@ -115,9 +120,34 @@ type MediaConfig struct {
 	Downloads versions.Downloads `yaml:"downloads" json:"downloads"`
 }
 
+// AvatarsConfig is people's avatars, keyed by the auth subject and shown
+// beside comment authors and in moderation lists at URLs built from the
+// person's id (the kind's Stable preset), so nothing looks one up. Of the
+// sites sharing an account store, one holds them: the primary. Another
+// sets Primary and keeps none: its people's avatar uploads, edits and
+// editor reads go to the primary with Key, its media host serves the
+// primary's files (the gateway maps the kind's namespace to the primary's
+// bucket), and the primary's EraseSubjects erases them.
+type AvatarsConfig struct {
+	// Kind is the avatar kind; nil is avatar.User() (accounts/user).
+	Kind *media.Kind `yaml:"kind" json:"kind"`
+	// Preset is the kind's Stable public preset people are shown with;
+	// empty is "avatar".
+	Preset string `yaml:"preset" json:"preset"`
+	// Primary is the primary's ContentKit API base, as its routes are
+	// mounted ("https://doujins.dev/api/v1/contentkit"); empty: this engine
+	// is the primary.
+	Primary string `yaml:"primary" json:"primary"`
+	// Key is an API key of the primary's auth holding root:avatars:write
+	// (access.AvatarsWrite). A secret: the server reads it from the
+	// environment. Required with Primary.
+	Key string `yaml:"key" json:"key"`
+}
+
 // MediaKinds is the media registry Config.Media serves, in the tenant's
-// namespace: content kinds' media are their versions', and each group kind
-// gains cover media (media.ForContent). The media worker runs it:
+// namespace: content kinds' media are their versions', each group kind
+// gains cover media (media.ForContent), and the avatar primary holds the
+// avatar kind (Config.Avatars). The media worker runs it:
 // cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
 // and a host building its own worker gives it, with its hooks, to
 // media.NewRegistry.
@@ -133,7 +163,24 @@ func (c Config) MediaKinds() (media.Config, error) {
 	default:
 		return media.Config{}, fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, tenant)
 	}
+	if mc.Avatars != (media.Avatars{}) {
+		return media.Config{}, errors.New("contentkit: people's avatars are Config.Avatars, not Config.Media.Avatars")
+	}
+	if a := c.Avatars; a != nil && a.Primary == "" {
+		kind, preset := a.kind()
+		mc.Kinds = append(slices.Clone(mc.Kinds), kind)
+		mc.Avatars = media.Avatars{Kind: kind.Name, Preset: preset}
+	}
 	return media.ForContent(mc, c.Content)
+}
+
+// kind is the avatar kind and preset, with their defaults.
+func (a *AvatarsConfig) kind() (media.Kind, string) {
+	kind, preset := avatar.User(), cmp.Or(a.Preset, "avatar")
+	if a.Kind != nil {
+		kind = *a.Kind
+	}
+	return kind, preset
 }
 
 // DeliveryConfig is how viewers with access present their item token to the

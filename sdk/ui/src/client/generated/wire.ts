@@ -418,6 +418,7 @@ export interface ContentModel {
   group_kinds: Record<string, GroupKind>;
   content_filters: ContentFilter[];
   signals: boolean;
+  avatars?: PresetRule;
 }
 
 export interface ContentPage {
@@ -1342,6 +1343,7 @@ export interface PresetRule {
   min_width?: number;
   first?: number;
   default: boolean;
+  stable?: boolean;
 }
 
 export interface PresignBody {

@@ -116,6 +116,9 @@ for _, r := range routes {
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
+- `Config.Avatars` is people's avatars: held by one site's engine, the
+  primary, which other sites sharing its people forward their avatar
+  writes to (HOST_INTEGRATION "Avatars").
 
 `server/` runs the same engine standalone: a YAML config file, secrets from
 the environment, an AuthKit resource server, OpenRails' remote client and
@@ -279,8 +282,10 @@ the catalog's resolver, groups', avatars' and, when the registry declares
 the `poll` kind, poll images.
 
 The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
-`avatar.User()` includes its upload rules and embedded default silhouette.
-Publish defaults with `media/image.PublishDefaults` as part of deployment.
+`avatar.User()` includes its upload rules, embedded default silhouette and
+a `Stable` preset (its current image also at fixed names, so its URL is
+built from the person's id). Publish defaults with
+`media/image.PublishDefaults` as part of deployment.
 
 **Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
 Postgres advisory lock shared by every process on the bucket) and writes with

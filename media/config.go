@@ -194,6 +194,11 @@ type Public struct {
 	// Default is a path in Kind.Defaults, rendered to the kind's _default
 	// item at every width (PublishDefaults).
 	Default string `json:"default,omitempty"`
+	// Stable also keeps the current image at the logical names (To without
+	// a generation), overwritten in place: a URL built from the item's id,
+	// which the gateway answers with Default while none is current. One
+	// image per item: no {name}, no First.
+	Stable bool `json:"stable,omitempty"`
 }
 
 // Image is a WebP rendering. Zero Width and Height keep the full size;

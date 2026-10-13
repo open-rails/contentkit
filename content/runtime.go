@@ -46,6 +46,9 @@ type Options struct {
 	// ak.UserInfo()): authors' names and usernames, read once per response
 	// and never copied. Nil shows authors by id.
 	UserInfo userinfo.Lookup
+	// Avatars shows authors' avatars (media.Registry.Avatars); nil shows
+	// none.
+	Avatars Avatars
 	// Resolver decides interaction targets: content items and their versions
 	// (the catalog's) and groups. Required.
 	Resolver resolve.Resolver
@@ -108,6 +111,7 @@ type Runtime struct {
 	tenant         string
 	guard          *gate.Gate
 	userInfo       userinfo.Lookup
+	avatars        Avatars
 	resolver       resolve.Resolver
 	media          *Media
 	processor      ContentProcessor
@@ -175,6 +179,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		schema:         opts.Schema,
 		tenant:         opts.Tenant,
 		userInfo:       opts.UserInfo,
+		avatars:        opts.Avatars,
 		resolver:       opts.Resolver,
 		media:          media,
 		processor:      processor,
