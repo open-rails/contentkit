@@ -74,8 +74,8 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 320}}}}
 	}
-	// The blog's images are its content-level item's; its hidden version
-	// takes attachments.
+	// The blog's named content images make its body kind (blog.body) and
+	// hold its cover; its hidden version takes attachments.
 	blog := folder("blog")
 	blog.Uploads[0].Content = true
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: pngs, MaxBytes: 10 << 20})
@@ -260,15 +260,20 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &cover}, nil)
 
 	// A draft: its editors read references and see the images through
-	// signed editor views; no one else sees the item or its folder.
+	// signed files; no one else sees the item or its folder.
 	for _, actor := range []access.Actor{anon, reader1} {
 		must(http.StatusNotFound, actor, "GET", "/v1/contents/"+id, nil, nil)
 		must(http.StatusNotFound, actor, "GET", "/media/blog/"+id+"?editor", nil, nil)
 	}
 	var draft catalog.Content
 	must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &draft)
-	if draft.Body != body || draft.Images != nil || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != cover {
+	if draft.Text["en"].Body != body || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != cover {
 		t.Fatalf("draft %+v", draft)
+	}
+	for name, u := range draft.Images {
+		if (name != a && name != b) || !strings.Contains(u, "?t=") || strings.Contains(u, "/public/") {
+			t.Fatalf("draft image %s at %s, want its editors' signed file", name, u)
+		}
 	}
 	eventually(t, "the editor preview", time.Minute, func() bool {
 		must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
@@ -323,7 +328,12 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	eventually(t, "the unpublished item's references", time.Minute, func() bool {
 		var hidden catalog.Content
 		must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &hidden)
-		return hidden.Body == body && hidden.Images == nil && hidden.Cover != nil && hidden.Cover.URL == nil
+		for _, u := range hidden.Images {
+			if strings.Contains(u, "/public/") {
+				return false
+			}
+		}
+		return hidden.Text["en"].Body == body && hidden.Cover != nil && hidden.Cover.URL == nil
 	})
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	resolved("the images shown again", regenerated.Images)
