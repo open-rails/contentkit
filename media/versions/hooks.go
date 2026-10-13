@@ -16,7 +16,8 @@ import (
 type resolver struct{ s *Service }
 
 // Resolve decides media reads. A content-level item shows like its content,
-// its public files only. A version's item shows like the version; its
+// its public files only; a body item ({kind}.body) only to its content's
+// openers and editors, every file. A version's item shows like the version; its
 // private files open only for a kind that publishes nothing, since a
 // publishing kind's originals reach viewers through published items alone.
 // A published item shows while its publication is current and its pages

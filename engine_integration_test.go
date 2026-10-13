@@ -183,7 +183,7 @@ func TestEngineIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
 		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
 	}
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes {
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
