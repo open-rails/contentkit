@@ -72,7 +72,7 @@ var routes = []httpapi.Route[handler]{
 	editor(httpapi.POST, "/groups", "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []GroupInput{}, httpapi.Created([]Group{}),
 		httpapi.H(handler.create), creates),
 	editor(httpapi.PATCH, "/groups/{id}", "Updates a group's given fields; state restores or deletes it."+editors, GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), creates),
-	editor(httpapi.DELETE, "/groups/{id}", "Marks a group deleted and retires its AuthKit scope."+editors, nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
+	editor(httpapi.DELETE, "/groups/{id}", "Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention."+editors, nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
 	staff(httpapi.PUT, "/groups/{id}/names", "Replaces a group's names and aliases.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.SetNames) }, writes),
 	staff(httpapi.POST, "/groups/{id}/names", "Adds names and aliases to a group; a new canonical name demotes the old one to an alias.", []Name{}, httpapi.OK([]Name{}),

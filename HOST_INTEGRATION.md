@@ -53,6 +53,13 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.GroupsWrite` | `root:groups:write` | create, edit, merge and delete groups, and set memberships |
 
+A user-owned group kind with `auth_scope` (channels) has its own
+permissions, held in each group's AuthKit scope, whose persona declares
+`access.GroupPermissions(kind)`: `{kind}:content:write` (its content),
+`{kind}:settings:manage` (the group), `{kind}:offers:write`,
+`{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
+and ban on the group's content). The group's owner holds them all.
+
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
 

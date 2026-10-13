@@ -1501,7 +1501,7 @@ func (c *Client) PatchGroup(ctx context.Context, id string, body groups.GroupUpd
 	return out, err
 }
 
-// DeleteGroup is DELETE /v1/groups/{id} (editor). Marks a group deleted and retires its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+// DeleteGroup is DELETE /v1/groups/{id} (editor). Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) DeleteGroup(ctx context.Context, id string) (groups.Group, error) {
 	var out groups.Group
 	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
