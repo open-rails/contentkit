@@ -100,7 +100,7 @@ function Moderation({ sections, basePath, navigation, ...p }: Rest & { sections:
         {allowed.length > 1 && (
           <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {allowed.map((s) => (
-              <TabsTrigger key={s} value={s}>
+              <TabsTrigger key={s} value={s} className="h-7.5">
                 {label[s]}
               </TabsTrigger>
             ))}
