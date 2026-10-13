@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -81,7 +82,7 @@ func (s *Service) isGroupKind(kind string) bool {
 
 // resolveGroups shows an active group's item to everyone, its public files
 // only, and its private files to its editors.
-func (s *Service) resolveGroups(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]access.Resolution) error {
+func (s *Service) resolveGroups(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
 	byKind := map[string][]string{}
 	for _, ref := range refs {
 		byKind[ref.ContentKind] = append(byKind[ref.ContentKind], ref.ContentID)
@@ -95,7 +96,7 @@ func (s *Service) resolveGroups(ctx context.Context, refs []contentref.ContentRe
 	}
 	for _, ref := range refs {
 		if r, ok := rights[ref.ContentKind][ref.ContentID]; ok && r.active {
-			out[ref.Key()] = access.Resolution{Visible: true, Editor: r.editor}
+			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.editor}
 		}
 	}
 	return nil

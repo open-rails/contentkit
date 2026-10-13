@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { CatalogText, Content, ContentInput, ContentPatch } from "../client/generated/wire.js";
-import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
+import { BODY_SUFFIX, IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -110,23 +110,30 @@ export function useContent(id: string | null | undefined, kind: string, language
     };
   }, []);
   const published = useMemo(() => new Map(Object.entries(content?.images ?? {})), [content?.images]);
-  const pending = useMemo(() => {
-    const names = refNames(body);
-    if (cover && !cover.url && !names.includes(cover.image)) names.push(cover.image);
-    return names.filter((n) => !previews.has(n) && !published.has(n));
-  }, [body, cover, previews, published]);
+  // The cover is the item's folder's; body images are its body folder's ({kind}.body).
+  const coverPending = !!cover && !cover.url && !previews.has(cover.image) && !published.has(cover.image);
+  const bodyPending = useMemo(() => refNames(body).filter((n) => !previews.has(n) && !published.has(n)), [body, previews, published]);
+  const pending = useMemo(() => (coverPending ? [...bodyPending, cover!.image] : bodyPending), [coverPending, bodyPending, cover]);
   const folder = useMemo(() => ({ kind, id: cid ?? "none" }), [kind, cid]);
-  const read = useMediaRead(folder, { editor: true, read: pending.length ? undefined : null, client });
+  const bodyFolder = useMemo(() => ({ kind: kind + BODY_SUFFIX, id: cid ?? "none" }), [kind, cid]);
+  const coverRead = useMediaRead(folder, { editor: true, read: coverPending ? undefined : null, client });
+  const bodyRead = useMediaRead(bodyFolder, { editor: true, read: bodyPending.length ? undefined : null, client });
+  const files = useMemo(() => [...(coverRead.read?.files ?? []), ...(bodyRead.read?.files ?? [])], [coverRead.read, bodyRead.read]);
   const views = useMemo(() => {
     const out = new Map<string, string>();
-    for (const f of read.read?.files ?? []) if (f.upload && f.editor_url) out.set(uploadName(f.path), f.editor_url);
+    for (const f of files) if (f.upload && f.editor_url) out.set(uploadName(f.path), f.editor_url);
     return out;
-  }, [read.read]);
+  }, [files]);
   // Editor views render on the first editor read that misses them: read again, backing off.
-  const failed = (n: string) => !!read.read?.files.some((f) => f.failed && uploadName(f.path) === n);
-  const missing = !!read.read && pending.some((n) => !views.has(n) && !failed(n));
+  const failed = (n: string) => files.some((f) => f.failed && uploadName(f.path) === n);
+  const missing = (!!coverRead.read || !!bodyRead.read) && pending.some((n) => !views.has(n) && !failed(n));
   const tries = useRef(0);
-  const { reload } = read;
+  const reloadCover = coverRead.reload;
+  const reloadBody = bodyRead.reload;
+  const reload = useCallback(() => {
+    reloadCover();
+    reloadBody();
+  }, [reloadCover, reloadBody]);
   useEffect(() => {
     if (!missing) {
       tries.current = 0;
@@ -138,7 +145,7 @@ export function useContent(id: string | null | undefined, kind: string, language
       reload();
     }, 1000 * 2 ** tries.current);
     return () => clearTimeout(t);
-  }, [missing, read.read, reload]);
+  }, [missing, files, reload]);
 
   // Every URL shown for an image, of this and earlier reads, back to its name.
   const shown = useRef(new Map<string, string>());
@@ -212,7 +219,7 @@ export function useContent(id: string | null | undefined, kind: string, language
   const uploadImage = useCallback(
     (file: Blob) =>
       run(async () => {
-        const up = await client.media.uploadInline({ kind, id: need() }, file);
+        const up = await client.media.uploadInline({ kind: kind + BODY_SUFFIX, id: need() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
         shown.current.set(url, up.name);
         return url;

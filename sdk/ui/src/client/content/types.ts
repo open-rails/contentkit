@@ -1,4 +1,17 @@
-import type { CommentBan, CommentStanding, Comment, Content, Poll, ReactionCounts, RefBody, ResolveInput } from "../generated/wire.js";
+import type { CommentBan, CommentStanding, Comment, Content, Poll, ReactionCounts, ResolveInput } from "../generated/wire.js";
+
+/** What an interaction targets: a content item (optionally one of its versions) or a group. */
+export interface Target {
+  type: "contents" | "groups";
+  id: string;
+  /** One version of a content item. */
+  version?: string;
+}
+
+/** The same target. */
+export function sameTarget(a?: Target, b?: Target): boolean {
+  return !!a && !!b && a.type === b.type && a.id === b.id && (a.version ?? "") === (b.version ?? "");
+}
 
 /** A reaction: like 1, dislike -1, none 0. */
 export type Reaction = -1 | 0 | 1;
@@ -27,14 +40,14 @@ export type ContentChange =
   /** A version changed: refetch the item. */
   | { type: "content.changed"; id: string }
   | { type: "content.deleted"; id: string }
-  /** ref is the commented item. */
-  | { type: "comment.created"; ref: RefBody; comment: Comment }
+  /** target is the commented item. */
+  | { type: "comment.created"; target: Target; comment: Comment }
   | { type: "comment.updated"; comment: Comment }
   | { type: "comment.deleted"; id: string }
   | { type: "comment.restored"; id: string }
   | { type: "comment.reacted"; id: string; counts: ReactionCounts }
-  | { type: "reaction.changed"; ref: RefBody; counts: ReactionCounts }
-  | { type: "favorite.changed"; ref: RefBody; favorited: boolean; count: number }
+  | { type: "reaction.changed"; target: Target; counts: ReactionCounts }
+  | { type: "favorite.changed"; target: Target; favorited: boolean; count: number }
   /** Created, updated, voted or answered: the poll as the server now answers it. */
   | { type: "poll.created"; poll: Poll }
   | { type: "poll.updated"; poll: Poll }
@@ -48,5 +61,7 @@ export type ContentChange =
   /** The reader's content filters changed: every list reads again. */
   | { type: "contentFilters.changed" }
   | { type: "history.changed" }
+  /** A search ran or recent searches were cleared. */
+  | { type: "searches.changed" }
   /** The reader's keys changed (a join, a purchase the host reports): reads of access re-run. */
   | { type: "access.changed" };

@@ -387,10 +387,10 @@ export class MediaClient {
   }
 
   /**
-   * An image for a content item's rich-text body, uploaded to the item's
-   * folder (its kind and id); resolves with its reference to store in the
-   * body (`ref`) and a URL that shows it to the editor now (`url`, null while
-   * none exists).
+   * An image for a content item's rich-text body, uploaded to the item's body
+   * folder ({kind}.body and its id, BODY_SUFFIX), which only viewers who open
+   * the item see; resolves with its reference to store in the body (`ref`) and
+   * a URL that shows it to the editor now (`url`, null while none exists).
    */
   async uploadInline(item: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
     const up = await this.uploadNamed(item, file, o);

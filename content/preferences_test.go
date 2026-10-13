@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -32,13 +31,13 @@ func newPreferenceRuntime(t *testing.T) *Runtime {
 		res.setCanonical("gallery", id, localeWorks[id])
 	}
 	res.set("tag", cid(9), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery", "tag")})
 	return rt
 }
 
 func mustReact(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, value int16) {
 	t.Helper()
-	if _, err := rt.reactions.react(context.Background(), actor, kind, id, value); err != nil {
+	if _, err := rt.reactions.react(context.Background(), actor, rt.Ref(kind, id), value); err != nil {
 		t.Fatalf("react %s/%s=%d: %v", kind, id, value, err)
 	}
 }
@@ -47,9 +46,9 @@ func mustFavorite(t *testing.T, rt *Runtime, actor access.Actor, kind, id string
 	t.Helper()
 	var err error
 	if add {
-		err = favErr(rt.favorites.add(context.Background(), actor, kind, id))
+		err = favErr(rt.favorites.add(context.Background(), actor, rt.Ref(kind, id)))
 	} else {
-		err = favErr(rt.favorites.remove(context.Background(), actor, kind, id))
+		err = favErr(rt.favorites.remove(context.Background(), actor, rt.Ref(kind, id)))
 	}
 	if err != nil {
 		t.Fatalf("favorite %s/%s add=%v: %v", kind, id, add, err)
@@ -94,7 +93,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := rt.reactions.react(ctx, actor, "gallery", langs[i%2], values[i%4])
+			_, err := rt.reactions.react(ctx, actor, rt.Ref("gallery", langs[i%2]), values[i%4])
 			errs <- err
 		}(i)
 	}
@@ -125,7 +124,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 	}
 	defer second.Close()
 	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}},
-		Resolver: rt.resolver, ContentKinds: []string{"gallery"}})
+		Resolver: rt.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,11 +176,8 @@ func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
 	if !ok || v != 0 || r2 <= r1 {
 		t.Fatalf("unfavorite row = (%d, %d) ok=%v, want value 0 above revision %d", v, r2, ok, r1)
 	}
-	if favs, _ := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{work}); favs[work.Key()] {
-		t.Fatal("IsFavorited reports an unfavorited row")
-	}
-	if items, err := rt.ListFavorites(ctx, "u1", 0, 0); err != nil || len(items) != 0 {
-		t.Fatalf("ListFavorites = %+v err=%v, want empty", items, err)
+	if favorited(t, rt, "u1", work) || len(favoriteIDs(t, rt, "u1")) != 0 {
+		t.Fatal("an unfavorited row reads as a favorite")
 	}
 	if c := countsOf(t, rt, work); c.Favorites != 0 {
 		t.Fatalf("counts = %+v, want no favorite", c)
@@ -193,9 +189,8 @@ func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
 	mustFavorite(t, rt, actor, "gallery", localeID(7, "en"), true)
-	items, err := rt.ListFavorites(ctx, "u1", 0, 0)
-	if err != nil || len(items) != 2 || items[0].ContentID != cid(7) {
-		t.Fatalf("ListFavorites = %+v err=%v", items, err)
+	if ids := favoriteIDs(t, rt, "u1"); len(ids) != 2 || ids[0] != cid(7) {
+		t.Fatalf("favorites %v", ids)
 	}
 	if c := countsOf(t, rt, work); c.Favorites != 1 {
 		t.Fatalf("counts after re-favorite = %+v", c)
@@ -215,7 +210,7 @@ func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
-	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, "gallery", localeID(42, "en"), 1))
+	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, ref("gallery", localeID(42, "en")), 1))
 	var pgErr interface{ SQLState() string }
 	if err == nil || !errors.As(err, &pgErr) {
 		t.Fatalf("react with a broken rollup = %v, want the transaction to fail", err)
@@ -322,7 +317,7 @@ func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 	}
 	defer pool.Close()
 	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}},
-		Resolver: &fakeResolver{}, ContentKinds: []string{"gallery", "tag"}})
+		Resolver: &fakeResolver{}, Kinds: testKinds("gallery", "tag")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +347,7 @@ func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 func TestPreferences_ExportScope(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(42), true, true)
-	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	rt, pool := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
 	u1 := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", cid(42), 1)
@@ -370,7 +365,7 @@ func TestPreferences_ExportScope(t *testing.T) {
 	if got := exported(t, rt); len(got) != 1 || got[0].ContentID != cid(42) || got[0].Value != -1 || got[0].ActorID != "u1" {
 		t.Fatalf("exported = %+v, want the work dislike", got)
 	}
-	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver})
+	other, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver})
 	if err != nil {
 		t.Fatal(err)
 	}

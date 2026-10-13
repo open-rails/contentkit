@@ -7,7 +7,7 @@ import { client, dark, item, q, theme, viewer } from "./session";
 // A thread and a poll the spec seeded (e2e/support/seed.ts seedSocial):
 // ?item= (a video), ?poll=; ?view=staff the staff screens, ?lang= the UI,
 // ?mount=members the ContentKit that takes nothing from signed-out visitors.
-const video = item("item", "video")!;
+const video = { type: "contents" as const, id: item("item", "video")!.id };
 const poll = q.get("poll")!;
 const view = q.get("view") ?? "public";
 const lang = q.get("lang") ?? "en";

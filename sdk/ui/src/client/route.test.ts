@@ -10,8 +10,8 @@ it("names every route once by method and path", () => {
 
 it("fills params, encodes them, repeats list queries and drops empty ones, under each module's mount", () => {
   const h = new Http({ baseUrl: "/api/ck/", mounts: { groups: "https://groups.example/g" } });
-  expect(routeURL(h, "GET", "/{kind}/{id}/comments", { params: { kind: "video", id: "a b/c" }, query: { sort: "best", limit: 10, offset: 0 } })).toBe(
-    "/api/ck/v1/video/a%20b%2Fc/comments?sort=best&limit=10&offset=0",
+  expect(routeURL(h, "GET", "/contents/{id}/comments", { params: { id: "a b/c" }, query: { sort: "best", limit: 10, offset: 0 } })).toBe(
+    "/api/ck/v1/contents/a%20b%2Fc/comments?sort=best&limit=10&offset=0",
   );
   expect(routeURL(h, "GET", "/manage/contents", { query: { kind: "blog", language: "" } })).toBe("/api/ck/v1/manage/contents?kind=blog");
   expect(routeURL(h, "GET", "/groups", { query: { kind: "tag", letter: "#" } })).toBe("https://groups.example/g/groups?kind=tag&letter=%23");

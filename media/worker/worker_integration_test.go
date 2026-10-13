@@ -37,6 +37,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/tcpproxy"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -102,11 +103,11 @@ type host struct {
 }
 
 // Resolve hides the ids in h.hidden from anonymous viewers.
-func (h *host) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (h *host) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, ref := range refs {
 		_, hidden := h.hidden.Load(ref.ContentID)
-		out[ref.Key()] = access.Resolution{Visible: !hidden || !a.Anonymous, Accessible: true, Editor: a.ID == alice.ID}
+		out[ref.Key()] = resolve.Resolution{Visible: !hidden || !a.Anonymous, Accessible: true, Editor: a.ID == alice.ID}
 	}
 	return out, nil
 }

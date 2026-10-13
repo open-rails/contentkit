@@ -36,6 +36,9 @@ export const discovery: typeof en = {
     items_other: "{count} elementos",
     free_one: "{count} gratis",
     free_other: "{count} gratis",
+    recentSearches: "Búsquedas recientes",
+    clearRecent: "Borrar",
+    removeRecent: "Quitar «{q}»",
   },
   listing: {
     sort: "Ordenar",

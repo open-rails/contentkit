@@ -158,7 +158,7 @@ describe("discovery against the real ContentKit", () => {
     const { result } = renderHook(() => useContents({ kind: "comic", groups: [t.id] }), { wrapper: wrap(c, { viewer: acc.id("alice") }) });
     await waitFor(() => expect(result.current.items.map((x) => x.counts.favorites)).toEqual([0]), wait);
     await act(async () => {
-      await c.favorites.set({ kind: "comic", id: one!.id }, true);
+      await c.favorites.set({ type: "contents", id: one!.id }, true);
     });
     expect(result.current.items[0]!.counts.favorites).toBe(1);
     expect(result.current.items[0]!.viewer?.favorited).toBe(true);

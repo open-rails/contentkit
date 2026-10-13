@@ -80,6 +80,9 @@ export {
   useContents,
   useExposure,
   useHistory,
+  useMyFavorites,
+  useMyReactions,
+  useRecentSearches,
   useRecommendations,
   useReleaseDates,
   useSearch,
@@ -87,11 +90,13 @@ export {
   useTypeahead,
   useViewSignal,
   type ExposureOptions,
+  type MyInteraction,
   type ReleaseDate,
   type UseContentFilters,
   type UseExposure,
   type UseHistory,
   type UseRail,
+  type UseRecentSearches,
   type UseTypeahead,
 } from "./discovery.js";
 export {

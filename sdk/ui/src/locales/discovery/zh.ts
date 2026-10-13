@@ -36,6 +36,9 @@ export const discovery: typeof en = {
     items_other: "{count} 项",
     free_one: "{count} 项免费",
     free_other: "{count} 项免费",
+    recentSearches: "最近搜索",
+    clearRecent: "清除",
+    removeRecent: "移除“{q}”",
   },
   listing: {
     sort: "排序",

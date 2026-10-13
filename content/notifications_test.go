@@ -120,7 +120,7 @@ func TestCommentNotificationRollbackAndRecipientErasure(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `ALTER TABLE `+table+` ADD CONSTRAINT reject_reply CHECK(kind <> 'comment.reply')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.comments.create(ctx, writer, "gallery", cid(1), CommentInput{Body: "must rollback", ReplyToID: root.ID}); err == nil {
+	if _, err := rt.comments.create(ctx, writer, rt.Ref("gallery", cid(1)), CommentInput{Body: "must rollback", ReplyToID: root.ID}); err == nil {
 		t.Fatal("reply committed after notification insert failed")
 	}
 	var replies int

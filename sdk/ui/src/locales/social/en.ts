@@ -71,6 +71,7 @@ export const social = {
     showMore: "Show more",
     showLess: "Show less",
     restore: "Restore",
+    closed: "Comments are closed.",
     locked: "You can't comment here.",
     rateLimited: "You're commenting too quickly. Try again in {seconds} s.",
     rateLimitedSoon: "You're commenting too quickly. Try again shortly.",

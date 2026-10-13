@@ -28,7 +28,8 @@ export const eventId = () => (typeof crypto !== "undefined" && "randomUUID" in c
 
 let unstored: string | undefined;
 
-function tabSession(): string {
+/** A signed-out reader's session: one per browser tab, kept across reloads. */
+export function readerSession(): string {
   try {
     const kept = sessionStorage.getItem(SESSION_KEY);
     if (kept) return kept;
@@ -57,7 +58,7 @@ export class Beacons {
     private readonly discovery: DiscoveryClient,
     o: BeaconOptions = {},
   ) {
-    this.session = o.session ?? tabSession;
+    this.session = o.session ?? readerSession;
     this.delay = o.delay ?? 2000;
     if (typeof addEventListener === "function") {
       addEventListener("pagehide", () => void this.flush(true));

@@ -33,6 +33,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -142,8 +143,8 @@ type catalog struct {
 
 func (c *catalog) t(name string) string { return pgx.Identifier{c.schema, name}.Sanitize() }
 
-func (c *catalog) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
+func (c *catalog) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	out := map[contentref.ContentKey]resolve.Resolution{}
 	for _, ref := range refs {
 		var live, creator bool
 		var content access.Rule
@@ -164,7 +165,7 @@ WHERE c.tenant_id = $1 AND c.id = $2 AND c.kind = $5 AND ($3 = '' OR v.id IS NOT
 		held := c.tiers[actor.ID]
 		opens := rule.Free(time.Now()) || slices.ContainsFunc(rule.Tiers, func(t string) bool { return !actor.Anonymous && slices.Contains(held, t) })
 		editor := actor.Person() && (creator || actor.ID == c.staff)
-		out[ref.Key()] = access.Resolution{Visible: live || editor, Accessible: opens, Editor: editor}
+		out[ref.Key()] = resolve.Resolution{Visible: live || editor, Accessible: opens, Editor: editor}
 	}
 	return out, nil
 }

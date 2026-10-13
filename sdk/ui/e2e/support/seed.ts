@@ -99,7 +99,7 @@ export async function seedSocial(h: Harness, o: { viewer?: TestUser | null; lang
     h.user(), h.user(), h.user(), h.user(), h.user({ role: "editor" }), h.user({ role: "moderator" }), h.user(),
   ]);
   const it = await h.item({ kind: "video", owner: creator.id, title: "Night Before the Counteroffensive" });
-  const item = { kind: it.kind, id: it.id };
+  const item = { type: "contents" as const, id: it.id };
   const [b, c, e, ed] = [bob, carol, erin, editor].map((u) => contentKit(h, u!));
   const first = await b!.comments.create(item, { body: "First! This trailer looks great." });
   await c!.comments.create(item, { body: "Agreed, the soundtrack at 1:20 is the best part.\nCan't wait for the full episode.", reply_to_id: first.id });
@@ -135,7 +135,7 @@ export async function seedSocial(h: Harness, o: { viewer?: TestUser | null; lang
 export async function seedModeration(h: Harness) {
   const [owner, bob, carol, staff] = await Promise.all([h.user(), h.user(), h.user(), h.user({ role: "staff" })]);
   const it = await h.item({ kind: "video", owner: owner.id, title: "Moderated video" });
-  const item = { kind: it.kind, id: it.id };
+  const item = { type: "contents" as const, id: it.id };
   const tag = Math.random().toString(36).slice(2, 8);
   const b = contentKit(h, bob);
   for (const body of [`Bob one ${tag}`, `Bob two ${tag}`, `Bob three ${tag}`]) await b.comments.create(item, { body });

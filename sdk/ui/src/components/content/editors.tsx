@@ -28,6 +28,8 @@ interface Common {
 
 const NONE = "__none__";
 const LISTINGS: readonly Listing[] = ["listed", "members", "unlisted"];
+const COMMENTS = ["open", "closed", "hidden"] as const;
+type Comments = (typeof COMMENTS)[number];
 const LEVELS: readonly Rule["level"][] = ["public", "tier", "ppv", "group", "group_ppv"];
 
 function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
@@ -61,11 +63,13 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
   const { spec } = useKind(content.kind, p.client);
   const declared = useMemo(() => spec?.attributes ?? {}, [spec]);
   const [listing, setListing] = useState<Listing>(content.listing);
+  const [comments, setComments] = useState(content.comments);
   const [attrs, setAttrs] = useState<Record<string, string | boolean>>({});
   useEffect(() => {
     setListing(content.listing);
+    setComments(content.comments);
     setAttrs(formOf(declared, content.attributes));
-  }, [content.revision, content.listing, content.attributes, declared]);
+  }, [content.revision, content.listing, content.comments, content.attributes, declared]);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -83,7 +87,7 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
           } catch (err) {
             return setInvalid((err as Error).message);
           }
-          void save.run(() => client.contents.update(content.id, { listing, attributes, revision: content.revision })).then((d) => d && setSaved(true));
+          void save.run(() => client.contents.update(content.id, { listing, comments, attributes, revision: content.revision })).then((d) => d && setSaved(true));
         }}
       >
         <div className="grid gap-1.5 sm:max-w-xs">
@@ -96,6 +100,21 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
               {LISTINGS.map((l) => (
                 <SelectItem key={l} value={l}>
                   {t(`contentEditor.listing_${l}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-1.5 sm:max-w-xs">
+          <Label>{t("contentEditor.comments")}</Label>
+          <Select value={comments} onValueChange={(v) => setComments(v as Comments)}>
+            <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
+              <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {COMMENTS.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {t(`contentEditor.comments_${c}`)}
                 </SelectItem>
               ))}
             </SelectContent>

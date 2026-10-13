@@ -22,7 +22,7 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 		res := &fakeResolver{}
 		res.set("gallery", cid(1), true, true)
 		res.set("blog", cid(2), true, true)
-		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "blog"}, Anonymous: a})
+		rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery", "blog"), Anonymous: a})
 		h := rt.Handler()
 		staff := access.Actor{ID: "staff", Kind: "user"}
 		var poll Poll
@@ -51,7 +51,7 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 			{"reply", "POST", gallery(1, "/comments"), CommentInput{Body: "re", AnonName: "Guest", ReplyToID: cm.ID}, comments},
 			{"work like", "POST", gallery(1, "/like"), nil, reactions},
 			{"work reaction clear", "DELETE", gallery(1, "/reaction"), nil, reactions},
-			{"another kind's dislike", "POST", "/blog/" + cid(2) + "/dislike", nil, reactions},
+			{"another kind's dislike", "POST", "/contents/" + cid(2) + "/dislike", nil, reactions},
 			{"comment like", "POST", "/comments/" + cm.ID + "/like", nil, reactions},
 			{"vote", "POST", "/polls/" + poll.ID + "/vote", PollVote{OptionID: poll.Options[0].ID}, func(a Anonymous) bool { return a.Votes }},
 		}
@@ -106,7 +106,7 @@ func TestCommentLengthIsAServerSetting(t *testing.T) {
 	for _, c := range []struct{ option, max int }{{0, DefaultCommentMaxLength}, {10, 10}} {
 		res := &fakeResolver{}
 		res.set("gallery", cid(1), true, true)
-		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, CommentMaxLength: c.option})
+		rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), CommentMaxLength: c.option})
 		h := rt.Handler()
 		var cfg Config
 		if rec := doJSON(t, h, user, "GET", "/config", nil); json.Unmarshal(rec.Body.Bytes(), &cfg) != nil || cfg.CommentMaxLength != c.max {
@@ -136,7 +136,7 @@ func TestCommentLengthIsAServerSetting(t *testing.T) {
 			}
 		}
 	}
-	if _, err := New(context.Background(), Options{Pool: pgtest.Pool(t, nil), Schema: "x", Tenant: "t", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, CommentMaxLength: -1}); err == nil {
+	if _, err := New(context.Background(), Options{Kinds: testKinds("gallery"), Pool: pgtest.Pool(t, nil), Schema: "x", Tenant: "t", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, CommentMaxLength: -1}); err == nil {
 		t.Fatal("a negative CommentMaxLength was accepted")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -484,7 +485,7 @@ func TestExpose(t *testing.T) {
 	if status, body, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 || body != string(png(199)) {
 		t.Fatalf("public cover %d %q", status, body)
 	}
-	f.res.set(cid(1), access.Resolution{})
+	f.res.set(cid(1), resolve.Resolution{})
 	if err := f.jobs.Expose(ctx, g); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +523,7 @@ func TestNewItemStartsHidden(t *testing.T) {
 	g := f.ref("gallery", 1)
 	item, _ := f.reg.Item(g)
 	cover, _ := item.Public("cover-460.webp")
-	f.res.set(cid(1), access.Resolution{}) // a draft
+	f.res.set(cid(1), resolve.Resolution{}) // a draft
 	if m, err := f.ms.Create(ctx, g); err != nil || !m.Hidden {
 		t.Fatalf("created %+v %v", m, err)
 	}

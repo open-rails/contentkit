@@ -38,7 +38,7 @@ function wrap(client: ContentKitClient, o: { viewer?: string | null; onSignIn?: 
   };
 }
 
-const item = { kind: "video", id: "v1" };
+const item = { type: "contents" as const, id: "v1" };
 const at = new Date(Date.now() - 3 * 60_000).toISOString();
 const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   id,
@@ -54,15 +54,15 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, comments: "open", anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
 const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {
   const posted = comment("c9", { body: "hello there", user_id: "alice", author: { id: "alice", username: "alice" } });
   const s = server({
-    "GET /video/v1/comments": () => [comment("c1"), comment("c2", { deleted: true, body: "[deleted]", author: undefined, user_id: undefined }), comment("c3", { user_id: "alice", author: { id: "alice", username: "alice" }, moderation: "held", moderation_reason: "needs a look" })],
-    "GET /video/v1/can-comment": () => standing(),
-    "POST /video/v1/comments": ({ body }) => (expect(body).toEqual({ body: "hello there" }), json(201, posted)),
+    "GET /contents/v1/comments": () => [comment("c1"), comment("c2", { deleted: true, body: "[deleted]", author: undefined, user_id: undefined }), comment("c3", { user_id: "alice", author: { id: "alice", username: "alice" }, moderation: "held", moderation_reason: "needs a look" })],
+    "GET /contents/v1/can-comment": () => standing(),
+    "POST /contents/v1/comments": ({ body }) => (expect(body).toEqual({ body: "hello there" }), json(201, posted)),
   });
   const user = userEvent.setup();
   render(<Comments item={item} count={3} />, { wrapper: wrap(s.client) });
@@ -82,16 +82,16 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   await user.keyboard("{Control>}{Enter}{/Control}");
   expect(await screen.findByText("hello there")).toBeInTheDocument();
   expect(box).toHaveValue("");
-  expect(s.calls.filter((c) => c.startsWith("GET /video/v1/comments"))).toHaveLength(1);
+  expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
 });
 
 it("Comments: a refused like rolls back; a ban or a rate limit is explained", async () => {
   let refuse = true;
   const s = server({
-    "GET /video/v1/comments": () => [comment("c1", { likes: 2 })],
-    "GET /video/v1/can-comment": () => standing(),
+    "GET /contents/v1/comments": () => [comment("c1", { likes: 2 })],
+    "GET /contents/v1/can-comment": () => standing(),
     "POST /comments/c1/like": () => (refuse ? refusal(404, "not_found") : { likes: 3, dislikes: 0, mine: 1 }),
-    "POST /video/v1/comments": () => refusal(429, "rate_limited", { retry_after: 12, action: "comment" }),
+    "POST /contents/v1/comments": () => refusal(429, "rate_limited", { retry_after: 12, action: "comment" }),
   });
   const user = userEvent.setup();
   render(<Comments item={item} />, { wrapper: wrap(s.client) });
@@ -112,9 +112,9 @@ it("Comments: a refused like rolls back; a ban or a rate limit is explained", as
 
 it("Comments: the longest comment is the server's: the field takes no more, and a refusal says the limit", async () => {
   const s = server({
-    "GET /video/v1/comments": () => [],
-    "GET /video/v1/can-comment": () => standing({ max_length: 20 }),
-    "POST /video/v1/comments": () => refusal(422, "comment_too_long", { details: { max: 20 } }),
+    "GET /contents/v1/comments": () => [],
+    "GET /contents/v1/can-comment": () => standing({ max_length: 20 }),
+    "POST /contents/v1/comments": () => refusal(422, "comment_too_long", { details: { max: 20 } }),
   });
   const user = userEvent.setup();
   render(<Comments item={item} />, { wrapper: wrap(s.client) });
@@ -128,8 +128,8 @@ it("Comments: the longest comment is the server's: the field takes no more, and 
 
 it("Comments: a banned caller sees why instead of the composer", async () => {
   const s = server({
-    "GET /video/v1/comments": () => [],
-    "GET /video/v1/can-comment": () => standing({ can_comment: false, ban: { scope: "owner:creator", reason: "spam", until: "2030-01-02T03:04:00Z" } }),
+    "GET /contents/v1/comments": () => [],
+    "GET /contents/v1/can-comment": () => standing({ can_comment: false, ban: { scope: "owner:creator", reason: "spam", until: "2030-01-02T03:04:00Z" } }),
   });
   render(<Comments item={item} />, { wrapper: wrap(s.client) });
   const notice = await screen.findByText("You can't comment on this creator's content.");
@@ -141,8 +141,8 @@ it("Comments: a banned caller sees why instead of the composer", async () => {
 it("Comments: signed out, the server decides: a sign-in where it takes no anonymous comments or reactions, a name where it does", async () => {
   const signIn = vi.fn();
   const members = {
-    "GET /video/v1/comments": () => [comment("c1")],
-    "GET /video/v1/can-comment": () => standing({ user_id: undefined, can_comment: false }),
+    "GET /contents/v1/comments": () => [comment("c1")],
+    "GET /contents/v1/can-comment": () => standing({ user_id: undefined, can_comment: false }),
     "GET /config": config(),
   };
   const user = userEvent.setup();
@@ -164,10 +164,10 @@ it("Comments: signed out, the server decides: a sign-in where it takes no anonym
 
   // Anonymous comments and reactions on: a name is asked although the host offers a sign-in.
   const s = server({
-    "GET /video/v1/comments": () => [comment("c1")],
-    "GET /video/v1/can-comment": () => standing({ user_id: undefined, anonymous: true }),
+    "GET /contents/v1/comments": () => [comment("c1")],
+    "GET /contents/v1/can-comment": () => standing({ user_id: undefined, anonymous: true }),
     "GET /config": config({ comments: true, reactions: true }),
-    "POST /video/v1/comments": ({ body }) => json(201, comment("c2", { anon_name: (body as { anon_name: string }).anon_name, user_id: undefined, author: undefined, body: "hi" })),
+    "POST /contents/v1/comments": ({ body }) => json(201, comment("c2", { anon_name: (body as { anon_name: string }).anon_name, user_id: undefined, author: undefined, body: "hi" })),
     "POST /comments/c1/like": () => ({ likes: 1, dislikes: 0, mine: 1 }),
   });
   signIn.mockClear();
@@ -187,8 +187,8 @@ it("Comments: signed out, the server decides: a sign-in where it takes no anonym
 
 it("Comments: replies open under their comment; authors edit, moderators delete others' comments after confirming", async () => {
   const s = server({
-    "GET /video/v1/comments": () => [comment("c1", { reply_count: 1 }), comment("c2", { user_id: "alice", author: { id: "alice", username: "alice" } })],
-    "GET /video/v1/can-comment": () => standing({ moderate: true }),
+    "GET /contents/v1/comments": () => [comment("c1", { reply_count: 1 }), comment("c2", { user_id: "alice", author: { id: "alice", username: "alice" } })],
+    "GET /contents/v1/can-comment": () => standing({ moderate: true }),
     "GET /comments/c1/replies": () => [comment("r1", { reply_to_id: "c1", body: "a reply" })],
     "PATCH /comments/c2": ({ body }) => comment("c2", { body: (body as { body: string }).body, user_id: "alice", author: undefined }),
     "DELETE /comments/c1": () => undefined,
@@ -219,11 +219,11 @@ it("Comments: replies open under their comment; authors edit, moderators delete 
 it("ReactionButtons and FavoriteButton change at once and roll back when refused; signed out they ask to sign in", async () => {
   let fail = false;
   const s = server({
-    "GET /video/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
-    "POST /video/v1/like": () => (fail ? refusal(429, "rate_limited", { retry_after: 5 }) : { likes: 5, dislikes: 1, mine: 1 }),
-    "DELETE /video/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
-    "GET /video/v1/favorite": () => ({ favorited: false, count: 10 }),
-    "POST /video/v1/favorite": () => ({ favorited: true, count: 11 }),
+    "GET /contents/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
+    "POST /contents/v1/like": () => (fail ? refusal(429, "rate_limited", { retry_after: 5 }) : { likes: 5, dislikes: 1, mine: 1 }),
+    "DELETE /contents/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
+    "GET /contents/v1/favorite": () => ({ favorited: false, count: 10 }),
+    "POST /contents/v1/favorite": () => ({ favorited: true, count: 11 }),
   });
   const user = userEvent.setup();
   const onChange = vi.fn();
@@ -253,7 +253,7 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
   expect(screen.getByRole("button", { name: /Remove from favorites/ })).toHaveTextContent("11");
 
   const signIn = vi.fn();
-  const out = server({ "GET /video/v1/favorite": () => ({ favorited: false, count: 7 }) });
+  const out = server({ "GET /contents/v1/favorite": () => ({ favorited: false, count: 7 }) });
   render(<FavoriteButton item={item} />, { wrapper: wrap(out.client, { viewer: null, onSignIn: signIn }) });
   // Signed out: the server's count shows; a click asks to sign in and writes nothing.
   const signedOut = screen.getByRole("button", { name: /Sign in to save favorites/ });
@@ -266,13 +266,13 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
 it("ReactionButtons signed out: ask to sign in where the server takes no anonymous reactions, react where it does", async () => {
   const user = userEvent.setup();
   const signIn = vi.fn();
-  const routes = { "GET /video/v1/reaction": () => ({ likes: 2, dislikes: 0, mine: 0 }), "POST /video/v1/like": () => ({ likes: 3, dislikes: 0, mine: 1 }) };
+  const routes = { "GET /contents/v1/reaction": () => ({ likes: 2, dislikes: 0, mine: 0 }), "POST /contents/v1/like": () => ({ likes: 3, dislikes: 0, mine: 1 }) };
   const off = server({ ...routes, "GET /config": config() });
   let view = render(<ReactionButtons item={item} />, { wrapper: wrap(off.client, { viewer: null, onSignIn: signIn }) });
   await waitFor(() => expect(off.calls).toContain("GET /config"));
   await user.click(screen.getByRole("button", { name: "Like" }));
   expect(signIn).toHaveBeenCalledTimes(1);
-  expect(off.calls).not.toContain("POST /video/v1/like");
+  expect(off.calls).not.toContain("POST /contents/v1/like");
   view.unmount();
 
   view = render(<ReactionButtons item={item} />, { wrapper: wrap(server({ ...routes, "GET /config": config() }).client, { viewer: null }) });

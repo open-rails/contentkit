@@ -227,22 +227,32 @@ mux.Handle("/", router.Middleware(spa))
 ## Interactions (`content`)
 
 The content module owns comments, reactions, favorites and polls in
-ContentKit's `content_*` interaction tables. Every row is keyed by the
-`ContentRef` of the catalog's content: `(tenant_id, content_kind, content_id,
-content_version_id)`; comment threading is `reply_to_id`. Routes are
-`/{kind}/{id}/comments|like|dislike|reaction|favorite`,
-`/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=&author=`,
-`/favorites`, `/polls...` (incl. `/polls/{id}/answer`),
-`/moderation/held`, `/moderation/{kind}/{id}/resolve`, `/comment-bans...`,
-`/global-comment-bans...`, `/{kind}/{id}/can-comment`; `kind` must be in
-`ContentKinds`.
+ContentKit's `content_*` interaction tables. They target ContentKit's own
+content items (optionally one version, `?version=`) and groups, stored under
+the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
+content_id, content_version_id)`. Routes are
+`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
+the same under `/v1/groups/{id}/`, then `/comments/{cid}/...`,
+`/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
+`/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
+group answers as its survivor; a deleted one, or content the request's site
+excludes, is `404`.
+
+Comments carry a `language` (one of the site's, or none): `?language=`
+narrows a list or the latest feed to one thread, and a reply joins its
+comment's. A content item's `comments` setting (`PATCH /v1/contents/{id}`,
+its editors) is `open`, `closed` (existing comments show; new ones and edits
+answer `403 comments_closed`) or `hidden` (none show). The reader's favorites
+and reactions, as cards, are `GET /v1/me/favorites` and `GET
+/v1/me/reactions?target=contents|groups&kind=&value=like|dislike` (tag
+preferences); their counts reach `content_facets` (`likes`, `dislikes`,
+`favorites`, `rating`) through the catalog's counts job.
 
 Ports (in `content` unless qualified):
 
 | Port | Required | Contract |
 |---|---|---|
 | `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
-| `access.ContentResolver` | yes (the engine passes the catalog's) | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
@@ -259,11 +269,17 @@ deleted account) has no author; a directory or media failure is logged and
 leaves bare ids, never failing the response. The avatar needs
 `content.Options.Media`; without `UserInfo` authors are bare ids.
 
-**Content and poll images.** A content item's cover and body images are its
-content-level media item's (`{tenant}/{kind}/{id}/`, uploads marked
-`Content`); poll images live in `{tenant}/poll/{poll_id}/`. Each is a
-`Named` upload (the server names it `i-{uuid}`) with a public preset. The
-catalog and the content module answer their uploads and reads.
+**Content and poll images.** A content item's cover is its content-level
+media item's (`{tenant}/{kind}/{id}/`, uploads marked `Content`); its body
+images are its body item's (`{tenant}/{kind}.body/{id}/`, `media.BodySuffix`,
+derived by `media.ForContent` from the kind's `Named` `Content` uploads and
+their public presets). A body item shows only to viewers who open the item
+(and its editors): a locked item's body images have no public files and are
+never listed or signed to anyone else, while a buyer's body shows them
+through the item token (a private `{preset}-open` rendition); an item anyone
+opens keeps public files. Poll images live in `{tenant}/poll/{poll_id}/`.
+Each is a `Named` upload (the server names it `i-{uuid}`) with a public
+preset. The catalog and the content module answer their uploads and reads.
 
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body
@@ -329,10 +345,18 @@ transactions, then a short source-revision CAS transaction commits the verdict;
 a concurrent edit returns `409` for retry. Provider waits never hold row or
 subject locks.
 
-`content.BasicModerator{AllowLinks, DupWindow, CensorWords}` is the
-deterministic default (links, per-process duplicate guard, censor list);
-compose it in front of an AI moderator with `content.Chain{basic, ai}` — the
-first reject/review wins, an error fails the chain closed.
+Banned words and IP bans are data staff edit (`root:comments:moderate`):
+`GET|POST|DELETE /v1/moderation/banned-words` (`{"word", "action"}`: `mask`,
+the default, replaces each word containing it with asterisks; `reject`
+refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
+(`{"network", "reason", "until"}`: an address or CIDR network). They apply to
+every comment and free-text answer before the moderator; an IP-banned write
+answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
+
+`content.BasicModerator{AllowLinks, DupWindow}` is the deterministic default
+(links, per-process duplicate guard); compose it in front of an AI moderator
+with `content.Chain{basic, ai}`: the first reject/review wins, an error
+fails the chain closed.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
@@ -373,10 +397,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{kind}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|groups}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
-| `reaction` | `POST /{kind}/{id}/like\|dislike`, `DELETE /{kind}/{id}/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{kind}/{id}/favorite` | 20 per minute |
+| `reaction` | `POST /{contents\|groups}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|groups}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -539,10 +563,17 @@ that fits the reader (`display_language` first, then position).
   reader may show or hide, and `include_deleted`.
 - `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
   `session` names the browser), `POST /exposures`.
+- `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
+  liked and disliked, contents as cards or groups, most recent first.
+- `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
+  searches, one per query, newest first, which `GET /search` keeps (its
+  `session` names a signed-out browser). A clear hides what came before it
+  (`?query=` removes one); an hourly job deletes hidden ones, erased
+  people's and those unused for 180 days. Erasure deletes them.
 
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
-by kind, likes, favorites and all-time viewers, the access decision
+by kind, likes, dislikes, favorites and all-time viewers, the access decision
 (`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
 reader's favorite and progress, `published_at` and attributes. Signal reads
 answer 501 `not_configured` without ClickHouse.
@@ -573,7 +604,7 @@ layouts.
 - **Content versions.** `media/versions` answers media's hooks from the
   content model: editors (staff, creators, owner-group editors) upload, a
   person their own avatar; reads follow the catalog's
-  `access.ContentResolver`, plus segments' release and the rule's preview;
+  visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
   audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
   kind reaches viewers only through `{kind}.published` items: one per
@@ -1127,8 +1158,7 @@ reactions and comment threads never do.
 
 - **Reference**: the reaction row, the counts rollup and the export all use
   the resolver's canonical reference (`Resolution.Ref`); comment reactions
-  never export. `MyReactions`/`IsFavorited` read under it; `Counts` reads
-  exactly the reference given.
+  never export. `Counts` reads exactly the reference given.
 - **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
   order as one `signal` event per subject × reference × axis (`Type` = axis,
   `EventID` = `"current"`, `Revision`, `OccurredAt` =

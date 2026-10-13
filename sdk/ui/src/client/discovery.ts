@@ -4,11 +4,13 @@ import type {
   ContentPage,
   ExposureInput,
   Exposures,
+  RecentSearches,
   ReleaseDates,
   SignalInput,
   Signals,
   Typeahead,
 } from "./generated/wire.js";
+import { readerSession } from "./beacons.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
 
@@ -60,7 +62,22 @@ export interface PageQuery {
 }
 
 export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & { sort?: ListSort };
-export type SearchQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & { q: string; sort?: "relevance" | ListSort; personalize?: boolean };
+export type SearchQuery = ContentFilterQuery &
+  ReaderQuery &
+  CardQuery &
+  PageQuery & {
+    q: string;
+    sort?: "relevance" | ListSort;
+    personalize?: boolean;
+    /** A signed-out reader's session, which keeps its recent searches; default readerSession(). */
+    session?: string;
+  };
+export interface RecentSearchesQuery {
+  /** A signed-out reader's session; default readerSession(). */
+  session?: string;
+  /** 10 by default, at most 100. */
+  limit?: number;
+}
 export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
@@ -77,7 +94,8 @@ export interface TypeaheadQuery extends ReaderQuery {
 // Comma-joined list parameters; `attribute` repeats instead.
 const LISTS = new Set(["groups", "exclude_groups", "traits", "card_groups", "group_kinds"]);
 
-function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {
+/** A query with its list parameters comma-joined, as discovery routes read them. */
+export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {
   const out: Record<string, string | number | boolean | readonly string[] | undefined> = {};
   for (const [k, v] of Object.entries(q)) out[k] = LISTS.has(k) && Array.isArray(v) ? (v.length ? v.join(",") : undefined) : v;
   return out;
@@ -94,8 +112,22 @@ export class DiscoveryClient {
   list(q: ContentQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
     return call(this.http, "GET", "/contents", { query: query(q) as never, signal });
   }
-  search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {
-    return call(this.http, "GET", "/search", { query: query(q) as never, signal });
+  /** A first page is kept among the reader's recent searches. */
+  async search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {
+    const emit = q.cursor ? null : this.http.captureChanges();
+    const out: ContentPage = await call(this.http, "GET", "/search", { query: query({ session: readerSession(), ...q }) as never, signal });
+    emit?.({ type: "searches.changed" });
+    return out;
+  }
+  /** The reader's recent searches, newest first, since they last cleared them. */
+  recentSearches(q: RecentSearchesQuery = {}, signal?: AbortSignal): Promise<RecentSearches> {
+    return call(this.http, "GET", "/me/searches", { query: { session: readerSession(), ...q }, signal });
+  }
+  /** Clears one recent search, or all of them. */
+  async clearSearches(o: { query?: string; session?: string } = {}): Promise<void> {
+    const emit = this.http.captureChanges();
+    await call(this.http, "DELETE", "/me/searches", { query: { session: readerSession(), ...o } });
+    emit({ type: "searches.changed" });
   }
   /** Contents and groups while the reader types. */
   typeahead(q: TypeaheadQuery, signal?: AbortSignal): Promise<Typeahead> {

@@ -308,7 +308,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []ImportCom
   r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, content_id text, version text, language text, reply_to text, user_id text,
   anon_name text, body text, deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
- ON CONFLICT (id) DO UPDATE SET content_kind = EXCLUDED.content_kind, content_id = EXCLUDED.content_id, content_version_id = EXCLUDED.content_version_id,
+ ON CONFLICT (tenant_id, id) DO UPDATE SET content_kind = EXCLUDED.content_kind, content_id = EXCLUDED.content_id, content_version_id = EXCLUDED.content_version_id,
   language = EXCLUDED.language, reply_to_id = EXCLUDED.reply_to_id, user_id = EXCLUDED.user_id, anon_name = EXCLUDED.anon_name, body = EXCLUDED.body,
   deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
  WHERE c.tenant_id = $1 AND (c.content_kind, c.content_id, c.content_version_id, c.language, c.reply_to_id, c.user_id, c.anon_name, c.body, c.deleted_at, c.created_at)
@@ -527,7 +527,7 @@ func (rt *Runtime) recountReplies(ctx context.Context, tx pgx.Tx, threads map[st
 	slices.Sort(ids)
 	s := rt.store
 	_, err := tx.Exec(ctx, `UPDATE `+s.t.comments+` p SET reply_count = n.replies FROM (SELECT x.id,
- (SELECT count(*) FROM `+s.t.comments+` r WHERE r.reply_to_id = x.id AND r.deleted_at IS NULL AND r.moderation = 'approved')::int AS replies
+ (SELECT count(*) FROM `+s.t.comments+` r WHERE r.tenant_id = $1 AND r.reply_to_id = x.id AND r.deleted_at IS NULL AND r.moderation = 'approved')::int AS replies
  FROM unnest($2::uuid[]) AS x(id)) n
  WHERE p.tenant_id = $1 AND p.id = n.id AND p.reply_count <> n.replies`, rt.tenant, ids)
 	return err
@@ -616,7 +616,7 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []ImportPoll) 
  SELECT r.id::uuid, $1, r.kind, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, question text, language text, active bool, live_at timestamptz, closes_at timestamptz,
   deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
- ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
+ ON CONFLICT (tenant_id, id) DO UPDATE SET kind = EXCLUDED.kind, question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
   live_at = EXCLUDED.live_at, closes_at = EXCLUDED.closes_at, deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
  WHERE q.tenant_id = $1 AND (q.kind, q.question, q.language, q.is_active, q.live_at, q.closes_at, q.deleted_at, q.created_at)
   IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.question, EXCLUDED.language, EXCLUDED.is_active, EXCLUDED.live_at, EXCLUDED.closes_at, EXCLUDED.deleted_at,
@@ -629,23 +629,23 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []ImportPoll) 
 	}
 	var moved string
 	if err := tx.QueryRow(ctx, `SELECT coalesce(min(o.id::text), '') FROM jsonb_to_recordset($1::jsonb) AS r(id text, poll_id text)
- JOIN `+s.t.pollOptions+` o ON o.id = r.id::uuid WHERE o.question_id <> r.poll_id::uuid`, string(odata)).Scan(&moved); err != nil {
+ JOIN `+s.t.pollOptions+` o ON o.tenant_id = $2 AND o.id = r.id::uuid WHERE o.question_id <> r.poll_id::uuid`, string(odata), rt.tenant).Scan(&moved); err != nil {
 		return err
 	}
 	if moved != "" {
 		return fmt.Errorf("%w: poll option %s belongs to another poll", ErrConflict, moved)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.pollOptions+` o WHERE o.question_id = ANY($1::uuid[])
- AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) AS r(id text) WHERE r.id::uuid = o.id)`, ids, string(odata)); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = ANY($1::uuid[])
+ AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) AS r(id text) WHERE r.id::uuid = o.id)`, ids, string(odata), rt.tenant); err != nil {
 		return err
 	}
 	if len(options) == 0 {
 		return nil
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO `+s.t.pollOptions+` AS o (id, question_id, label, position)
- SELECT r.id::uuid, r.poll_id::uuid, r.label, r.position FROM jsonb_to_recordset($1::jsonb) AS r(id text, poll_id text, label text, position int)
- ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, position = EXCLUDED.position
- WHERE (o.label, o.position) IS DISTINCT FROM (EXCLUDED.label, EXCLUDED.position)`, string(odata))
+	_, err = tx.Exec(ctx, `INSERT INTO `+s.t.pollOptions+` AS o (tenant_id, id, question_id, label, position)
+ SELECT $2, r.id::uuid, r.poll_id::uuid, r.label, r.position FROM jsonb_to_recordset($1::jsonb) AS r(id text, poll_id text, label text, position int)
+ ON CONFLICT (tenant_id, id) DO UPDATE SET label = EXCLUDED.label, position = EXCLUDED.position
+ WHERE (o.label, o.position) IS DISTINCT FROM (EXCLUDED.label, EXCLUDED.position)`, string(odata), rt.tenant)
 	return err
 }
 
@@ -700,8 +700,8 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []ImportVote) 
 	}
 	var bad string
 	if err := tx.QueryRow(ctx, `SELECT coalesce(min(r.option_id), '') FROM jsonb_to_recordset($1::jsonb) AS r(poll_id text, option_id text)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.pollOptions+` o JOIN `+s.t.pollQuestions+` q ON q.id = o.question_id
-  WHERE o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid AND q.tenant_id = $2 AND q.kind = $3)`, string(all), rt.tenant, PollMultipleChoice).Scan(&bad); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.t.pollOptions+` o JOIN `+s.t.pollQuestions+` q ON q.tenant_id = o.tenant_id AND q.id = o.question_id
+  WHERE o.tenant_id = $2 AND o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid AND q.kind = $3)`, string(all), rt.tenant, PollMultipleChoice).Scan(&bad); err != nil {
 		return err
 	}
 	if bad != "" {
@@ -710,7 +710,7 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []ImportVote) 
 	for _, part := range []struct {
 		rows   []row
 		target string
-	}{{byUser, `(question_id, user_id) WHERE user_id IS NOT NULL`}, {byIP, `(question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL`}} {
+	}{{byUser, `(tenant_id, question_id, user_id) WHERE user_id IS NOT NULL`}, {byIP, `(tenant_id, question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL`}} {
 		if len(part.rows) == 0 {
 			continue
 		}
@@ -718,18 +718,18 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []ImportVote) 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pollVotes+` AS v (question_id, option_id, user_id, ip, created_at)
- SELECT r.poll_id::uuid, r.option_id::uuid, r.user_id, r.ip, r.created_at
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pollVotes+` AS v (tenant_id, question_id, option_id, user_id, ip, created_at)
+ SELECT $2, r.poll_id::uuid, r.option_id::uuid, r.user_id, r.ip, r.created_at
  FROM jsonb_to_recordset($1::jsonb) AS r(poll_id text, option_id text, user_id text, ip text, created_at timestamptz)
  ON CONFLICT `+part.target+` DO UPDATE SET option_id = EXCLUDED.option_id, created_at = EXCLUDED.created_at
- WHERE (v.option_id, v.created_at) IS DISTINCT FROM (EXCLUDED.option_id, EXCLUDED.created_at)`, string(data)); err != nil {
+ WHERE (v.option_id, v.created_at) IS DISTINCT FROM (EXCLUDED.option_id, EXCLUDED.created_at)`, string(data), rt.tenant); err != nil {
 			return err
 		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
- FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE question_id = ANY($1::uuid[]) GROUP BY option_id) c
-  ON c.option_id = x.id WHERE x.question_id = ANY($1::uuid[])) n
- WHERE o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))))
+ FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
+  GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
+ WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))), rt.tenant)
 	return err
 }
 

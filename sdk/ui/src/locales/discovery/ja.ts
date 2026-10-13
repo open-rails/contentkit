@@ -36,6 +36,9 @@ export const discovery: typeof en = {
     items_other: "{count} 件",
     free_one: "無料 {count} 件",
     free_other: "無料 {count} 件",
+    recentSearches: "最近の検索",
+    clearRecent: "消去",
+    removeRecent: "「{q}」を削除",
   },
   listing: {
     sort: "並べ替え",

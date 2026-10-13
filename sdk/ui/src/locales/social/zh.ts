@@ -72,6 +72,7 @@ export const social: typeof en = {
     showMore: "展开",
     showLess: "收起",
     restore: "恢复",
+    closed: "评论已关闭。",
     locked: "你不能在这里评论。",
     rateLimited: "你评论得太快了。请在 {seconds} 秒后重试。",
     rateLimitedSoon: "你评论得太快了。请稍后重试。",

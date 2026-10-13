@@ -35,6 +35,9 @@ export const discovery = {
     items_other: "{count} items",
     free_one: "{count} free",
     free_other: "{count} free",
+    recentSearches: "Recent searches",
+    clearRecent: "Clear",
+    removeRecent: "Remove “{q}”",
   },
   listing: {
     sort: "Sort",

@@ -1,6 +1,7 @@
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Card, Comment, Content, Item, Poll, RefBody } from "../client/generated/wire.js";
+import { sameTarget, type Target } from "../client/content/types.js";
+import type { Card, Comment, Content, Item, Poll } from "../client/generated/wire.js";
 import type { ContentKitChange } from "../client/http.js";
 
 /** One shared read: its data, whether a fetch is in flight, and its last failure. */
@@ -26,7 +27,7 @@ export type Fetcher<T> = (signal: AbortSignal) => Promise<T>;
 export interface Tag {
   type: string;
   readScope?: string;
-  ref?: RefBody;
+  target?: Target;
   id?: string;
   scope?: string;
 }
@@ -46,8 +47,6 @@ interface Slot {
 }
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
-
-const sameRef = (a?: RefBody, b?: RefBody) => !!a && !!b && a.kind === b.kind && a.id === b.id;
 
 /**
  * The content reads hooks share, per client: one request per key while any
@@ -213,7 +212,7 @@ export class ResourceStore {
       case "comment.created": {
         const parent = c.comment.reply_to_id;
         const published = !c.comment.moderation;
-        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && sameRef(t.ref, c.ref));
+        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && sameTarget(t.target, c.target));
         patch<Page<Comment>>(add, (p) => (p.items.some((x) => x.id === c.comment.id) ? p : { ...p, items: parent ? [...p.items, c.comment] : [c.comment, ...p.items] }));
         if (parent && published) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: x.reply_count + 1 } : x));
         this.invalidate((t) => t.type === "latest" || t.type === "admin-comments");
@@ -241,12 +240,14 @@ export class ResourceStore {
         this.invalidate((t) => comments.includes(t.type));
         break;
       case "reaction.changed":
-        patch((t) => t.type === "reaction" && sameRef(t.ref, c.ref), () => c.counts);
-        cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes } }));
+        patch((t) => t.type === "reaction" && sameTarget(t.target, c.target), () => c.counts);
+        if (c.target.type === "contents") cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+        this.invalidate((t) => t.type === "reactions");
         break;
       case "favorite.changed":
-        patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
-        cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
+        patch((t) => t.type === "favorite" && sameTarget(t.target, c.target), () => ({ favorited: c.favorited, count: c.count }));
+        if (c.target.type === "contents")
+          cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
         this.invalidate((t) => t.type === "favorites");
         break;
       case "content.saved":
@@ -291,6 +292,9 @@ export class ResourceStore {
         break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards");
+        break;
+      case "searches.changed":
+        this.invalidate((t) => t.type === "searches");
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));

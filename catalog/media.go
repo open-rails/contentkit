@@ -18,7 +18,8 @@ import (
 // Media connects content items to ContentKit media, built over the
 // catalog's Resolver and RefreshTx (media/versions): bind it with BindMedia
 // before serving. A content item's media item is (kind, content), holding its
-// cover and body images; each version's is (kind, content, version).
+// cover; its body images are its body item's ({kind}.body, content), shown
+// only to viewers who open it; each version's is (kind, content, version).
 type Media struct {
 	Images Images // *media.Manifests
 	// Reader gives editors an unpublished item's image previews.
@@ -34,6 +35,8 @@ type Images interface {
 // Reader reads an item as the media read API does.
 type Reader interface {
 	Read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o media.ReadOptions) (*media.ReadResult, error)
+	// NamedURLs signs an opened item's named images that have no public files.
+	NamedURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor, names []string) (map[string]string, error)
 }
 
 // VersionMedia is the media calls catalog writes make in their transaction:

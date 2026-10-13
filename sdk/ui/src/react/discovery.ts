@@ -1,9 +1,10 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
+import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard } from "../client/generated/wire.js";
+import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -91,6 +92,47 @@ export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKit
   );
   const forget = useCallback((f: { kind?: string; content_id?: string } = {}) => guarded(() => client.discovery.forgetHistory(f)), [client, guarded]);
   return { ...list, forget };
+}
+
+export interface UseRecentSearches {
+  searches: RecentSearch[];
+  loading: boolean;
+  error?: ContentKitError;
+  /** Clears one query, or every recent search. */
+  clear: (query?: string) => Promise<void>;
+}
+
+/** The reader's recent searches, newest first (signed out, of this tab's session); enabled false reads nothing yet. */
+export function useRecentSearches(o: { limit?: number; enabled?: boolean; client?: ContentKitClient } = {}): UseRecentSearches {
+  const { client, store, scope } = useContentScope(o.client);
+  const guarded = useGuarded();
+  const key = o.enabled === false ? null : keyOf("searches", scope, o.limit ?? 10);
+  const r = useResource<RecentSearch[]>(store, key, { type: "searches" }, async (s) => (await client.discovery.recentSearches({ limit: o.limit }, s)).searches);
+  const clear = useCallback((query?: string) => guarded(() => client.discovery.clearSearches(query ? { query } : {})), [client, guarded]);
+  return { searches: r.data ?? [], loading: !!key && (r.loading || !r.loaded), error: r.error, clear };
+}
+
+/** A favorite or reaction with its content's or group's id. */
+export type MyInteraction = Interaction & { id: string };
+
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.group?.id ?? "" })), next: p.next_cursor ?? null });
+
+/** The signed-in reader's favorites, most recent first: content cards or groups. */
+export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
+  const { client, store, scope, viewer } = useContentScope(o.client);
+  const query = useDisplay(q)!;
+  return useList(store, viewer === null ? null : keyOf("favorites", scope, query), { type: "favorites" }, async (cursor, signal) =>
+    interactions(await client.favorites.mine({ ...query, cursor: cursor as string | undefined }, signal)),
+  );
+}
+
+/** What the signed-in reader liked (or, with value, disliked), most recent first. */
+export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
+  const { client, store, scope, viewer } = useContentScope(o.client);
+  const query = useDisplay(q)!;
+  return useList(store, viewer === null ? null : keyOf("reactions", scope, query), { type: "reactions" }, async (cursor, signal) =>
+    interactions(await client.reactions.mine({ ...query, cursor: cursor as string | undefined }, signal)),
+  );
 }
 
 export interface UseContentFilters {
