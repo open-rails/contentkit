@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+// idError wraps its sentinel as contentref.IDError does.
+type idError struct{ sentinel error }
+
+func (e idError) Error() string { return fmt.Sprintf("%v, got %q", e.sentinel, "x") }
+func (e idError) Unwrap() error { return e.sentinel }
+
 // People read the rule a request broke, never a package's error chain.
 func TestRule(t *testing.T) {
 	invalid := errors.New("groups: invalid input")
@@ -23,6 +29,7 @@ func TestRule(t *testing.T) {
 		"wrapped again": {fmt.Errorf("groups: save: %w", fmt.Errorf("%w: sort %q", invalid, "random")), `sort "random"`},
 		"the innermost": {fmt.Errorf("%w: %w", invalid, fmt.Errorf("%w: attribute %q is not declared", attrs, "x")), `attribute "x" is not declared`},
 		"two sentinels": {fmt.Errorf("%w: group id: %w", invalid, badID), "group id: content_id must be a canonical lowercase UUIDv7"},
+		"a typed error": {fmt.Errorf("%w: group id: %w", invalid, idError{badID}), `group id: content_id must be a canonical lowercase UUIDv7, got "x"`},
 		"bare sentinel": {invalid, Message(CodeInvalidRequest)},
 		"not after it":  {fmt.Errorf("body: %w", invalid), Message(CodeInvalidRequest)},
 	} {

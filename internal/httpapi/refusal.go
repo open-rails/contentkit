@@ -28,12 +28,12 @@ func rule(err error) string {
 		return ""
 	}
 	for _, e := range inner {
-		if len(unwrap(e)) > 0 {
-			return rule(e)
+		if r := rule(e); r != "" {
+			return r
 		}
 	}
-	// err wraps sentinels only: its text after the first, the others' without
-	// their package prefix.
+	// err states the rule: its text after the first sentinel, the other
+	// errors' without their package prefix.
 	text, ok := strings.CutPrefix(err.Error(), inner[0].Error()+": ")
 	if !ok {
 		return ""
