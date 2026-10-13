@@ -17,26 +17,33 @@ import (
 // rather than adopt an object already selected for cleanup.
 var ErrAllocationRetired = errors.New("media: file allocation is missing or retired")
 
-// NewBlob records ownership before a worker sends bytes to a fresh private
-// name. The digest identifies the bytes; the UUID isolates their lifetime.
-// This does not publish the object: a later manifest edit must adopt it.
-func (m *Manifests) NewBlob(ctx context.Context, ref contentref.ContentRef, sum []byte) (string, error) {
+// NewBlobs records ownership, in one journal step, before a writer sends
+// bytes to fresh private names: one per digest, in order. The digest
+// identifies the bytes; the UUID isolates their lifetime. This does not
+// publish the objects: a later manifest edit must adopt them.
+func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, sums [][]byte) ([]string, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if len(sum) != sha256.Size {
-		return "", errors.New("media: blob digest must be SHA-256")
+	names, keys := make([]string, len(sums)), make([]string, len(sums))
+	for i, sum := range sums {
+		if len(sum) != sha256.Size {
+			return nil, errors.New("media: blob digest must be SHA-256")
+		}
+		names[i] = layout.BlobName(sum, uuid.NewString())
+		keys[i], _ = item.Blob(names[i])
 	}
-	name := layout.BlobName(sum, uuid.NewString())
-	key, _ := item.Blob(name)
-	if err := m.allocate(ctx, item, key); err != nil {
-		return "", err
+	if len(keys) == 0 {
+		return names, nil
 	}
-	return name, nil
+	if err := m.allocate(ctx, item, keys); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
-func (m *Manifests) allocate(ctx context.Context, item Item, key string) error {
+func (m *Manifests) allocate(ctx context.Context, item Item, keys []string) error {
 	if _, _, err := m.Get(ctx, item.Ref()); errors.Is(err, ErrNotFound) {
 		// Establish the S3 incarnation before issuing a write capability.
 		// Edit refuses a tombstone; only explicit reset can clear it.
@@ -50,7 +57,7 @@ func (m *Manifests) allocate(ctx context.Context, item Item, key string) error {
 		if !exists || cur.Deleted {
 			return journalEffects{}, ErrNotFound
 		}
-		return journalEffects{Allocate: []string{key}, Incarnation: cur.Incarnation}, nil
+		return journalEffects{Allocate: keys, Incarnation: cur.Incarnation}, nil
 	})
 }
 

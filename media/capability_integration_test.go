@@ -147,10 +147,11 @@ func TestRetiredPrivateAllocationCannotBeAdopted(t *testing.T) {
 	item, _ := f.reg.Item(ref)
 	body := png(2)
 	sum := sha256.Sum256(body)
-	old, err := f.ms.NewBlob(t.Context(), ref, sum[:])
+	names, err := f.ms.NewBlobs(t.Context(), ref, [][]byte{sum[:]})
 	if err != nil {
 		t.Fatal(err)
 	}
+	old := names[0]
 	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
 	cleaner := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
 	store.armed.Store(true)
@@ -643,7 +644,7 @@ func TestPurgeRecoveryIsolatesRecreatedItem(t *testing.T) {
 					t.Fatalf("ordinary edit recreated a tombstone: %v", err)
 				}
 				sum := sha256.Sum256(png(1))
-				if _, err := f.ms.NewBlob(t.Context(), ref, sum[:]); !errors.Is(err, media.ErrNotFound) {
+				if _, err := f.ms.NewBlobs(t.Context(), ref, [][]byte{sum[:]}); !errors.Is(err, media.ErrNotFound) {
 					t.Fatalf("allocation recreated a tombstone: %v", err)
 				}
 			}

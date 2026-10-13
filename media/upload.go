@@ -205,7 +205,7 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 			return Presigned{}, err
 		}
 	}
-	if err := u.o.Manifests.allocate(ctx, item, key); err != nil {
+	if err := u.o.Manifests.allocate(ctx, item, []string{key}); err != nil {
 		if limited {
 			_ = u.limiter(r.Ref.TenantID).Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 		}
@@ -800,21 +800,25 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			files = files[:1]
 		}
 		var todo []string
+		var sums [][]byte
 		for _, b := range fileBlobs(files) {
 			srcKey, _ := from.Blob(b)
-			if _, seen := copiedNames[srcKey]; seen {
+			if _, seen := copiedNames[srcKey]; seen || slices.Contains(todo, b) {
 				continue
 			}
 			sum, ok := layout.BlobDigest(b)
 			if !ok {
 				return nil, nil, fmt.Errorf("media: invalid copy source %q", b)
 			}
-			name, err := u.o.Manifests.NewBlob(ctx, item.Ref(), sum)
-			if err != nil {
-				return nil, nil, err
-			}
-			copiedNames[srcKey] = name
-			todo = append(todo, b)
+			todo, sums = append(todo, b), append(sums, sum)
+		}
+		names, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), sums)
+		if err != nil {
+			return nil, nil, err
+		}
+		for i, b := range todo {
+			srcKey, _ := from.Blob(b)
+			copiedNames[srcKey] = names[i]
 		}
 		// One reservation per copy, for the upload's bytes: what the commit
 		// charges (outputs are not charged).

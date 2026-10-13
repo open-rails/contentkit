@@ -330,6 +330,52 @@ func newSite(t *testing.T, o siteOptions) *site {
 	return s
 }
 
+// placements counts the worker's place jobs by item kind.
+func (s *site) placements() map[string]int {
+	s.t.Helper()
+	rows, err := s.pool.Query(s.ctx, `SELECT args->'ref'->>'content_kind', count(*) FROM `+pgx.Identifier{s.workers, "river_job"}.Sanitize()+`
+WHERE kind = 'contentkit_media_place' GROUP BY 1`)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	out := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			s.t.Fatal(err)
+		}
+		out[kind] = n
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatal(err)
+	}
+	return out
+}
+
+// settles waits for the worker's queue to drain, then checks it gets no new
+// job for longer than a publish job's poll: nothing feeds back.
+func (s *site) settles() {
+	s.t.Helper()
+	sql := `SELECT count(*) FILTER (WHERE state IN ('available', 'pending', 'running', 'retryable', 'scheduled')), coalesce(max(id), 0)
+FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize()
+	var waiting, last int64
+	eventually(s.t, "the worker's queue to drain", time.Minute, func() bool {
+		if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &last); err != nil {
+			s.t.Fatal(err)
+		}
+		return waiting == 0
+	})
+	time.Sleep(8 * time.Second)
+	var now int64
+	if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &now); err != nil {
+		s.t.Fatal(err)
+	}
+	if waiting != 0 || now != last {
+		s.t.Fatalf("the settled version's worker got %d more jobs", now-last)
+	}
+}
+
 // dumpJobs logs every River job of the worker and the host (#132 diagnostics).
 func (s *site) dumpJobs() {
 	for _, schema := range []string{s.workers, s.host} {

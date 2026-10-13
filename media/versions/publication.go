@@ -3,16 +3,15 @@ package versions
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -322,22 +321,31 @@ VALUES ($1, $2, $3, $4, $5, $6)`, s.o.Tenant, contentref.NewID(), id, sp.Segment
 	return id, false, nil
 }
 
-// promoteTx makes a complete build current, retiring the one it replaces.
-func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind, id string) error {
-	var old []string
+// promoteTx makes build id current, retiring the one it replaces; false when
+// the build is gone (an edit retired it meanwhile). Promoting the current one
+// changes nothing, so publishers that raced to build it agree.
+func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind, id string) (bool, error) {
+	var state string
+	err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, id).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil || state == "current" {
+		return err == nil, err
+	}
 	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = $2 AND kind = $3 AND state = 'current'`,
 		s.o.Tenant, v.Version, kind)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if old, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
-		return err
+	old, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return false, err
 	}
 	if err := s.retireTx(ctx, tx, k, old); err != nil {
-		return err
+		return false, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.publications+` SET state = 'current', ready_at = now() WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, id)
-	return err
+	return err == nil, err
 }
 
 // snapshotPages is v's pages snapshot now, with its segments' spans.
@@ -418,7 +426,8 @@ func (s *Service) publishPages(ctx context.Context, k *media.Kind, v Target) (bo
 		if !sameJSON(now, snap) {
 			return "", false, s.retireTx(ctx, tx, k, []string{id})
 		}
-		return "", true, s.promoteTx(ctx, tx, k, v, kindPages, id)
+		ok, err := s.promoteTx(ctx, tx, k, v, kindPages, id)
+		return "", ok, err
 	})
 	return current, err
 }
@@ -476,7 +485,8 @@ func (s *Service) publishPlayback(ctx context.Context, k *media.Kind, v Target) 
 		if !sameJSON(playbackSnapshot{Tracks: tracks}, snap) {
 			return "", false, s.retireTx(ctx, tx, k, []string{id})
 		}
-		return "", true, s.promoteTx(ctx, tx, k, v, kindPlayback, id)
+		ok, err := s.promoteTx(ctx, tx, k, v, kindPlayback, id)
+		return "", ok, err
 	})
 	return current, err
 }
@@ -504,74 +514,81 @@ func sameJSON(a, b any) bool {
 	return err1 == nil && err2 == nil && bytes.Equal(x, y)
 }
 
-// fill copies files into a published item, each row of files at its index
-// in its upload group, and reports it complete: every file placed, at its
-// position, with its bytes. A file already there with other bytes retires
-// nothing here; the item is left to its publication's retirement.
+// fill brings a published item to files, each row at its index in its
+// upload group, and reports it complete: every file there, at its position,
+// with its bytes. Missing files are copied server-side into new allocations
+// and put, with the order, in one commit: nothing is staged, so the worker
+// has nothing to place. A complete item takes no commit. A file already
+// there with other bytes retires nothing here; the item is left to its
+// publication's retirement.
 func (s *Service) fill(ctx context.Context, src, dst contentref.ContentRef, files [][]rendition) (bool, error) {
 	m, _, err := s.m.Manifests.Get(ctx, dst)
 	if err != nil && !errors.Is(err, media.ErrNotFound) {
 		return false, err
 	}
-	var order []media.Op
+	if complete(m, files) {
+		return true, nil
+	}
+	var (
+		order   []media.Op
+		missing []rendition
+		sums    [][]byte
+	)
 	for i, row := range files {
 		for _, r := range row {
 			at := i
 			order = append(order, media.Op{Op: media.OpMove, Path: r.Path, Index: &at})
 			if m != nil {
 				if f, ok := m.Get(r.Path); ok {
-					if !sameBlob(f.Blob, r.Blob) && !(f.Staged != "" && f.Meta[sourceMeta] == r.Blob) {
+					if !sameBlob(f.Blob, r.Blob) {
 						return false, fmt.Errorf("%w: %s holds other bytes at %s", errRetired, dst, r.Path)
 					}
 					continue
 				}
 			}
-			if err := s.copyIn(ctx, src, dst, r); err != nil {
-				return false, err
+			sum, ok := layout.BlobDigest(r.Blob)
+			if !ok {
+				return false, fmt.Errorf("versions: invalid rendition blob %q", r.Blob)
 			}
+			missing, sums = append(missing, r), append(sums, sum)
 		}
 	}
-	for batch := range slices.Chunk(order, 1000) {
+	from, err := s.reg.Item(src)
+	if err != nil {
+		return false, err
+	}
+	to, err := s.reg.Item(dst)
+	if err != nil {
+		return false, err
+	}
+	names, err := s.m.Manifests.NewBlobs(ctx, dst, sums)
+	if err != nil {
+		return false, err
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	ops := make([]media.Op, 0, len(missing)+len(order))
+	for i, r := range missing {
+		ops = append(ops, media.Op{Op: media.OpPut, Path: r.Path, Blob: names[i]})
+		g.Go(func() error {
+			srcKey, _ := from.Blob(r.Blob)
+			dstKey, _ := to.Blob(names[i])
+			_, err := s.m.Manifests.Store().Copy(gctx, srcKey, dstKey, media.CopyOptions{})
+			if errors.Is(err, media.ErrNotFound) {
+				return fmt.Errorf("%w: %s is gone", errRetired, srcKey)
+			}
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return false, err
+	}
+	for batch := range slices.Chunk(append(ops, order...), 1000) {
 		if m, err = s.m.Uploads.Commit(ctx, system, dst, uuid.NewString(), batch); err != nil {
 			return false, err
 		}
 	}
 	return complete(m, files), nil
-}
-
-// sourceMeta records a copy's source blob until the worker places it.
-const sourceMeta = "source"
-
-// copyIn ingests one finished file of src into dst, checked against its
-// recorded digest: a published item's token opens all of it.
-func (s *Service) copyIn(ctx context.Context, src, dst contentref.ContentRef, r rendition) error {
-	item, err := s.reg.Item(src)
-	if err != nil {
-		return err
-	}
-	key, err := item.Blob(r.Blob)
-	if err != nil {
-		return err
-	}
-	body, obj, err := s.m.Manifests.Store().Get(ctx, key, media.GetOptions{})
-	if err != nil {
-		return err
-	}
-	defer body.Close()
-	if obj.Size != r.Size {
-		return fmt.Errorf("%w: %s changed", errRetired, key)
-	}
-	data, err := io.ReadAll(io.LimitReader(body, r.Size+1))
-	if err != nil {
-		return err
-	}
-	sum := sha256.Sum256(data)
-	if digest, ok := layout.BlobDigest(r.Blob); !ok || int64(len(data)) != r.Size || !bytes.Equal(digest, sum[:]) {
-		return fmt.Errorf("%w: %s", media.ErrChecksumMismatch, key)
-	}
-	_, err = s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: dst, Path: r.Path, Type: r.Type, Body: bytes.NewReader(data),
-		Size: r.Size, Meta: map[string]any{sourceMeta: r.Blob}})
-	return err
 }
 
 // complete reports an item holding exactly files, placed, in order.

@@ -91,10 +91,11 @@ func TestStoreOutage(t *testing.T) {
 	if got, want := store.Capabilities(), env.Store.Capabilities(); got != want {
 		t.Fatalf("probed capabilities %+v, want %+v", got, want)
 	}
-	name, err = ms.NewBlob(ctx, ref, mustSum(blobOf([]byte("a"))))
+	names, err := ms.NewBlobs(ctx, ref, [][]byte{mustSum(blobOf([]byte("a")))})
 	if err != nil {
 		t.Fatal(err)
 	}
+	name = names[0]
 	if err := edit(); err != nil {
 		t.Fatal(err)
 	}
