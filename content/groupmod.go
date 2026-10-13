@@ -132,8 +132,8 @@ func (c *comments) handleRelease(w http.ResponseWriter, req *http.Request) {
 
 var groupModerationRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/held-comments", Resource: "moderation", Auth: httpapi.User,
-		Doc: "Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.",
-		Query: []httpapi.Param{httpapi.Text("cursor", "the previous page's next"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
+		Doc:       "Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.",
+		Query:     []httpapi.Param{httpapi.Text("cursor", "the previous page's next"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleGroupHeld)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/comment-bans", Resource: "bans", Auth: httpapi.User,

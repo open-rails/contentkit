@@ -56,13 +56,13 @@ type world struct {
 	// permission (access.GroupPermissions); channelWriter only
 	// channel:content:write, channelModerator channel:comments:moderate.
 	channelEditor, channelWriter, channelModerator iam.Role
-	pool                         *pgxpool.Pool
-	schema                       string
-	tenant                       string // the media namespace too
-	env                          *mediatest.Env
-	reg                          *media.Registry
-	jobs                         *media.Jobs
-	queue                        *workqueue.Queue
+	pool                                           *pgxpool.Pool
+	schema                                         string
+	tenant                                         string // the media namespace too
+	env                                            *mediatest.Env
+	reg                                            *media.Registry
+	jobs                                           *media.Jobs
+	queue                                          *workqueue.Queue
 }
 
 func newWorld(t *testing.T) *world {
