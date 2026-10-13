@@ -71,14 +71,15 @@ func recLimit(n int) int {
 // shows; of the anchor's kind unless the filter names one.
 func (s *Service) Similar(ctx context.Context, anchorID string, o RecommendationOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}
-	if s.recs == nil {
-		return empty, ErrNoSignals
+	recs, err := s.recommender()
+	if err != nil {
+		return empty, err
 	}
 	if err := contentref.ValidateID(anchorID); err != nil {
 		return empty, fmt.Errorf("%w: content id: %w", ErrInvalid, err)
 	}
 	var kind string
-	err := s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, anchorID).Scan(&kind)
+	err = s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, anchorID).Scan(&kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, ErrNotFound
 	}
@@ -101,7 +102,7 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 		return empty, err
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
-	hits, err := s.recs.Similar(ctx, anchor, SimilarOptions{Limit: recLimit(o.Limit), ContentKinds: []string{o.Kind}, Admit: a.admit})
+	hits, err := recs.Similar(ctx, anchor, SimilarOptions{Limit: recLimit(o.Limit), ContentKinds: []string{o.Kind}, Admit: a.admit})
 	if err != nil {
 		return empty, err
 	}
@@ -113,8 +114,9 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 // disliked content left out.
 func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}
-	if s.recs == nil {
-		return empty, ErrNoSignals
+	recs, err := s.recommender()
+	if err != nil {
+		return empty, err
 	}
 	if !o.Actor.Person() {
 		return empty, fmt.Errorf("%w: recommendations need a signed-in reader", ErrInvalid)
@@ -124,7 +126,7 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 		return empty, err
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
-	hits, err := s.recs.Recommend(ctx, signal.Subject{UserID: o.Actor.ID}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
+	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.ID}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Admit: a.admit})
 	if err != nil {
 		return empty, err

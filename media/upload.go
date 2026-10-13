@@ -454,7 +454,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	// must not refund quota or consume the upload's reservations.
 	input, err := json.Marshal(ops)
 	if err != nil {
-		return nil, uploadErr(CodeInvalid, "commit operations must be JSON: %v", err)
+		return nil, uploadErr(CodeInvalid, "commit operations must be JSON")
 	}
 	mutation := &manifestMutation{commit: manifestCommit{ID: id, Ref: ref, Folder: item.Prefix(),
 		Actor: string(actor.Kind) + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
@@ -666,7 +666,7 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		if op.Op == OpCopy {
 			src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 			if err != nil {
-				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: %v", op.From.ID, err)
+				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 			}
 			stem, _ := splitExt(op.From.Path)
 			if err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
@@ -778,7 +778,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		}
 		src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 		if err != nil {
-			return nil, nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
+			return nil, nil, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 		}
 		if src.Equal(item.Ref()) {
 			continue // read the source under the destination's manifest lock
@@ -933,7 +933,7 @@ func (u *Uploads) item(ref contentref.ContentRef) (Item, error) {
 		if errors.Is(err, ErrUnknownKind) {
 			return Item{}, err
 		}
-		return Item{}, uploadErr(CodeInvalid, "%v", err)
+		return Item{}, uploadErr(CodeInvalid, "not a valid media reference")
 	}
 	return item, nil
 }

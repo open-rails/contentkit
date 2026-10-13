@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes.",
+        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute.",
         "responses": {
           "200": {
             "description": "OK",
@@ -16740,7 +16740,7 @@
     },
     "unavailable": {
       "status": 503,
-      "meaning": "The host's auth or media storage cannot be reached, or a commit's recovery is pending; retry."
+      "meaning": "The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry."
     },
     "upgrade_required": {
       "status": 503,

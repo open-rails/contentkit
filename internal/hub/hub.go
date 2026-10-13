@@ -3,8 +3,10 @@ package hub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,9 +16,14 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// ErrSignalPlaneDisabled is returned by signal methods when the hub was
-// constructed without a ClickHouse connection.
-var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
+var (
+	// ErrSignalPlaneDisabled is returned by signal methods while the hub has
+	// no signal plane: none is configured, or it is down (ErrSignalPlaneDown).
+	ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled")
+	// ErrSignalPlaneDown: the configured signal plane is unreachable until
+	// SetSignals opens it again.
+	ErrSignalPlaneDown = fmt.Errorf("%w: ClickHouse is down", ErrSignalPlaneDisabled)
+)
 
 // Config configures one tenant's hub.
 type Config struct {
@@ -36,6 +43,9 @@ type Config struct {
 	// migrations.ClickHouse and gate startup on signal.CheckSchema.
 	CH         signal.Conn
 	CHDatabase string
+	// SignalPlane: a signal plane is configured that SetSignals opens later;
+	// until then signal methods return ErrSignalPlaneDown.
+	SignalPlane bool
 
 	// Tenant is the single tenant of this embedded hub. Required: every
 	// document, signal, cursor and result carries it.
@@ -47,7 +57,8 @@ type Config struct {
 type Hub struct {
 	defaultRRFK int
 	client      *Client
-	store       *signal.Store
+	store       atomic.Pointer[signal.Store]
+	configured  bool
 	tenant      string
 }
 
@@ -67,6 +78,7 @@ func New(cfg Config) (*Hub, error) {
 		client:      client,
 		defaultRRFK: cfg.DefaultRRFK,
 		tenant:      client.Tenant(),
+		configured:  cfg.CH != nil || cfg.SignalPlane,
 	}
 	if h.defaultRRFK <= 0 {
 		h.defaultRRFK = 60
@@ -76,7 +88,7 @@ func New(cfg Config) (*Hub, error) {
 		if err != nil {
 			return nil, err
 		}
-		h.store = store
+		h.store.Store(store)
 	}
 	return h, nil
 }
@@ -93,10 +105,13 @@ func (h *Hub) Content(contentKind, contentID string) ContentRef {
 }
 
 func (h *Hub) requireStore() (*signal.Store, error) {
-	if h.store == nil {
-		return nil, ErrSignalPlaneDisabled
+	if s := h.store.Load(); s != nil {
+		return s, nil
 	}
-	return h.store, nil
+	if h.configured {
+		return nil, ErrSignalPlaneDown
+	}
+	return nil, ErrSignalPlaneDisabled
 }
 
 // --- Content plane ---
@@ -288,8 +303,15 @@ func (h *Hub) Typeahead(ctx context.Context, userText string, opts TypeaheadOpti
 	return h.client.Typeahead(ctx, userText, opts)
 }
 
-// Signals is the signal plane's store; nil without one.
-func (h *Hub) Signals() *signal.Store { return h.store }
+// Signals is the signal plane's store; nil while there is none up.
+func (h *Hub) Signals() *signal.Store { return h.store.Load() }
+
+// SetSignals opens the configured signal plane over s, or takes it down
+// (nil) while ClickHouse is unreachable.
+func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
+
+// SignalsConfigured reports whether the hub has a signal plane, up or down.
+func (h *Hub) SignalsConfigured() bool { return h.configured }
 
 // RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
 // for this tenant (see signal.Store.RefreshCoEngagement). Run periodically.

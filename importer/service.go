@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/codes"
+	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -288,37 +289,39 @@ func (run *batchRun) fail(section string, index int, external string, err error)
 	code, msg := classify(err)
 	if code == CodeInternal {
 		run.s.o.Logger.Error("contentkit: import record failed", "section", section, "index", index, "err", err)
+	} else {
+		run.s.o.Logger.Info("contentkit: import record refused", "section", section, "index", index, "external_id", external, "code", code, "err", err)
 	}
 	run.res.Failed = append(run.res.Failed, RecordFailure{Section: section, Index: index, ExternalID: external, Code: code, Error: msg})
 }
 
-// classify maps a store's error to a failure code and a message without
-// internals.
+// classify maps a store's error to a failure code and the rule the record
+// broke, without internals (fail logs them).
 func classify(err error) (string, string) {
 	var pg *pgconn.PgError
 	switch {
 	case errors.Is(err, content.ErrSubjectErased):
-		return CodeErased, err.Error()
+		return CodeErased, "The person was erased."
 	case errors.Is(err, errNotFound), errors.Is(err, catalog.ErrNotFound), errors.Is(err, groups.ErrNotFound), errors.Is(err, offers.ErrNotFound),
 		errors.Is(err, content.ErrNotFound), errors.Is(err, codes.ErrNotFound), errors.Is(err, discovery.ErrNotFound):
-		return CodeNotFound, err.Error()
+		return CodeNotFound, httpapi.Rule(err, httpapi.CodeNotFound)
 	case errors.Is(err, errConflict), errors.Is(err, catalog.ErrConflict), errors.Is(err, groups.ErrConflict), errors.Is(err, offers.ErrConflict),
 		errors.Is(err, content.ErrConflict), errors.Is(err, codes.ErrConflict):
-		return CodeConflict, err.Error()
+		return CodeConflict, httpapi.Rule(err, httpapi.CodeConflict)
 	case errors.Is(err, errInvalid), errors.Is(err, catalog.ErrInvalid), errors.Is(err, groups.ErrInvalid), errors.Is(err, offers.ErrInvalid),
 		errors.Is(err, content.ErrInvalid), errors.Is(err, codes.ErrInvalid), errors.Is(err, discovery.ErrInvalid), errors.Is(err, contentref.ErrInvalidID):
-		return CodeInvalid, err.Error()
+		return CodeInvalid, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.As(err, &pg):
 		switch {
 		case pg.Code == "23505":
-			return CodeConflict, pg.Message
+			return CodeConflict, httpapi.Message(httpapi.CodeConflict)
 		case pg.Code == "23503":
-			return CodeNotFound, pg.Message
+			return CodeNotFound, httpapi.Message(httpapi.CodeNotFound)
 		case strings.HasPrefix(pg.Code, "23"), strings.HasPrefix(pg.Code, "22"):
-			return CodeInvalid, pg.Message
+			return CodeInvalid, httpapi.Message(httpapi.CodeInvalidRequest)
 		}
 	}
-	return CodeInternal, "internal error"
+	return CodeInternal, httpapi.Message(httpapi.CodeInternal)
 }
 
 // extKey is an external id of an entity.

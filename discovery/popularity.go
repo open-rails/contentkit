@@ -22,8 +22,8 @@ const PopularityDepth = 100_000
 // positive) and all-time viewers. Run it periodically (the engine's
 // contentkit_popularity job).
 func (s *Service) RefreshPopularity(ctx context.Context) error {
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	now := s.now()
 	for _, kind := range s.kindNames() {

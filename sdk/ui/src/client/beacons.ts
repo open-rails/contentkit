@@ -7,6 +7,8 @@ export interface BeaconOptions {
   session?: () => string | undefined;
   /** How long events gather before they are sent, ms. Default 2000. */
   delay?: number;
+  /** How long beacons stay off after the site records no signals, ms, before the content model is read again. Default 60000. */
+  recheck?: number;
 }
 
 /** Where a click or a view came from: the list render it was shown in. */
@@ -43,17 +45,21 @@ export function readerSession(): string {
 
 /**
  * Batched, best-effort signals and exposures: gathered for `delay`, sent in
- * one request each, flushed with keepalive when the page hides. A site whose
- * content model says it records no signals gets none.
+ * one request each, flushed with keepalive when the page hides. While the
+ * content model says the site records no signals (or a send is refused as
+ * not_configured or unavailable) events are dropped; after `recheck` the
+ * next event reads the model again, so signals resume when the site's
+ * signal plane is back.
  */
 export class Beacons {
   private signals: SignalInput[] = [];
   private exposures: ExposureInput[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private off = false;
+  private offUntil = 0;
   private recorded: Promise<boolean> | undefined;
   private readonly session: () => string | undefined;
   private readonly delay: number;
+  private readonly recheck: number;
 
   constructor(
     private readonly client: Pick<ContentKitClient, "discovery" | "kinds">,
@@ -61,6 +67,7 @@ export class Beacons {
   ) {
     this.session = o.session ?? readerSession;
     this.delay = o.delay ?? 2000;
+    this.recheck = o.recheck ?? 60_000;
     if (typeof addEventListener === "function") {
       addEventListener("pagehide", () => void this.flush(true));
       addEventListener("visibilitychange", () => {
@@ -85,7 +92,7 @@ export class Beacons {
 
   /** A result list served, rendered or shown. */
   exposure(e: ExposureInput): void {
-    if (this.off || !e.shown.length) return;
+    if (this.paused() || !e.shown.length) return;
     this.exposures.push(e);
     this.schedule();
   }
@@ -96,9 +103,9 @@ export class Beacons {
     this.timer = undefined;
     const signals = this.signals.splice(0);
     const exposures = this.exposures.splice(0);
-    if (this.off || (!signals.length && !exposures.length)) return;
+    if (this.paused() || (!signals.length && !exposures.length)) return;
     if (!(await this.recording())) {
-      this.off = true;
+      this.pause();
       return;
     }
     const session = this.session();
@@ -107,18 +114,30 @@ export class Beacons {
     for (let i = 0; i < signals.length; i += MAX) sends.push(discovery.signals(signals.slice(i, i + MAX), session, { keepalive }));
     for (let i = 0; i < exposures.length; i += MAX) sends.push(discovery.exposures(exposures.slice(i, i + MAX), session, { keepalive }));
     const done = await Promise.allSettled(sends);
-    if (done.some((r) => r.status === "rejected" && toContentKitError(r.reason).code === "not_configured")) this.off = true;
+    if (done.some((r) => r.status === "rejected" && ["not_configured", "unavailable"].includes(toContentKitError(r.reason).code))) this.pause();
   }
 
   private signal(s: SignalInput): void {
-    if (this.off) return;
+    if (this.paused()) return;
     // A view's later revision replaces its earlier one still waiting.
     if (s.type === "view") this.signals = this.signals.filter((x) => x.event_id !== s.event_id);
     this.signals.push(s);
     this.schedule();
   }
 
-  /** Whether the site records signals, asked once at the first event; an unreadable model sends anyway (a not_configured answer still turns them off). */
+  /** Off until `recheck` passes; then the model is read again. */
+  private paused(): boolean {
+    if (this.offUntil > Date.now()) return true;
+    this.offUntil = 0;
+    return false;
+  }
+
+  private pause(): void {
+    this.offUntil = Date.now() + this.recheck;
+    this.recorded = undefined;
+  }
+
+  /** Whether the site records signals, asked at the first event and after a pause; an unreadable model sends anyway (a refusal still pauses them). */
   private recording(): Promise<boolean> {
     return (this.recorded ??= this.client.kinds().then(
       (m) => m.signals,

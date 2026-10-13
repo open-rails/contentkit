@@ -57,8 +57,11 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 	if d.Offer != nil || d.Access == nil || !d.Access.Editor {
 		t.Fatalf("an unsold channel as its owner sees it: offer %+v access %+v", d.Offer, d.Access)
 	}
-	if rec := f.want(http.StatusConflict, memberToken, "POST", path+"/join", nil, nil); !strings.Contains(rec.Body.String(), `"not_joinable"`) {
-		t.Fatalf("joining a channel that sells nothing: %s", rec.Body)
+	// People read why, not the error chain behind it.
+	var refusal struct{ Error, Code string }
+	if f.want(http.StatusConflict, memberToken, "POST", path+"/join", nil, &refusal); refusal.Code != "not_joinable" || refusal.Error == "" ||
+		strings.Contains(refusal.Error, "offers:") || strings.Contains(refusal.Error, ch) {
+		t.Fatalf("joining a channel that sells nothing: %+v", refusal)
 	}
 
 	// A free membership: its owner reads the offer to manage it, the paywall

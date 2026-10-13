@@ -404,7 +404,7 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	for _, n := range favorited {
 		out[n-1].Favorited = true
 	}
-	if s.recs == nil {
+	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
 	states, err := s.o.Hub.States(ctx, signal.Subject{UserID: actor.ID}, refs)

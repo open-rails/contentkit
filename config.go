@@ -40,9 +40,10 @@ type Config struct {
 	Media *MediaConfig `yaml:"media" json:"media"`
 	// ClickHouse is the signal plane: signals, exposures, history,
 	// preferences, popularity and recommendations from signals. Unset, or
-	// unavailable when New runs, they are off: the content model says so
-	// (signals: false), lists sort on what Postgres holds and the
-	// contentkit_clickhouse probe fails while a configured one is down.
+	// while a configured one is down, they are off: the content model says
+	// so (signals: false), lists sort on what Postgres holds and the
+	// contentkit_clickhouse probe fails with the cause. The engine retries a
+	// down one in the background and turns signals back on when it answers.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
 	// Offers prices what creators and staff put on sale (needs Deps.Billing).
 	Offers offers.Config `yaml:"offers" json:"offers"`

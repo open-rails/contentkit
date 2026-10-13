@@ -12,8 +12,8 @@ import (
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-// Every failure answers its stable code and never a SQL identifier; staff
-// routes refuse people without the permission.
+// Every failure answers its stable code and never a SQL identifier or an
+// error chain; staff routes refuse people without the permission.
 func TestHandler(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"))
@@ -45,7 +45,7 @@ func TestHandler(t *testing.T) {
 			t.Fatalf("%s %s -> %d %s (want %d containing %q)", method, path, code, out, status, contains)
 		}
 		if status >= 400 {
-			for _, leak := range []string{"_idx", "_fkey", "_check", "sqlstate", "content_groups", "content_memberships", "pgx"} {
+			for _, leak := range []string{"_idx", "_fkey", "_check", "sqlstate", "content_groups", "content_memberships", "pgx", "groups:", "kinds:", "contentref:", "json:"} {
 				if strings.Contains(out, leak) {
 					t.Fatalf("%s %s leaks %q: %s", method, path, leak, out)
 				}
@@ -65,14 +65,14 @@ func TestHandler(t *testing.T) {
 	}
 	color, saga := string(made[0].ID), string(made[1].ID)
 	expect("", "POST", "/groups", `[]`, 401, "")
-	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"color"}]`, 409, `"error":"groups: conflict"`)
+	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"color"}]`, 409, "")
 	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"x","nope":1}]`, 400, "unknown field")
-	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"x"}] {}`, 400, "multiple JSON values")
+	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"x"}] {}`, 400, "more than one JSON value")
 	expect("", "GET", "/groups?kind=tag&language=en", "", 200, `"name":"Color"`)
 	expect("", "GET", "/groups?sort=random", "", 400, "sort")
 	expect("", "GET", "/groups/"+color, "", 200, `"names":[{"language":"en","kind":"name","name":"Color"}]`)
-	expect("", "GET", "/groups/"+cid(99), "", 404, "not found")
-	expect("", "GET", "/groups/not-an-id", "", 400, "group id")
+	expect("", "GET", "/groups/"+cid(99), "", 404, "")
+	expect("", "GET", "/groups/not-an-id", "", 400, "group id: ")
 	expect(user, "PATCH", "/groups/"+color, `{"slug":"colour","attributes":{"x":1}}`, 400, "not declared")
 	expect(user, "PATCH", "/groups/"+color, `{"slug":"colour","text":[{"language":"en","description":"Hues"}]}`, 200, `"slug":"colour"`)
 	expect(user, "POST", "/groups/"+color+"/names", `[{"language":"en","kind":"alias","name":"Hue"}]`, 200, `"name":"Hue"`)
@@ -87,7 +87,7 @@ func TestHandler(t *testing.T) {
 	expect(user, "POST", "/groups/"+saga+"/members", `[{"group_id":"`+color+`","content_id":"`+cid(1)+`"}]`, 400, "names group")
 	expect(user, "PUT", "/groups/"+saga+"/members/order", `{"members":[{"content_id":"`+cid(1)+`"}]}`, 200, `"count":1`)
 	expect(user, "GET", "/groups/"+saga+"/members?cursor=%21", "", 400, "cursor")
-	expect(user, "POST", "/groups/"+color+"/merge", `{"into":"`+saga+`"}`, 409, "cannot merge")
+	expect(user, "POST", "/groups/"+color+"/merge", `{"into":"`+saga+`"}`, 409, "")
 	expect(user, "DELETE", "/groups/"+color, "", 200, `"state":"deleted"`)
 	expect("", "GET", "/groups/"+color, "", 404, "")
 

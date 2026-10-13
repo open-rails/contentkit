@@ -25,15 +25,15 @@ type ImportSignal struct {
 	Resume     string
 }
 
-// SignalPlane reports whether signals are recorded.
-func (s *Service) SignalPlane() bool { return s.recs != nil }
+// SignalPlane reports whether signals are recorded now.
+func (s *Service) SignalPlane() bool { return s.o.Hub.SignalPlane() }
 
 // ImportSignals records imported events in the signal plane, without a
 // visibility check: a view on a version also counts for its content.
-// ErrNoSignals without a signal plane.
+// ErrNoSignals without a signal plane (ErrSignalsDown while it is down).
 func (s *Service) ImportSignals(ctx context.Context, in []ImportSignal) error {
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	if len(in) == 0 {
 		return nil

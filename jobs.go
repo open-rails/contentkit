@@ -103,7 +103,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
 		}
-		if e.hub.SignalPlane() {
+		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{}, true)
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true}, false)
 			periodic("contentkit_coengagement", coEngagementEvery, coEngagementArgs{}, false)

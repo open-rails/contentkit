@@ -127,3 +127,75 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 		t.Fatalf("erased subject still has state: %+v %v", states, err)
 	}
 }
+
+// A ClickHouse that is down at boot, comes up, drops and comes back: signals
+// follow it without a restart, and the content model and the probe tell the
+// truth throughout.
+func TestEngineSignalPlaneOutageIntegration(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	schema := engineSchema(t, pool)
+	chDB := "ck_outage_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	env.Empty(t, chDB)
+	admin := env.Open(t, "")
+	t.Cleanup(func() {
+		env.Drop(t, admin, chDB)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE app = 'contentkit_signal' AND database LIKE '%' || $1", chDB)
+	})
+	ch := newCHProxy(t, env.Addr)
+	cfg := siteConfig(schema)
+	cfg.ClickHouse = ClickHouseConfig{Database: chDB, Addr: ch.addr(), Username: env.User, Password: env.Password, Cluster: env.Cluster}
+	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close(context.Background()) })
+	if err := e.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := e.Routes(Routes{Prefix: "/ck", Groups: ContentRoutes | DiscoveryRoutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := serve(t, routes)
+	staff, u1 := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "u1", Kind: "user"}
+	var c catalog.Content
+	s.call(http.StatusCreated, staff, "POST", "/ck/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Tide"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
+	s.call(http.StatusOK, staff, "POST", "/ck/v1/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
+	probe := e.Probes()[0]
+	signals := func(status int) {
+		t.Helper()
+		s.call(status, u1, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, Type: discovery.TypeClick,
+			EventID: uuid.NewString(), OccurredAt: time.Now().UTC()}}}, nil)
+	}
+	await := func(on bool) {
+		t.Helper()
+		for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+			var model kindsroute.ContentModel
+			s.call(http.StatusOK, access.Actor{Anonymous: true}, "GET", "/ck/v1/kinds", nil, &model)
+			if model.Signals == on {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the content model never said signals=%v", on)
+			}
+		}
+		if err := probe.Check(ctx); (err == nil) != on {
+			t.Fatalf("signals=%v but the probe says %v", on, err)
+		}
+	}
+
+	await(false)
+	signals(http.StatusServiceUnavailable)
+	ch.set(true)
+	await(true)
+	signals(http.StatusNoContent)
+	ch.set(false)
+	await(false)
+	signals(http.StatusServiceUnavailable)
+	ch.set(true)
+	await(true)
+	signals(http.StatusNoContent)
+}

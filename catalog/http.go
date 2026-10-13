@@ -155,10 +155,10 @@ func (s *Store) Handler() http.Handler {
 		start := time.Now()
 		mux.ServeHTTP(sw, r.WithContext(access.WithMemo(r.Context())))
 		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start)}
+		if sw.cause != nil {
+			attrs = append(attrs, "err", sw.cause.Error())
+		}
 		if sw.status >= http.StatusInternalServerError {
-			if sw.cause != nil {
-				attrs = append(attrs, "err", sw.cause.Error())
-			}
 			s.log.Error("catalog request failed", attrs...)
 			return
 		}
@@ -166,6 +166,7 @@ func (s *Store) Handler() http.Handler {
 	})
 }
 
+// statusWriter records the status and the cause writeErr kept off the wire.
 type statusWriter struct {
 	http.ResponseWriter
 	status int
@@ -192,10 +193,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	status, code, msg := classify(err)
-	if status >= http.StatusInternalServerError {
-		if sw, ok := w.(*statusWriter); ok {
-			sw.cause = err
-		}
+	if sw, ok := w.(*statusWriter); ok {
+		sw.cause = err
 	}
 	writeJSON(w, status, errorBody{Error: msg, Code: code})
 }
@@ -212,13 +211,13 @@ func classify(err error) (int, string, string) {
 	case errors.Is(err, errUnauthenticated):
 		return http.StatusUnauthorized, httpapi.CodeUnauthorized, "authentication required"
 	case errors.Is(err, ErrInvalid):
-		return http.StatusBadRequest, httpapi.CodeInvalidRequest, err.Error()
+		return http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.Is(err, ErrNotFound), errors.Is(err, content.ErrNotFound):
 		return http.StatusNotFound, httpapi.CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, content.ErrSubjectErased):
 		return http.StatusForbidden, httpapi.CodeForbidden, "forbidden"
 	case errors.Is(err, ErrConflict):
-		return http.StatusConflict, httpapi.CodeConflict, err.Error()
+		return http.StatusConflict, httpapi.CodeConflict, httpapi.Message(httpapi.CodeConflict)
 	case errors.As(err, &rej):
 		return http.StatusUnprocessableEntity, "moderation_rejected", rej.Reason
 	case errors.Is(err, errMediaNotConfigured):
@@ -235,7 +234,7 @@ func decode(r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return invalid("invalid JSON body: %v", err)
+		return invalid("%s", httpapi.BodyError(err))
 	}
 	return nil
 }

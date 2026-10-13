@@ -26,8 +26,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	riverhelpers "github.com/open-rails/helpers/river"
-	"github.com/open-rails/migratekit"
-	"github.com/open-rails/migratekit/chmigrate"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit/auth"
@@ -72,8 +70,9 @@ type Engine struct {
 	classifier  bool // free-text answers to reclassify
 
 	hub      *hub.Hub
-	ch       signal.Conn
-	ownCH    clickhouse.Conn
+	signals  *signalPlane // nil without ClickHouse
+	chMu     sync.Mutex
+	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *content.Runtime
 	notices  *notification.Store
 	groups   *groups.Store
@@ -85,9 +84,6 @@ type Engine struct {
 	modules  map[httpapi.Module]http.Handler
 	inproc   http.Handler
 	probes   []Probe
-
-	// signalErr is why a configured signal plane is off.
-	signalErr error
 
 	mu        sync.Mutex
 	jobs      *jobs
@@ -115,10 +111,11 @@ type engineMedia struct {
 // database it creates or upgrades ContentKit's tables in
 // Config.Database.Schema, River's in Config.Database.RiverSchema and the
 // media worker's queue; replicas booting together take turns on an advisory
-// lock. With ClickHouse.Addr it applies the signal plane's migrations too;
-// a signal plane it can't open leaves signals off (see openSignalPlane).
-// It starts no jobs: Start does, and jobs queued before it wait. ctx bounds
-// the wait for the databases.
+// lock. With ClickHouse configured it opens the signal plane, applying its
+// migrations with ClickHouse.Addr; while ClickHouse is down signals are off,
+// and the engine retries in the background until Close. It starts no jobs:
+// Start does, and jobs queued before it wait. ctx bounds the wait for the
+// databases.
 func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil}
 	if e.log == nil {
@@ -139,9 +136,9 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	if err := e.migrate(ctx); err != nil {
 		return nil, err
 	}
-	e.openSignalPlane(ctx, deps)
+	e.signals = e.newSignals(deps)
 	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Tenant, DefaultLanguage: cfg.Content.Languages[0],
-		CH: e.ch, CHDatabase: cfg.ClickHouse.Database}); err != nil {
+		SignalPlane: e.signals != nil}); err != nil {
 		return nil, err
 	}
 	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log}); err != nil {
@@ -171,6 +168,9 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	}
 	e.jobs = &jobs{e: e}
 	e.probes = e.newProbes(deps)
+	if e.signals != nil {
+		e.signals.start(ctx)
+	}
 	return e, nil
 }
 
@@ -247,55 +247,6 @@ func (e *Engine) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// openSignalPlane opens the signal plane when ClickHouse is configured
-// (Deps.ClickHouse or Config.ClickHouse.Addr). One it can't migrate, open or
-// whose schema this version does not use leaves signals off: the engine runs
-// on Postgres alone, says so in its content model, logs why and fails the
-// contentkit_clickhouse probe until a restart finds it.
-func (e *Engine) openSignalPlane(ctx context.Context, deps Deps) {
-	if deps.ClickHouse == nil && e.cfg.ClickHouse.Addr == "" {
-		return
-	}
-	if e.signalErr = e.signalPlane(ctx, deps); e.signalErr == nil {
-		return
-	}
-	e.log.ErrorContext(ctx, "contentkit: the signal plane is unavailable; running with signals off", "err", e.signalErr)
-	if e.ownCH != nil {
-		_ = e.ownCH.Close()
-	}
-	e.ch, e.ownCH = nil, nil
-}
-
-// signalPlane applies the signal migrations (with Addr), takes Deps.ClickHouse
-// or opens one from Config, and checks its schema.
-func (e *Engine) signalPlane(ctx context.Context, deps Deps) error {
-	c := e.cfg.ClickHouse
-	if c.Addr != "" {
-		steps, err := migratekit.Load(migrations.ClickHouse, ".")
-		if err != nil {
-			return fmt.Errorf("contentkit: load signal migrations: %w", err)
-		}
-		db := stdlib.OpenDBFromPool(e.pool)
-		defer db.Close()
-		m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password,
-			Cluster: c.Cluster, App: "contentkit_signal", PostgresDB: db})
-		defer m.Close()
-		if err := m.ApplyMigrations(ctx, steps); err != nil {
-			return fmt.Errorf("contentkit: apply signal migrations: %w", err)
-		}
-	}
-	e.ch = deps.ClickHouse
-	if e.ch == nil {
-		conn, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr},
-			Auth: clickhouse.Auth{Database: c.Database, Username: c.Username, Password: c.Password}})
-		if err != nil {
-			return fmt.Errorf("contentkit: open ClickHouse: %w", err)
-		}
-		e.ch, e.ownCH = conn, conn
-	}
-	return signal.CheckSchema(ctx, e.ch, c.Database)
 }
 
 // newCatalog builds the stores media is built over: groups, offers (with
@@ -495,7 +446,7 @@ func (e *Engine) mount(deps Deps) error {
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
 	}
-	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.discover.SignalPlane()); err != nil {
+	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane); err != nil {
 		return err
 	}
 	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Groups: e.groups,
@@ -528,7 +479,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog}
-	if o.Candidates != nil && !e.hub.SignalPlane() {
+	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")
 		o.Candidates = nil
 	}
@@ -619,6 +570,9 @@ func (e *Engine) Close(ctx context.Context) error {
 		return nil
 	}
 	e.closed = true
+	if e.signals != nil {
+		e.signals.close()
+	}
 	var errs []error
 	if e.own != nil {
 		if err := e.own.Stop(ctx); err != nil {
@@ -627,9 +581,11 @@ func (e *Engine) Close(ctx context.Context) error {
 			cancel()
 		}
 	}
+	e.chMu.Lock()
 	if e.ownCH != nil {
 		errs = append(errs, e.ownCH.Close())
 	}
+	e.chMu.Unlock()
 	return errors.Join(errs...)
 }
 
@@ -667,14 +623,8 @@ func (e *Engine) Probes() []Probe { return slices.Clone(e.probes) }
 
 func (e *Engine) newProbes(deps Deps) []Probe {
 	var out []Probe
-	if e.ch != nil {
-		out = append(out, Probe{Name: "contentkit_clickhouse", Check: func(ctx context.Context) error {
-			return e.ch.Exec(ctx, "SELECT 1")
-		}})
-	} else if err := e.signalErr; err != nil {
-		out = append(out, Probe{Name: "contentkit_clickhouse", Check: func(context.Context) error {
-			return fmt.Errorf("contentkit: signals are off until a restart opens the signal plane: %w", err)
-		}})
+	if e.signals != nil {
+		out = append(out, Probe{Name: "contentkit_clickhouse", Check: e.signals.check})
 	}
 	if e.media != nil {
 		store := e.media.store
@@ -698,8 +648,8 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish
 // (content_plane, media_plane, signal_plane). Without a signal plane only the
-// content and media planes are erased; a configured one that New could not
-// open stays signal_plane until a restart opens it.
+// content and media planes are erased; a configured one that is down stays
+// signal_plane until it is back.
 func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
 	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
 	if len(subjects) > signal.MaxErasureSubjects {
@@ -711,9 +661,12 @@ func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (
 		}
 	}
 	report, signalErr := e.hub.EraseSubjects(ctx, subjects)
-	if errors.Is(signalErr, hub.ErrSignalPlaneDisabled) {
-		// A configured plane that is down still holds their signals.
-		signalErr = e.signalErr
+	if errors.Is(signalErr, hub.ErrSignalPlaneDown) {
+		// It still holds their signals.
+		_, cause := e.signals.state()
+		signalErr = errors.Join(signalErr, cause)
+	} else if errors.Is(signalErr, hub.ErrSignalPlaneDisabled) {
+		signalErr = nil
 	}
 	if report.Remaining == nil {
 		report.Remaining = map[string]uint64{}

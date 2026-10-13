@@ -32,8 +32,8 @@ type HistoryOptions struct {
 // recent first, as their listing shows them now.
 func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}
-	if s.recs == nil {
-		return empty, ErrNoSignals
+	if err := s.signals(); err != nil {
+		return empty, err
 	}
 	if !o.Actor.Person() {
 		return empty, fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
@@ -87,8 +87,8 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 // ForgetHistory erases the signed-in reader's signals for one content item,
 // one kind, or every kind.
 func (s *Service) ForgetHistory(ctx context.Context, actor access.Actor, kind, contentID string) error {
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	if !actor.Person() {
 		return fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
@@ -207,8 +207,8 @@ type versionFacts struct {
 // (popularity.SessionScore), so it completes at 90% of its pages, duration
 // or scroll.
 func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Signals) error {
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	if len(in.Signals) == 0 || len(in.Signals) > maxSignals {
 		return fmt.Errorf("%w: 1-%d signals", ErrInvalid, maxSignals)
@@ -373,8 +373,8 @@ type Placement struct {
 
 // RecordExposures records result lists for click attribution.
 func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Exposures) error {
-	if s.recs == nil {
-		return ErrNoSignals
+	if err := s.signals(); err != nil {
+		return err
 	}
 	if len(in.Exposures) == 0 || len(in.Exposures) > signal.MaxExposuresPerBatch {
 		return fmt.Errorf("%w: 1-%d exposures", ErrInvalid, signal.MaxExposuresPerBatch)

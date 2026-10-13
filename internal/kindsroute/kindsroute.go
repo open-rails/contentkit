@@ -18,8 +18,10 @@ type ContentModel struct {
 	Kinds          map[string]kinds.Kind      `json:"kinds"`
 	GroupKinds     map[string]kinds.GroupKind `json:"group_kinds"`
 	ContentFilters []kinds.ContentFilter      `json:"content_filters"`
-	// Signals: the site records signals and exposures. Without, clients send
-	// none, and history, similar and recommendations answer not_configured.
+	// Signals: the site records signals and exposures now. Without, clients
+	// send none and read the model again later: a configured signal plane
+	// that is down comes back (history, similar and recommendations answer
+	// unavailable meanwhile), one never configured answers not_configured.
 	Signals bool `json:"signals"`
 }
 
@@ -44,17 +46,24 @@ func Public(c kinds.Config, signals bool) ContentModel {
 	return m
 }
 
-type server struct{ body []byte }
+type server struct {
+	bodies  [2][]byte // without and with signals
+	signals func() bool
+}
 
-// Handler serves GET /kinds from c and whether signals are recorded,
-// rendered once.
-func Handler(c kinds.Config, signals bool) (http.Handler, error) {
-	body, err := json.Marshal(Public(c, signals))
-	if err != nil {
-		return nil, err
+// Handler serves GET /kinds from c, rendered once, and whether signals are
+// recorded, asked per request.
+func Handler(c kinds.Config, signals func() bool) (http.Handler, error) {
+	srv := &server{signals: signals}
+	for i, on := range []bool{false, true} {
+		body, err := json.Marshal(Public(c, on))
+		if err != nil {
+			return nil, err
+		}
+		srv.bodies[i] = body
 	}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, nil, &server{body: body}, routes)
+	httpapi.Mount(mux, nil, srv, routes)
 	return mux, nil
 }
 
@@ -62,12 +71,17 @@ func init() { httpapi.Register(httpapi.Kinds, routes) }
 
 var routes = []httpapi.Route[*server]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded. Cacheable for five minutes.",
+		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters and whether signals are recorded now. Cacheable for a minute.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
 }
 
 func (s *server) handle(w http.ResponseWriter, _ *http.Request) {
+	body := s.bodies[0]
+	if s.signals() {
+		body = s.bodies[1]
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=300")
-	_, _ = w.Write(s.body)
+	// Short, so clients see the signal plane come and go.
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	_, _ = w.Write(body)
 }
