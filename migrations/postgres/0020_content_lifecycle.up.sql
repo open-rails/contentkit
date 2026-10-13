@@ -45,3 +45,10 @@ CREATE TRIGGER content_groups_deleted BEFORE INSERT OR UPDATE OF state ON conten
     FOR EACH ROW EXECUTE FUNCTION contentkit_group_deleted();
 
 CREATE INDEX content_groups_purge_idx ON content_groups (tenant_id, deleted_at) WHERE ((state = 'deleted'::text) AND (media_purged_at IS NULL));
+
+-- A version's free_after has passed and what follows ran (catalog
+-- ReleaseFree): facets, documents and media exposure re-derived. A changed
+-- free_after runs again.
+ALTER TABLE content_facets ADD COLUMN free_applied boolean DEFAULT false NOT NULL;
+UPDATE content_facets SET free_applied = true WHERE access_free_after <= now();
+CREATE INDEX content_facets_free_idx ON content_facets (tenant_id, access_free_after) WHERE ((NOT free_applied) AND (access_free_after IS NOT NULL));

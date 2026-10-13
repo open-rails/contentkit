@@ -265,7 +265,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 // Engine jobs erase what nobody keeps: a blog draft that never went live is
 // expired after its kind's draft_ttl, media folder included; a deleted
 // channel's media is hidden, kept for a restore through the retention, then
-// purged once.
+// purged once. A post whose free_after passed has its body images exposed.
 func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
@@ -280,7 +280,8 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	cfg.Media = &MediaConfig{
 		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
 			Uploads: []media.Upload{{Path: "{name}", Content: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
-				{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}}}}},
+				{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
+			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}}},
 		Delivery: DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 	}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Store: env.Store})
@@ -312,6 +313,30 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	}
 	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", ids[0]) == 0 {
 		t.Fatalf("expired %d (%v), folder deletions queued %d", n, err, jobs("contentkit_media_delete_folder", ids[0]))
+	}
+
+	passed := time.Now().Add(-time.Minute)
+	freed, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Freed"}},
+		Access: &access.Rule{Level: access.PPV, FreeAfter: &passed}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.catalog.Publish(ctx, staff, []catalog.Publish{{ContentID: freed[0]}}); err != nil {
+		t.Fatal(err)
+	}
+	body := "blog" + media.BodySuffix
+	exposed := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+
+			` WHERE kind = 'contentkit_media_expose' AND args->'ref'->>'content_kind' = $1 AND args->'ref'->>'content_id' = $2`, body, freed[0]).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := exposed()
+	if n, err := e.catalog.ReleaseFree(ctx); err != nil || n != 1 || exposed() != before+1 {
+		t.Fatalf("released %d (%v); body exposes %d after %d", n, err, exposed(), before)
 	}
 
 	made, err := e.groups.CreateGroups(ctx, []groups.GroupInput{{Kind: "channel", Slug: "studio", OwnerUserID: "u1"}})

@@ -95,7 +95,8 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
   deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
-  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes, updated_at = EXCLUDED.updated_at`,
+  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes, updated_at = EXCLUDED.updated_at,
+  free_applied = f.free_applied AND f.access_free_after IS NOT DISTINCT FROM EXCLUDED.access_free_after`,
 		s.tenant, ids, string(data)); err != nil {
 		return err
 	}

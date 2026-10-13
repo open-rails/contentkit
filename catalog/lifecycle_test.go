@@ -340,3 +340,57 @@ func TestDraftExpiryIntegration(t *testing.T) {
 		t.Fatal("a negative draft_ttl was accepted")
 	}
 }
+
+// Once a free_after time passes, ReleaseFree runs a write's effects for the
+// content once (reads open it from that time on their own): a content update
+// event goes out, and a second run finds nothing; moving free_after arms it
+// again.
+func TestReleaseFreeIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	var events []Event
+	f.s.Subscribe(func(_ context.Context, batch []Event) error {
+		events = append(events, batch...)
+		return nil
+	})
+	free := f.now().Add(time.Hour)
+	in := gallery("Soon free", "en")
+	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}
+	id := f.create("staff", in)
+	f.publish("staff", id, nil)
+	plain := f.create("staff", gallery("Plain", "en"))
+	f.publish("staff", plain, nil)
+	applied := func() bool {
+		t.Helper()
+		var ok bool
+		if err := f.pool.QueryRow(f.ctx, `SELECT bool_and(free_applied) FROM `+pgx.Identifier{f.schema, "content_facets"}.Sanitize()+` WHERE content_id = $1`, id).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 || applied() {
+		t.Fatalf("released %d (%v) before free_after", n, err)
+	}
+	if d := f.read("", "main.test", id)[0].Versions[0].Decision; d.Allowed {
+		t.Fatalf("anonymous opens it before free_after: %+v", d)
+	}
+	f.advance(2 * time.Hour)
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 1 || !applied() {
+		t.Fatalf("released %d (%v) after free_after", n, err)
+	}
+	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 {
+		t.Fatalf("released again %d (%v)", n, err)
+	}
+	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentUpdated && e.ContentID == id }) {
+		t.Fatalf("no update event for the released item: %+v", events)
+	}
+	later := f.now().Add(time.Hour)
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.PPV, FreeAfter: &later}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if applied() {
+		t.Fatal("a moved free_after stays released")
+	}
+}
