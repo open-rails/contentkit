@@ -215,7 +215,8 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
-		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override), Groups: c.groupIDs}
+		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override).Previewed(s.o.Kinds.Kinds[c.Kind]),
+			Groups: c.groupIDs}
 	}
 	ds, err := s.o.Gate.Decide(ctx, q.reader.Actor, items)
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {

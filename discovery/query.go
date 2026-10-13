@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,7 +42,9 @@ type Reader struct {
 type Filter struct {
 	Kind string
 	// Groups are all required (effective on the card's version); a position
-	// sort orders by the first.
+	// sort orders by the first, which must be of an ordered group kind. A
+	// reader's content filter never hides a group's content from a list
+	// requiring that group.
 	Groups        []string
 	ExcludeGroups []string
 	// Traits are all required on the card's version.
@@ -100,6 +104,14 @@ func (q *sel) and(pred string, args pgx.NamedArgs) {
 
 func (q *sel) predicate() string { return strings.Join(q.where, " AND ") }
 
+// with is a copy of q also requiring pred.
+func (q *sel) with(pred string, args pgx.NamedArgs) *sel {
+	c := *q
+	c.where, c.args = slices.Clone(q.where), maps.Clone(q.args)
+	c.and(pred, args)
+	return &c
+}
+
 // compile resolves the reader once and renders the filter over f.
 func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error) {
 	if r.Mode == "" {
@@ -129,8 +141,13 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	if err != nil {
 		return nil, err
 	}
+	required, err := uniqueIDs("groups", f.Groups)
+	if err != nil {
+		return nil, err
+	}
 	// A channel's feed shows its editors the channel's drafts too.
-	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners})
+	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
+		Requested: required})
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +163,8 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		}
 		q.and("f.kind = @d_kind", pgx.NamedArgs{"d_kind": f.Kind})
 	}
-	if gs, err := uniqueIDs("groups", f.Groups); err != nil {
-		return nil, err
-	} else if len(gs) > 0 {
-		q.and("f.group_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": gs})
+	if len(required) > 0 {
+		q.and("f.group_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": required})
 	}
 	if gs, err := uniqueIDs("exclude_groups", f.ExcludeGroups); err != nil {
 		return nil, err
@@ -377,7 +392,7 @@ type order struct {
 const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key, ''), x.title)) FROM %s x WHERE x.tenant_id = f.tenant_id AND x.content_id = f.content_id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1), '')`
 
-func (s *Service) parseSort(raw string, f Filter) (order, error) {
+func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	if raw == "" {
 		raw = s.o.Kinds.Kinds[f.Kind].Sort
 	}
@@ -413,9 +428,19 @@ func (s *Service) parseSort(raw string, f Filter) (order, error) {
 		if len(f.Groups) == 0 {
 			return o, fmt.Errorf("%w: sort position needs groups: it orders by the first", ErrInvalid)
 		}
+		group := strings.TrimSpace(f.Groups[0])
+		var kind string
+		err := s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, group).Scan(&kind)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows): // lists nothing
+		case err != nil:
+			return o, err
+		case !s.o.Kinds.GroupKinds[kind].Ordered:
+			return o, fmt.Errorf("%w: sort position needs an ordered group first; %s groups have no order", ErrInvalid, kind)
+		}
 		o.expr = fmt.Sprintf(`coalesce((SELECT min(m.position) FROM %s m WHERE m.tenant_id = f.tenant_id AND m.group_id = @d_pgroup
  AND m.content_id = f.content_id AND m.state = 'active'), 2147483647)::bigint`, s.t.memberships)
-		o.cast, o.desc, o.args["d_pgroup"] = "bigint", false, strings.TrimSpace(f.Groups[0])
+		o.cast, o.desc, o.args["d_pgroup"] = "bigint", false, group
 	case SortRandom:
 		o.expr, o.cast, o.desc = "md5(f.content_id || @d_seed::text)", "text", false
 	default:
