@@ -96,7 +96,7 @@ func bodyKind(k Kind) (Kind, bool) {
 			if len(p.Widths) > 0 {
 				img.Width = slices.Max(p.Widths)
 			}
-			body.Private = append(body.Private, Private{Name: p.Name + "-open", From: p.From, To: p.Name + "/{name}.webp", Image: &img})
+			body.Private = append(body.Private, Private{Name: p.Name + "-open", From: p.From, To: p.Name + "-open/{name}.webp", Image: &img})
 		}
 	}
 	return body, len(body.Uploads) > 0

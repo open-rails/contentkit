@@ -201,7 +201,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 				return fmt.Errorf("image not placed: %+v", m.Files)
 			}
 			m.Files[i].Pending = nil
-			m.Files = append(m.Files, media.File{Path: "inline/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1,
+			m.Files = append(m.Files, media.File{Path: "inline-open/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1,
 				From: plan.Path, Preset: "inline-open"})
 			return nil
 		}); err != nil {
