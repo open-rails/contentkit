@@ -153,12 +153,14 @@ func TestOwnerGroupEditors(t *testing.T) {
 	if d.Editor || d.Decision.Allowed || d.Body != "" || len(d.Decision.Offers) != 1 || d.Decision.Offers[0].PriceID == "" {
 		t.Fatalf("a stranger reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
 	}
+	d = catalog.Content{}
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+gallery.ID, nil, &d)
 	for _, v := range d.Versions {
 		if !v.Decision.Allowed || len(v.Decision.Sell) > 0 || len(v.Decision.Offers) > 0 {
 			t.Fatalf("the writer is offered the channel's gallery: version %s %+v", v.ID, v.Decision)
 		}
 	}
+	d = catalog.Content{}
 	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+gallery.ID, nil, &d)
 	if len(d.Versions) != 2 || !d.Versions[0].Decision.Allowed || d.Versions[1].Decision.Allowed || len(d.Versions[1].Decision.Offers) != 1 {
 		t.Fatalf("a stranger's gallery %+v", d.Versions)
@@ -185,8 +187,8 @@ func TestOwnerGroupEditors(t *testing.T) {
 		t.Fatalf("the writer's list %+v", got)
 	}
 
-	var page groups.GroupDetail
 	for token, editor := range map[string]bool{creatorToken: true, writerToken: true, strangerToken: false} {
+		var page groups.GroupDetail
 		f.want(http.StatusOK, token, "GET", "/groups/"+ch, nil, &page)
 		if a := page.Access; a == nil || a.Editor != editor || (a.Offer == nil) != editor {
 			t.Fatalf("the channel's page as an editor (%v): access %+v", editor, a)

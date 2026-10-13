@@ -118,11 +118,13 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 	}
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
 		left := 0
-		for _, err := range w.env.Store.List(ctx, avatars.Prefix()) {
+		for obj, err := range w.env.Store.List(ctx, avatars.Prefix()) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			left++
+			if obj.Key != avatars.ManifestKey() { // the deletion's tombstone
+				left++
+			}
 		}
 		if left == 0 {
 			break
