@@ -595,7 +595,7 @@ func (c *Client) PostPollVote(ctx context.Context, id string, body content.PollV
 	return out, err
 }
 
-// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll.
+// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.
 func (c *Client) PostPollAnswer(ctx context.Context, id string, body content.PollAnswerInput) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/answer", "{id}", url.PathEscape(id)), nil, body, &out)

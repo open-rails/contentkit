@@ -230,6 +230,7 @@
         "x-contentkit-errors": [
           "comment_banned",
           "comment_too_long",
+          "comments_closed",
           "forbidden",
           "moderation_rejected",
           "not_found",
@@ -387,6 +388,7 @@
         "x-contentkit-errors": [
           "comment_banned",
           "comment_too_long",
+          "comments_closed",
           "forbidden",
           "moderation_rejected",
           "not_found",
@@ -719,6 +721,7 @@
         "x-contentkit-errors": [
           "comment_banned",
           "comment_too_long",
+          "comments_closed",
           "conflict",
           "forbidden",
           "moderation_rejected",
@@ -2133,7 +2136,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Stores or replaces the caller's answer to an open free-text poll.",
+        "summary": "Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.",
         "parameters": [
           {
             "name": "id",
@@ -2177,7 +2180,9 @@
         "x-contentkit-module": "content",
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [
+          "comment_banned",
           "forbidden",
+          "moderation_rejected",
           "not_found",
           "rate_limited"
         ],
