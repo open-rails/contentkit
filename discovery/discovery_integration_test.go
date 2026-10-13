@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -55,6 +57,13 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	}
 	if views := page.Contents[0].Counts.Views; views != 100 {
 		t.Fatalf("an imported view baseline counts as views: %d", views)
+	}
+	v, err := f.cat.Viewer(f.ctx, catalog.ViewerOptions{Actor: access.Actor{Anonymous: true}, Host: host})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items, err := f.cat.Contents(f.ctx, v, []string{f.cid(1), f.cid(3)}); err != nil || items[0].Views != 40 || items[1].Views != 100 {
+		t.Fatalf("detail views %v: viewers %+v, baseline %+v", err, items[0], items[1])
 	}
 	if alpha.Attributes["format"] != "manga" || alpha.PublishedAt == nil || alpha.Viewer != nil {
 		t.Fatalf("card attributes and anonymous state: %+v", alpha)
