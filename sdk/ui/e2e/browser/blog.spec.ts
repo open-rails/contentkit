@@ -4,7 +4,7 @@ import { contentKit } from "../support/seed.ts";
 import { harness, page as at, screenshots as dir } from "./pages.ts";
 
 // demo/post.html over the real catalog: a blog item's body stores image
-// references, so its images show through publish, unpublish and publish.
+// references, resolved to the version's private files for whoever opens it.
 test.describe.configure({ timeout: 150_000 });
 test.use({ actionTimeout: 15_000 });
 const h = harness();
@@ -34,8 +34,8 @@ test("a blog item's body images show through publish, unpublish and publish", as
   await reader.goto(at("post.html", null, { post: post.id }));
   await expect(reader.locator("[data-demo=missing]")).toHaveText("not_found", { timeout: 30_000 });
 
-  /** The reader's image source once the published item's public images load, other than not. */
-  const shown = async (not?: string | null) => {
+  /** The reader's image source once the published item's private image loads. */
+  const shown = async () => {
     let src: string | null = null;
     await expect
       .poll(
@@ -43,7 +43,7 @@ test("a blog item's body images show through publish, unpublish and publish", as
           await reader.reload();
           if (!(await reader.locator("[data-demo=post]").isVisible({ timeout: 10_000 }).catch(() => false))) return false;
           src = await reader.locator("[data-demo=post] img").first().getAttribute("src");
-          return src !== not && /\/public\//.test(src ?? "") && (await loaded(reader, "[data-demo=post]"));
+          return /\/private\//.test(src ?? "") && (await loaded(reader, "[data-demo=post]"));
         },
         { timeout: 90_000, intervals: [1000] },
       )
@@ -52,17 +52,17 @@ test("a blog item's body images show through publish, unpublish and publish", as
   };
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.locator("[data-demo=state]")).toHaveText("Published");
-  const first = await shown();
-  expect(first).toMatch(/\/public\/i-[0-9a-f-]{36}-[0-9a-f-]{36}\.webp$/);
+  await shown();
   await reader.screenshot({ path: `${dir}/post-${info.project.name}.png`, fullPage: true });
 
-  // Unpublished and published again, the image publishes a new generation; the stored reference follows it.
+  // Unpublished, the reader loses it; published again, the stored reference shows again.
   await page.getByRole("button", { name: "Unpublish" }).click();
   await expect(page.locator("[data-demo=state]")).toHaveText("Draft");
+  await expect
+    .poll(async () => (await reader.reload(), await reader.locator("[data-demo=missing]").textContent().catch(() => null)), { timeout: 30_000 })
+    .toBe("not_found");
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.locator("[data-demo=state]")).toHaveText("Published");
-  const again = await shown(first);
-  expect(again).toMatch(/\/public\/i-[0-9a-f-]{36}-[0-9a-f-]{36}\.webp$/);
-  expect((await reader.request.get(first!)).status()).toBe(404);
+  await shown();
   await reader.close();
 });
