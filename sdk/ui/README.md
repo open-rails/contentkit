@@ -589,11 +589,16 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 ## Errors
 
 Every call rejects with `ContentKitError`: `code` (the server's, or `network`,
-`storage`, `aborted`, `resume_mismatch`, `decode`, `render_timeout`),
-`status`, `retryAfter`, `details` (image and video limits), `blobs`
-(`not_uploaded`), `ban` (`comment_banned`) and `action` (`rate_limited`),
-plus `refusal`, `isLimit`, `isCeiling`, `blocksQueue` and `transient`. Every
-code has a message in every bundle (`useMessages().error(e)`).
+`server_unavailable`, `storage`, `aborted`, `resume_mismatch`, `decode`,
+`render_timeout`), `status`, `retryAfter`, `details` (image and video limits),
+`blobs` (`not_uploaded`), `ban` (`comment_banned`), `action` (`rate_limited`)
+and `unknownCode` (a code this client doesn't know; the message is the
+server's), plus `refusal`, `isLimit`, `isCeiling`, `blocksQueue` and
+`transient`. Every code has a message in every bundle (`useMessages().error(e)`).
+
+Failures are classified like auth-ui's and billing-ui's (`transportFailure`):
+no server reached is `network`; a 502, 503, 504 or 520–524 without an API
+error body, or a timeout, is `server_unavailable`.
 
 ## Migrating from the two old packages
 

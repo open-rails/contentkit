@@ -35,7 +35,7 @@ it.each([false, true])("rolls back a failed comment reaction after a reply, unle
     act(() => result.current.reload());
     await waitFor(() => expect(result.current.loading).toBe(false));
   }
-  await act(async () => { reactions[0]!(Response.json({ error: "unavailable" }, { status: 503 })); await failed; });
+  await act(async () => { reactions[0]!(Response.json({ error: "unavailable", code: "unavailable" }, { status: 503 })); await failed; });
   expect(result.current.items[0]).toMatchObject({ mine: refetch ? 1 : 0, likes: refetch ? 1 : 0, reply_count: 1 });
 });
 
@@ -196,7 +196,7 @@ it.each(["unchanged", "viewer", "round-trip"] as const)("keeps failed comment-re
     await waitFor(() => expect(result.current.loading).toBe(false));
   }
   await act(async () => {
-    writes[0]!(Response.json({ error: "unavailable" }, { status: 503 }));
+    writes[0]!(Response.json({ error: "unavailable", code: "unavailable" }, { status: 503 }));
     await failed;
   });
   expect(result.current.items[0]?.mine).toBe(transition === "unchanged" ? 0 : 1);
@@ -228,7 +228,7 @@ it("does not roll back a new reaction after leaving and returning to the same vi
   act(() => { current = result.current.set(-1); });
   await waitFor(() => expect(writes).toHaveLength(2));
   await act(async () => {
-    writes[0]!(Response.json({ error: "unavailable" }, { status: 503 }));
+    writes[0]!(Response.json({ error: "unavailable", code: "unavailable" }, { status: 503 }));
     await failed;
   });
   expect(result.current.counts.mine).toBe(-1);

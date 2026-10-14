@@ -10,6 +10,7 @@ export {
   isContentKitError,
   readContentKitError,
   toContentKitError,
+  transportFailure,
   type ContentKitErrorCode,
   type ContentKitErrorInit,
 } from "./errors.js";

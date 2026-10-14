@@ -1,9 +1,9 @@
-import { ContentKitError, aborted } from "../errors.js";
+import { ContentKitError, aborted, requestFailure } from "../errors.js";
 import type { RequestReply } from "../generated/wire.js";
 
 /**
  * Sends a presigned request with its body. Resolves on 2xx; rejects with an
- * ContentKitError (storage, network or aborted). onProgress reports bytes sent.
+ * ContentKitError (storage, network, server_unavailable or aborted). onProgress reports bytes sent.
  */
 export type Transport = (
   req: RequestReply,
@@ -31,7 +31,7 @@ export const xhrTransport: Transport = (req, body, { signal, onProgress }) =>
     xhr.onload = () =>
       done(xhr.status >= 200 && xhr.status < 300 ? undefined : storageError(xhr.status, xhr.responseText));
     xhr.onerror = () => done(new ContentKitError("network", "connection to storage failed"));
-    xhr.ontimeout = xhr.onerror;
+    xhr.ontimeout = () => done(new ContentKitError("server_unavailable", "storage did not respond"));
     xhr.onabort = () => done(aborted(signal));
     signal?.addEventListener("abort", onAbort, { once: true });
     xhr.send(body);
@@ -42,8 +42,7 @@ export const fetchTransport: Transport = async (req, body, { signal, onProgress 
   try {
     res = await fetch(req.url, { method: req.method, headers: req.headers, body, signal: signal ?? null });
   } catch (err) {
-    if (signal?.aborted) throw aborted(signal);
-    throw new ContentKitError("network", "connection to storage failed", { cause: err });
+    throw requestFailure(err, signal, "storage");
   }
   if (!res.ok) throw storageError(res.status, await res.text().catch(() => ""));
   await res.body?.cancel();
