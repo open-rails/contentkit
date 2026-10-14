@@ -225,6 +225,9 @@ export const es: ContentKitUiMessageBundle = {
     },
   },
   versionDownload: {
+    unavailable: "Esto no está disponible para descargar ahora.",
+    availableIn_one: "Disponible para descargar en {count} día",
+    availableIn_other: "Disponible para descargar en {count} días",
     label: "Descargar",
     preparing: "Preparando la descarga…",
     locked: "Desbloquéalo para descargarlo.",
@@ -232,6 +235,7 @@ export const es: ContentKitUiMessageBundle = {
     failed: "No se pudo iniciar la descarga. Inténtalo de nuevo.",
   },
   errors: {
+    download_unavailable: "Esto no está disponible para descargar ahora.",
     no_download: "Todavía no hay nada que descargar.",
     generic: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",
     network: "Se perdió la conexión. Revisa tu red e inténtalo de nuevo.",

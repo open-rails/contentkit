@@ -224,6 +224,9 @@ export const en = {
     },
   },
   versionDownload: {
+    unavailable: "This isn't available to download right now.",
+    availableIn_one: "Available to download in {count} day",
+    availableIn_other: "Available to download in {count} days",
     label: "Download",
     preparing: "Preparing download…",
     locked: "Unlock this to download it.",
@@ -231,6 +234,7 @@ export const en = {
     failed: "The download couldn't start. Please try again.",
   },
   errors: {
+    download_unavailable: "This isn't available to download right now.",
     no_download: "There is nothing to download yet.",
     generic: "Something went wrong on our end. Please try again.",
     network: "Connection lost. Check your network and try again.",

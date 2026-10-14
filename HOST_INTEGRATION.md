@@ -289,51 +289,49 @@ apply it; staff, creators and owner-group editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
-## Downloads (`kinds.Kind.Download`)
+## Downloads (`kinds.Kind.Download`, `Deps.Downloads`)
 
 `GET /v1/contents/{id}/versions/{vid}/download` serves what the version's kind
-serves, to viewers who open the whole version (every segment released;
-editors and staff always), each granted download charged once to
-`media.downloads`:
+serves to viewers who open the whole version (every segment released;
+editors and staff always), as the host's policy allows, each granted
+download charged once to `media.downloads`:
 
 ```yaml
 content:
   kinds:
     video:
-      download:
-        serve: original             # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
-        tiers: [premium]            # optional: only these tiers' holders download (editors always)
-    gallery:
-      download:                     # readers serve pages: the media kind's Publish.Download zip
-        watermark:
-          pages: [3, 5, 7]          # from 1; pages past the end are skipped
-          tiers: [premium]          # the version's rule locks behind one of these
-          groups: [{kind: translator, slug: doujins-com}]   # the version (or its content) is in one
+      download: {serve: original}   # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
+    gallery: {}                     # readers serve pages: the media kind's Publish.Download zip
 media:
   downloads:
     anonymous: [{limit: 5, per: 1h}]   # by address
     user: [{limit: 20, per: 1h}]
     tiers: [{tier: premium, quotas: [{limit: 50, per: 1h}]}]   # the first tier held replaces user
-    ttl: 5m                            # a file download URL's life
+    ttl: 5m                            # a download URL's life
 ```
 
+- **Policy** is the host's `Deps.Downloads` (`versions.DownloadPolicy`):
+  `Decide(ctx, DownloadRequest) (DownloadDecision, error)` runs after the
+  access check, before the quota, for files and zips. The request carries
+  the actor, the tiers it holds, `Editor`, the version, its kind, its groups
+  (`{kind, slug}`, its own and its content's), its effective `access.Rule`,
+  `Released` (when it went live) and `Pages` (0 for a file). The decision
+  allows it, or refuses with the host's `Reason` and `AvailableAt` (403
+  `download_unavailable`, nothing charged), and names pages (from 1) to
+  `Mark`; files ignore marks. `Mark(ctx, actor, version, page, bytes)`
+  marks them. Nil allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
-  expires_at}`. `url` serves the download as an attachment for `ttl`;
-  navigate to it (contentkit-ui's `useVersionDownload` does). Files (the
-  original, an MP4) and unmarked zips are the media host's, with a download
-  token of that one `download/` key, so bytes never pass the app; files are
-  named `{title} [{version code}].{ext}`, zips by the zip preset's
-  `Download` template.
-- A zip the watermark marks for a signed-in viewer is
-  `archive?for=&ticket=`, relative to the download route: `GET
-  .../versions/{vid}/archive` streams the pages, those the policy names
-  passed through `Deps.Watermark.Mark(ctx, actor, version, page, bytes)`
-  (page from 1). No watermark on video kinds; without `Deps.Watermark`
-  nothing is marked.
-- `202 Pending` while the file is placed or produced, `403` locked, `404` no
-  download for the kind, `409 no_download` when the version has no file to
-  serve, `429 rate_limited` with `retry_after`. Quotas are charged when the
-  download is granted.
+  expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
+  `VersionDownloadButton` do). Files and unmarked zips are the media host's,
+  with a download token of that one `download/` key, so bytes never pass the
+  app; files are named `{title} [{version code}].{ext}`, zips by the zip
+  preset's `Download` template. A zip with marks is `archive?for=&mark=&ticket=`,
+  relative to the download route: `GET .../versions/{vid}/archive` streams
+  it, marking the ticket's pages.
+- `202 Pending` while the file is placed or produced, `403` locked or
+  `download_unavailable`, `404` no download for the kind, `409 no_download`
+  when the version has nothing to serve, `429 rate_limited` with
+  `retry_after`.
 
 ## Interactions (`content`)
 

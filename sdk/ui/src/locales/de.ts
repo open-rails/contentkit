@@ -225,6 +225,9 @@ export const de: ContentKitUiMessageBundle = {
     },
   },
   versionDownload: {
+    unavailable: "Das ist gerade nicht zum Herunterladen verfügbar.",
+    availableIn_one: "In {count} Tag zum Herunterladen verfügbar",
+    availableIn_other: "In {count} Tagen zum Herunterladen verfügbar",
     label: "Herunterladen",
     preparing: "Download wird vorbereitet…",
     locked: "Schalte das frei, um es herunterzuladen.",
@@ -232,6 +235,7 @@ export const de: ContentKitUiMessageBundle = {
     failed: "Der Download konnte nicht starten. Bitte versuche es erneut.",
   },
   errors: {
+    download_unavailable: "Das ist gerade nicht zum Herunterladen verfügbar.",
     no_download: "Hier gibt es noch nichts herunterzuladen.",
     generic: "Auf unserer Seite ist etwas schiefgelaufen. Bitte versuche es erneut.",
     network: "Verbindung unterbrochen. Prüfe dein Netzwerk und versuche es erneut.",

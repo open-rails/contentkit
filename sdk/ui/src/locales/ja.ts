@@ -225,6 +225,9 @@ export const ja: ContentKitUiMessageBundle = {
     },
   },
   versionDownload: {
+    unavailable: "現在はダウンロードできません。",
+    availableIn_one: "{count} 日後にダウンロードできます",
+    availableIn_other: "{count} 日後にダウンロードできます",
     label: "ダウンロード",
     preparing: "ダウンロードを準備中…",
     locked: "ダウンロードするにはロックを解除してください。",
@@ -232,6 +235,7 @@ export const ja: ContentKitUiMessageBundle = {
     failed: "ダウンロードを開始できませんでした。もう一度お試しください。",
   },
   errors: {
+    download_unavailable: "現在はダウンロードできません。",
     no_download: "まだダウンロードできるものがありません。",
     generic: "サーバー側で問題が発生しました。もう一度お試しください。",
     network: "接続が切れました。ネットワークを確認して再試行してください。",

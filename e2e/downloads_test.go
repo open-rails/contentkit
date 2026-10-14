@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
-	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
@@ -233,19 +233,24 @@ func (d *downloads) refused(bearer string, c catalog.Content) time.Duration {
 // A movie's download is its original upload at a short-lived URL of the
 // media host, never through the app: the gateway serves exactly its bytes as
 // an attachment named for the movie and its version, to that URL alone and
-// only briefly; the viewing token never opens it. Locked movies download
-// only for entitled viewers and editors. Every download is charged to its
-// viewer's bucket: anonymous by address, signed in, or the premium tier,
-// which replaces the user bucket.
+// only briefly; the viewing token never opens it; the policy's marks don't
+// apply. Locked movies download only for entitled viewers and editors, and
+// the host's policy may hold one back (403 download_unavailable with when),
+// charging nothing. Every download is charged to its viewer's bucket:
+// anonymous by address, signed in, or the premium tier, which replaces the
+// user bucket.
 func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 	d := newDownloads(t, versions.Downloads{
 		Anonymous: []versions.Quota{{Limit: 2, Per: time.Hour}},
 		User:      []versions.Quota{{Limit: 3, Per: time.Hour}},
-		Tiers:     []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 4, Per: time.Hour}}}},
+		Tiers:     []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 5, Per: time.Hour}}}},
 		TTL:       10 * time.Second})
 	free := d.content("movie", "Night Train: Episode 2", access.Rule{Level: access.Public})
 	premium := d.content("movie", "Locked Movie", access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}})
 	empty := d.content("movie", "Nothing Yet", access.Rule{Level: access.Public})
+	embargoed := d.content("movie", "Just Out", access.Rule{Level: access.Public})
+	d.join(embargoed, "embargo")
+	d.put(embargoed, "source", "video/mp4", []byte("embargoed original"))
 	original := bytes.Repeat([]byte("original video bytes "), 500)
 	ref := d.put(free, "source", "video/x-matroska", original)
 	d.put(premium, "source", "video/mp4", []byte("premium original"))
@@ -260,6 +265,7 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 		t.Fatalf("the original is in %s/: %+v", area, src)
 	}
 
+	// The policy names marks for every file; a video ignores them.
 	got := d.file("", free)
 	name := "Night Train: Episode 2 [" + free.Versions[0].Code + "].mkv"
 	if got.Name != name || got.Type != "video/x-matroska" || got.Size != int64(len(original)) || time.Until(got.ExpiresAt) > 10*time.Second {
@@ -290,15 +296,33 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 	// Anonymous: two per address, the second charged again.
 	d.file("", free)
 	d.refused("", free)
-	// Signed in: three, apart from the anonymous bucket.
+	// The policy holds the embargoed movie back from viewers without premium
+	// for three days after its release, charging nothing.
+	for range 2 {
+		var refusal struct {
+			Code        string    `json:"code"`
+			Reason      string    `json:"reason"`
+			AvailableAt time.Time `json:"available_at"`
+		}
+		if err := json.Unmarshal(d.download(http.StatusForbidden, d.user, embargoed).Body.Bytes(), &refusal); err != nil ||
+			refusal.Code != "download_unavailable" || refusal.Reason != "release_window" ||
+			time.Until(refusal.AvailableAt) < 71*time.Hour || time.Until(refusal.AvailableAt) > 72*time.Hour {
+			t.Fatalf("embargo refusal %+v %v", refusal, err)
+		}
+	}
+	// Signed in: three, apart from the anonymous bucket; refusals took none.
 	for range 3 {
 		d.file(d.user, free)
 	}
 	d.refused(d.user, free)
 	d.file(d.another, free)
-	// Premium: its tier's four replace the user's three.
+	// Premium: its tier's five replace the user's three; the embargo
+	// does not hold it back.
 	for range 3 {
 		d.file(d.premium, free)
+	}
+	if f := d.file(d.premium, embargoed); f.Size != int64(len("embargoed original")) {
+		t.Fatalf("premium embargoed download %+v", f)
 	}
 	if f := d.file(d.premium, premium); f.Type != "video/mp4" || !strings.HasSuffix(f.Name, "].mp4") {
 		t.Fatalf("premium download %+v", f)
@@ -310,15 +334,6 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 	d.download(http.StatusForbidden, d.another, premium)
 	if f := d.file(d.staff, premium); f.URL == "" {
 		t.Fatalf("staff download %+v", f)
-	}
-	// A kind whose downloads need premium: refused to anyone else, even of a
-	// free episode everyone watches.
-	episode := d.content("episode", "Free Episode", access.Rule{Level: access.Public})
-	d.put(episode, "source", "video/mp4", []byte("episode original"))
-	d.download(http.StatusForbidden, "", episode)
-	d.download(http.StatusForbidden, d.another, episode)
-	if f := d.file(d.staff, episode); f.Size != int64(len("episode original")) {
-		t.Fatalf("staff episode download %+v", f)
 	}
 	// Nothing uploaded: a clear 409.
 	var reply struct {
@@ -360,7 +375,11 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 		}
 		return refs[0]
 	}
-	outputs := map[string][2]media.File{}
+	type outs struct {
+		from       string
+		read, high media.File
+	}
+	var produced []outs
 	var zipped bytes.Buffer
 	zw := zip.NewWriter(&zipped)
 	for _, f := range m.Files {
@@ -368,10 +387,11 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 			continue
 		}
 		stem := strings.TrimSuffix(path.Base(f.Path), path.Ext(f.Path))
-		read := media.File{Path: "read/" + stem + ".webp", Blob: copyTo(f, k.Area("", "read")), Type: "image/webp", Size: f.Size, FP: "e2e"}
-		high := media.File{Path: "high/" + stem + ".webp", Blob: copyTo(f, k.Area("", "high")), Type: "image/webp", Size: f.Size, FP: "e2e"}
-		outputs[f.Path] = [2]media.File{read, high}
-		e, _ := zw.CreateHeader(&zip.FileHeader{Name: path.Base(high.Path), Method: zip.Store})
+		o := outs{from: f.Path,
+			read: media.File{Path: "read/" + stem + ".webp", Blob: copyTo(f, k.Area("", "read")), Type: "image/webp", Size: f.Size, FP: "e2e"},
+			high: media.File{Path: "high/" + stem + ".webp", Blob: copyTo(f, k.Area("", "high")), Type: "image/webp", Size: f.Size, FP: "e2e"}}
+		produced = append(produced, o)
+		e, _ := zw.CreateHeader(&zip.FileHeader{Name: path.Base(o.high.Path), Method: zip.Store})
 		key, _ := item.Blob(f.Blob)
 		rc, _, err := d.w.env.Store.Get(ctx, key, media.GetOptions{})
 		if err != nil {
@@ -383,6 +403,21 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		for _, o := range produced {
+			if err := m.SetOutputs(o.from, "read", []media.File{o.read}); err != nil {
+				return err
+			}
+			if err := m.SetOutputs(o.from, "high", []media.File{o.high}); err != nil {
+				return err
+			}
+			m.ClearPending(o.from, "read")
+			m.ClearPending(o.from, "high")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	sum := sha256.Sum256(zipped.Bytes())
 	refs, err := ms.NewBlobs(ctx, ref, k.Area("", "zip"), [][]byte{sum[:]})
 	if err != nil {
@@ -392,23 +427,9 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 	if _, err := d.w.env.Store.Put(ctx, key, bytes.NewReader(zipped.Bytes()), int64(zipped.Len()), media.PutOptions{ContentType: "application/zip"}); err != nil {
 		t.Fatal(err)
 	}
+	// The zip packs its inputs as the stored manifest orders them.
 	if _, err := ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
-		for from, outs := range outputs {
-			if err := m.SetOutputs(from, "read", outs[:1]); err != nil {
-				return err
-			}
-			if err := m.SetOutputs(from, "high", outs[1:]); err != nil {
-				return err
-			}
-			m.ClearPending(from, "read")
-			m.ClearPending(from, "high")
-		}
-		var z *media.Private
-		for i := range k.Private {
-			if k.Private[i].Name == "zip" {
-				z = &k.Private[i]
-			}
-		}
+		z := &k.Private[slices.IndexFunc(k.Private, func(p media.Private) bool { return p.Name == "zip" })]
 		return m.SetOutputs(z.Zip, z.Name, []media.File{{Path: z.To, Blob: refs[0], Type: "application/zip", Size: int64(zipped.Len()),
 			FP: media.ZipFP(k.ZipInputs(m, z))}})
 	}); err != nil {
@@ -433,33 +454,21 @@ func entries(t *testing.T, b []byte) [][]byte {
 	return out
 }
 
-// A book's download is its full-resolution pages as a zip. The book's
-// watermark marks exactly pages 3, 5 and 7, through the host's Mark, of a
-// premium version translated by the site; every other page, and every page
-// of a premium version outside the group or a free one in it, is
-// byte-identical to the prepared archive. The originals and full-resolution
-// pages never open to the viewing token; the web rendition does.
-func TestBookDownloadsMarkTheWatermarkedPages(t *testing.T) {
+// A book's download is its full-resolution pages as a zip. The host's policy
+// marks exactly pages 3, 5 and 7 of a premium version the site translated,
+// streamed through the archive route; every other page, and every page of a
+// premium version outside the group or a free one in it, is byte-identical
+// to the prepared archive the media host serves. The originals and
+// full-resolution pages never open to the viewing token; the web rendition
+// does.
+func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 	d := newDownloads(t, versions.Downloads{})
 	premium := access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
-	var translators []groups.Group
-	d.f.want(http.StatusCreated, d.staff, "POST", "/groups", []groups.GroupInput{{Kind: "translator", Slug: "doujins-com",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"}}}}, &translators)
-	join := func(c catalog.Content) {
-		d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
-			{GroupID: translators[0].ID, VersionID: c.Versions[0].ID}}}, nil)
-	}
 	ours := d.content("book", "Ours", premium)
-	join(ours)
+	d.join(ours, "doujins-com")
 	theirs := d.content("book", "Theirs", premium)
 	free := d.content("book", "Free", access.Rule{Level: access.Public})
-	join(free)
-	// The public model says the book downloads, never which pages it marks.
-	var model kindsroute.ContentModel
-	d.f.want(http.StatusOK, "", "GET", "/kinds", nil, &model)
-	if b := model.Kinds["book"].Download; b == nil || b.Watermark != nil {
-		t.Fatalf("the public model's book download %+v", b)
-	}
+	d.join(free, "doujins-com")
 	prepared := map[string][]byte{}
 	for _, c := range []catalog.Content{ours, theirs, free} {
 		prepared[c.ID] = d.pages(c, 8)

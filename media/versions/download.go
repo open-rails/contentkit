@@ -237,7 +237,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 			return nil, ErrNoDownload
 		}
 	}
-	mark, err := s.decide(ctx, actor, v, d.res.Editor, len(pages))
+	mark, err := s.ask(ctx, actor, v, d.res.Editor, len(pages))
 	if err != nil {
 		return nil, err
 	}
@@ -329,10 +329,10 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, ticket st
 	return a, nil
 }
 
-// decide asks the host's policy about actor's download of v, of pages
+// ask asks the host's policy about actor's download of v, of pages
 // pages (0 for a file), and returns the pages (from 1) to mark: none for a
 // file or a signed-out viewer. An UnavailableError when it refuses.
-func (s *Service) decide(ctx context.Context, actor access.Actor, v version, editor bool, pages int) ([]int, error) {
+func (s *Service) ask(ctx context.Context, actor access.Actor, v version, editor bool, pages int) ([]int, error) {
 	if s.o.Policy == nil {
 		return nil, nil
 	}

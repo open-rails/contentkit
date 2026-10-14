@@ -56,3 +56,10 @@ it("says a locked version must be unlocked, and when there is nothing to downloa
   fireEvent.click(screen.getByRole("button", { name: /download/i }));
   await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/nothing to download/i));
 });
+
+it("says when a download the site holds back opens", async () => {
+  const at = new Date(Date.now() + 2.5 * 86_400_000).toISOString();
+  setup([json(403, { error: "x", code: "download_unavailable", reason: "release_window", available_at: at })]);
+  fireEvent.click(screen.getByRole("button", { name: /download/i }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/in 3 days/));
+});

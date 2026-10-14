@@ -225,6 +225,9 @@ export const ko: ContentKitUiMessageBundle = {
     },
   },
   versionDownload: {
+    unavailable: "지금은 다운로드할 수 없습니다.",
+    availableIn_one: "{count}일 후에 다운로드할 수 있습니다",
+    availableIn_other: "{count}일 후에 다운로드할 수 있습니다",
     label: "다운로드",
     preparing: "다운로드 준비 중…",
     locked: "다운로드하려면 잠금을 해제하세요.",
@@ -232,6 +235,7 @@ export const ko: ContentKitUiMessageBundle = {
     failed: "다운로드를 시작할 수 없습니다. 다시 시도하세요.",
   },
   errors: {
+    download_unavailable: "지금은 다운로드할 수 없습니다.",
     no_download: "아직 다운로드할 항목이 없습니다.",
     generic: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
     network: "연결이 끊어졌습니다. 네트워크를 확인하고 다시 시도해 주세요.",

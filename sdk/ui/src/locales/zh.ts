@@ -225,6 +225,9 @@ export const zh: ContentKitUiMessageBundle = {
     },
   },
   versionDownload: {
+    unavailable: "目前无法下载。",
+    availableIn_one: "{count} 天后可下载",
+    availableIn_other: "{count} 天后可下载",
     label: "下载",
     preparing: "正在准备下载…",
     locked: "解锁后即可下载。",
@@ -232,6 +235,7 @@ export const zh: ContentKitUiMessageBundle = {
     failed: "无法开始下载，请重试。",
   },
   errors: {
+    download_unavailable: "目前无法下载。",
     no_download: "暂时没有可下载的内容。",
     generic: "我们这边出了问题，请重试。",
     network: "连接已断开，请检查网络后重试。",
