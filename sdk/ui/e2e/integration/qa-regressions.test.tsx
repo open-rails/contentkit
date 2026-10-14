@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, expect, it } from "vitest";
 import type { ContentKitClient, RefBody } from "../../src/client/index.js";
-import { ContentManager, MediaFolderEditor, ReaderStats, StatsDashboard } from "../../src/index.js";
+import { ContentManager, MediaFolderEditor, ReaderStats, StatsDashboard, VersionsEditor } from "../../src/index.js";
 import { ContentKitProvider } from "../../src/react/index.js";
 import type { Config, TestUser } from "../support/harness.js";
 import { client, fixture, harness, item, png, recorder, wait } from "./setup.js";
@@ -60,7 +60,7 @@ it("an earlier visit's uploads return, reserve their names and are added beside 
   record.presigns.length = 0;
   const user = userEvent.setup();
   const { container } = render(<MediaFolderEditor item={ref} client={c} poll={false} />);
-  expect(await screen.findByText("Uploaded, not added yet", undefined, wait)).toBeInTheDocument();
+  await waitFor(() => expect(container.querySelector('[data-ckui="pending-row"]')).toHaveTextContent("a.png"), wait);
   await user.upload(container.querySelector<HTMLInputElement>('[data-ckui="folder-add"] input')!, png("a.png", 81));
   await waitFor(() => expect(record.presigns.map((p) => p.path)).toEqual(["originals/a-2.png"]), wait);
   await user.click(await screen.findByRole("button", { name: "Add 2" }, wait));
@@ -106,7 +106,7 @@ it("staff statistics expose missing view collection and still rank comments; rea
   await reader.comments.create({ type: "contents", id: blog.id }, { body: "A reader comment." });
   const user = userEvent.setup();
   const dashboard = render(<StatsDashboard client={c} kinds={["blog"]} />);
-  expect(await screen.findAllByText("View statistics aren't available on this site.", undefined, wait)).toHaveLength(2);
+  await waitFor(() => expect(screen.getAllByText("View statistics aren't available on this site.")).toHaveLength(2), wait);
   await user.click(screen.getByRole("combobox", { name: "Ranked by" }));
   await user.click(await screen.findByRole("option", { name: "Comments" }));
   expect(await screen.findByRole("link", { name: "QA statistics" }, wait)).toBeInTheDocument();
@@ -123,7 +123,6 @@ it("a video version exposes its poster once a source has been uploaded", async (
   const ref = { kind: video.kind, id: video.id, version: video.versions[0]!.id };
   await c.media.put(fixture("portrait.mp4", "video/mp4"), { ref, path: "source", wait: false });
   const user = userEvent.setup();
-  const { VersionsEditor } = await import("../../src/components/content/editors.js");
   const { container } = render(<VersionsEditor content={video} client={c} />);
   await user.click(await screen.findByRole("button", { name: "Edit" }, wait));
   expect(await screen.findByRole("button", { name: "Replace video" }, wait)).toBeInTheDocument();
