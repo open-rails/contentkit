@@ -92,4 +92,10 @@ export const content: typeof en = {
     addSegment: "章を追加",
     saveSegments: "章を保存",
   },
+  myStats: {
+    completed: "読了・視聴済みの{kind}",
+    comments: "コメント",
+    likes: "もらったいいね",
+    dislikes: "もらったよくないね",
+  },
 };

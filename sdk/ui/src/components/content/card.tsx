@@ -3,13 +3,13 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useCallback, useContext, type MouseEvent, type ReactNode } from "react";
 import type { Card, CardAccess } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
 import { Badge } from "#ckui/ui/badge";
 import { RenditionImg } from "../rendition-img.js";
 import { formatDate, RelativeTime } from "../social/parts.js";
-import { GroupAvatar, GroupLink, labelOf, useLanguageName, type GroupLike, type Labels } from "../groups/parts.js";
+import { GroupAvatar, GroupLink, labelOf, type GroupLike, type Labels } from "../groups/parts.js";
 import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {

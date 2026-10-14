@@ -3,9 +3,10 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
 import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/groups.js";
+import { useMediaRead } from "../../react/read.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
@@ -13,10 +14,12 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
+import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
+import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
-import { GroupPicker, labelOf, useGroupNames, useLanguageName, type Labels } from "../groups/parts.js";
+import { GroupPicker, labelOf, useGroupNames, type Labels } from "../groups/parts.js";
 import { AttributeFields, formOf } from "../groups/fields.js";
 import { MembershipEditor } from "../groups/memberships.js";
 import { OfferFields } from "./offer-fields.js";
@@ -335,7 +338,7 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
     return (
       <Section title={t("contentEditor.media")} ckui="version-media">
         {spec.segments && <SegmentsEditor content={content} version={only} {...p} />}
-        {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: only.id }} label={t("contentEditor.media")} client={p.client} onError={p.onError} />}
+        {media && <VersionMedia content={content} version={only} model={model} {...p} />}
       </Section>
     );
   }
@@ -372,7 +375,13 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
         )}
       </SortableList>
       <ErrorLine error={order.error} />
-      <AddVersion languages={languages} many={spec?.versions.languages === "many"} pending={add.pending} onAdd={(input) => void add.run(() => client.contents.addVersion(content.id, input))} />
+      <AddVersion
+        languages={languages}
+        many={spec?.versions.languages === "many"}
+        pending={add.pending}
+        // A new version is a draft: open it for its media.
+        onAdd={(input) => void add.run(() => client.contents.addVersion(content.id, input)).then((v) => v && setOpen(v.id))}
+      />
       <ErrorLine error={add.error} />
     </Section>
   );
@@ -519,10 +528,26 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
       />
       <ErrorLine error={offer.error} />
       {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
-      {media && <MediaFolderEditor item={{ kind: content.kind, id: content.id, version: v.id }} label={t("contentEditor.media")} client={p.client} onError={p.onError} />}
+      {media && <VersionMedia content={content} version={v} model={model} {...p} />}
       {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
     </div>
   );
+}
+
+/**
+ * A version's media: a video kind's source, poster and subtitles (by its
+ * upload rules), else its upload folders. Uploads to a version that is not
+ * live are added as they finish; a live one's wait for "Add".
+ */
+function VersionMedia({ content, version, model, ...p }: Common & { content: Content; version: Version; model: ContentModel | null }) {
+  const { t } = useMessages();
+  const languageName = useLanguageName();
+  const item = useMemo(() => ({ kind: content.kind, id: content.id, version: version.id }), [content.kind, content.id, version.id]);
+  const r = useMediaRead(item, { editor: true, client: p.client });
+  const languages = useMemo(() => (model?.languages ?? []).map((l) => ({ value: l, label: languageName(l) })), [model, languageName]);
+  if (!r.read && r.loading) return <Skeleton className="h-24 w-full" />;
+  if (r.read?.uploads && videoPaths(r.read.uploads).source) return <VideoMediaEditor item={item} languages={languages} client={p.client} onError={p.onError} />;
+  return <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />;
 }
 
 type Row = { title: string; start: string; end: string; release: string };

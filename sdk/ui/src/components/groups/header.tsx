@@ -3,14 +3,14 @@ import type { ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Attribute, GroupDetail } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useGroup, useKinds } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { contentError, formatDate } from "../social/parts.js";
-import { GroupCover, GroupLink, labelOf, useLanguageName, type GroupLike, type Labels } from "./parts.js";
+import { GroupCover, GroupLink, labelOf, type GroupLike, type Labels } from "./parts.js";
 
 export interface GroupHeaderProps {
   /** The group the host already read; or give id. */

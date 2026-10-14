@@ -48,10 +48,11 @@ func TestRoutesIntegration(t *testing.T) {
 	var v Version
 	f.want(http.StatusCreated, "staff", "POST", "/v1/contents/"+id+"/versions", VersionInput{Languages: []string{"ja"}, Label: ptr("JA"),
 		Text: map[string]VersionText{"ja": {Title: "日本語版"}}}, &v)
-	if v.Position != 1 || v.Label != "JA" || v.Text["ja"].Title != "日本語版" || v.State != StatePublished {
+	// An added version is a draft until it is published.
+	if v.Position != 1 || v.Label != "JA" || v.Text["ja"].Title != "日本語版" || v.State != StateDraft {
 		t.Fatalf("version %+v", v)
 	}
-	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+id+"/versions/"+v.ID, VersionInput{Traits: &[]string{"colored"}}, &v)
+	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+id+"/versions/"+v.ID, VersionInput{Traits: &[]string{"colored"}, State: StatePublished}, &v)
 	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/versions/"+v.ID+"/segments", SegmentsInput{Segments: []Segment{{Start: 0, End: 4}, {Start: 4, End: 9, Title: "Two"}}}, &v)
 	if len(v.Segments) != 2 || v.Segments[1].Title != "Two" || !v.Segments[1].Released {
 		t.Fatalf("segments %+v", v.Segments)

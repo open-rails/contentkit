@@ -92,4 +92,10 @@ export const content: typeof en = {
     addSegment: "添加章节",
     saveSegments: "保存章节",
   },
+  myStats: {
+    completed: "已看完的{kind}",
+    comments: "评论",
+    likes: "收到的赞",
+    dislikes: "收到的踩",
+  },
 };
