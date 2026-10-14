@@ -606,6 +606,32 @@ func TestEditorViewIsNotAnUpload(t *testing.T) {
 	}
 }
 
+func TestManualCoversRelinquishAutomaticOwnership(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	f.visible(2)
+	g := f.gallery(1, 1)
+	f.commit(g, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: "originals/000.png"}, To: "cover",
+		Meta: map[string]any{media.MetaAutoCover: true, "alt": "Cover"}})
+	other := f.ref("gallery", 2)
+	m := f.commit(other, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: "cover.png"}, To: "cover"})
+	if cover, _ := m.Get("cover.png"); cover.Meta["auto_cover"] != nil || cover.Meta["alt"] != "Cover" {
+		t.Fatalf("a manual copy inherited automatic ownership or lost metadata: %+v", cover)
+	}
+	m = f.put(g, "cover", "image/png", png(9))
+	if cover, _ := m.Get("cover.png"); cover.Meta["auto_cover"] != nil || cover.Meta["alt"] != "Cover" {
+		t.Fatalf("a replacement inherited automatic ownership or lost metadata: %+v", cover)
+	}
+	for _, op := range []media.Op{
+		{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: "originals/000.png"}, To: "cover", Meta: map[string]any{media.MetaAutoCover: true}},
+		{Op: media.OpRemove, Path: "cover.png", Meta: map[string]any{media.MetaAutoCover: true}},
+	} {
+		if _, err := f.up.Commit(t.Context(), f.editor, g, uuid.NewString(), []media.Op{op}); code(err) != media.CodeConflict {
+			t.Fatalf("automatic %s replaced an editor's cover: %v", op.Op, err)
+		}
+	}
+}
+
 // frame fills an upload from its Frames video; a new video grabs again.
 func TestFrame(t *testing.T) {
 	f := newFixture(t)

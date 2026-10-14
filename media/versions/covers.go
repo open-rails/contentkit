@@ -15,10 +15,9 @@ import (
 
 // A reader content without a cover of its own shows its first published
 // page: its content-level cover upload is a copy of the leading released
-// page of its first live version, marked autoCover. A cover an editor
+// page of its first live version, marked media.MetaAutoCover. A cover an editor
 // uploads replaces it and is never touched; once that is removed, the next
 // publication brings the automatic one back.
-const autoCover = "auto_cover"
 
 // applyCover brings content's automatic cover to its source page, removing
 // it when no live version shows a released page.
@@ -50,7 +49,7 @@ func (s *Service) applyCover(ctx context.Context, kind, content string) error {
 			if !f.IsUpload() || f.Unattached || !coverPath(cover.From, f.Path) {
 				continue
 			}
-			if f.Meta[autoCover] != true {
+			if f.Meta[media.MetaAutoCover] != true {
 				return nil // the editor's
 			}
 			auto = &f
@@ -65,12 +64,12 @@ func (s *Service) applyCover(ctx context.Context, kind, content string) error {
 	case page == nil && auto == nil:
 		return nil
 	case page == nil:
-		ops = []media.Op{{Op: media.OpRemove, Path: auto.Path}}
+		ops = []media.Op{{Op: media.OpRemove, Path: auto.Path, Meta: map[string]any{media.MetaAutoCover: true}}}
 	case auto != nil && sameBlob(auto.Blob, page.Blob):
 		return nil
 	default:
 		ops = []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: content, Version: src, Path: page.Path}, To: coverTo(item.Kind(), cover.From, auto),
-			Meta: map[string]any{autoCover: true}}}
+			Meta: map[string]any{media.MetaAutoCover: true}}}
 	}
 	_, err = s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), ops)
 	if ue, ok := media.AsUploadError(err); ok && ue.Code != media.CodeUnavailable {

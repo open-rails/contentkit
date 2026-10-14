@@ -726,11 +726,12 @@ var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "
 
 // Upload meta keys ContentKit reads (put's meta).
 const (
-	MetaLang    = "lang"    // subtitles and audio: BCP 47
-	MetaLabel   = "label"   // a track's name
-	MetaForced  = "forced"  // bool: a forced-narrative subtitle track
-	MetaFor     = "for"     // a subtitle's video upload path; default every video of the item
-	MetaCharset = "charset" // a subtitle's IANA charset, overriding detection
+	MetaLang      = "lang"       // subtitles and audio: BCP 47
+	MetaLabel     = "label"      // a track's name
+	MetaForced    = "forced"     // bool: a forced-narrative subtitle track
+	MetaFor       = "for"        // a subtitle's video upload path; default every video of the item
+	MetaCharset   = "charset"    // a subtitle's IANA charset, overriding detection
+	MetaAutoCover = "auto_cover" // automatic cover ownership; explicit uploads clear it
 )
 
 // Output entry sizes in manifest JSON, beyond their paths and preset name:
