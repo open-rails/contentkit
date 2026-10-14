@@ -148,11 +148,11 @@ func TestReactions_HTTPRoute(t *testing.T) {
 
 func assertCounts(t *testing.T, rt *Runtime, actor access.Actor, r contentref.ContentRef, wantLikes, wantDislikes int, wantMine int16) {
 	t.Helper()
-	c, err := rt.reactions.counts(context.Background(), rt.store.pool, actor, r.Key())
+	c, err := rt.reactions.counts(context.Background(), rt.store.pool, actor, r.Key(), true)
 	if err != nil {
 		t.Fatalf("counts: %v", err)
 	}
-	if c.Likes != wantLikes || c.Dislikes != wantDislikes || c.Mine != wantMine {
+	if *c.Likes != wantLikes || *c.Dislikes != wantDislikes || c.Mine != wantMine {
 		t.Fatalf("counts = %+v, want likes=%d dislikes=%d mine=%d", c, wantLikes, wantDislikes, wantMine)
 	}
 }

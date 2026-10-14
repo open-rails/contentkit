@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // TargetType is what an interaction route names: a content item (optionally
@@ -29,14 +30,18 @@ const (
 	CommentsHidden = "hidden" // comments neither show nor take writes
 )
 
-// opensComments reports whether the actor reads and writes the target's
-// comments: it opens the content (for a version's comments, the version), or
-// edits it. Groups' comments are open to all.
-func opensComments(res resolve.Resolution) bool { return res.Accessible || res.Editor }
+// shows reports whether the actor sees property p (kinds.Show*) of a visible
+// target: all of content they open (for a version's, the version) or edit,
+// of the rest what its kind's locked view shows; all of a group.
+func (rt *Runtime) shows(ref contentref.ContentRef, res resolve.Resolution, p string) bool {
+	k, content := rt.cfg.Kinds[ref.ContentKind]
+	return res.Visible && (!content || res.Accessible || res.Editor || k.LockedView().Shows(p))
+}
 
-// commentsLocked refuses comment writes on content the actor can't open.
-func commentsLocked(res resolve.Resolution) error {
-	if !opensComments(res) {
+// commentsLocked refuses comment writes where the actor doesn't see the
+// target's comments.
+func (rt *Runtime) commentsLocked(ref contentref.ContentRef, res resolve.Resolution) error {
+	if !rt.shows(ref, res, kinds.ShowComments) {
 		return ErrCommentsLocked
 	}
 	return nil

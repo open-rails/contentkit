@@ -70,12 +70,70 @@ type Kind struct {
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
-	// Preview is what locked content of the kind shows anyone when its
-	// access rule names no preview; nil shows nothing.
-	Preview *Preview `json:"preview,omitempty" yaml:"preview"`
+	// Locked is what a viewer who does not open its content sees of it;
+	// nil is DefaultLocked.
+	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
 	// DraftTTL expires drafts that never went live this long after their
 	// creation: they are deleted, media included. Zero keeps them.
 	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
+}
+
+// Locked is what a viewer who does not open content (or a version) still
+// sees of it: the properties Show names and the free part Preview names. Its
+// id, code, path, title, languages, traits, owner, creators and paywall
+// always show; its body and private media never do.
+type Locked struct {
+	Show []string `json:"show" yaml:"show"`
+	// Preview is the free part when its access rule names none; nil is none.
+	Preview *Preview `json:"preview,omitempty" yaml:"preview"`
+}
+
+// Properties a Locked view may show.
+const (
+	ShowDescription = "description" // the content's and versions' descriptions
+	ShowCover       = "cover"
+	ShowGroups      = "groups"
+	ShowAttributes  = "attributes" // the content's and versions' attributes
+	ShowLength      = "length"     // versions' page counts, durations and segments
+	ShowReactions   = "reactions"  // like and dislike counts; locked viewers may react
+	ShowFavorites   = "favorites"  // favorite counts
+	ShowViews       = "views"      // view counts
+	ShowComments    = "comments"   // comments and their counts; locked viewers may comment
+)
+
+// Shown are the properties a Locked view may show.
+var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowViews, ShowComments}
+
+// DefaultLocked shows a kind's metadata and cover: no preview, counts or
+// comments.
+var DefaultLocked = Locked{Show: []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength}}
+
+// LockedView is k's Locked, else DefaultLocked.
+func (k Kind) LockedView() Locked {
+	if k.Locked != nil {
+		return *k.Locked
+	}
+	return DefaultLocked
+}
+
+// Shows reports whether l shows property p.
+func (l Locked) Shows(p string) bool { return slices.Contains(l.Show, p) }
+
+func (l Locked) validate(segments bool) error {
+	for i, p := range l.Show {
+		if !slices.Contains(Shown, p) || slices.Contains(l.Show[:i], p) {
+			return fmt.Errorf("locked shows unknown or repeated %q (one of %v)", p, Shown)
+		}
+	}
+	if p := l.Preview; p != nil {
+		if err := p.Validate(); err != nil {
+			return err
+		}
+		if p.Segments > 0 && !segments {
+			return errors.New("locked previews segments but the kind has none")
+		}
+	}
+	return nil
 }
 
 // Preview is the free part of locked content: its first Pages pages or first
@@ -264,12 +322,9 @@ func (c Config) Validate() error {
 		if k.DraftTTL < 0 {
 			return fmt.Errorf("%w: kind %s draft_ttl is negative", ErrInvalid, name)
 		}
-		if p := k.Preview; p != nil {
-			if err := p.Validate(); err != nil {
+		if l := k.Locked; l != nil {
+			if err := l.validate(k.Segments); err != nil {
 				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
-			}
-			if p.Segments > 0 && !k.Segments {
-				return fmt.Errorf("%w: kind %s previews segments but has none", ErrInvalid, name)
 			}
 		}
 	}

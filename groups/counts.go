@@ -3,6 +3,8 @@ package groups
 import (
 	"context"
 	"fmt"
+
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // Count is the number of distinct live, listed contents of one kind in a
@@ -20,8 +22,9 @@ const liveListed = `NOT f.deleted AND f.listing = 'listed' AND f.live_from IS NO
 // Recount rebuilds content_group_counts from content_facets, whose rows are
 // versions: per active group, content kind and language, the distinct live,
 // listed contents it holds or owns. It also re-picks every automatic cover:
-// the most-favorited live, listed content it holds or owns. It is an engine
-// job; counts may lag writes until it runs.
+// the most-favorited live, listed content it holds or owns whose cover anyone
+// sees (free, or its kind's locked view shows covers). It is an engine job;
+// counts may lag writes until it runs.
 func (s *Store) Recount(ctx context.Context) error {
 	return s.run(ctx, func(q Querier) error {
 		if _, err := q.Exec(ctx, fmt.Sprintf(`WITH c AS (
@@ -44,6 +47,7 @@ DELETE FROM %[3]s gc WHERE gc.tenant_id = $1
  SELECT DISTINCT ON (gid) gid AS group_id, f.content_id
  FROM %[1]s f CROSS JOIN LATERAL unnest(array_append(f.group_ids, f.owner_group_id)) AS gid
  WHERE f.tenant_id = $1 AND gid IS NOT NULL AND %[3]s
+  AND (f.access_level = 'public' OR f.access_free_after <= now() OR f.kind = ANY($2::text[]))
  ORDER BY gid, f.favorites DESC, f.published_at DESC NULLS LAST, f.content_id),
 auto AS (
  SELECT g.id, CASE WHEN b.content_id IS NULL THEN NULL ELSE jsonb_build_object('content_id', b.content_id, 'auto', true) END AS cover
@@ -51,9 +55,20 @@ auto AS (
  WHERE g.tenant_id = $1 AND g.state = 'active' AND (g.cover IS NULL OR g.cover ? 'auto'))
 UPDATE %[2]s g SET cover = auto.cover FROM auto
  WHERE g.tenant_id = $1 AND g.id = auto.id AND g.cover IS DISTINCT FROM auto.cover`,
-			s.table("content_facets"), s.table("content_groups"), liveListed), s.tenant)
+			s.table("content_facets"), s.table("content_groups"), liveListed), s.tenant, s.coveredKinds())
 		return err
 	})
+}
+
+// coveredKinds are the content kinds whose locked view shows covers.
+func (s *Store) coveredKinds() []string {
+	out := []string{}
+	for name, k := range s.cfg.Kinds {
+		if k.LockedView().Shows(kinds.ShowCover) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (s *Store) counts(ctx context.Context, q Querier, ids []string) (map[GroupID][]Count, error) {

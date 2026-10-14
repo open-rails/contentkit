@@ -6,11 +6,10 @@ import type { AdminComment, BanInput, BannedWord, BannedWordInput, Comment, Comm
 import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
-/** Counts after the caller's reaction changes from counts.mine to value. */
+/** Counts after the caller's reaction changes from counts.mine to value; a hidden tally stays hidden. */
 export function withReaction(counts: ReactionCounts, value: Reaction): ReactionCounts {
-  const likes = counts.likes - (counts.mine === 1 ? 1 : 0) + (value === 1 ? 1 : 0);
-  const dislikes = counts.dislikes - (counts.mine === -1 ? 1 : 0) + (value === -1 ? 1 : 0);
-  return { likes, dislikes, mine: value };
+  const move = (n: number | undefined, from: boolean, to: boolean) => (n === undefined ? undefined : n - (from ? 1 : 0) + (to ? 1 : 0));
+  return { likes: move(counts.likes, counts.mine === 1, value === 1), dislikes: move(counts.dislikes, counts.mine === -1, value === -1), mine: value };
 }
 
 const commentLists = ["comments", "replies", "latest", "admin-comments"];

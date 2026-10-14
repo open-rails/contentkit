@@ -108,11 +108,11 @@ func Effective(content Rule, override *Rule) Rule {
 	return content
 }
 
-// Previewed is r with its content kind's default preview when r locks and
+// Previewed is r with its content kind's locked preview when r locks and
 // names none of its own.
 func (r Rule) Previewed(k kinds.Kind) Rule {
-	if r.Preview == nil && r.Level != Public && k.Preview != nil {
-		p := *k.Preview
+	if p := k.LockedView().Preview; r.Preview == nil && r.Level != Public && p != nil {
+		p := *p
 		r.Preview = &p
 	}
 	return r

@@ -37,14 +37,14 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/v1/contents/{id}/like` | public | — | 200 `ReactionCounts` | Likes a content item or one of its versions. Query: `version`. |
 | POST | `/v1/contents/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a content item or one of its versions. Query: `version`. |
 | DELETE | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a content item or one of its versions. Query: `version`. |
-| GET | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a content item or one of its versions and the caller's own reaction. Query: `version`. |
+| GET | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a content item or one of its versions (absent where its kind's locked view hides them) and the caller's own reaction. Query: `version`. |
 | POST | `/v1/groups/{id}/like` | public | — | 200 `ReactionCounts` | Likes a group. |
 | POST | `/v1/groups/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a group. |
 | DELETE | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a group. |
 | GET | `/v1/groups/{id}/reaction` | public | — | 200 `ReactionCounts` | The like and dislike counts of a group and the caller's own reaction. |
 | POST | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a content item or one of its versions the caller sees; favoriting again is a no-op. Answers the state with its favorite count. Query: `version`. |
 | DELETE | `/v1/contents/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a content item or one of its versions, also one no longer visible. Answers the state with its favorite count. Query: `version`. |
-| GET | `/v1/contents/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible). Query: `version`. |
+| GET | `/v1/contents/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a content item or one of its versions (absent where its kind's locked view hides it) and whether the caller favorited it (never, signed out: then it must be visible). Query: `version`. |
 | POST | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count. |
 | DELETE | `/v1/groups/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a group, also one no longer visible. Answers the state with its favorite count. |
 | GET | `/v1/groups/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible). |

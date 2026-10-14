@@ -38,6 +38,7 @@ export interface ReactionButtonsProps {
  * Like and dislike toggles with counts: they change at once and roll back if
  * the server refuses. Signed out, they react anonymously where the server
  * allows it (`Config.anonymous.reactions`) and ask to sign in elsewhere.
+ * Nothing renders where the item's kind's locked view hides reactions.
  */
 export function ReactionButtons({ item, counts: initial, dislike = true, onSignIn, size = "default", client, onError, className, appearance }: ReactionButtonsProps) {
   const m = useMessages();
@@ -60,6 +61,7 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
       report(err, "reaction.save");
     });
   };
+  if (r.counts.likes === undefined && !r.loading) return null;
   const btn = size === "sm" ? "sm" : "default";
   const hint = mustSignIn ? t("reactions.signIn") : undefined;
   const disabled = mustSignIn && !signIn;
@@ -68,12 +70,12 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
       <div className="inline-flex items-center gap-1">
         <Button variant={r.counts.mine === 1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === 1} aria-label={t("reactions.like")} title={hint} disabled={disabled} onClick={() => toggle(1)}>
           <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} />
-          <span>{compact(r.counts.likes, m.language)}</span>
+          {r.counts.likes !== undefined && <span>{compact(r.counts.likes, m.language)}</span>}
         </Button>
         {dislike && (
           <Button variant={r.counts.mine === -1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === -1} aria-label={t("reactions.dislike")} title={hint} disabled={disabled} onClick={() => toggle(-1)}>
             <HugeiconsIcon icon={ThumbsDownIcon} strokeWidth={2} />
-            <span>{compact(r.counts.dislikes, m.language)}</span>
+            {r.counts.dislikes !== undefined && <span>{compact(r.counts.dislikes, m.language)}</span>}
           </Button>
         )}
       </div>

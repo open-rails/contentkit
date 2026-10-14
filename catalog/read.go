@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
 )
@@ -72,8 +73,8 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			continue
 		}
 		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
-			Access: it.access, Restrictions: it.restrictions, Attributes: it.attributes, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
-			Groups: []GroupSummary{}, Versions: []Version{}, Views: it.views, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
+			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
+			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
 		shown := texts[id]
@@ -82,9 +83,19 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		}
 		lang := s.pickLanguage(v.language, shown)
 		t := shown[lang]
-		c.Language, c.Title, c.Slug, c.Description = lang, t.Title, t.Slug, t.Description
+		c.Language, c.Title, c.Slug = lang, t.Title, t.Slug
 		if c.Decision = bundle(iv); c.Decision.Allowed {
 			c.Body = t.Body
+		}
+		show := func(p string) bool { return s.shows(it.kind, c.Decision, p) }
+		if show(kinds.ShowDescription) {
+			c.Description = t.Description
+		}
+		if show(kinds.ShowAttributes) {
+			c.Attributes = it.attributes
+		}
+		if show(kinds.ShowViews) {
+			c.Views = &it.views
 		}
 		if iv.editor {
 			c.Text = texts[id]
@@ -93,7 +104,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			}
 			c.EverSold = it.everSold
 		}
-		if it.cover != nil {
+		if it.cover != nil && show(kinds.ShowCover) {
 			c.Cover = &Cover{Image: it.cover.Image}
 			images.add(it.kind, id, it.cover.Image)
 		}
@@ -122,6 +133,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 				out.Text, out.State, out.Access = nil, "", nil
 			}
 			out.Segments = released(out.Segments, v.now)
+			s.lockVersion(it.kind, &out)
 			c.Versions = append(c.Versions, out)
 		}
 		built[id] = c
@@ -168,7 +180,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			}
 		}
 		for _, g := range gs {
-			if n, ok := names[g]; ok {
+			if n, ok := names[g]; ok && s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
 				c.Groups = append(c.Groups, n)
 			}
 		}
@@ -272,6 +284,26 @@ func (s *Store) fillOffers(ctx context.Context, v *Viewer, built map[string]*Con
 		*put[i] = o
 	}
 	return nil
+}
+
+// shows reports whether a viewer decided d sees property p of content of
+// kind: all of what they open, of the rest what the kind's locked view shows.
+func (s *Store) shows(kind string, d Decision, p string) bool {
+	return d.Allowed || s.cfg.Kinds[kind].LockedView().Shows(p)
+}
+
+// lockVersion withholds from a version its viewer does not open what its
+// kind's locked view hides.
+func (s *Store) lockVersion(kind string, v *Version) {
+	if !s.shows(kind, v.Decision, kinds.ShowDescription) {
+		v.Description = ""
+	}
+	if !s.shows(kind, v.Decision, kinds.ShowAttributes) {
+		v.Attributes = map[string]any{}
+	}
+	if !s.shows(kind, v.Decision, kinds.ShowLength) {
+		v.Pages, v.DurationMS, v.Segments = nil, nil, []Segment{}
+	}
 }
 
 // bundle is the viewer's access to an item's body: allowed when they edit it

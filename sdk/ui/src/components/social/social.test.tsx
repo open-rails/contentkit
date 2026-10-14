@@ -85,7 +85,7 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
 });
 
-it("Comments: on content the reader can't open, an unlock note instead of the thread; access arriving loads it", async () => {
+it("Comments: where the kind's locked view hides them, an unlock note instead of the thread and its count; access arriving loads it", async () => {
   let open = false;
   const s = server({
     "GET /contents/v1/comments": () => (open ? [comment("c1")] : []),
@@ -98,7 +98,7 @@ it("Comments: on content the reader can't open, an unlock note instead of the th
   );
   const { rerender } = render(view(1));
   expect(await screen.findByText("Unlock to see comments")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "4 comments" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Comments" })).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Add a comment…" })).toBeNull();
   expect(screen.queryByText("No comments yet. Be the first to comment!")).toBeNull();
 
@@ -299,6 +299,27 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
   await user.click(signedOut);
   expect(signIn).toHaveBeenCalled();
   expect(out.calls.filter((c) => !c.startsWith("GET"))).toEqual([]);
+});
+
+it("ReactionButtons and FavoriteButton where the kind's locked view hides counts: no reaction buttons, favoriting without a count", async () => {
+  const s = server({
+    "GET /contents/v1/reaction": () => ({ mine: 0 }),
+    "GET /contents/v1/favorite": () => ({ favorited: false }),
+    "POST /contents/v1/favorite": () => ({ favorited: true }),
+  });
+  const user = userEvent.setup();
+  const { container } = render(
+    <>
+      <ReactionButtons item={item} />
+      <FavoriteButton item={item} />
+    </>,
+    { wrapper: wrap(s.client, { viewer: "alice" }) },
+  );
+  await waitFor(() => expect(container.querySelector('[data-ckui="reaction-buttons"]')).toBeNull());
+  const fav = screen.getByRole("button", { name: /Add to favorites/ });
+  await user.click(fav);
+  const saved = await screen.findByRole("button", { name: /Remove from favorites/ });
+  expect(saved).not.toHaveTextContent(/\d/);
 });
 
 it("ReactionButtons signed out: ask to sign in where the server takes no anonymous reactions, react where it does", async () => {

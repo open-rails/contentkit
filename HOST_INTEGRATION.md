@@ -252,6 +252,43 @@ mux.Handle("/", router.Middleware(spa))
   `content_codes` on `(tenant_id, content_kind, content_id)`, for example for
   sitemaps.
 
+## Locked content (`kinds.Kind.Locked`)
+
+What a viewer who doesn't open content (or a version) sees of it is each
+kind's policy:
+
+```yaml
+kinds:
+  gallery:
+    locked:
+      show: [cover, groups] # of description, cover, groups, attributes, length, reactions, favorites, views, comments
+      preview: {pages: 3}   # optional: none unless set
+```
+
+Its id, code, path, title, languages, traits, owner, creators and paywall
+(`decision`) always show; its body and private media never do. A kind
+without `locked` shows `description, cover, groups, attributes, length`: no
+preview, counts or comments. With it, exactly what it names.
+
+| `show` | Withheld otherwise |
+|---|---|
+| `description`, `attributes` | the content's and locked versions' (empty) |
+| `cover` | detail and cards (none); nor is it a group's automatic cover |
+| `groups` | detail and cards (none) |
+| `length` | versions' and cards' `pages` and `duration_ms`, versions' `segments`; the reader plan's `pages` and locked segments |
+| `reactions` | like and dislike counts (cards, `GET .../reaction`); liking and disliking answer `403 forbidden` |
+| `favorites` | favorite counts (cards, `.../favorite`); favoriting needs only visibility: a wishlist is the reader's own |
+| `views` | view counts (cards, detail) |
+| `comments` | comments, as below |
+
+Hidden counts are absent, never zero. `preview` is the free pages or
+segments when the access rule names none; a rule's own `preview` wins.
+Detail, cards (lists, search, typeahead, rails, similar, recommendations,
+group pages, `me` favorites and history), the reader plan and interactions
+apply it; staff, creators and owner-group editors see everything. Sitemaps,
+codes and notifications carry only ids, codes and paths; stats and import
+are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
+
 ## Interactions (`content`)
 
 The content module owns comments, reactions, favorites and polls in
@@ -271,11 +308,11 @@ narrows a list or the latest feed to one thread, and a reply joins its
 comment's. A content item's `comments` setting (`PATCH /v1/contents/{id}`,
 its editors) is `open`, `closed` (existing comments show; new ones and edits
 answer `403 comments_closed`) or `hidden` (none show). Comments on content
-follow its access, as its `body` does: to a viewer who can't open the item (or
-a version-level comment's version), and doesn't edit it, lists, replies and the
-latest feed withhold them, the standing (`GET .../can-comment`) says `locked`,
-and posting, replying, editing and reacting answer `403 comments_locked`.
-Counts stay visible; moderation queues keep them. The reader's favorites
+a viewer can't open (or a version-level comment's version) and doesn't edit
+follow its kind's locked view (Locked content below): unless it shows
+`comments`, lists, replies and the latest feed withhold them, the standing
+(`GET .../can-comment`) says `locked`, and posting, replying, editing and
+reacting answer `403 comments_locked`; moderation queues keep them. The reader's favorites
 and reactions, as cards, are `GET /v1/me/favorites` and `GET
 /v1/me/reactions?target=contents|groups&kind=&value=like|dislike` (tag
 preferences); their counts reach `content_facets` (`likes`, `dislikes`,

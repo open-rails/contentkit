@@ -50,7 +50,8 @@ export type ContentChange =
   | { type: "comment.restored"; id: string }
   | { type: "comment.reacted"; id: string; counts: ReactionCounts }
   | { type: "reaction.changed"; target: Target; counts: ReactionCounts }
-  | { type: "favorite.changed"; target: Target; favorited: boolean; count: number }
+  /** count is absent where the target's kind's locked view hides it. */
+  | { type: "favorite.changed"; target: Target; favorited: boolean; count?: number }
   /** Created, updated, voted or answered: the poll as the server now answers it. */
   | { type: "poll.created"; poll: Poll }
   | { type: "poll.updated"; poll: Poll }

@@ -29,7 +29,7 @@ func TestFork(t *testing.T) {
 		t.Fatalf("fork: %d %s", resp.StatusCode, b)
 	}
 	got := s.plan(s.creator, to, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
-	if got.Pages != src.Pages || len(got.Segments) != len(src.Segments) || got.Segments[2].Title != "Part 3" ||
+	if *got.Pages != *src.Pages || len(got.Segments) != len(src.Segments) || got.Segments[2].Title != "Part 3" ||
 		got.Segments[1].Pages[0].Name != "003" {
 		t.Fatalf("forked plan %+v", got)
 	}
@@ -58,7 +58,7 @@ func TestImport(t *testing.T) {
 	archive := zipOf(t, map[string][]byte{"p1.png": pngOf(t, 20, 30, 1), "p10.png": pngOf(t, 20, 30, 2), "p2.png": pngOf(t, 20, 30, 3),
 		"__MACOSX/._p1.png": []byte("x"), "notes.txt": []byte("hi")})
 	s.mustUpload(s.creator, ref, "import/book", "application/zip", archive)
-	p := s.plan(access.Actor{Anonymous: true, IP: "203.0.113.2"}, v, func(p *versions.ReaderPlan) bool { return p.Pages == 3 })
+	p := s.plan(access.Actor{Anonymous: true, IP: "203.0.113.2"}, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 3 })
 	var names []string
 	for _, pg := range p.Segments[0].Pages {
 		names = append(names, pg.Name)

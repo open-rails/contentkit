@@ -197,7 +197,7 @@ func TestInteractionsGateOnAccessible(t *testing.T) {
 }
 
 // Every favorite answer carries the target's count, read under the canonical
-// reference; signed out, the count of a visible target only.
+// reference, where the caller sees it; signed out, a visible target only.
 func TestFavoriteStateCarriesTheCount(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", cid(1), true, true)
@@ -208,20 +208,20 @@ func TestFavoriteStateCarriesTheCount(t *testing.T) {
 		t.Helper()
 		rec := doJSON(t, h, actor, method, path, nil)
 		var got FavoriteState
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got != want {
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s %s as %q: %d %s, want %+v", method, path, actor.ID, rec.Code, rec.Body, want)
 		}
 	}
 	u1, u2, anon := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "u2", Kind: "user"}, access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	item := "/contents/" + cid(1) + "/favorite"
-	state(anon, "GET", item, FavoriteState{})
-	state(u1, "POST", item, FavoriteState{Favorited: true, Count: 1})
-	state(u1, "POST", item, FavoriteState{Favorited: true, Count: 1})
-	state(u2, "POST", item, FavoriteState{Favorited: true, Count: 2})
-	state(anon, "GET", item, FavoriteState{Count: 2})
-	state(u1, "GET", item, FavoriteState{Favorited: true, Count: 2})
-	state(u1, "DELETE", item, FavoriteState{Count: 1})
-	state(u2, "GET", item, FavoriteState{Favorited: true, Count: 1})
+	state(anon, "GET", item, FavoriteState{Count: ptr(0)})
+	state(u1, "POST", item, FavoriteState{Favorited: true, Count: ptr(1)})
+	state(u1, "POST", item, FavoriteState{Favorited: true, Count: ptr(1)})
+	state(u2, "POST", item, FavoriteState{Favorited: true, Count: ptr(2)})
+	state(anon, "GET", item, FavoriteState{Count: ptr(2)})
+	state(u1, "GET", item, FavoriteState{Favorited: true, Count: ptr(2)})
+	state(u1, "DELETE", item, FavoriteState{Count: ptr(1)})
+	state(u2, "GET", item, FavoriteState{Favorited: true, Count: ptr(1)})
 	if rec := doJSON(t, h, anon, "GET", "/contents/"+cid(2)+"/favorite", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("signed out, a hidden target: %d %s", rec.Code, rec.Body)
 	}

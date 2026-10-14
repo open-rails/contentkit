@@ -11,6 +11,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // reactions is the 3-state (like/dislike/neutral) reaction system over a
@@ -28,10 +29,12 @@ func newReactions(rt *Runtime) *reactions {
 	return &reactions{rt: rt, s: rt.store}
 }
 
-// ReactionCounts is the split tally for a reference plus the caller's own value.
+// ReactionCounts is the split tally for a reference plus the caller's own
+// value. The tally is absent where the kind's locked view hides it from the
+// caller.
 type ReactionCounts struct {
-	Likes    int   `json:"likes"`
-	Dislikes int   `json:"dislikes"`
+	Likes    *int  `json:"likes,omitempty"`
+	Dislikes *int  `json:"dislikes,omitempty"`
 	Mine     int16 `json:"mine"` // -1, 0, or 1; 0 also means "no reaction"
 }
 
@@ -120,10 +123,14 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 	return value, true, nil
 }
 
-// react gates on accessibility and applies the reaction under the canonical
-// reference, which it returns.
+// react applies the reaction under the canonical reference, which it
+// returns. The actor must see the target's reactions: content they open, or
+// whose kind's locked view shows reactions.
 func (r *reactions) react(ctx context.Context, actor access.Actor, target contentref.ContentRef, value int16) (contentref.ContentRef, error) {
-	ref, err := r.rt.gate(ctx, target, actor, true)
+	ref, res, err := r.rt.resolveTarget(ctx, target, actor, false)
+	if err == nil && !r.rt.shows(ref, res, kinds.ShowReactions) {
+		err = ErrForbidden
+	}
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
@@ -141,12 +148,16 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, target conten
 	return ref, tx.Commit(ctx)
 }
 
-// counts returns the split tally plus the caller's own reaction: an O(1) read
-// of the rollup applyTx maintains in-tx.
-func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, key contentref.ContentKey) (ReactionCounts, error) {
+// counts returns the caller's own reaction and, when tally, the split tally:
+// an O(1) read of the rollup applyTx maintains in-tx.
+func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, key contentref.ContentKey, tally bool) (ReactionCounts, error) {
 	var out ReactionCounts
-	if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.counts+` WHERE `+keyPred(1), keyArgs(key)...).Scan(&out.Likes, &out.Dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return out, err
+	if tally {
+		var likes, dislikes int
+		if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.counts+` WHERE `+keyPred(1), keyArgs(key)...).Scan(&likes, &dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return out, err
+		}
+		out.Likes, out.Dislikes = &likes, &dislikes
 	}
 	if userID, ip, ok := reactionKey(actor); ok {
 		var mine int16
@@ -172,7 +183,7 @@ func reactionRoutes() []httpapi.Route[*reactions] {
 			reaction(typ, httpapi.POST, "dislike", "Dislikes "+noun+".", -1),
 			reaction(typ, httpapi.DELETE, "reaction", "Clears the caller's reaction to "+noun+".", 0),
 			httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/reaction", Resource: "reactions", Auth: httpapi.Public,
-				Doc: "The like and dislike counts of " + noun + " and the caller's own reaction.", Query: targetQuery(typ),
+				Doc: "The like and dislike counts of " + noun + lockedNote(typ, "them") + " and the caller's own reaction.", Query: targetQuery(typ),
 				Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeNotFound}},
 				Serve: func(r *reactions) http.HandlerFunc { return r.rt.targetHandler(typ, r.handleGet) }})
 	}
@@ -184,6 +195,15 @@ func reaction(typ TargetType, method, verb, doc string, value int16) httpapi.Rou
 		Doc: doc, Query: targetQuery(typ), Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})},
 		Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(r *reactions) http.HandlerFunc { return r.handleSet(typ, value) }}
+}
+
+// lockedNote says in route docs that a content target's counts follow its
+// kind's locked view.
+func lockedNote(typ TargetType, them string) string {
+	if typ == TargetGroup {
+		return ""
+	}
+	return " (absent where its kind's locked view hides " + them + ")"
 }
 
 // targetNoun names a target type in route docs.
@@ -211,7 +231,7 @@ func (r *reactions) handleSet(typ TargetType, value int16) http.HandlerFunc {
 		}
 		var cnt ReactionCounts
 		if err == nil {
-			cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key())
+			cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key(), true)
 		}
 		if err != nil {
 			writeErr(w, err)
@@ -223,10 +243,10 @@ func (r *reactions) handleSet(typ TargetType, value int16) http.HandlerFunc {
 
 func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	actor := r.rt.actor(req.Context())
-	ref, err := r.rt.gate(req.Context(), target, actor, false)
+	ref, res, err := r.rt.resolveTarget(req.Context(), target, actor, false)
 	var cnt ReactionCounts
 	if err == nil {
-		cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key())
+		cnt, err = r.counts(req.Context(), r.s.pool, actor, ref.Key(), r.rt.shows(ref, res, kinds.ShowReactions))
 	}
 	if err != nil {
 		writeErr(w, err)

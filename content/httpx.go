@@ -71,8 +71,8 @@ const (
 	CodeCommentBanned = "comment_banned"
 	// CodeCommentsClosed: the target's comments are closed or hidden. -> 403
 	CodeCommentsClosed = "comments_closed"
-	// CodeCommentsLocked: the caller can't open the content, so its comments
-	// take no writes from them. -> 403
+	// CodeCommentsLocked: the caller can't open the content and its kind's
+	// locked view hides comments, so they take no writes from them. -> 403
 	CodeCommentsLocked = "comments_locked"
 	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
 	// details.max is the limit in characters. -> 422

@@ -43,7 +43,7 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	var rc content.ReactionCounts
 	f.want(http.StatusOK, user, "POST", g+"/like", nil, &rc)
 	f.want(http.StatusOK, user, "POST", g+"/dislike", nil, &rc)
-	if rc.Likes != 0 || rc.Dislikes != 1 || rc.Mine != -1 {
+	if *rc.Likes != 0 || *rc.Dislikes != 1 || rc.Mine != -1 {
 		t.Fatalf("after dislike %+v", rc)
 	}
 	var mine discovery.InteractionPage
@@ -53,18 +53,18 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	}
 	f.want(http.StatusOK, user, "DELETE", g+"/reaction", nil, &rc)
 	f.want(http.StatusOK, "", "GET", g+"/reaction", nil, &rc)
-	if rc.Likes != 0 || rc.Dislikes != 0 {
+	if *rc.Likes != 0 || *rc.Dislikes != 0 {
 		t.Fatalf("after clearing %+v", rc)
 	}
 
 	var fav content.FavoriteState
 	f.want(http.StatusOK, user, "POST", g+"/favorite", nil, &fav)
 	f.want(http.StatusOK, user, "GET", g+"/favorite", nil, &fav)
-	if !fav.Favorited || fav.Count != 1 {
+	if !fav.Favorited || *fav.Count != 1 {
 		t.Fatalf("favorite %+v", fav)
 	}
 	f.want(http.StatusOK, user, "DELETE", g+"/favorite", nil, &fav)
-	if fav.Favorited || fav.Count != 0 {
+	if fav.Favorited || *fav.Count != 0 {
 		t.Fatalf("unfavorite %+v", fav)
 	}
 
@@ -274,15 +274,15 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, "", "POST", "/codes/aliases", contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("Video", "1")}}, nil)
 
-	if item.Comments != content.CommentsClosed || item.Views != 5000 {
-		t.Fatalf("detail comments %q, views %d", item.Comments, item.Views)
+	if item.Comments != content.CommentsClosed || *item.Views != 5000 {
+		t.Fatalf("detail comments %q, views %d", item.Comments, *item.Views)
 	}
 	f.want(http.StatusForbidden, user, "POST", "/contents/"+g1+"/comments", content.CommentInput{Body: "late"}, nil)
 	f.want(http.StatusCreated, user, "POST", "/contents/"+g2+"/comments", content.CommentInput{Body: "open"}, nil)
 
 	var cards discovery.ContentPage
 	f.want(http.StatusOK, "", "GET", "/contents?kind=gallery&sort=most_viewed", nil, &cards)
-	if len(cards.Contents) != 2 || cards.Contents[0].ID != g1 || cards.Contents[0].Counts.Views != 5000 || cards.Contents[1].Counts.Views != 50 {
+	if len(cards.Contents) != 2 || cards.Contents[0].ID != g1 || *cards.Contents[0].Counts.Views != 5000 || *cards.Contents[1].Counts.Views != 50 {
 		t.Fatalf("most viewed %+v", cards.Contents)
 	}
 }

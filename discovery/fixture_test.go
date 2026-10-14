@@ -45,7 +45,8 @@ func siteConfig() kinds.Config {
 		},
 		Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
-				Groups: []string{"tag", "artist", "series", "rail"}, Sort: "newest", Preview: &kinds.Preview{Pages: 2},
+				Groups: []string{"tag", "artist", "series", "rail"}, Sort: "newest",
+				Locked:     &kinds.Locked{Show: kinds.Shown, Preview: &kinds.Preview{Pages: 2}},
 				Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
 			"video": {Route: "watch", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}, Groups: []string{"tag"}},
 		},
