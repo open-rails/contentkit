@@ -411,6 +411,18 @@ func TestListFiltersByAccessAndCreator(t *testing.T) {
 			t.Errorf("card %d previews %d pages (allowed %t), want %d", i+1, got, page.Contents[i].Access.Allowed, want)
 		}
 	}
+	// Every reader sees each card's effective rule, and its version's audio.
+	f.exec(`UPDATE {s}.content_versions SET has_audio = true WHERE id = $1`, f.vid(2, 0))
+	for _, user := range []string{"", "fan", "staff"} {
+		_, page := f.list(host, user, q("/contents", "kind", "gallery", "sort", "oldest"))
+		var got []string
+		for _, c := range page.Contents {
+			got = append(got, fmt.Sprintf("%s%v audio=%t", c.Access.Level, c.Access.Tiers, c.Version.HasAudio))
+		}
+		if want := []string{"public[] audio=false", "tier[premium] audio=true", "public[] audio=false", "ppv[] audio=false"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: cards %v, want %v", user, got, want)
+		}
+	}
 	for _, bad := range []string{q("/contents", "access", "vip"), q("/contents", "tiers", "gold"), q("/search", "q", "x", "tiers", "gold")} {
 		if status, code := f.call(http.MethodGet, host, "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
 			t.Errorf("%s: %d %s", bad, status, code)

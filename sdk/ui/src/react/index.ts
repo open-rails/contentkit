@@ -86,6 +86,7 @@ export {
   useContents,
   useExposure,
   useHistory,
+  useLockedCount,
   useMyFavorites,
   useMyReactions,
   useRecentSearches,

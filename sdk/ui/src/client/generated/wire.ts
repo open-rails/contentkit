@@ -196,6 +196,8 @@ export interface Card {
 
 export interface CardAccess {
   allowed: boolean;
+  level: "group" | "group_ppv" | "ppv" | "public" | "tier";
+  tiers?: string[];
   unknown?: boolean;
   sell?: string[];
   requires?: string;
@@ -212,6 +214,7 @@ export interface CardVersion {
   label?: string;
   pages?: number;
   duration_ms?: number;
+  has_audio: boolean;
 }
 
 export interface CatalogCover {

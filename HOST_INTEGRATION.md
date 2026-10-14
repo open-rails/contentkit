@@ -629,7 +629,10 @@ that fits the reader (`display_language` first, then position).
   `position` in the first of `groups`, which must be of an ordered group
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   a group's content from a list requiring that group: a hidden tag's page
-  shows what its count counts, while other lists leave it out.
+  shows what its count counts, while other lists leave it out. A card's
+  `access` has the reader's decision (`allowed`, `sell`) and the version's
+  effective rule for everyone (`level`, `tiers`; `public` once free), and
+  its `version.has_audio` says the version's media has audio.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
   signed-in reader, or any list sort of the best 1000 matches), `GET
   /typeahead` (contents and groups).

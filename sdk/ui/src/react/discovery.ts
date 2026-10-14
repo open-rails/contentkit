@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
-import type { ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
+import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
@@ -23,6 +23,28 @@ export function useContents(q: ContentQuery | null, o: { client?: ContentKitClie
   return useList(store, query ? keyOf("cards", scope, "list", query) : null, { type: "cards" }, async (cursor, signal) =>
     page(await client.discovery.list({ ...query, cursor: cursor as string | undefined }, signal)),
   );
+}
+
+/**
+ * How many contents of a list the reader doesn't open: its filters' count
+ * with locked cards less without them (sort and paging aside); null reads
+ * nothing.
+ */
+export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitClient } = {}): { count?: number; loading: boolean } {
+  const { client, store, scope } = useContentScope(o.client);
+  const filter = useMemo(() => {
+    if (!q) return null;
+    const { sort: _s, cursor: _c, limit: _l, card_groups: _g, mode: _m, ...f } = q;
+    return f;
+  }, [q]);
+  const query = useDisplay(filter);
+  const r = useResource<number>(store, query ? keyOf("release-dates", scope, "locked", query) : null, { type: "release-dates" }, async (signal) => {
+    const count = async (mode: AccessMode) =>
+      (await client.discovery.releaseDates({ ...query, mode, by: "month", limit: 1000 }, signal)).dates.reduce((n, d) => n + d.count, 0);
+    const [all, open] = await Promise.all([count("lock"), count("hide")]);
+    return Math.max(0, all - open);
+  });
+  return { count: r.data, loading: r.loading };
 }
 
 /** Keyword search results as cards; nothing while q.q is empty. */

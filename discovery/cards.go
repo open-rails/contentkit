@@ -59,6 +59,7 @@ type CardVersion struct {
 	Label      string   `json:"label,omitempty"`
 	Pages      *int     `json:"pages,omitempty"`
 	DurationMS *int64   `json:"duration_ms,omitempty"`
+	HasAudio   bool     `json:"has_audio"`
 }
 
 // Chip names one group on a card.
@@ -82,6 +83,10 @@ type Counts struct {
 // CardAccess is the reader's access decision on the card's version.
 type CardAccess struct {
 	Allowed bool `json:"allowed"`
+	// Level and Tiers are the version's effective rule, the same for every
+	// reader (public once free): what a premium badge shows.
+	Level access.Level `json:"level"`
+	Tiers []string     `json:"tiers,omitempty"`
 	// Unknown: entitlements could not be read; denied, nothing offered.
 	Unknown bool `json:"unknown,omitempty"`
 	// Sell are the keys whose purchase opens it; Requires is the key a buyer
@@ -177,7 +182,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		vids[i] = p.version
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms,
+ f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
@@ -200,7 +205,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var baseline int64
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
+			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
 		if err != nil {
 			return c, err
 		}
@@ -266,8 +271,12 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 		return err
 	}
 	var keys []string
+	now := s.o.Now()
 	for i, d := range ds {
-		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter}
+		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter, Level: access.Public}
+		if r := items[i].Rule; !r.Free(now) {
+			a.Level, a.Tiers = r.Level, r.Tiers
+		}
 		for _, k := range d.Sell {
 			a.Sell = append(a.Sell, k.String())
 		}
@@ -286,7 +295,7 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	for i := range rows {
 		c := &rows[i]
 		if !c.Access.Allowed && (q.viewer.Staff() || c.creator || editors[c.owner]) {
-			c.Access = CardAccess{Allowed: true}
+			c.Access = CardAccess{Allowed: true, Level: c.Access.Level, Tiers: c.Access.Tiers}
 		}
 		keys = append(keys, c.Access.Sell...)
 	}
