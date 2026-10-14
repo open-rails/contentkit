@@ -143,11 +143,14 @@ func (a adapter) UpdateProducts(ctx context.Context, updates []access.ProductUpd
 }
 
 func (a adapter) CreatePrices(ctx context.Context, prices []access.NewPrice) ([]access.Price, error) {
-	out := make([]access.Price, 0, len(prices))
+	// Refuse before creating anything, so a batch never half-applies.
 	for _, p := range prices {
 		if len(p.PSPs) > 0 {
 			return nil, fmt.Errorf("create price %s on %s: legacy PSP selection is unsupported; configure the price directly in OpenRails", p.Key, p.ProductID)
 		}
+	}
+	out := make([]access.Price, 0, len(prices))
+	for _, p := range prices {
 		id, err := billing.ParseProductID(p.ProductID)
 		if err != nil {
 			return nil, err
