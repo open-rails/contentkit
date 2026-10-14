@@ -68,7 +68,8 @@ type Kind struct {
 	Uploads []Upload `json:"uploads"`
 	// KeepOriginals keeps an upload's blob once its private outputs exist;
 	// otherwise it is dropped (File.Gone). Public presets' sources are
-	// always kept, so unhiding can render them again.
+	// always kept, so unhiding can render them again, as are body images,
+	// which new versions copy.
 	KeepOriginals bool `json:"keep_originals,omitempty"`
 	// ServeOriginals lists and serves uploads to viewers with access, like
 	// any private file. Otherwise viewer URLs are scoped to served files,

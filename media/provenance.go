@@ -161,13 +161,14 @@ func (k *Kind) Normalize(m *Manifest) {
 
 // droppable reports an upload whose blob is no longer needed: its kind does
 // not keep originals, it feeds private presets but no public preset or
-// frame, and nothing is pending or failed from it.
+// frame, it is no body image (new versions copy those, editors view them),
+// and nothing is pending or failed from it.
 func (k *Kind) droppable(m *Manifest, f File) bool {
 	if k.KeepOriginals || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
 		return false
 	}
 	i, _, _, _, ok := k.upload(f.Path)
-	if !ok || slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Frames == k.Uploads[i].Path }) {
+	if !ok || k.Uploads[i].Body || slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Frames == k.Uploads[i].Path }) {
 		return false
 	}
 	return len(k.PrivateFor(f.Path)) > 0
