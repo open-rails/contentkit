@@ -1023,7 +1023,7 @@ func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (c
 	return out, err
 }
 
-// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -1098,7 +1098,7 @@ func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body ca
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)

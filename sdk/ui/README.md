@@ -95,8 +95,9 @@ operation. This does not change the operation's result or its authentication.
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
   version); `media.uploadInline({kind: kind + BODY_SUFFIX, id, version}, file)`
-  resolves a body image's reference, copied into the other versions, (`ref`, `contentkit:i-{uuid}`, what the body stores:
-  `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
+  resolves a body image's reference (`ref`, `contentkit:i-{uuid}`, what the
+  body stores: `imageRef(name)`), copied into the other versions, and a URL
+  that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
   content's `body` shows the images' current public files and `images` maps
   each name to its URL. `folders` renames the poll media kind. Public image
