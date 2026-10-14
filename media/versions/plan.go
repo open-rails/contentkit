@@ -21,12 +21,12 @@ import (
 // of a locked version; the playback item; and the reader metadata naming
 // what the viewer can read. It signs nothing. A viewer locked out of a
 // version whose kind's locked view hides its length gets neither its page
-// count (0) nor its locked segments.
+// count (absent) nor its locked segments.
 type ReaderPlan struct {
 	Content     string        `json:"content_id"`
 	Version     string        `json:"version_id"`
 	Publication string        `json:"publication_id"`
-	Pages       int           `json:"pages"`
+	Pages       *int          `json:"pages,omitempty"`
 	Segments    []PlanSegment `json:"segments"`
 	Previews    []PlanPreview `json:"previews"`
 	Playback    *PlanPlayback `json:"playback,omitempty"`
@@ -164,7 +164,8 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	length := d.res.Accessible || d.res.Editor || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
 	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Segments: []PlanSegment{}, Previews: []PlanPreview{}}
 	if length {
-		plan.Pages = len(snap.Pages)
+		n := len(snap.Pages)
+		plan.Pages = &n
 	}
 	byPos := map[int]segment{}
 	for _, g := range d.segs {

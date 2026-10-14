@@ -96,11 +96,11 @@ func TestEngineInteractions(t *testing.T) {
 	vid := harbor.Versions[0].ID
 	var counts content.ReactionCounts
 	s.call(http.StatusOK, u1, "POST", item+"/like?version="+vid, nil, &counts)
-	if counts.Likes != 1 || counts.Mine != 1 {
+	if *counts.Likes != 1 || counts.Mine != 1 {
 		t.Fatalf("version like %+v", counts)
 	}
 	s.call(http.StatusOK, u1, "GET", item+"/reaction", nil, &counts)
-	if counts.Likes != 0 {
+	if *counts.Likes != 0 {
 		t.Fatalf("the item counts its version's like: %+v", counts)
 	}
 	s.call(http.StatusNotFound, u1, "POST", item+"/like?version="+cid(5), nil, nil)
@@ -109,7 +109,7 @@ func TestEngineInteractions(t *testing.T) {
 	var fav content.FavoriteState
 	s.call(http.StatusOK, u1, "POST", item+"/favorite", nil, nil)
 	s.call(http.StatusOK, u2, "POST", item+"/favorite", nil, &fav)
-	if fav != (content.FavoriteState{Favorited: true, Count: 2}) {
+	if !fav.Favorited || fav.Count == nil || *fav.Count != 2 {
 		t.Fatalf("favorite %+v", fav)
 	}
 	s.call(http.StatusOK, u1, "POST", v+"/contents/"+third.ID+"/favorite", nil, nil)
@@ -128,7 +128,7 @@ func TestEngineInteractions(t *testing.T) {
 	s.call(http.StatusBadRequest, u1, "POST", v+"/groups/"+moon+"/like?version="+vid, nil, nil)
 	s.call(http.StatusOK, staff, "POST", v+"/groups/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
 	s.call(http.StatusOK, u2, "POST", v+"/groups/"+old+"/like", nil, &counts)
-	if counts.Likes != 2 {
+	if *counts.Likes != 2 {
 		t.Fatalf("a like through the merged group %+v", counts)
 	}
 	s.call(http.StatusOK, staff, "DELETE", v+"/groups/"+rainy, nil, nil)
@@ -183,8 +183,8 @@ func TestEngineInteractions(t *testing.T) {
 	}
 	var listed discovery.ContentPage
 	s.call(http.StatusOK, anon, "GET", v+"/contents?kind=gallery&sort=most_favorited", nil, &listed)
-	if len(listed.Contents) == 0 || listed.Contents[0].ID != harbor.ID || listed.Contents[0].Counts.Likes != 1 ||
-		listed.Contents[0].Counts.Dislikes != 1 || listed.Contents[0].Counts.Favorites != 2 {
+	if len(listed.Contents) == 0 || listed.Contents[0].ID != harbor.ID || *listed.Contents[0].Counts.Likes != 1 ||
+		*listed.Contents[0].Counts.Dislikes != 1 || *listed.Contents[0].Counts.Favorites != 2 {
 		t.Fatalf("listing %+v", listed.Contents)
 	}
 	var rating float64

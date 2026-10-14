@@ -66,7 +66,7 @@ func TestPublication(t *testing.T) {
 	anon := access.Actor{Anonymous: true, IP: "203.0.113.1"}
 
 	editor := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return len(p.Segments) == 3 && p.Playback != nil })
-	if editor.Pages != 5 || !eq(locks(editor), []bool{false, false, false}) || editor.Segments[2].Released || !editor.Segments[0].Released {
+	if *editor.Pages != 5 || !eq(locks(editor), []bool{false, false, false}) || editor.Segments[2].Released || !editor.Segments[0].Released {
 		t.Fatalf("editor plan %+v", editor)
 	}
 	if g := editor.Segments[0]; g.Item == nil || len(g.Pages) != 2 || g.Pages[0].Name != "001" || g.Pages[0].Files["low"] != "low-res/001.webp" ||
@@ -200,7 +200,7 @@ func TestWithdrawal(t *testing.T) {
 	if _, err := s.reader.Read(s.ctx, old, s.creator, media.ReadOptions{}); !errors.Is(err, media.ErrNotVisible) {
 		t.Fatalf("a withdrawn item reads: %v", err)
 	}
-	after := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 4 })
+	after := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
 	if after.Publication == before.Publication || len(after.Segments) != 2 || after.Segments[0].Pages[1].Name != "003" {
 		t.Fatalf("republished plan %+v", after)
 	}
@@ -212,7 +212,7 @@ func TestWithdrawal(t *testing.T) {
 	if _, err := s.svc.Plan(s.ctx, s.creator, v); err != nil {
 		t.Fatalf("an append withdrew the publication: %v", err)
 	}
-	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 5 })
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 5 })
 }
 
 // Previews follow releases: the recovery pass widens them once a segment
@@ -252,7 +252,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	}
 	anon := access.Actor{Anonymous: true, IP: "203.0.113.5"}
 	p := s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 2 })
-	if len(p.Segments) != 0 || p.Pages != 0 || p.Previews[0].Name != "001" || p.Previews[1].Name != "002" {
+	if len(p.Segments) != 0 || p.Pages != nil || p.Previews[0].Name != "001" || p.Previews[1].Name != "002" {
 		t.Fatalf("anonymous plan %+v", p)
 	}
 
@@ -283,7 +283,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	mine := pngOf(t, 64, 64, 5)
 	s.mustUpload(s.creator, top, "cover", "image/png", mine)
 	s.mustUpload(s.creator, ref, "originals/004", "image/png", pngOf(t, 30, 40, 4))
-	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 4 })
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
 	if err := versions.Publish(s.svc, s.ctx, v); err != nil && !errors.Is(err, versions.ErrNotReady) {
 		t.Fatal(err)
 	}

@@ -275,7 +275,7 @@ preview, counts or comments. With it, exactly what it names.
 | `description`, `attributes` | the content's and locked versions' (empty) |
 | `cover` | detail and cards (none); nor is it a group's automatic cover |
 | `groups` | detail and cards (none) |
-| `length` | versions' and cards' `pages` and `duration_ms`, versions' `segments`; the reader plan's `pages` (0) and locked segments |
+| `length` | versions' and cards' `pages` and `duration_ms`, versions' `segments`; the reader plan's `pages` and locked segments |
 | `reactions` | like and dislike counts (cards, `GET .../reaction`); liking and disliking answer `403 forbidden` |
 | `favorites` | favorite counts (cards, `.../favorite`); favoriting needs only visibility: a wishlist is the reader's own |
 | `views` | view counts (cards, detail) |

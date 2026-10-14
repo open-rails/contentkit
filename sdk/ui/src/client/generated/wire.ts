@@ -1488,7 +1488,7 @@ export interface ReaderPlan {
   content_id: string;
   version_id: string;
   publication_id: string;
-  pages: number;
+  pages?: number;
   segments: PlanSegment[];
   previews: PlanPreview[];
   playback?: PlanPlayback;
