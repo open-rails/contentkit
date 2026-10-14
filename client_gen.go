@@ -1016,7 +1016,7 @@ func (c *Client) GetManageContents(ctx context.Context, q GetManageContentsQuery
 	return out, err
 }
 
-// PostContents is POST /v1/contents (public). Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.
+// PostContents is POST /v1/contents (public). Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.
 func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, "/v1/contents", nil, body, &out)
@@ -1084,7 +1084,7 @@ func (c *Client) PostContentImages(ctx context.Context, id string, body content.
 	return out, err
 }
 
-// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others, a draft unless state says otherwise. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentVersions(ctx context.Context, id string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions", "{id}", url.PathEscape(id)), nil, body, &out)

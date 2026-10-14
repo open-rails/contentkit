@@ -4197,7 +4197,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
+        "summary": "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
         "requestBody": {
           "required": true,
           "content": {
@@ -4913,7 +4913,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Adds a version after the others. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Adds a version after the others, a draft unless state says otherwise. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
