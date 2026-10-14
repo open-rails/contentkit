@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
@@ -147,7 +148,7 @@ func TestRetiredPrivateAllocationCannotBeAdopted(t *testing.T) {
 	item, _ := f.reg.Item(ref)
 	body := png(2)
 	sum := sha256.Sum256(body)
-	names, err := f.ms.NewBlobs(t.Context(), ref, [][]byte{sum[:]})
+	names, err := f.ms.NewBlobs(t.Context(), ref, layout.AreaPrivate, [][]byte{sum[:]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -644,7 +645,7 @@ func TestPurgeRecoveryIsolatesRecreatedItem(t *testing.T) {
 					t.Fatalf("ordinary edit recreated a tombstone: %v", err)
 				}
 				sum := sha256.Sum256(png(1))
-				if _, err := f.ms.NewBlobs(t.Context(), ref, [][]byte{sum[:]}); !errors.Is(err, media.ErrNotFound) {
+				if _, err := f.ms.NewBlobs(t.Context(), ref, layout.AreaPrivate, [][]byte{sum[:]}); !errors.Is(err, media.ErrNotFound) {
 					t.Fatalf("allocation recreated a tombstone: %v", err)
 				}
 			}

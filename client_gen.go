@@ -1760,9 +1760,38 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
+}
+
+// GetContentVersionArchiveQuery is the query of GetContentVersionArchive.
+type GetContentVersionArchiveQuery struct {
+	// the viewer the ticket is for
+	For string
+	// the pages to mark, from 1: 3,5,7
+	Mark string
+	// the download's ticket
+	Ticket string
+}
+
+func (q GetContentVersionArchiveQuery) values() url.Values {
+	v := url.Values{}
+	if q.For != "" {
+		v.Set("for", q.For)
+	}
+	if q.Mark != "" {
+		v.Set("mark", q.Mark)
+	}
+	if q.Ticket != "" {
+		v.Set("ticket", q.Ticket)
+	}
+	return v
+}
+
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the marked zip a download granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.
+func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
+	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }
 
 // PutContentOffer is PUT /v1/contents/{id}/offer (editor). Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.

@@ -36,6 +36,10 @@ type ErrorReply struct {
 	Ban        *content.BanNotice  `json:"ban,omitempty"`
 	Blobs      []string            `json:"blobs,omitempty"`
 	Details    *media.ErrorDetails `json:"details,omitempty"`
+	// Reason and AvailableAt explain a download_unavailable: the host
+	// policy's code and when the download opens.
+	Reason      string     `json:"reason,omitempty"`
+	AvailableAt *time.Time `json:"available_at,omitempty"`
 }
 
 // enum is a string field whose values are constants of an untyped string,

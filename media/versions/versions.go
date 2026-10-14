@@ -66,8 +66,8 @@ type Options struct {
 	// Gate answers the tiers a viewer holds for download quotas; optional.
 	Gate      *access.Gate
 	Facets    Facets
-	Others    Others      // nil refuses every other kind
-	Watermark Watermarker // nil serves prepared archives
+	Others    Others         // nil refuses every other kind
+	Policy    DownloadPolicy // the host's download policy; nil allows every download and marks none
 	Downloads Downloads
 	Logger    *slog.Logger
 	Now       func() time.Time
@@ -78,6 +78,7 @@ type Media struct {
 	Manifests *media.Manifests
 	Uploads   *media.Uploads
 	Jobs      *media.Jobs
+	Reader    *media.Reader // signs file downloads; nil serves none
 }
 
 // Service is media for content versions.
@@ -117,7 +118,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
 		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups")}}
 	var err error
-	if s.dl, err = newQuotas(o.Downloads, o.Logger, o.Now); err != nil {
+	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -256,6 +257,9 @@ var (
 	// ErrNotReady is a version whose media is still processing, being
 	// forked or imported, or not yet published.
 	ErrNotReady = errors.New("versions: media not ready")
+	// ErrNoDownload is a version without the file its kind's download
+	// serves: nothing uploaded, or an upload that failed or was dropped.
+	ErrNoDownload = errors.New("versions: no download")
 	// ErrForbidden is what the viewer sees but may not do.
 	ErrForbidden = errors.New("versions: forbidden")
 	// ErrInvalid is a malformed request.

@@ -291,6 +291,50 @@ Staff, creators and owner-group editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
+## Downloads (`kinds.Kind.Download`, `Deps.Downloads`)
+
+`GET /v1/contents/{id}/versions/{vid}/download` serves what the version's kind
+serves to viewers who open the whole version (every segment released;
+editors and staff always), as the host's policy allows, each granted
+download charged once to `media.downloads`:
+
+```yaml
+content:
+  kinds:
+    video:
+      download: {serve: original}   # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
+    gallery: {}                     # readers serve pages: the media kind's Publish.Download zip
+media:
+  downloads:
+    anonymous: [{limit: 5, per: 1h}]   # by address
+    user: [{limit: 20, per: 1h}]
+    tiers: [{tier: premium, quotas: [{limit: 50, per: 1h}]}]   # the first tier held replaces user
+    ttl: 5m                            # a download URL's life
+```
+
+- **Policy** is the host's `Deps.Downloads` (`versions.DownloadPolicy`):
+  `Decide(ctx, DownloadRequest) (DownloadDecision, error)` runs after the
+  access check, before the quota, for files and zips. The request carries
+  the actor, the tiers it holds, `Editor`, the version, its kind, its groups
+  (`{kind, slug}`, its own and its content's), its effective `access.Rule`,
+  `Released` (when it went live) and `Pages` (0 for a file). The decision
+  allows it, or refuses with the host's `Reason` and `AvailableAt` (403
+  `download_unavailable`, nothing charged), and names pages (from 1) to
+  `Mark`; files ignore marks. `Mark(ctx, actor, version, page, bytes)`
+  marks them. Nil allows everything and marks nothing.
+- The route answers `200` JSON `FileDownload{url, name, type, size,
+  expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
+  `VersionDownloadButton` do). Files and unmarked zips are the media host's,
+  with a download token of that one `download/` key, so bytes never pass the
+  app; files are named `{title} [{version code}].{ext}`, zips by the zip
+  preset's `Download` template. A zip with marks is `archive?for=&mark=&ticket=`,
+  relative to the download route: `GET .../versions/{vid}/archive` streams
+  it, marking the ticket's pages.
+- `202 Pending` while the file is placed or produced, `403` locked or
+  `download_unavailable`, `404` no download for the kind, `409 no_download`
+  when the version has nothing to serve, `429 rate_limited` with
+  `retry_after`.
+
 ## Interactions (`content`)
 
 The content module owns comments, reactions, favorites and polls in
@@ -720,7 +764,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
+- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private|download}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
@@ -816,13 +860,18 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   for viewers with access; otherwise the read API never returns an upload's
   path or URL.
 - **Host-only presets.** `Private.HostOnly` keeps an output out of generic
-  reads, downloads and playlists; a host route applies its own checks and
-  calls `grant.HostURL(path, download)`, which answers the file's URL with
-  the item token for a viewer with access.
+  reads, downloads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private
   file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
   what the token reaches: a viewer with access who learns a blob's hash can
-  fetch it. Put what must be gated separately in another item.
+  fetch it.
+- **`download/`.** `Kind.Downloads` names the uploads and presets (Image,
+  MP4, Zip) whose files live in `download/`: no item token or cookie opens
+  them, reads never list them, and only the version download route's token
+  opens one, that one key, for minutes (`media.downloads.ttl`, default 5m).
+  `media.ForContent` fills it for content kinds: page uploads and imports,
+  the zip and the presets it packs, videos' HLS sources, the served MP4.
+  Workers read them with storage credentials as before.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; `NewRegistry` checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -1208,7 +1257,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
+  key reads only `*/private/*`, `*/download/*` and `*/public/*` of each; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache: names are fixed and
   overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
   revalidated by ETag), so wire `Hooks.PurgePublic` to purge every URL it is
@@ -1235,8 +1284,8 @@ the host's periodic jobs. The worker migrates its schema itself.
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
     token of per hour (default 120 per account, 600 per anonymous IP;
     `Issuance.Redis` shares the count across replicas, else it is per
-    process). It is enforced in `Reader.Grant`, so reads, playlists and
-    `HostURL` routes all pass it; over the limit the read API answers 429
+    process). It is enforced in `Reader.Grant`, so reads and playlists
+    pass it (downloads have their own `media.downloads` quotas); over the limit the read API answers 429
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
     (`ErrRateLimited`). Opening the same item again within the hour is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors

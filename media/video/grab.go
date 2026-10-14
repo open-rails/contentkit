@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // grabFrames grabs the frames of uploads declaring Upload.Frames that have
@@ -102,7 +103,7 @@ func (e *Encoder) grab(ctx context.Context, item media.Item, man *media.Manifest
 		return err
 	}
 	sum := sha256.Sum256(body)
-	blob, size, err := e.putBlob(ctx, item, bytes.NewReader(body), int64(len(body)), sum[:], "image/png", nil)
+	blob, size, err := e.putBlob(ctx, item, layout.AreaPrivate, bytes.NewReader(body), int64(len(body)), sum[:], "image/png", nil)
 	if err != nil {
 		return err
 	}

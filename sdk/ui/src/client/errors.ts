@@ -21,6 +21,8 @@ export interface ContentKitErrorInit extends ErrorOptions {
   blobs?: string[];
   ban?: BanNotice;
   action?: string;
+  reason?: string;
+  availableAt?: string;
 }
 
 export class ContentKitError extends Error {
@@ -32,6 +34,10 @@ export class ContentKitError extends Error {
   readonly blobs?: string[];
   readonly ban?: BanNotice;
   readonly action?: string;
+  /** A download_unavailable's code of the host's policy ("release_window"). */
+  readonly reason?: string;
+  /** A download_unavailable's opening time (RFC 3339), when a matter of time. */
+  readonly availableAt?: string;
 
   constructor(
     readonly code: ContentKitErrorCode,
@@ -45,6 +51,8 @@ export class ContentKitError extends Error {
     this.blobs = init.blobs;
     this.ban = init.ban;
     this.action = init.action;
+    this.reason = init.reason;
+    this.availableAt = init.availableAt;
   }
 
   /**
@@ -130,6 +138,8 @@ export async function readContentKitError(res: Response): Promise<ContentKitErro
     details: body.details,
     ban: body.ban,
     action: body.action,
+    reason: body.reason,
+    availableAt: body.available_at,
   });
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/internal/tcpproxy"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
@@ -86,7 +87,7 @@ func TestStoreOutage(t *testing.T) {
 	}
 
 	proxy.Up(t)
-	names, err := ms.NewBlobs(ctx, ref, [][]byte{mustSum(blobOf([]byte("a")))})
+	names, err := ms.NewBlobs(ctx, ref, layout.AreaPrivate, [][]byte{mustSum(blobOf([]byte("a")))})
 	if err != nil {
 		t.Fatal(err)
 	}

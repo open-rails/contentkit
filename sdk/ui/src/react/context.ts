@@ -20,6 +20,7 @@ export type ContentKitOperation =
   | "folder.process"
   | "crop.load"
   | "crop.save"
+  | "version.download"
   | SocialOperation;
 
 /** What failed in a content component: a load or a write. */

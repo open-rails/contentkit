@@ -19,7 +19,8 @@ import (
 const placeConcurrency = 4
 
 // Place moves ref's staged uploads (temp/u-{uuid}) to their content
-// allocations, private/sha256-{hex}-{uuid} of the bytes the server read, and returns
+// allocations, {private|download}/sha256-{hex}-{uuid} of the bytes the server
+// read (download/ for Kind.Downloads), and returns
 // how many files it placed. The media worker runs it before processing:
 //
 //  1. read each staged upload, hashing it. A single PUT (at most
@@ -49,10 +50,10 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	if man.Full {
 		return 0, nil // placing would grow it: wait for a commit that shrinks it
 	}
-	sizes := map[string]int64{}
+	sizes, areas := map[string]int64{}, map[string]string{}
 	for _, f := range man.Files {
 		if f.Staged != "" && f.Fail() == nil {
-			sizes[f.Staged] = f.Size
+			sizes[f.Staged], areas[f.Staged] = f.Size, item.Kind().Area(f.Path, "")
 		}
 	}
 	if len(sizes) == 0 {
@@ -64,7 +65,7 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	g.SetLimit(placeConcurrency)
 	for name, size := range sizes {
 		g.Go(func() error {
-			blob, err := m.placeOne(gctx, item, name, size)
+			blob, err := m.placeOne(gctx, item, areas[name], name, size)
 			if err != nil {
 				return fmt.Errorf("media: place %s%s: %w", item.TempPrefix(), name, err)
 			}
@@ -135,7 +136,7 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 
 // placeOne hashes the staged upload and writes its blob unless it exists.
 // It returns the blob, or "" when the upload is gone or not size bytes.
-func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size int64) (string, error) {
+func (m *Manifests) placeOne(ctx context.Context, item Item, area, name string, size int64) (string, error) {
 	src, _ := item.Staged(name)
 	rc, obj, err := m.store.Get(ctx, src, GetOptions{})
 	if errors.Is(err, ErrNotFound) {
@@ -162,7 +163,7 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 		return "", err
 	}
 	sum := h.Sum(nil)
-	blobs, err := m.NewBlobs(ctx, item.Ref(), [][]byte{sum})
+	blobs, err := m.NewBlobs(ctx, item.Ref(), area, [][]byte{sum})
 	if err != nil {
 		return "", err
 	}

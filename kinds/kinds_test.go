@@ -71,6 +71,47 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// downloads is doujins with a movie kind serving an MP4.
+func downloads() Config {
+	c := doujins()
+	c.Kinds["movie"] = Kind{Route: "watch", Presentation: "player", Versions: VersionRules{Languages: "many"}, Download: &Download{Serve: "mp4-1080"}}
+	return c
+}
+
+func TestValidateDownloads(t *testing.T) {
+	if err := downloads().Validate(); err != nil {
+		t.Fatalf("downloads config: %v", err)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"off and serving": func(c *Config) { c.Kinds["movie"].Download.Off = true },
+		"serve a path":    func(c *Config) { c.Kinds["movie"].Download.Serve = "video/source.mp4" },
+	} {
+		c := downloads()
+		mutate(&c)
+		if err := c.Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: got %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestServes(t *testing.T) {
+	c := downloads()
+	for name, want := range map[string]string{"gallery": DownloadPages, "blog": "", "movie": "mp4-1080"} {
+		if got := c.Kinds[name].Serves(); got != want {
+			t.Errorf("%s serves %q, want %q", name, got, want)
+		}
+	}
+	movie := c.Kinds["movie"]
+	movie.Download = nil
+	if movie.Serves() != DownloadOriginal {
+		t.Fatalf("a player serves %q by default", movie.Serves())
+	}
+	movie.Download = &Download{Off: true}
+	if movie.Serves() != "" {
+		t.Fatalf("an off download serves %q", movie.Serves())
+	}
+}
+
 func TestLockedView(t *testing.T) {
 	c := doujins()
 	if l := c.Kinds["blog"].LockedView(); !l.Shows(ShowCover) || l.Shows(ShowComments) || l.Shows(ShowReactions) || l.Preview != nil {

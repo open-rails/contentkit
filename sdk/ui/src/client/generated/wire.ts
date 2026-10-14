@@ -542,6 +542,11 @@ export interface DeleteRecord {
   external_id: string;
 }
 
+export interface Download {
+  off?: boolean;
+  serve?: string;
+}
+
 export interface Edge {
   from: string;
   relation: string;
@@ -603,6 +608,8 @@ export interface ErrorReply {
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
+  reason?: string;
+  available_at?: string;
 }
 
 export interface ExposureInput {
@@ -688,6 +695,14 @@ export interface FeedItem {
   content_kind: string;
   content_id: string;
   content_version_id?: string;
+}
+
+export interface FileDownload {
+  url: string;
+  name: string;
+  type: string;
+  size?: number;
+  expires_at: string;
 }
 
 export interface FileInfo {
@@ -1013,6 +1028,7 @@ export interface Kind {
   sort?: string;
   locked?: Locked;
   draft_ttl?: number;
+  download?: Download;
 }
 
 export interface LanguageTotal {

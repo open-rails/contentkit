@@ -73,9 +73,18 @@ type Kind struct {
 	// ServeOriginals lists and serves uploads to viewers with access, like
 	// any private file. Otherwise viewer URLs are scoped to served files,
 	// not the whole private folder, and reads omit upload paths and blobs.
-	ServeOriginals bool      `json:"serve_originals,omitempty"`
-	Private        []Private `json:"private,omitempty"`
-	Public         []Public  `json:"public,omitempty"`
+	ServeOriginals bool `json:"serve_originals,omitempty"`
+	// Downloads are the upload paths and private presets (Image, MP4 or Zip)
+	// whose files live in download/: only a download token opens them and
+	// reads never list them. ForContent adds a content kind's originals, its
+	// zip and what the zip packs.
+	Downloads []string `json:"downloads,omitempty"`
+	// Download is what a version's download serves, one of Downloads: a
+	// literal upload (the original) or an MP4 or Zip preset. ForContent sets
+	// it from the content kind's download; "" serves none.
+	Download string    `json:"download,omitempty"`
+	Private  []Private `json:"private,omitempty"`
+	Public   []Public  `json:"public,omitempty"`
 	// Defaults holds the images the kind's public presets name in
 	// Public.Default, so a shared kind ships its own (go:embed). A registry
 	// read from JSON (the stock worker) has none; PublishDefaults needs them.
@@ -124,7 +133,8 @@ type Publish struct {
 	// Import is the {name} upload of page archives (application/zip),
 	// expanded into Pages in name order.
 	Import string `json:"import,omitempty"`
-	// Download is the HostOnly Zip preset the download route serves.
+	// Download is the HostOnly Zip preset of the version's pages, which a
+	// download serves when its content kind serves pages.
 	Download string `json:"download,omitempty"`
 }
 
@@ -156,10 +166,9 @@ type Private struct {
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
 	Download string `json:"download,omitempty"`
-	// HostOnly leaves this preset out of generic reads and playlists; a host
-	// route applies its own policy and calls Grant.HostURL. It decides what
-	// is listed, not what a token opens: an item's token opens every private
-	// file of the item.
+	// HostOnly leaves this preset out of generic reads and playlists. It
+	// decides what is listed, not what a token opens: an item's token opens
+	// every private file of the item; only Kind.Downloads keeps one from it.
 	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`

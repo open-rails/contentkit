@@ -3,8 +3,10 @@
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
-// The one access scope is an item's, "{ns}/{kind}/{id}" or a version's
-// "{ns}/{kind}/{id}/{version}": every private file of the item or none. Tokens are bearer tokens, revoked only by expiry.
+// An item token's scope is an item's, "{ns}/{kind}/{id}" or a version's
+// "{ns}/{kind}/{id}/{version}": every file in the item's private/ or none. A
+// download token's is one key in an item's download/, which no item token
+// opens. Tokens are bearer tokens, revoked only by expiry.
 package token
 
 import (
@@ -148,7 +150,22 @@ func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 }
 
 // reserved are an item folder's own names, never a version.
-var reserved = []string{"manifest.json", "private", "public", "temp"}
+var reserved = []string{"manifest.json", "private", "download", "public", "temp"}
+
+// VerifyDownload checks tok for the download key
+// "{ns}/{kind}/{id}[/{version}]/download/{name}" at now: that one key's
+// download token.
+func (r Ring) VerifyDownload(tok, key string, now time.Time) error {
+	p := strings.Split(key, "/")
+	if slices.Contains(p, "") || !(len(p) == 5 && p[3] == "download" || len(p) == 6 && p[4] == "download" && !slices.Contains(reserved, p[3])) {
+		return ErrInvalid
+	}
+	return r.VerifyScope(tok, DownloadScope(key), now)
+}
+
+// DownloadScope is the scope of a download token for key: the key itself,
+// which no item scope equals.
+func DownloadScope(key string) string { return key }
 
 // VerifyScope checks tok for exactly scope at now.
 func (r Ring) VerifyScope(tok, scope string, now time.Time) error {

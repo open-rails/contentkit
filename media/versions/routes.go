@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/open-rails/authkit/auth"
 
@@ -33,9 +34,11 @@ type Pending struct {
 }
 
 type errorReply struct {
-	Error      string `json:"error"`
-	Code       string `json:"code"`
-	RetryAfter int    `json:"retry_after,omitempty"`
+	Error       string     `json:"error"`
+	Code        string     `json:"code"`
+	RetryAfter  int        `json:"retry_after,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	AvailableAt *time.Time `json:"available_at,omitempty"`
 }
 
 var routes = []httpapi.Route[handler]{
@@ -54,11 +57,24 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.Accepted(Pending{})}},
 		Serve: httpapi.H(handler.fork)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.",
-		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.Accepted(Pending{})},
-		Errors:    []string{httpapi.CodeForbidden, httpapi.CodeRateLimited}},
+		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+		Responses: []httpapi.Reply{httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
+		Errors:    []string{httpapi.CodeForbidden, CodeDownloadUnavailable, httpapi.CodeRateLimited, CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/archive", Resource: "reader", Auth: httpapi.Public,
+		Doc:       "Streams the marked zip a download granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.",
+		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("mark", "the pages to mark, from 1: 3,5,7"), httpapi.Text("ticket", "the download's ticket")},
+		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"})}},
+		Serve: httpapi.H(handler.archive)},
 }
+
+// Download refusals.
+const (
+	// CodeNoDownload is a version without the file its kind's download serves.
+	CodeNoDownload = "no_download"
+	// CodeDownloadUnavailable is a download the host's policy refused.
+	CodeDownloadUnavailable = "download_unavailable"
+)
 
 // Handler serves the versions module's routes, each behind its tier's gate.
 func (s *Service) Handler(a auth.Authenticator, log *slog.Logger) (http.Handler, error) {
@@ -123,19 +139,27 @@ func (h handler) fork(w http.ResponseWriter, r *http.Request) {
 
 func (h handler) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	a, err := h.s.Download(r.Context(), gate.Actor(r.Context()), target(r))
+	d, err := h.s.Download(r.Context(), gate.Actor(r.Context()), target(r))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (h handler) archive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	q := r.URL.Query()
+	a, err := h.s.Archive(r.Context(), target(r), q.Get("for"), q.Get("mark"), q.Get("ticket"))
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
-	if a.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
-	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := a.WriteTo(w); err != nil && r.Context().Err() == nil {
-		h.log.ErrorContext(r.Context(), "versions: download stream failed", "version", target(r).Version, "error", err)
+		h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
 	}
 }
 
@@ -151,6 +175,7 @@ func decode(r *http.Request, v any) error {
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Cache-Control", "no-store")
 	var quota *QuotaError
+	var unavailable *UnavailableError
 	switch {
 	case errors.Is(err, ErrNotReady):
 		writeJSON(w, http.StatusAccepted, Pending{Status: "pending"})
@@ -160,6 +185,11 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusTooManyRequests, errorReply{Error: "download quota reached", Code: httpapi.CodeRateLimited, RetryAfter: retry})
 	case errors.Is(err, ErrNotFound):
 		writeJSON(w, http.StatusNotFound, errorReply{Error: "not found", Code: httpapi.CodeNotFound})
+	case errors.As(err, &unavailable):
+		writeJSON(w, http.StatusForbidden, errorReply{Error: httpapi.Message(CodeDownloadUnavailable), Code: CodeDownloadUnavailable,
+			Reason: unavailable.Reason, AvailableAt: unavailable.AvailableAt})
+	case errors.Is(err, ErrNoDownload):
+		writeJSON(w, http.StatusConflict, errorReply{Error: httpapi.Message(CodeNoDownload), Code: CodeNoDownload})
 	case errors.Is(err, ErrForbidden):
 		writeJSON(w, http.StatusForbidden, errorReply{Error: "not allowed", Code: httpapi.CodeForbidden})
 	case errors.Is(err, ErrInvalid):

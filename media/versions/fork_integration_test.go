@@ -3,6 +3,7 @@ package versions_test
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -116,14 +117,13 @@ func TestReaderMeta(t *testing.T) {
 	}
 }
 
-// Downloads stream the prepared archive, or the host's marked copy, to
-// viewers who open every page, within their bucket's quota.
+// Downloads serve the prepared archive, or stream a copy with the pages the
+// host's policy names marked, to viewers who open every page, within their
+// bucket's quota.
 func TestDownload(t *testing.T) {
-	mark := &marker{}
-	s := newSite(t, siteOptions{watermark: mark, downloads: versions.Downloads{
+	s := newSite(t, siteOptions{policy: marker{}, downloads: versions.Downloads{
 		User:  []versions.Quota{{Limit: 5, Per: time.Hour}},
 		Tiers: []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}}})
-	mark.who = s.fan.ID
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
 	v := s.version(c)
 	ref := s.ref("gallery", v)
@@ -152,28 +152,38 @@ func TestDownload(t *testing.T) {
 		}
 		return out
 	}
+	// The policy marks: the download's URL is the archive route, streaming
+	// the pages with page 2 marked (9 is past the end).
 	resp, b := s.call(s.fan, "GET", path, nil)
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" {
+	var granted versions.FileDownload
+	if err := json.Unmarshal(b, &granted); resp.StatusCode != 200 || err != nil || !strings.HasPrefix(granted.URL, "archive?") || granted.Name != "A Title.zip" {
 		t.Fatalf("fan download: %d %s", resp.StatusCode, b)
 	}
+	archive := strings.TrimSuffix(path, "download") + granted.URL
+	resp, b = s.call(access.Actor{}, "GET", archive, nil)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" {
+		t.Fatalf("marked archive: %d %s", resp.StatusCode, b)
+	}
 	marked := entries(b)
-	if len(marked) != 3 || !bytes.HasSuffix(marked["002.png"], []byte("marked:"+s.fan.ID)) || marked["001.webp"] == nil {
+	if len(marked) != 3 || !bytes.HasSuffix(marked["002.png"], []byte("marked:"+s.fan.ID)) || marked["001.webp"] == nil ||
+		bytes.Contains(marked["003.webp"], []byte("marked:")) {
 		t.Fatalf("marked archive %v", keys(marked))
+	}
+	if resp, _ := s.call(access.Actor{}, "GET", strings.Replace(archive, "for="+s.fan.ID, "for="+s.stranger.ID, 1), nil); resp.StatusCode != 404 {
+		t.Fatalf("another viewer's ticket: %d", resp.StatusCode)
 	}
 	if resp, _ := s.call(s.fan, "GET", path, nil); resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("a download past the premium quota: %d", resp.StatusCode)
 	}
-	// Without marks, the prepared archive: an editor's, in the user bucket.
-	a, err := s.svc.Download(s.ctx, s.creator, v)
+	// A version no longer locked behind premium is unmarked: the prepared
+	// archive at the media host, here an editor's in the user bucket.
+	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"public"}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
+	d, err := s.svc.Download(s.ctx, s.creator, v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if _, err := a.WriteTo(&buf); err != nil {
-		t.Fatal(err)
-	}
-	if a.Name != "A Title.zip" || len(entries(buf.Bytes())) != 3 {
-		t.Fatalf("archive %q of %d pages", a.Name, len(entries(buf.Bytes())))
+	if d.Name != "A Title.zip" || d.Size == 0 || !strings.Contains(d.URL, "/download/") || !strings.Contains(d.URL, "t=") {
+		t.Fatalf("prepared archive %+v", d)
 	}
 	s.exec(`INSERT INTO `+s.table("content_segments")+` (tenant_id, version_id, position, start_index, end_index, release_at)
 VALUES ($1, $2, 1, 2, 3, now() + interval '1 hour')`, s.tenant, v.Version)

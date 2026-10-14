@@ -53,7 +53,7 @@ func matchesBlob(name string, body []byte) bool {
 func (f *fixture) blob(ref contentref.ContentRef, body []byte, typ string) string {
 	f.t.Helper()
 	sum := sha256.Sum256(body)
-	names, err := f.ms.NewBlobs(f.t.Context(), ref, [][]byte{sum[:]})
+	names, err := f.ms.NewBlobs(f.t.Context(), ref, layout.AreaPrivate, [][]byte{sum[:]})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -441,6 +441,31 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 			}
 		}
 	}
+	// An output in another area than its upload is a copy there, as a
+	// producer writes each output where its preset's files live.
+	copies := map[[2]string]string{}
+	for _, u := range m.Files {
+		if !u.IsUpload() || u.Blob == "" {
+			continue
+		}
+		for _, p := range k.PrivateFor(u.Path) {
+			area := k.Area("", p.Name)
+			if from, _, _ := layout.SplitBlobRef(u.Blob); p.Zip != "" || p.HLS != nil || p.Audio != nil || area == from && area == layout.AreaPrivate {
+				continue
+			}
+			sum, _ := layout.BlobDigest(u.Blob)
+			names, err := f.ms.NewBlobs(ctx, ref, area, [][]byte{sum})
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			src, _ := item.Blob(u.Blob)
+			dst, _ := item.Blob(names[0])
+			if _, err := f.env.Store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
+				f.t.Fatal(err)
+			}
+			copies[[2]string{u.Blob, area}] = names[0]
+		}
+	}
 	if _, err := f.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
 		for _, p := range publics {
 			m.SetPublication(p.from, p.pub)
@@ -453,7 +478,11 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 				if p.Zip != "" || p.HLS != nil || p.Audio != nil {
 					continue
 				}
-				out := media.File{Path: k.OutputPath(p, u.Path), Blob: u.Blob, Type: u.Type, Size: u.Size, FP: "test"}
+				blob := u.Blob
+				if c, ok := copies[[2]string{u.Blob, k.Area("", p.Name)}]; ok {
+					blob = c
+				}
+				out := media.File{Path: k.OutputPath(p, u.Path), Blob: blob, Type: u.Type, Size: u.Size, FP: "test"}
 				if err := m.SetOutputs(u.Path, p.Name, []media.File{out}); err != nil {
 					return err
 				}

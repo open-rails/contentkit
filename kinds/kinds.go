@@ -76,6 +76,56 @@ type Kind struct {
 	// DraftTTL expires drafts that never went live this long after their
 	// creation: they are deleted, media included. Zero keeps them.
 	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
+	// Download is what a version's download serves; nil serves its
+	// presentation's default (Download.Serves).
+	Download *Download `json:"download,omitempty" yaml:"download"`
+}
+
+// Download is what a kind's version download serves. Whether a viewer may
+// download, and which pages are marked, is the host's DownloadPolicy.
+type Download struct {
+	// Off: the kind's versions have no download.
+	Off bool `json:"off,omitempty" yaml:"off"`
+	// Serve is DownloadPages, DownloadOriginal or a private MP4 preset of the
+	// kind's media ("mp4-1080"); empty is the presentation's default.
+	Serve string `json:"serve,omitempty" yaml:"serve"`
+}
+
+// What a download serves.
+const (
+	// DownloadPages is a zip of the version's pages (the media kind's
+	// Publish.Download), the default of readers.
+	DownloadPages = "pages"
+	// DownloadOriginal is the version's video as uploaded (the upload its HLS
+	// ladder encodes), the default of players.
+	DownloadOriginal = "original"
+)
+
+// Serves is what k's download serves: its Serve, else its presentation's
+// default; "" serves none.
+func (k Kind) Serves() string {
+	d := k.Download
+	switch {
+	case d != nil && d.Off:
+		return ""
+	case d != nil && d.Serve != "":
+		return d.Serve
+	case k.Presentation == "reader":
+		return DownloadPages
+	case k.Presentation == "player":
+		return DownloadOriginal
+	}
+	return ""
+}
+
+func (d Download) validate() error {
+	if d.Off && d.Serve != "" {
+		return errors.New("download is off: it serves nothing")
+	}
+	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal && !routeRE.MatchString(d.Serve) {
+		return fmt.Errorf("download serves %q: pages, original or a preset name", d.Serve)
+	}
+	return nil
 }
 
 // Locked is what a viewer who does not open content (or a version) still
@@ -324,6 +374,11 @@ func (c Config) Validate() error {
 		}
 		if l := k.Locked; l != nil {
 			if err := l.validate(k.Segments); err != nil {
+				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
+			}
+		}
+		if d := k.Download; d != nil {
+			if err := d.validate(); err != nil {
 				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
 			}
 		}

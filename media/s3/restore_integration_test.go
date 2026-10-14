@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
@@ -65,7 +66,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 		names := make([]string, 2)
 		for i, body := range []string{original, output} {
 			sum := sha256.Sum256([]byte(body))
-			allocated, err := ms.NewBlobs(ctx, ref, [][]byte{sum[:]})
+			allocated, err := ms.NewBlobs(ctx, ref, layout.AreaPrivate, [][]byte{sum[:]})
 			if err != nil {
 				t.Fatal(err)
 			}

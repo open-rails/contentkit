@@ -189,3 +189,38 @@ func TestParseRing(t *testing.T) {
 		}
 	}
 }
+
+// A download token opens its one download/ key until it expires; an item
+// token opens none, and a download token no other key.
+func TestVerifyDownload(t *testing.T) {
+	r := ring(t, k1, nil)
+	now := time.Unix(1_700_000_000, 0)
+	exp := now.Add(5 * time.Minute)
+	original := item + "/download/sha256-3a"
+	dl := r.Sign(token.DownloadScope(original), exp)
+	if err := r.VerifyDownload(dl, original, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.VerifyDownload(dl, original, exp); !errors.Is(err, token.ErrExpired) {
+		t.Fatalf("at exp: %v", err)
+	}
+	for _, c := range []struct{ tok, key string }{
+		{r.Sign(item, exp), original},
+		{dl, item + "/download/sha256-3b"},
+		{dl, page},
+		{dl, item + "/private/../download/sha256-3a"},
+	} {
+		if err := r.VerifyDownload(c.tok, c.key, now); !errors.Is(err, token.ErrInvalid) {
+			t.Errorf("%s: %v", c.key, err)
+		}
+	}
+	if err := r.VerifyPrivate(dl, page, now); !errors.Is(err, token.ErrInvalid) {
+		t.Fatalf("a download token opened a private file: %v", err)
+	}
+	if err := r.VerifyPrivate(r.Sign(item, exp), original, now); !errors.Is(err, token.ErrInvalid) {
+		t.Fatalf("an item token opened a download: %v", err)
+	}
+	if err := r.VerifyDownload(r.Sign(token.DownloadScope(item+"/v/download/sha256-3a"), exp), item+"/v/download/sha256-3a", now); err != nil {
+		t.Fatalf("a version's download: %v", err)
+	}
+}

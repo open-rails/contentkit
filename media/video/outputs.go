@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // HLS outputs under the preset's directory To:
@@ -170,7 +171,7 @@ func (e *Encoder) stream(ctx context.Context, item media.Item, dir, name, path, 
 	if err != nil {
 		return media.File{}, err
 	}
-	blob, size, err := e.put(ctx, item, file, contentType, fp)
+	blob, size, err := e.put(ctx, item, layout.AreaPrivate, file, contentType, fp)
 	if err != nil {
 		return media.File{}, err
 	}

@@ -59,7 +59,7 @@ func versionsScenario(t *testing.T, w *world, f *server, staff, ownerID, owner, 
 	f.want(403, user, "POST", path+"/fork", versions.ForkBody{From: v2}, nil)
 	f.want(400, owner, "POST", path+"/fork", versions.ForkBody{}, nil)
 	f.want(403, anon, "GET", path+"/download", nil, nil)
-	f.want(404, owner, "GET", path+"/download", nil, nil)
+	f.want(409, owner, "GET", path+"/download", nil, nil) // no media yet: nothing to download
 	// The published premium version shows, locked.
 	var read media.ReadResult
 	f.want(200, anon, "GET", "/media/book/"+book+"/versions/"+v1, nil, &read)

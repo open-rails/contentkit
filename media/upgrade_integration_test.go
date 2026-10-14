@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // sharedLegacyGallery stores gallery n as v0.67 did with content-addressed
@@ -153,7 +154,7 @@ func TestUpgradeAdoptsSharedLegacyBlobs(t *testing.T) {
 	// The worker replaces one output and drops its old blob, which others use.
 	body := []byte("high 001, rendered again")
 	sum := sha256.Sum256(body)
-	names, err := f.ms.NewBlobs(ctx, l.ref, [][]byte{sum[:]})
+	names, err := f.ms.NewBlobs(ctx, l.ref, layout.AreaPrivate, [][]byte{sum[:]})
 	if err != nil {
 		t.Fatal(err)
 	}

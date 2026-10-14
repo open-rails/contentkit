@@ -201,8 +201,8 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // Allowed reports whether a read gives this viewer f's URL: with access,
 // every listed file with a blob. Uploads are listed only with
-// ServeOriginals, HostOnly presets never (Grant.HostURL), unattached files
-// and frames not grabbed yet never.
+// ServeOriginals; HostOnly presets, files in download/ (Kind.Downloads),
+// unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
 	return g.Full() && f.Blob != "" && g.listed(f)
 }
@@ -234,25 +234,6 @@ func (g *Grant) cookie() bool {
 	return g.r.o.Delivery.Mode == DeliverCookie && g.actor.Kind != auth.SubjectApplication
 }
 
-// HostURL is the URL of a HostOnly preset's file for a viewer with access,
-// always carrying the item token (the host route may not have set the
-// cookie). HostOnly only keeps a file out of generic reads: call this from a
-// host route after its own policy, which decides who is handed the URL.
-func (g *Grant) HostURL(path string, dl bool) (string, error) {
-	f, ok := g.Manifest.Get(path)
-	if !ok || !g.Full() || f.IsUpload() || f.Blob == "" {
-		return "", ErrNotAllowed
-	}
-	if src, ok := g.Manifest.Get(f.From); ok && src.IsUpload() && src.Unattached {
-		return "", ErrNotAllowed
-	}
-	p := g.Item.Kind().private(f.Preset)
-	if p == nil || !p.HostOnly {
-		return "", ErrNotAllowed
-	}
-	return g.url(f.Blob, f.Download, dl, false)
-}
-
 // url is the URL of the item's blob: plain under the item cookie, else with
 // the item token. A download adds dl, its name: unsigned, since the token
 // already opens the file and the gateway only accepts a name of the file's
@@ -274,6 +255,44 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 		u += "?" + q.Encode()
 	}
 	return u, nil
+}
+
+// DownloadURL is the URL of f, a file of item in download/, carrying a
+// download token of its one key that expires after ttl and serving it as an
+// attachment named name. Only the version download route hands one out,
+// after its own access check and quota.
+func (r *Reader) DownloadURL(item Item, f File, name string, ttl time.Duration) (string, time.Time, error) {
+	key, err := item.Blob(f.Blob)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if area, _, _ := layout.SplitBlobRef(f.Blob); area != layout.AreaDownload {
+		return "", time.Time{}, fmt.Errorf("%w: %s is not in download/", ErrNotAllowed, f.Path)
+	}
+	exp := time.Unix(r.o.Now().Add(ttl).Unix(), 0)
+	q := url.Values{"t": {r.ring.Sign(token.DownloadScope(key), exp)}}
+	if name != "" {
+		q.Set("dl", name)
+	}
+	return r.base + layout.URLPrefix + key + "?" + q.Encode(), exp, nil
+}
+
+// SignTicket signs a host route's own scope until exp with the delivery key:
+// a short-lived ticket. Its scope must hold a ':', which no item or download
+// scope does, so a ticket opens no media.
+func (r *Reader) SignTicket(scope string, exp time.Time) string {
+	if !strings.Contains(scope, ":") {
+		panic("media: a ticket scope needs a ':'")
+	}
+	return r.ring.Sign(scope, exp)
+}
+
+// VerifyTicket checks a SignTicket ticket for scope now.
+func (r *Reader) VerifyTicket(ticket, scope string) error {
+	if !strings.Contains(scope, ":") {
+		return token.ErrInvalid
+	}
+	return r.ring.VerifyScope(ticket, scope, r.o.Now())
 }
 
 // EditorView returns the upload's recorded view when its source/spec still
@@ -438,8 +457,12 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 }
 
 // listed reports a file a viewer with access is listed: derived files and
-// served uploads (attached only). An editor read lists every file.
+// served uploads (attached only), never one in download/. An editor read
+// lists every file.
 func (g *Grant) listed(f File) bool {
+	if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
+		return false
+	}
 	if f.IsUpload() {
 		return !f.Unattached && g.Item.Kind().ServeOriginals && f.Blob != "" && !f.Gone
 	}

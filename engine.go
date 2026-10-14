@@ -316,8 +316,8 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	m.polls = declared[pollFolder]
 	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
-		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, Redis: deps.Redis},
-		Logger:    e.log, Now: now}); err != nil {
+		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
+		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	reg.Hooks = m.versions.Hooks()
@@ -384,7 +384,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	m.limit = rate(mc.ReadLimit)
-	if err := m.versions.Bind(versions.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs}); err != nil {
+	if err := m.versions.Bind(versions.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
 		return nil, err
 	}
 	return m, nil

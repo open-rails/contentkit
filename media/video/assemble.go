@@ -16,6 +16,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
@@ -265,7 +266,13 @@ func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Privat
 	}
 	defer os.Remove(out)
 	fp.set(media.PhaseUploading)
-	blob, size, err := e.put(ctx, w.item, out, "video/mp4", fp)
+	area := layout.AreaPrivate
+	for _, q := range presets {
+		if w.item.Kind().Area("", q.Name) == layout.AreaDownload {
+			area = layout.AreaDownload // one blob serves every rung's presets
+		}
+	}
+	blob, size, err := e.put(ctx, w.item, area, out, "video/mp4", fp)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +296,7 @@ func setMP4s(m *media.Manifest, from string, files []media.File) error {
 
 // sprite stores a first stage's seek sprite and its grid.
 func (e *Encoder) sprite(ctx context.Context, item media.Item, dir, to string, pl plan, fp *fileProgress) (media.File, error) {
-	blob, size, err := e.put(ctx, item, filepath.Join(dir, "sprite.jpg"), "image/jpeg", fp)
+	blob, size, err := e.put(ctx, item, layout.AreaPrivate, filepath.Join(dir, "sprite.jpg"), "image/jpeg", fp)
 	if err != nil {
 		return media.File{}, err
 	}

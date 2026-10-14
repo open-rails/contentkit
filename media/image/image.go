@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Recipe versions the image producer: a change re-renders every image output.
@@ -594,7 +595,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if err != nil {
 			return p.permanent(d, err)
 		}
-		blob, err := p.putBlob(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+		blob, err := p.putBlob(ctx, item, k.Area("", pr.Name), bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
 		if err != nil {
 			return d, err
 		}
@@ -666,7 +667,7 @@ func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.M
 			if err != nil {
 				return nil
 			}
-			blob, err := p.putBlob(gctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+			blob, err := p.putBlob(gctx, item, layout.AreaPrivate, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
 			if err != nil {
 				return err
 			}
@@ -695,9 +696,9 @@ func (p *Processor) rules(animation media.Animation) rules {
 	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
-// putBlob records ownership and writes one immutable private allocation.
-func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	names, err := p.c.Manifests.NewBlobs(ctx, item.Ref(), [][]byte{sum})
+// putBlob records ownership and writes one immutable allocation in area.
+func (p *Processor) putBlob(ctx context.Context, item media.Item, area string, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
+	names, err := p.c.Manifests.NewBlobs(ctx, item.Ref(), area, [][]byte{sum})
 	if err != nil {
 		return "", err
 	}

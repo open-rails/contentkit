@@ -7,3 +7,4 @@ export { Paywall, VersionPicker, priceLabel, useVersionMenuItems, type PaywallPr
 export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, VersionsEditor, versionLabel } from "./editors.js";
 export { OfferFields } from "./offer-fields.js";
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
+export { VersionDownloadButton, type VersionDownloadButtonProps } from "./download-button.js";

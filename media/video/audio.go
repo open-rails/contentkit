@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
@@ -171,7 +172,7 @@ func (e *Encoder) audioFile(ctx context.Context, item media.Item, f media.File, 
 	}
 	hls.FP, hls.Track = fprint, &media.Track{Kind: media.TrackAudio, ID: "a1", Lang: t.lang, Label: t.label, Default: true,
 		Bandwidth: hls.Track.Bandwidth, Codecs: "mp4a.40.2", Index: hls.Track.Index}
-	blob, size, err := e.put(ctx, item, m4a, "audio/mp4", fp)
+	blob, size, err := e.put(ctx, item, layout.AreaPrivate, m4a, "audio/mp4", fp)
 	if err != nil {
 		return err
 	}

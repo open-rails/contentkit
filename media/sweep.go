@@ -102,7 +102,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 				if !now.Before(o.LastModified.Add(j.cfg.TempTTL)) {
 					effects.Private = append(effects.Private, o.Key)
 				}
-			case layout.AreaPrivate:
+			case layout.AreaPrivate, layout.AreaDownload:
 				if until, ok := protected[o.Key]; ok {
 					if left := until.Sub(now); result.Wait == 0 || left < result.Wait {
 						result.Wait = left + time.Second
@@ -131,7 +131,9 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
 	keep := map[string]bool{}
 	for _, b := range m.Blobs() {
-		keep[layout.AreaPrivate+"/"+b] = true
+		if area, name, ok := layout.SplitBlobRef(b); ok {
+			keep[area+"/"+name] = true
+		}
 	}
 	for _, s := range m.StagedNames() {
 		keep[layout.AreaTemp+"/"+s] = true

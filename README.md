@@ -339,13 +339,15 @@ always holds the bytes of its name. The optional `UploadLimiter`
 `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone
 (`public, max-age=300, stale-while-revalidate=86400`, falling back to the
 kind's `_default` for declared names), `private/sha256-{hex}` with the item's
-token in `?t=` or the `mt` cookie (`private, immutable`). A token opens every
-private file of its item or none; `?dl={name}` serves the file as a download
+token in `?t=` or the `mt` cookie (`private, immutable`), and
+`download/sha256-{hex}-{uuid}` only with a `?t=` download token of that one
+key (the version download route's). An item token opens every private file of
+its item or none, never a download; `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
 (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
-reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
+reading only `*/private/*`, `*/download/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
 `MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
