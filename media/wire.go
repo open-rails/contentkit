@@ -133,8 +133,8 @@ const (
 )
 
 // ReadResult is the read API's answer: the files under the requested prefix
-// in manifest order (Total of them). With access each has a URL within
-// [offset, offset+limit); without, each is locked: its path, type and size.
+// in manifest order (Total of them), each with a URL within
+// [offset, offset+limit). Without access it lists none.
 type ReadResult struct {
 	Access string `json:"access"`
 	// Expires is when the item token (the URLs, the cookie) stops working,
@@ -148,9 +148,12 @@ type ReadResult struct {
 	// Public lists the exact published renditions. Clients must not infer a
 	// current cover or avatar's physical filename from the preset template.
 	Public []PublicImage `json:"public,omitempty"`
-	Total  int           `json:"total"`
-	Offset int           `json:"offset"`
-	Limit  int           `json:"limit"`
+	// Locked: the item holds files this viewer does not open. A viewer is
+	// listed only the files it opens, so Total counts those alone.
+	Locked bool `json:"locked,omitempty"`
+	Total  int  `json:"total"`
+	Offset int  `json:"offset"`
+	Limit  int  `json:"limit"`
 	// HLS lists the item's playable ladders by output directory ("hls/"):
 	// play {read API}/{kind}/{id}/hls/{dir}master.m3u8.
 	HLS []string `json:"hls,omitempty"`
@@ -192,7 +195,6 @@ type FileInfo struct {
 	Dur      float64 `json:"dur,omitempty"`
 	Download string  `json:"download,omitempty"` // the name a download read serves it under
 	URL      string  `json:"url,omitempty"`
-	Locked   bool    `json:"locked,omitempty"`
 
 	// Editors (editor reads and commit replies):
 	Upload     bool            `json:"upload,omitempty"`

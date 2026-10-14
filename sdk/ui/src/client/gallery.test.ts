@@ -27,23 +27,18 @@ it("an audio-only ladder plays its M4A", () => {
   expect(galleryItems(read("full", files, ["listen/song/"]))).toEqual([{ kind: "audio", key: "listen/song/", dir: "listen/song/", file: files[1], aspect: 3 }]);
 });
 
-const lockedImg = (n: number): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/webp", size: 1000, locked: true });
-
-it("no access: one locked item, a locked ladder counts once, and nothing locked leaks", () => {
-  const files = [lockedImg(0), lockedImg(1), ...ladder("hls/", { url: undefined, locked: true })];
-  expect(galleryItems(read("none", files))).toEqual([{ kind: "locked", key: "locked", count: 3, videos: 1, backdrop: undefined, aspect: 1 }]);
+it("no access: one uncounted locked item when the read holds locked files, none otherwise", () => {
+  expect(galleryItems({ ...read("none", []), locked: true })).toEqual([{ kind: "locked", key: "locked", backdrop: undefined, aspect: 1 }]);
+  expect(galleryItems(read("none", []))).toEqual([]);
 });
 
 it("no access with previews: the public previews, then the locked rest behind the last preview", () => {
   const previews = ["https://m/public/preview-1.webp", "https://m/public/preview-2.webp"];
-  const items = galleryItems({ ...read("none", [lockedImg(0), lockedImg(1), lockedImg(2)]), previews });
-  expect(items).toEqual([
+  expect(galleryItems({ ...read("none", []), previews, locked: true })).toEqual([
     { kind: "image", key: "preview/1", file: { path: "preview/1", type: "image/webp", url: previews[0] }, aspect: 1 },
     { kind: "image", key: "preview/2", file: { path: "preview/2", type: "image/webp", url: previews[1] }, aspect: 1 },
-    { kind: "locked", key: "locked", count: 1, videos: 0, backdrop: previews[1], aspect: 1 },
+    { kind: "locked", key: "locked", backdrop: previews[1], aspect: 1 },
   ]);
-  // Every page previewed: nothing is left to lock.
-  expect(galleryItems({ ...read("none", [lockedImg(0), lockedImg(1)]), previews }).map((i) => i.kind)).toEqual(["image", "image"]);
 });
 
 it("stage aspect is the current item's native aspect; durations format", () => {

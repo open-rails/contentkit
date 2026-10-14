@@ -204,7 +204,7 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 // ServeOriginals; HostOnly presets, files in download/ (Kind.Downloads),
 // unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
-	return g.Full() && f.Blob != "" && g.listed(f, false)
+	return g.Full() && f.Blob != "" && g.listed(f)
 }
 
 // Cookie is the item cookie for a viewer with access in cookie mode, else nil.
@@ -348,7 +348,7 @@ func (r *Reader) NamedURLs(ctx context.Context, ref contentref.ContentRef, actor
 	}
 	k := g.Item.Kind()
 	for _, f := range g.Manifest.Files {
-		if f.IsUpload() || f.Blob == "" || !g.listed(f, false) {
+		if f.IsUpload() || f.Blob == "" || !g.listed(f) {
 			continue
 		}
 		p := k.private(f.Preset)
@@ -396,10 +396,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		return nil, nil, err
 	}
 	editor := o.Editor && g.Editor()
-	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(),
-		Meta: g.Manifest.Meta, Files: []FileInfo{}, Cookie: g.Cookie()}
+	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []FileInfo{}, Cookie: g.Cookie()}
 	if g.Full() {
-		out.Access = AccessFull
+		out.Access, out.Meta = AccessFull, g.Manifest.Meta
 	}
 	k := g.Item.Kind()
 	for _, n := range k.previewNames(g.Manifest) {
@@ -411,27 +410,27 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	views := &editorViews{g: g}
 	for _, f := range g.Manifest.Files {
-		if !strings.HasPrefix(f.Path, o.Prefix) || !g.listed(f, editor) {
+		if !strings.HasPrefix(f.Path, o.Prefix) {
+			continue
+		}
+		// A viewer is listed only what it opens: without access nothing, so
+		// no path, size or count tells what the item holds.
+		if !editor && !g.Allowed(f) {
+			out.Locked = out.Locked || !g.Full() && f.Blob != "" && g.listed(f)
 			continue
 		}
 		n := out.Total
 		out.Total++
 		// Viewers get what a file is, never editor fields: an edit, a frame's
-		// source blob, meta, pending work or failures. Without access a file
-		// is its path, type and size, locked: nothing names a blob.
-		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size}
-		if g.Full() {
-			fi.W, fi.H, fi.Dur, fi.Download = f.W, f.H, f.Dur, f.Download
-		}
+		// source blob, meta, pending work or failures.
+		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Download: f.Download}
 		switch {
 		case f.IsUpload() && editor:
 			fi = uploadInfo(f)
 		case editor:
 			fi.From = f.From
 		}
-		if !g.Allowed(f) {
-			fi.Locked = g.listed(f, false)
-		} else if n >= o.Offset && n < o.Offset+o.Limit {
+		if g.Allowed(f) && n >= o.Offset && n < o.Offset+o.Limit {
 			if fi.URL, err = g.URL(f, o.Download); err != nil {
 				return nil, nil, err
 			}
@@ -457,12 +456,10 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	return out, g, nil
 }
 
-// listed reports a file a read lists: derived files and served uploads to
-// viewers (attached only); every file to an editor read.
-func (g *Grant) listed(f File, editor bool) bool {
-	if editor {
-		return true
-	}
+// listed reports a file a viewer with access is listed: derived files and
+// served uploads (attached only), never one in download/. An editor read
+// lists every file.
+func (g *Grant) listed(f File) bool {
 	if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
 		return false
 	}

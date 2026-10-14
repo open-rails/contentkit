@@ -285,7 +285,9 @@ Hidden counts are absent, never zero. `preview` is the free pages or
 segments when the access rule names none; a rule's own `preview` wins.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 group pages, `me` favorites and history), the reader plan and interactions
-apply it; staff, creators and owner-group editors see everything. Sitemaps,
+apply it; the media read API lists a locked item's public files alone (its
+cover, and previews where named), never its private files or their count.
+Staff, creators and owner-group editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
@@ -969,13 +971,16 @@ The media route group serves the read API at `/v1/media`
 (`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
-  `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
+  `{access, expires, meta, previews, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
   in manifest order. `access` is `full` or `none`. With access every listed
   file has a URL: plain under the item cookie
   (`Path=/v1/{ns}/{kind}/{id}/private/`) in cookie mode, with `?t={item
-  token}` in URL mode. Without it there is no URL, token or cookie, and each
-  file is `{path, type, size, locked}`: nothing names a blob. `previews` are
-  the item's public preview URLs, for every viewer who can see it. `expires`
+  token}` in URL mode. Without it there is no URL, token, cookie, meta or
+  file: no path, size or count tells what a locked item holds, only
+  `locked: true` that it holds something. `previews` and `public` are the
+  item's public files (covers; a version's previews only as many as its
+  access rule or kind's `locked.preview` names), for every viewer who can
+  see it. `expires`
   is when the token stops working; a read before then answers the same token,
   so clients keep what they have and read again shortly before (the SDK's
   gallery and player do). With `download`, each URL carries the file's

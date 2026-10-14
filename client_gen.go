@@ -1249,7 +1249,7 @@ func (q GetMediaQuery) values() url.Values {
 	return v
 }
 
-// GetMedia is GET /v1/media/{kind}/{id} (public). An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked.
+// GetMedia is GET /v1/media/{kind}/{id} (public). An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones.
 func (c *Client) GetMedia(ctx context.Context, kind string, id string, q GetMediaQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)

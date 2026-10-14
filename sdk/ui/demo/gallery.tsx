@@ -16,9 +16,9 @@ function Post({ title, children, demo }: { title: string; children: ReactNode; d
   );
 }
 
-const unlock = ({ count }: { count: number }) => (
+const unlock = () => (
   <button type="button" style={{ border: 0, borderRadius: 8, padding: "8px 14px", fontWeight: 600, background: "#fafafa", color: "#18181b", cursor: "pointer" }}>
-    Unlock {count} for $5
+    Unlock for $5
   </button>
 );
 

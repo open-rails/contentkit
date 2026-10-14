@@ -714,7 +714,6 @@ export interface FileInfo {
   dur?: number;
   download?: string;
   url?: string;
-  locked?: boolean;
   upload?: boolean;
   staged?: boolean;
   from?: string;
@@ -1478,6 +1477,7 @@ export interface ReadResult {
   meta?: Record<string, unknown>;
   previews?: string[];
   public?: PublicImage[];
+  locked?: boolean;
   total: number;
   offset: number;
   limit: number;
