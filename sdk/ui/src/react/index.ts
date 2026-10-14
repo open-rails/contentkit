@@ -106,6 +106,7 @@ export {
   type UseTypeahead,
 } from "./discovery.js";
 export {
+  downloadMessage,
   nextRelease,
   startDownload,
   useReaderPlan,

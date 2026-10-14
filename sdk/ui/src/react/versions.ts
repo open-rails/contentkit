@@ -3,6 +3,8 @@ import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { FileDownload, Pending, PlanSegment, ReaderPlan } from "../client/generated/wire.js";
 import { isPending } from "../client/versions.js";
+import { useMessages } from "../i18n/context.js";
+import type { Translator } from "../i18n/messages.js";
 import { useMediaRead, type ReadWindow } from "./read.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
@@ -90,6 +92,12 @@ export interface UseVersionDownload {
   error?: ContentKitError;
   /** While a quota refused: when the viewer may download again (ms). */
   retryAt?: number;
+  /**
+   * What to tell the viewer about the last refusal: when a quota frees, when
+   * a download the site holds back opens ("available to download in N
+   * days"), a locked version, nothing to download, or a failure.
+   */
+  message?: string;
 }
 
 /** Starts a granted download: the browser fetches its URL, an attachment. */
@@ -104,6 +112,26 @@ export function startDownload(d: FileDownload): void {
   a.remove();
 }
 
+/** The viewer's line for a download refusal at now. */
+export function downloadMessage(m: Translator, err: ContentKitError | undefined, now = Date.now()): string | undefined {
+  switch (err?.code) {
+    case undefined:
+      return undefined;
+    case "rate_limited":
+      return m.t("versionDownload.limited", { minutes: Math.max(1, Math.ceil((err.retryAfter ?? 60) / 60)) });
+    case "download_unavailable": {
+      const ms = err.availableAt ? Date.parse(err.availableAt) - now : NaN;
+      return ms > 0 ? m.plural("versionDownload.availableIn", Math.max(1, Math.ceil(ms / 86_400_000))) : m.t("versionDownload.unavailable");
+    }
+    case "forbidden":
+      return m.t("versionDownload.locked");
+    case "no_download":
+      return m.error(err);
+    default:
+      return m.t("versionDownload.failed");
+  }
+}
+
 /**
  * A version's download, charged to the viewer's download quota: the
  * original or rendition its kind serves, or its pages as a zip.
@@ -114,6 +142,7 @@ export function useVersionDownload(
   o: { poll?: number; client?: ContentKitClient; start?: (d: FileDownload) => void } = {},
 ): UseVersionDownload {
   const { client } = useContentScope(o.client);
+  const m = useMessages();
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<ContentKitError>();
   const [retryAt, setRetryAt] = useState<number>();
@@ -140,5 +169,5 @@ export function useVersionDownload(
       setPreparing(false);
     }
   }, [client, content, version, o.poll, start]);
-  return { download, preparing, error, retryAt };
+  return { download, preparing, error, retryAt, message: downloadMessage(m, error) };
 }

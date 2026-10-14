@@ -1760,7 +1760,7 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the kind's watermark marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -1769,6 +1769,8 @@ func (c *Client) GetContentVersionDownload(ctx context.Context, id string, versi
 type GetContentVersionArchiveQuery struct {
 	// the viewer the ticket is for
 	For string
+	// the pages to mark, from 1: 3,5,7
+	Mark string
 	// the download's ticket
 	Ticket string
 }
@@ -1778,13 +1780,16 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	if q.For != "" {
 		v.Set("for", q.For)
 	}
+	if q.Mark != "" {
+		v.Set("mark", q.Mark)
+	}
 	if q.Ticket != "" {
 		v.Set("ticket", q.Ticket)
 	}
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the marked zip a download granted: the version's pages, those its kind's watermark names marked for the viewer the ticket is for. 404 for an expired or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the marked zip a download granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }

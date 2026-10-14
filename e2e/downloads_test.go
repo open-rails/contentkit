@@ -335,6 +335,15 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 	if f := d.file(d.staff, premium); f.URL == "" {
 		t.Fatalf("staff download %+v", f)
 	}
+	// A quota for a tier the content model lacks is refused at New.
+	cfg := d.w.config()
+	cfg.Media.Downloads = versions.Downloads{Tiers: []versions.TierQuota{{Tier: "gold", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}}
+	if e, err := contentkit.New(t.Context(), cfg, d.w.deps()); err == nil || !strings.Contains(err.Error(), `"gold"`) {
+		if e != nil {
+			_ = e.Close(context.Background())
+		}
+		t.Fatalf("a quota of an unknown tier: %v", err)
+	}
 	// Nothing uploaded: a clear 409.
 	var reply struct {
 		Code string `json:"code"`

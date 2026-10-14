@@ -118,7 +118,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
 		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups")}}
 	var err error
-	if s.dl, err = newQuotas(o.Downloads, o.Logger, o.Now); err != nil {
+	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err
 	}
 	return s, nil

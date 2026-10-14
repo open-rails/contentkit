@@ -10,6 +10,7 @@ export type ErrorCode =
   | "comments_closed"
   | "comments_locked"
   | "conflict"
+  | "download_unavailable"
   | "forbidden"
   | "gone"
   | "image_too_large"
@@ -52,6 +53,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   comments_closed: { status: 403, meaning: "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused." },
   comments_locked: { status: 403, meaning: "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
+  download_unavailable: { status: 403, meaning: "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },
   image_too_large: { status: 413, meaning: "The image has more pixels or frames than the processor decodes." },

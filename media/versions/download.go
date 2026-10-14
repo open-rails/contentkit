@@ -107,7 +107,7 @@ type quotas struct {
 	byTier          map[string]*ratelimit.Limiter
 }
 
-func newQuotas(d Downloads, log *slog.Logger, now func() time.Time) (*quotas, error) {
+func newQuotas(d Downloads, tiers []string, log *slog.Logger, now func() time.Time) (*quotas, error) {
 	build := func(name string, qs []Quota) (*ratelimit.Limiter, error) {
 		if len(qs) == 0 {
 			return nil, nil
@@ -131,8 +131,8 @@ func newQuotas(d Downloads, log *slog.Logger, now func() time.Time) (*quotas, er
 		return nil, err
 	}
 	for _, t := range d.Tiers {
-		if t.Tier == "" || slices.Contains(q.tiers, t.Tier) {
-			return nil, fmt.Errorf("versions: downloads: tier %q is empty or repeated", t.Tier)
+		if !slices.Contains(tiers, t.Tier) || slices.Contains(q.tiers, t.Tier) {
+			return nil, fmt.Errorf("versions: downloads: tier %q is repeated or none of the content model's tiers %v", t.Tier, tiers)
 		}
 		l, err := build("tier:"+t.Tier, t.Quotas)
 		if err != nil {

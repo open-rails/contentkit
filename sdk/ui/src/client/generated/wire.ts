@@ -545,8 +545,6 @@ export interface DeleteRecord {
 export interface Download {
   off?: boolean;
   serve?: string;
-  tiers?: string[];
-  watermark?: Watermark;
 }
 
 export interface Edge {
@@ -610,6 +608,8 @@ export interface ErrorReply {
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
+  reason?: string;
+  available_at?: string;
 }
 
 export interface ExposureInput {
@@ -1847,12 +1847,6 @@ export interface VoteRecord {
   user_id?: string;
   ip?: string;
   created_at?: string;
-}
-
-export interface Watermark {
-  pages: number[];
-  tiers?: string[];
-  groups?: GroupRef[];
 }
 
 export interface Written {

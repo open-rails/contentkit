@@ -178,8 +178,8 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/contents/{id}/versions/{version}/reader` | public | — | 200 `ReaderPlan`<br>202 `Pending` | A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication. |
 | PUT | `/v1/contents/{id}/versions/{version}/reader` | user | `ReaderMeta` | 204 — | Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads. |
 | POST | `/v1/contents/{id}/versions/{version}/fork` | user | `ForkBody` | 202 `Pending` | Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job. |
-| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `FileDownload`<br>202 `Pending` | Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the kind's watermark marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 409 no_download when the version has nothing to serve. |
-| GET | `/v1/contents/{id}/versions/{version}/archive` | public | — | 200 `application/zip` | Streams the marked zip a download granted: the version's pages, those its kind's watermark names marked for the viewer the ticket is for. 404 for an expired or foreign ticket. Query: `for`, `ticket`. |
+| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `FileDownload`<br>202 `Pending` | Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve. |
+| GET | `/v1/contents/{id}/versions/{version}/archive` | public | — | 200 `application/zip` | Streams the marked zip a download granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket. Query: `for`, `mark`, `ticket`. |
 
 ## Offers, free group joins and the library (`/v1`)
 
@@ -244,6 +244,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
 | `comments_locked` | 403 | The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
+| `download_unavailable` | 403 | The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |
 | `image_too_large` | 413 | The image has more pixels or frames than the processor decodes. |
