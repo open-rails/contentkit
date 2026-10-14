@@ -244,7 +244,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 	}
 	for _, v := range []struct{ name, token string }{{"premium", premiumToken}, {"staff", staff}} {
 		var read media.ReadResult
-		f.want(http.StatusOK, v.token, "GET", pages, nil, &read)
+		f.want(http.StatusOK, v.token, "GET", pages+"?prefix=pages/", nil, &read)
 		if read.Access != media.AccessFull || read.Locked || read.Total != 3 || len(read.Files) != 3 || read.Meta["title"] != "Premium pages" {
 			t.Fatalf("%s reads the pages: %+v", v.name, read)
 		}
@@ -255,7 +255,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 		}
 	}
 	var edit media.ReadResult
-	f.want(http.StatusOK, staff, "GET", pages+"?editor", nil, &edit)
+	f.want(http.StatusOK, staff, "GET", pages+"?editor&prefix=pages/", nil, &edit)
 	if edit.Total != 3 || !edit.Files[0].Upload || len(edit.Uploads) == 0 {
 		t.Fatalf("staff's editor read %+v", edit)
 	}
