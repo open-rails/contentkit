@@ -138,7 +138,8 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => {
       await expect(result.current.locked.set(1)).rejects.toMatchObject({ code: "forbidden" });
     });
-    expect(result.current.locked.counts).toEqual({ likes: 0, dislikes: 0, mine: 0 });
+    // The default locked view hides reaction counts: absent, not zero.
+    expect(result.current.locked.counts).toEqual({ mine: 0 });
 
     const signedOut = client();
     const out = renderHook(() => useFavorite(ref), { wrapper: wrap(signedOut, null) });
