@@ -195,11 +195,11 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
 
   const place = useCallback(
     (files: File[]) => {
-      const { groups, listed, unattached } = live.current;
+      const { groups, listed, unattached, leftover } = live.current;
       const gs = groups.map((g) => g.rule ?? { path: g.path, types: [], max_bytes: 0 });
       const queued = inbound(q.getSnapshot().items, listed);
       const inGroup = (path: string, rule: UploadRule) => ruleFor(gs, path)?.path === rule.path;
-      const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + queued.filter((i) => inGroup(i.path, rule)).length);
+      const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + leftover.filter((f) => inGroup(f.path, rule)).length + queued.filter((i) => inGroup(i.path, rule)).length);
       const taken = new Map<string, string[]>();
       const takenIn = (rule: UploadRule) => {
         let t = taken.get(rule.path);
