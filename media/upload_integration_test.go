@@ -610,7 +610,8 @@ func TestManualCoversRelinquishAutomaticOwnership(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	f.visible(2)
-	g := f.gallery(1, 1)
+	g := f.ref("gallery", 1)
+	f.put(g, "originals/000.png", "image/png", png(1))
 	f.commit(g, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: "originals/000.png"}, To: "cover",
 		Meta: map[string]any{media.MetaAutoCover: true, "alt": "Cover"}})
 	other := f.ref("gallery", 2)
