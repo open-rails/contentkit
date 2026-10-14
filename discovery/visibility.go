@@ -15,10 +15,12 @@ type Visibility interface {
 	Viewer(ctx context.Context, o catalog.ViewerOptions) (*catalog.Viewer, error)
 }
 
-// Covers resolves covers to public renditions, per cover in order:
-// versions.Service.
-type Covers interface {
+// Media is the cards' media: versions.Service. Covers resolves covers to
+// public renditions, per cover in order; Ladder is the folder of a kind's
+// HLS ladder (a read's hls entry), "" when it streams none.
+type Media interface {
 	Covers(ctx context.Context, covers []versions.CoverOf) ([][]media.PublicRendition, error)
+	Ladder(kind string) string
 }
 
 // Sales answers the purchasable offers selling paywalls' keys, by key:

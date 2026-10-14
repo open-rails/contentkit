@@ -64,6 +64,9 @@ type CardVersion struct {
 	Pages      *int     `json:"pages,omitempty"`
 	DurationMS *int64   `json:"duration_ms,omitempty"`
 	HasAudio   bool     `json:"has_audio"`
+	// HLS is the folder of its ladder (a read's hls entry) once its video is
+	// in, for a reader who opens it: the card previews it inline.
+	HLS string `json:"hls,omitempty"`
 }
 
 // Chip names one group on a card.
@@ -253,7 +256,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		got = slices.DeleteFunc(got, func(c cardRow) bool { return !c.Access.Allowed })
 	}
 	s.lock(got)
-	if err := s.covers(ctx, got); err != nil {
+	if err := s.cardMedia(ctx, got); err != nil {
 		return nil, err
 	}
 	if !o.lean {
@@ -334,13 +337,18 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	return nil
 }
 
-func (s *Service) covers(ctx context.Context, rows []cardRow) error {
-	if s.o.Covers == nil || len(rows) == 0 {
+// cardMedia fills the cards' covers, and the ladders of the videos their
+// readers open.
+func (s *Service) cardMedia(ctx context.Context, rows []cardRow) error {
+	if s.o.Media == nil || len(rows) == 0 {
 		return nil
 	}
 	var asked []versions.CoverOf
 	var at []int
 	for i := range rows {
+		if c := &rows[i]; c.Access.Allowed && c.Version.DurationMS != nil {
+			c.Version.HLS = s.o.Media.Ladder(c.Kind)
+		}
 		if s.shows(&rows[i], kinds.ShowCover) {
 			asked, at = append(asked, versions.CoverOf{Kind: rows[i].Kind, ID: rows[i].ID, Version: rows[i].Version.ID}), append(at, i)
 		}
@@ -348,7 +356,7 @@ func (s *Service) covers(ctx context.Context, rows []cardRow) error {
 	if len(asked) == 0 {
 		return nil
 	}
-	got, err := s.o.Covers.Covers(ctx, asked)
+	got, err := s.o.Media.Covers(ctx, asked)
 	if err != nil {
 		return err
 	}
