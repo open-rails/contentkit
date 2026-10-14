@@ -23,7 +23,7 @@ const maxFirst = 100
 // Registry is a validated Config.
 type Registry struct {
 	cfg      Config
-	declared int // cfg.Kinds[:declared] are c's; the body kinds follow
+	declared int // cfg.Kinds[:declared] are c's
 	kinds    map[string]*Kind
 	all      []*Kind // cfg.Kinds, then the published kinds
 }

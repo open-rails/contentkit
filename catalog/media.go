@@ -93,7 +93,7 @@ func (s *Store) exposeTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return s.media.Versions.ExposeTx(ctx, tx, contentTargets(ids))
 }
 
-// BodyImageInput names a body image uploaded to one version's body item.
+// BodyImageInput names a body image uploaded to one version (Upload.Body).
 type BodyImageInput struct {
 	Image   *string `json:"image"`
 	Version string  `json:"version"`

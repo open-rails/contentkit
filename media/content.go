@@ -19,7 +19,7 @@ const AvatarPreset = "avatar"
 // ForContent derives c from the site's one kinds list: a media kind named
 // after a content kind is that kind's, of Versions, in the app's namespace;
 // every group kind without one declared gets GroupKind's. No other kind has
-// versions. NewRegistry adds the content kinds' body kinds.
+// versions.
 func ForContent(c Config, k kinds.Config) (Config, error) {
 	out := c
 	out.Kinds = slices.Clone(c.Kinds)

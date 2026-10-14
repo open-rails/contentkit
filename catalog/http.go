@@ -91,7 +91,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: CreatorsInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutCreators)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/images", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Takes a body image uploaded to one version's body item ({kind}.body): copies it into every other version's, since versions share no files, " +
+		Doc: "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, " +
 			"and returns the reference to store in the body and a URL that shows it to the editor now." + editorsDoc,
 		Request: BodyImageInput{}, Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleImage)},

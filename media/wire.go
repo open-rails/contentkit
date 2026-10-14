@@ -9,8 +9,8 @@ import (
 // (Reader.Handler). The browser SDK's types are generated from them
 // (internal/contract). SHA-256 values are lowercase hex.
 
-// RefBody names an item of the handler's registry: of a content kind (and
-// its body kind), one version's; of any other kind, Version "".
+// RefBody names an item of the handler's registry: of a content kind, one
+// version's; of any other kind, Version "".
 type RefBody struct {
 	Kind    string `json:"kind"`
 	ID      string `json:"id"`
