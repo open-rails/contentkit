@@ -203,41 +203,39 @@ type itemRow struct {
 }
 
 func (s *Service) loadPub(ctx context.Context, q querier, id string) (*pubRow, error) {
-	p := &pubRow{ID: id}
-	err := q.QueryRow(ctx, `SELECT state, source, previews FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $2`,
-		s.o.Tenant, id).Scan(&p.State, &p.Source, &p.Previews)
+	p, err := s.readPub(ctx, q, "p.id = $2", id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errRetired
-	} else if err != nil {
-		return nil, err
 	}
-	rows, err := q.Query(ctx, `SELECT id, segment, start_index, end_index FROM `+s.t.pubItems+`
-WHERE tenant_id = $1 AND publication_id = $2 ORDER BY start_index`, s.o.Tenant, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var it itemRow
-		if err := rows.Scan(&it.ID, &it.Segment, &it.Start, &it.End); err != nil {
-			return nil, err
-		}
-		p.Items = append(p.Items, it)
-	}
-	return p, rows.Err()
+	return p, err
 }
 
 // current is v's current publication of kind, nil without one.
 func (s *Service) current(ctx context.Context, q querier, v Target, kind string) (*pubRow, error) {
-	var id string
-	err := q.QueryRow(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = $2 AND kind = $3 AND state = 'current'`,
-		s.o.Tenant, v.Version, kind).Scan(&id)
+	p, err := s.readPub(ctx, q, "p.version_id = $2 AND p.kind = $3 AND p.state = 'current'", v.Version, kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
-	} else if err != nil {
+	}
+	return p, err
+}
+
+// The publication and its items share one snapshot even during withdrawal.
+func (s *Service) readPub(ctx context.Context, q querier, where string, args ...any) (*pubRow, error) {
+	p := &pubRow{}
+	var items []byte
+	err := q.QueryRow(ctx, `SELECT p.id, p.state, p.source, p.previews,
+ (SELECT coalesce(json_agg(json_build_object('id', i.id, 'segment', i.segment,
+ 'start', i.start_index, 'end', i.end_index) ORDER BY i.start_index), '[]'::json)
+ FROM `+s.t.pubItems+` i WHERE i.tenant_id = p.tenant_id AND i.publication_id = p.id)
+ FROM `+s.t.publications+` p WHERE p.tenant_id = $1 AND `+where,
+		append([]any{s.o.Tenant}, args...)...).Scan(&p.ID, &p.State, &p.Source, &p.Previews, &items)
+	if err != nil {
 		return nil, err
 	}
-	return s.loadPub(ctx, q, id)
+	if err := json.Unmarshal(items, &p.Items); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // publishedRef is the ref of a published item of k.
