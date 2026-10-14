@@ -8,7 +8,7 @@ require (
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.81.0
 	github.com/open-rails/helpers v1.12.0
-	github.com/open-rails/openrails v0.252.1
+	github.com/open-rails/openrails v0.256.0
 	github.com/riverqueue/river v0.49.0
 )
 
