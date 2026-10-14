@@ -57,7 +57,7 @@ const read = (files: FileInfo[]): ReadResult => ({
   limit: 50,
   expires: 0,
   files,
-  hls: files.filter((f) => !f.locked).map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)),
+  hls: files.map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)),
 });
 const vid = (index: number): FileInfo => ({ path: `hls/${index}/1080-h264.mp4`, type: "video/mp4", w: 1920, h: 1080, dur: 40, url: "u" });
 const hlsBase = (dir: string) => `/read/${dir}`;
@@ -189,8 +189,8 @@ it("the host setting turns it off; a locked or unencoded video never loads a str
   expect(hls.instances).toHaveLength(0);
   unmount();
 
-  const locked: FileInfo = { path: "hls/0/480-h264.mp4", type: "video/mp4", locked: true };
-  render(<MediaGallery read={{ ...read([locked, vid(1)]), hls: [], access: "none" }} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
+  render(<MediaGallery read={{ ...read([]), access: "none", locked: true }} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
+  render(<MediaGallery read={{ ...read([vid(1)]), hls: [] }} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
   for (const el of document.querySelectorAll<HTMLElement>("[data-ckui=tile], [data-ckui=video-player]")) fireEvent.pointerEnter(el, { pointerType: "mouse" });
   await wait(700);
   expect(hls.instances).toHaveLength(0);

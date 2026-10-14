@@ -25,7 +25,7 @@ export function mergeReads(reads: readonly (ReadResult | null | undefined)[]): R
   const urls = new Map<string, FileInfo>();
   for (const r of [...present].sort((a, b) => a.expires - b.expires)) for (const f of r.files) if (f.url) urls.set(f.path, f);
   const files = newest.files.map((f) => {
-    if (f.url || f.locked) return f;
+    if (f.url) return f;
     const signed = urls.get(f.path);
     return signed ? { ...f, url: signed.url, ...(signed.download ? { download: signed.download } : {}) } : f;
   });
