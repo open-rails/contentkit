@@ -163,8 +163,8 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 			asks = append(asks, ask{id, c.Version, c.Language})
 		}
 	}
-	type edition struct{ kind, version, image string }
-	found := map[int]edition{}
+	type chosen struct{ kind, version, image string }
+	found := map[int]chosen{}
 	if len(asks) > 0 {
 		contents, versions, languages := make([]string, len(asks)), make([]string, len(asks)), make([]string, len(asks))
 		for i, a := range asks {
@@ -180,7 +180,7 @@ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant
 		}
 		for rows.Next() {
 			var n int
-			var e edition
+			var e chosen
 			if err := rows.Scan(&n, &e.kind, &e.version, &e.image); err != nil {
 				rows.Close()
 				return nil, err

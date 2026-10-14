@@ -15,35 +15,27 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// A content kind's media lives in a content-level folder (its cover) and one
-// folder per version, each its own item with its own token.
+// A content kind's media lives in one folder per version, each its own item
+// with its own token; the content's folder holds no item.
 func TestVersionFolders(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c := s.content("gallery", `{"level":"public"}`)
 	v1, v2 := s.version(c), s.version(c)
-	top, r1, r2 := s.ref("gallery", versions.Target{Content: c}), s.ref("gallery", v1), s.ref("gallery", v2)
-	for ref, want := range map[contentref.ContentRef]string{top: s.tenant + "/gallery/" + c + "/", r1: s.tenant + "/gallery/" + c + "/" + v1.Version + "/"} {
-		item, err := s.reg.Item(ref)
-		if err != nil || item.Prefix() != want {
-			t.Fatalf("%s: %q %v", ref, item.Prefix(), err)
-		}
+	r1, r2 := s.ref("gallery", v1), s.ref("gallery", v2)
+	if item, err := s.reg.Item(r1); err != nil || item.Prefix() != s.tenant+"/gallery/"+c+"/"+v1.Version+"/" {
+		t.Fatalf("%s: %q %v", r1, item.Prefix(), err)
 	}
-	s.mustUpload(s.creator, top, "cover", "image/png", pngOf(t, 64, 64, 1))
+	if _, err := s.reg.VersionRef("gallery", c, ""); err == nil {
+		t.Fatal("a content took an item of its own")
+	}
+	s.mustUpload(s.creator, r1, "cover", "image/png", pngOf(t, 64, 64, 1))
 	s.mustUpload(s.creator, r1, "originals/001", "image/png", pngOf(t, 30, 40, 2))
 	s.mustUpload(s.creator, r2, "originals/001", "image/png", pngOf(t, 30, 40, 3))
-	for _, wrong := range []struct {
-		ref  contentref.ContentRef
-		path string
-	}{{top, "originals/002"}, {r1, "cover"}} {
-		if err := s.upload(s.creator, wrong.ref, wrong.path, "image/png", pngOf(t, 8, 8, 4)); err == nil {
-			t.Fatalf("%s took %s", wrong.ref, wrong.path)
-		}
-	}
 	if _, err := s.reg.VersionRef("user", s.creator.ID, v1.Version); err == nil {
 		t.Fatal("a kind without versions took a versioned ref")
 	}
 
-	// Every object belongs to exactly one of the three folders.
+	// Every object belongs to exactly one of the versions' folders.
 	folders := map[string]int{}
 	for o, err := range s.Store.List(s.ctx, s.tenant+"/gallery/"+c+"/") {
 		if err != nil {
@@ -55,7 +47,7 @@ func TestVersionFolders(t *testing.T) {
 		}
 		folders[k.Folder()]++
 	}
-	if len(folders) != 3 {
+	if len(folders) != 2 {
 		t.Fatalf("folders %v", folders)
 	}
 
@@ -88,11 +80,12 @@ func TestVersionFolders(t *testing.T) {
 	if err := ring.VerifyPrivate(tok, s.tenant+"/gallery/"+c+"/"+v2.Version+"/private/"+other, time.Now()); err == nil {
 		t.Fatal("a version's token opened its sibling")
 	}
-	if err := ring.VerifyPrivate(tok, s.tenant+"/gallery/"+c+"/private/"+other, time.Now()); err == nil {
-		t.Fatal("a version's token opened its content's item")
+	if resp, body := s.call(access.Actor{}, "GET", "/media/gallery/"+c+"/versions/"+v1.Version, nil); resp.StatusCode != 200 ||
+		!strings.Contains(string(body), `"preset":"cover"`) {
+		t.Fatalf("version read: %d %s", resp.StatusCode, body)
 	}
-	if resp, body := s.call(access.Actor{}, "GET", "/media/gallery/"+c, nil); resp.StatusCode != 200 || !strings.Contains(string(body), `"preset":"cover"`) {
-		t.Fatalf("content read: %d %s", resp.StatusCode, body)
+	if resp, _ := s.call(access.Actor{}, "GET", "/media/gallery/"+c, nil); resp.StatusCode < 400 {
+		t.Fatalf("content-level read: %d", resp.StatusCode)
 	}
 
 	// Deleting a version takes its folder alone; deleting the content takes the rest.
@@ -120,11 +113,8 @@ func TestVersionFolders(t *testing.T) {
 	if m := s.manifest(r1); m.Deleted || len(m.Files) == 0 {
 		t.Fatal("deleting a version took its sibling")
 	}
-	if m := s.manifest(top); m.Deleted || len(m.Files) == 0 {
-		t.Fatal("deleting a version took its content's item")
-	}
 	del(versions.Target{Content: c})
-	eventually(t, "content deleted", time.Minute, func() bool { return gone(r1)() && gone(top)() })
+	eventually(t, "content deleted", time.Minute, gone(r1))
 }
 
 // Editors of a content write its items: staff and its creators; a person
@@ -225,15 +215,11 @@ func TestMovieVersions(t *testing.T) {
 	for _, r := range item.Kind().UploadRules() {
 		paths = append(paths, r.Path)
 	}
-	if strings.Join(paths, ",") != "source,subs/{name},poster" {
+	if strings.Join(paths, ",") != "cover,source,subs/{name},poster" {
 		t.Fatalf("version uploads %v", paths)
 	}
 	if p := item.Kind().PrivateFor("source"); len(p) != 2 || p[0].HLS == nil || len(p[0].HLS.Ladder) != 2 {
 		t.Fatalf("version presets %+v", p)
-	}
-	top, err := s.reg.Item(s.ref("movie", versions.Target{Content: c}))
-	if err != nil || len(top.Kind().Uploads) != 1 || top.Kind().Uploads[0].Path != "cover" {
-		t.Fatalf("content-level uploads %+v %v", top.Kind().Uploads, err)
 	}
 	s.mustUpload(s.creator, s.ref("movie", v), "subs/en", "text/vtt", []byte("WEBVTT\n\n00:00.000 --> 00:01.000\nhi\n"))
 	for actor, full := range map[*access.Actor]bool{&s.fan: true, &s.stranger: false} {

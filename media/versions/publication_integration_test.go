@@ -238,15 +238,15 @@ func TestPreviewsFollowReleases(t *testing.T) {
 	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
 }
 
-// Reader content gets what its host never uploads: a cover from its first
-// published page, and while locked without a preview of its own, the preview
+// Reader content gets what its host never uploads: each version a cover from
+// its first published page, and while locked without a preview of its own, the preview
 // pages its kind's locked view names; a view hiding length hides its page
 // count and locked pages. A cover an editor uploads is never replaced.
 func TestDerivedCoversAndPreviews(t *testing.T) {
 	s := newSite(t, siteOptions{gallery: func(k *kinds.Kind) { k.Locked = &kinds.Locked{Preview: &kinds.Preview{Pages: 2}} }})
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
 	v := s.version(c)
-	ref, top := s.ref("gallery", v), s.ref("gallery", versions.Target{Content: c})
+	ref := s.ref("gallery", v)
 	for i := range 3 {
 		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
 	}
@@ -261,7 +261,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 		t.Helper()
 		var cover media.File
 		eventually(t, "the automatic cover of "+page, 2*time.Minute, func() bool {
-			m, _, err := s.ms.Get(s.ctx, top)
+			m, _, err := s.ms.Get(s.ctx, ref)
 			if err != nil {
 				return false
 			}
@@ -274,14 +274,14 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	coverOf("originals/001.png")
 	eventually(t, "the public cover", 2*time.Minute, func() bool {
 		got, err := s.svc.Covers(s.ctx, []versions.CoverOf{{Kind: "gallery", ID: c}})
-		return err == nil && len(got[0]) > 0 && strings.Contains(got[0][0].URL, "/gallery/"+c+"/public/cover-")
+		return err == nil && len(got[0]) > 0 && strings.Contains(got[0][0].URL, "/gallery/"+c+"/"+v.Version+"/public/cover-")
 	})
 	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 9))
 	coverOf("originals/001.png")
 
 	// An editor's cover stays through later publications.
 	mine := pngOf(t, 64, 64, 5)
-	s.mustUpload(s.creator, top, "cover", "image/png", mine)
+	s.mustUpload(s.creator, ref, "cover", "image/png", mine)
 	s.mustUpload(s.creator, ref, "originals/004", "image/png", pngOf(t, 30, 40, 4))
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
 	if err := versions.Publish(s.svc, s.ctx, v); err != nil && !errors.Is(err, versions.ErrNotReady) {
@@ -289,10 +289,10 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	}
 	sum := sha256.Sum256(mine)
 	eventually(t, "the editor's cover placed", 2*time.Minute, func() bool {
-		cover, _ := s.manifest(top).Get("cover.png")
+		cover, _ := s.manifest(ref).Get("cover.png")
 		return layout.ValidBlobName(cover.Blob)
 	})
-	if cover, _ := s.manifest(top).Get("cover.png"); cover.Meta["auto_cover"] != nil || !bytes.Equal(digest(cover.Blob), sum[:]) {
+	if cover, _ := s.manifest(ref).Get("cover.png"); cover.Meta["auto_cover"] != nil || !bytes.Equal(digest(cover.Blob), sum[:]) {
 		t.Fatalf("the editor's cover was replaced: %+v", cover)
 	}
 

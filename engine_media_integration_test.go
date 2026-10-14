@@ -118,16 +118,17 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/blog/"+post.ID+"?editor", nil, nil)
 }
 
-// A content item's body images are its body item's ({kind}.body): nobody who
-// has not opened a locked item reads or is signed them, its buyer is signed
-// the opened images through the item token, and an open item's show anyone.
+// A content item's body images are its version's body item's ({kind}.body,
+// content, version): nobody who has not opened a locked version reads or is
+// signed them, its buyer is signed the opened images through the item token,
+// and an open version's show anyone.
 func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	images := []string{"image/png"}
-	blog := media.Kind{Name: "blog", Uploads: []media.Upload{{Path: "{name}", Content: true, Types: images, MaxBytes: 1 << 20, Named: true, Max: 10},
+	blog := media.Kind{Name: "blog", Uploads: []media.Upload{{Path: "{name}", Body: true, Types: images, MaxBytes: 1 << 20, Named: true, Max: 10},
 		{Path: "files/{name}", Types: images, MaxBytes: 1 << 20}},
 		Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}
 	key := "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))
@@ -171,8 +172,9 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 		var c catalog.Content
 		s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Access: &rule,
 			Text: map[string]catalog.Text{"en": {Title: "Post", Body: "text"}}}, &c)
-		ref := media.RefBody{Kind: "blog" + media.BodySuffix, ID: c.ID}
-		s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/"+ref.Kind+"/"+c.ID+"?editor", nil, nil)
+		vid := c.Versions[0].ID
+		ref := media.RefBody{Kind: "blog" + media.BodySuffix, ID: c.ID, Version: vid}
+		s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/"+ref.Kind+"/"+c.ID+"/versions/"+vid+"?editor", nil, nil)
 		body := pngBytes(t, 16)
 		sum := sha256.Sum256(body)
 		presign := media.PresignBody{Ref: ref, Path: "photo.png", Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
@@ -193,8 +195,8 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 			Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
 		name := strings.TrimSuffix(plan.Path, ".png")
 		var inline catalog.InlineImage
-		s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+c.ID+"/images", content.ImageInput{Image: &name}, &inline)
-		item := contentref.New(env.Tenant, ref.Kind, c.ID)
+		s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+c.ID+"/images", catalog.BodyImageInput{Image: &name, Version: vid}, &inline)
+		item := contentref.New(env.Tenant, ref.Kind, c.ID).WithVersion(vid)
 		if _, err := e.media.jobs.Manifests().Place(ctx, item); err != nil {
 			t.Fatal(err)
 		}
@@ -226,7 +228,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		k := strings.TrimPrefix(parsed.Path, "/v1/")
-		if !strings.HasPrefix(k, env.Tenant+"/blog.body/"+c.ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
+		if !strings.HasPrefix(k, env.Tenant+"/blog.body/"+c.ID+"/"+c.Versions[0].ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
 			t.Fatalf("body image URL %s is not the item's signed private file", u)
 		}
 	}
@@ -238,18 +240,18 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 		if c.Body != "" || len(c.Images) != 0 {
 			t.Fatalf("a locked viewer is shown the body: %+v", c)
 		}
-		s.call(http.StatusNotFound, who, "GET", "/api/ck/v1/media/blog.body/"+locked.ID, nil, nil)
+		s.call(http.StatusNotFound, who, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, nil)
 	}
 	var opened catalog.Content
 	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/contents/"+locked.ID, nil, &opened)
 	signed(opened, name)
 	var read media.ReadResult
-	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/media/blog.body/"+locked.ID, nil, &read)
+	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, &read)
 	if read.Access != media.AccessFull || len(read.Public) != 0 {
 		t.Fatalf("the buyer's read %+v", read)
 	}
 	// The locked item has no public files: anonymous exposure hides it.
-	m, _, err := e.media.jobs.Manifests().Get(ctx, contentref.New(env.Tenant, "blog.body", locked.ID))
+	m, _, err := e.media.jobs.Manifests().Get(ctx, contentref.New(env.Tenant, "blog.body", locked.ID).WithVersion(locked.Versions[0].ID))
 	if err != nil || !m.Hidden {
 		t.Fatalf("locked body item exposed: hidden=%v %v", m != nil && m.Hidden, err)
 	}
@@ -259,7 +261,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	var public catalog.Content
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents/"+locked.ID, nil, &public)
 	signed(public, name)
-	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog.body/"+locked.ID, nil, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, nil)
 }
 
 // Engine jobs erase what nobody keeps: a blog draft that never went live is
@@ -279,7 +281,7 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	cfg.Content.GroupKinds["channel"] = kinds.GroupKind{Route: "c", Owner: "user"}
 	cfg.Media = &MediaConfig{
 		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
-			Uploads: []media.Upload{{Path: "{name}", Content: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
+			Uploads: []media.Upload{{Path: "{name}", Body: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
 				{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}}},
 		Delivery: DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},

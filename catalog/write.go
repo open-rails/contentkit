@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -908,8 +909,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			if o.state == StateDeleted {
 				return fx, ErrNotFound
 			}
-			if k.Versions.Hidden {
-				return fx, invalid("kind %s has one hidden version", o.kind)
+			if k.Versions.Hidden && (p.VersionID == "" || !coverOnly(p.VersionInput)) {
+				return fx, invalid("kind %s has one hidden version: only its cover is edited", o.kind)
 			}
 			if p.Fork != nil {
 				if err := s.checkFork(ctx, tx, p); err != nil {
@@ -1062,6 +1063,12 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 		return "", err
 	}
 	return id, nil
+}
+
+// coverOnly reports an edit of nothing but the cover.
+func coverOnly(v VersionInput) bool {
+	v.Cover = nil
+	return reflect.DeepEqual(v, VersionInput{})
 }
 
 // sibling is the version new version vid copies its body images from: fork,

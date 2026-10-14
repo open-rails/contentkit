@@ -17,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	"github.com/open-rails/contentkit/media"
 )
 
 // totalsPath is the totals route under a ContentKit mount.
