@@ -32,7 +32,7 @@ try {
   const p = f.player;
   process.stdout.write(
     [
-      `profile  ${stack.origin}/?${as(f.owner)}&channel=${channel.id}&empty=${empty.id}&video=${itemParam(video)}`,
+      `profile  ${stack.origin}/?${as(f.owner)}&channel=${itemParam(channel)}&empty=${itemParam(empty)}&video=${itemParam(video)}`,
       `gallery  ${stack.origin}/gallery.html?${as(f.viewer)}&post=${itemParam(f.post)}&locked=${itemParam(f.locked)}&single=${itemParam(f.single)}`,
       `player   ${stack.origin}/gallery.html?page=player&${as(f.viewer)}&no-cors=${itemParam(p["no-cors"])}&refresh=${itemParam(p.refresh)}&denied=${itemParam(p.denied)}&busy=${itemParam(p.busy)}&missing=${itemParam(p.missing)}`,
       `abr      ${stack.origin}/gallery.html?page=abr&${as(f.viewer)}&abr=${itemParam(f.abr)}`,
