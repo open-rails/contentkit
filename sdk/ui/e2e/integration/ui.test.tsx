@@ -21,8 +21,7 @@ beforeAll(async () => {
 
 /** A channel (avatar 1:1, cover 3:1 public presets) its owner edits. */
 async function channel(): Promise<RefBody> {
-  const { kind, id } = await item(h, "channel", owner);
-  return { kind, id };
+  return item(h, "channel", owner);
 }
 
 function setup() {

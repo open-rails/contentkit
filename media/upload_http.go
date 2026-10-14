@@ -245,8 +245,16 @@ func (h uploadHandler) digest(w http.ResponseWriter, s string) ([]byte, bool) {
 	return b, true
 }
 
+// ref is b's item; a ref the registry refuses is the caller's mistake.
 func (h uploadHandler) ref(b RefBody) (contentref.ContentRef, error) {
-	return h.u.reg.VersionRef(b.Kind, b.ID, b.Version)
+	ref, err := h.u.reg.VersionRef(b.Kind, b.ID, b.Version)
+	switch {
+	case errors.Is(err, ErrUnknownKind):
+		return ref, uploadErr(CodeNotFound, "%v", err)
+	case err != nil:
+		return ref, uploadErr(CodeInvalid, "%v", err)
+	}
+	return ref, nil
 }
 
 func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {

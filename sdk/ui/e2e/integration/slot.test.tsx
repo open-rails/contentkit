@@ -24,7 +24,7 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const channel = (): Promise<RefBody> => item(h, "channel", alice).then(({ kind, id }) => ({ kind, id }));
+  const channel = (): Promise<RefBody> => item(h, "channel", alice);
   /** The public files of the item's preset, as an editor read lists them. */
   const published = async (ref: RefBody, preset: string) =>
     (await client(h, cfg, alice).media.read(ref, { editor: true })).public?.find((p) => p.preset === preset)?.renditions ?? [];

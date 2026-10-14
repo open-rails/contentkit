@@ -112,7 +112,7 @@ describe("media hooks against the real ContentKit", () => {
   });
 
   it("useMediaFolder refuses files waiting when the editor read states no rules (a reader's)", async () => {
-    const ref = await item(h, "note", accounts.get("alice"));
+    const ref = await item(h, "note", accounts.get("alice"), { access: "none" });
     const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}"] }), { wrapper: provider(as("reader")) });
     act(() => result.current.add([png("1.png", 41)]));
     expect(result.current.waiting).toHaveLength(1);
