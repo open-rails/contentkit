@@ -170,6 +170,7 @@ export class MediaClient {
   private readonly delay: (attempt: number, retryAfter?: number) => number;
   private readonly targetSeconds: number;
   private presetList?: Promise<PresetRule[]>;
+  private readonly bodyDirs = new Map<string, string>();
 
   private readonly folders: Required<ContentFolders>;
 
@@ -389,16 +390,28 @@ export class MediaClient {
 
   /**
    * An image for a content item's rich-text body, uploaded to a version's
-   * body folder ({kind}.body, id and version, BODY_SUFFIX), which only viewers
-   * who open the version see, and copied into every other version's; resolves
-   * with its reference to store in the body (`ref`) and a URL that shows it to
-   * the editor now (`url`, null while none exists).
+   * body upload (the kind's `body` upload rule), a private file only viewers
+   * who open the version read, and copied into the other versions; resolves
+   * with its reference to store in the body (`ref`) and a URL that shows it
+   * to the editor now (`url`, null while none exists).
    */
   async uploadInline(item: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
-    if (!item.version) throw new ContentKitError("invalid_request", "body images live in a version's body folder");
-    const up = await this.uploadNamed(item, file, { ...o, path: o.path ?? (await this.presetPath(item.kind, undefined, file)) });
+    if (!item.version) throw new ContentKitError("invalid_request", "body images live in a version");
+    const up = await this.uploadNamed(item, file, { ...o, path: o.path ?? (await this.bodyPath(item, file)) });
     const r: InlineImage = await call(this.http, "POST", "/contents/{id}/images", { params: { id: item.id }, body: { image: up.name, version: item.version }, signal: o.signal });
     return { ...up, ...r };
+  }
+
+  /** The upload path of file as a body image of item's kind, from its editor read's body rule. */
+  private async bodyPath(item: RefBody, file: Uploadable): Promise<string> {
+    let dir = this.bodyDirs.get(item.kind);
+    if (dir === undefined) {
+      const rule = (await this.read(item, { editor: true, limit: 1 })).uploads?.find((r) => r.body);
+      if (!rule) throw new ContentKitError("invalid_request", `kind ${item.kind} takes no body images`);
+      dir = rule.path.endsWith("{name}") ? rule.path.slice(0, -"{name}".length) : rule.path;
+      this.bodyDirs.set(item.kind, dir);
+    }
+    return dir + (file.name || "image");
   }
 
   /** The upload path of file for kind's public preset (its first without one): the preset's source, its {name} the file's. */

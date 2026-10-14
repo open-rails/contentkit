@@ -1744,6 +1744,7 @@ export interface UploadRule {
   max_bytes: number;
   max?: number;
   named?: boolean;
+  body?: boolean;
   frames?: string;
   aspect?: string;
   min_width?: number;

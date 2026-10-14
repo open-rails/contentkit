@@ -16338,6 +16338,9 @@
           "named": {
             "type": "boolean"
           },
+          "body": {
+            "type": "boolean"
+          },
           "frames": {
             "type": "string"
           },

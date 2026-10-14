@@ -94,8 +94,8 @@ from the media jobs.
 Every file lives in a version; versions share none. A legacy record's one
 cover is ingested into each version's folder (a `Named` cover upload) and
 each `VersionRecord.cover` names that version's copy, sent once the files are
-in. Body images go into each version's body folder (`{kind}.body`, same
-content and version), named as the body references them.
+in. Body images go into each version's folder too (its `Body` upload),
+named as the body references them.
 
 ## Record shapes
 

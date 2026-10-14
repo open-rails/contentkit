@@ -376,14 +376,6 @@
       ],
       "public": [
         {
-          "name": "inline",
-          "from": "{name}",
-          "to": "{name}.webp",
-          "image": {
-            "width": 1600
-          }
-        },
-        {
           "name": "cover",
           "from": "covers/{name}",
           "to": "cover-{name}-{w}.webp",
@@ -393,7 +385,17 @@
           ]
         }
       ],
-      "versions": true
+      "versions": true,
+      "private": [
+        {
+          "name": "inline",
+          "from": "{name}",
+          "to": "inline/{name}.webp",
+          "image": {
+            "width": 1600
+          }
+        }
+      ]
     },
     {
       "name": "poll",

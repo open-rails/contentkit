@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { CatalogText, Content, ContentInput, ContentPatch, Version } from "../client/generated/wire.js";
-import { BODY_SUFFIX, IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
+import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -135,15 +135,13 @@ export function useContent(
     if (cover?.image && cover.url) out.set(cover.image, cover.url);
     return out;
   }, [content?.images, cover?.image, cover?.url]);
-  // The cover is the version's folder's; body images its body folder's ({kind}.body).
+  // The cover and the body's images are the version's.
   const coverPending = !!cover?.image && !cover.url && !previews.has(cover.image) && !published.has(cover.image);
   const bodyPending = useMemo(() => refNames(body).filter((n) => !previews.has(n) && !published.has(n)), [body, previews, published]);
   const pending = useMemo(() => (coverPending ? [...bodyPending, cover!.image!] : bodyPending), [coverPending, bodyPending, cover]);
   const folder = useMemo(() => ({ kind, id: cid ?? "none", version: vid }), [kind, cid, vid]);
-  const bodyFolder = useMemo(() => ({ kind: kind + BODY_SUFFIX, id: cid ?? "none", version: vid }), [kind, cid, vid]);
-  const coverRead = useMediaRead(folder, { editor: true, read: coverPending && vid ? undefined : null, client });
-  const bodyRead = useMediaRead(bodyFolder, { editor: true, read: bodyPending.length && vid ? undefined : null, client });
-  const files = useMemo(() => [...(coverRead.read?.files ?? []), ...(bodyRead.read?.files ?? [])], [coverRead.read, bodyRead.read]);
+  const folderRead = useMediaRead(folder, { editor: true, read: pending.length && vid ? undefined : null, client });
+  const files = useMemo(() => folderRead.read?.files ?? [], [folderRead.read]);
   const views = useMemo(() => {
     const out = new Map<string, string>();
     for (const f of files) if (f.upload && f.editor_url) out.set(uploadName(f.path), f.editor_url);
@@ -151,14 +149,9 @@ export function useContent(
   }, [files]);
   // Editor views render on the first editor read that misses them: read again, backing off.
   const failed = (n: string) => files.some((f) => f.failed && uploadName(f.path) === n);
-  const missing = (!!coverRead.read || !!bodyRead.read) && pending.some((n) => !views.has(n) && !failed(n));
+  const missing = !!folderRead.read && pending.some((n) => !views.has(n) && !failed(n));
   const tries = useRef(0);
-  const reloadCover = coverRead.reload;
-  const reloadBody = bodyRead.reload;
-  const reload = useCallback(() => {
-    reloadCover();
-    reloadBody();
-  }, [reloadCover, reloadBody]);
+  const reload = folderRead.reload;
   useEffect(() => {
     if (!missing) {
       tries.current = 0;
@@ -245,7 +238,7 @@ export function useContent(
   const uploadImage = useCallback(
     (file: Blob) =>
       run(async () => {
-        const up = await client.media.uploadInline({ kind: kind + BODY_SUFFIX, id: need(), version: needVersion() }, file);
+        const up = await client.media.uploadInline({ kind, id: need(), version: needVersion() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
         shown.current.set(url, up.name);
         return url;

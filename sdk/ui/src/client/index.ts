@@ -14,7 +14,7 @@ export {
   type ContentKitErrorCode,
   type ContentKitErrorInit,
 } from "./errors.js";
-export { BODY_SUFFIX, IMAGE_SCHEME, imageRef, imageRefs, ContentsClient, type ManageQuery } from "./contents.js";
+export { IMAGE_SCHEME, imageRef, imageRefs, ContentsClient, type ManageQuery } from "./contents.js";
 export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";

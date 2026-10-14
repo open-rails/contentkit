@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BODY_SUFFIX, createContentKitClient, imageRef, type ContentKitChange, type ContentKitClient } from "../../src/client/index.js";
+import { createContentKitClient, imageRef, type ContentKitChange, type ContentKitClient } from "../../src/client/index.js";
 import type { Config, TestUser } from "../support/harness.js";
 import { Accounts, fixture, harness } from "./setup.js";
 
@@ -81,33 +81,32 @@ describe("content modules against the real ContentKit", () => {
     await expect(editor.contents.restore(post.id)).rejects.toEqual(code("not_found"));
   });
 
-  it("media.uploadInline places a body image in a version's body folder and resolves its reference; reads resolve references; covers are versions'", async () => {
+  it("media.uploadInline places a body image in a version's private files and resolves its reference; reads resolve references; covers are versions'", async () => {
     const editor = ck("editor");
     const made = await editor.contents.create({ kind: "blog", text: { en: { title: "Pictures", body: "b" } } });
     const post = await editor.contents.publish(made.id);
     const vid = post.versions[0]!.id;
     const folder = { kind: "blog", id: post.id, version: vid };
-    const body = { kind: "blog" + BODY_SUFFIX, id: post.id, version: vid };
-    const img = await editor.media.uploadInline(body, png());
+    const img = await editor.media.uploadInline(folder, png());
     expect(img.name).toMatch(/^i-[0-9a-f-]{36}$/);
-    expect(img.path).toBe(`${img.name}.png`);
     expect(img.ref).toBe(imageRef(img.name));
-    // Published, the upload waited for its public file.
-    expect(img.url).toMatch(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/blog\\.body/${post.id}/${vid}/public/${img.name}-[0-9a-f-]{36}\\.webp$`));
-    expect(await editor.contents.inlineImage(post.id, vid, img.name)).toEqual({ ref: img.ref, url: img.url });
+    expect((await editor.contents.inlineImage(post.id, vid, img.name)).ref).toBe(img.ref);
     const withImage = await editor.contents.putText(post.id, "en", { title: "Pictures", body: `see ${img.ref} twice ${img.ref}` });
-    expect(withImage).toMatchObject({ body: `see ${img.url} twice ${img.url}`, images: { [img.name]: img.url } });
-    expect((await ck().contents.get(post.id, "en")).body).toBe(withImage.body);
-    expect((await fetch(img.url!)).status).toBe(200);
-    await expect(editor.media.uploadInline({ kind: body.kind, id: post.id }, png())).rejects.toMatchObject({ code: "invalid_request" });
+    const url = withImage.images?.[img.name] ?? "";
+    expect(url).toContain(`/v1/${cfg.namespace}/blog/${post.id}/${vid}/private/`);
+    expect(withImage.body).toBe(`see ${url} twice ${url}`);
+    const read = await ck().contents.get(post.id, "en");
+    expect(read.images?.[img.name]).toContain(`/blog/${post.id}/${vid}/private/`);
+    expect((await fetch(read.images![img.name]!)).status).toBe(200);
+    await expect(editor.media.uploadInline({ kind: "blog", id: post.id }, png())).rejects.toMatchObject({ code: "invalid_request" });
 
     const up = await editor.media.uploadNamed(folder, png(), { path: await editor.media.presetPath("blog", "cover", png()) });
     const covered = await editor.contents.setCover(post.id, vid, up.name);
     expect(covered.cover).toMatchObject({ image: up.name, url: expect.stringMatching(new RegExp(`/blog/${post.id}/${vid}/public/cover-${up.name}-`)) });
     expect((await editor.contents.setCover(post.id, vid, null)).cover?.image).toBeUndefined();
 
-    // Only the item's editors upload to its folders.
-    await expect(ck("alice").media.uploadInline(body, png())).rejects.toEqual(code("forbidden"));
+    // Only the item's editors upload to its folder.
+    await expect(ck("alice").media.uploadInline(folder, png())).rejects.toEqual(code("forbidden"));
   });
 
   it("comments: threads, replies, edits, tombstones, restore, reactions and the latest feed", async () => {

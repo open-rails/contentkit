@@ -94,15 +94,15 @@ operation. This does not change the operation's result or its authentication.
 - **Images of content and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
-  version); `media.uploadInline({kind: kind + BODY_SUFFIX, id, version}, file)`
-  resolves a body image's reference (`ref`, `contentkit:i-{uuid}`, what the
-  body stores: `imageRef(name)`), copied into the other versions, and a URL
-  that shows it now; `polls.uploadImage` and
+  version); `media.uploadInline({kind, id, version}, file)` puts a body image
+  in the version's private files, copied into the other versions, and
+  resolves its reference (`ref`, `contentkit:i-{uuid}`, what the body stores:
+  `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
-  content's `body` shows the images' current public files and `images` maps
-  each name to its URL. `folders` renames the poll media kind. Public image
-  files exist only while the item is live; `useContent` shows an unpublished
-  item's images to its editors (below).
+  content's `body` shows its images' signed URLs (the opened version's
+  private files) and `images` maps each name to its URL. `folders` renames
+  the poll media kind. Public image files exist only while the item is live;
+  `useContent` shows an unpublished item's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by

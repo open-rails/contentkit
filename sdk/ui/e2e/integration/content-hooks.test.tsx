@@ -277,15 +277,14 @@ describe("content hooks against the real ContentKit", () => {
     await expect(client("alice").contents.get(id)).rejects.toMatchObject({ code: "not_found" });
     await expect(client("alice").media.read({ kind: "blog", id, version: vid }, { editor: true })).rejects.toMatchObject({ code: "not_found" });
 
-    // Published, every read resolves the reference to the current public file, which serves.
+    // Published, every read resolves the reference to the version's private image, signed for the reader, which serves.
     await act(async () => void (await result.current.publish()));
-    const readerSees = async (not?: string) => {
+    const readerSees = async () => {
       let url = "";
       await waitFor(async () => {
         const p = await client().contents.get(id, "en");
         url = p.images?.[name] ?? "";
-        expect(url).toMatch(new RegExp(`/blog\\.body/${id}/${vid}/public/${name}-[0-9a-f-]{36}\\.webp$`));
-        expect(url).not.toBe(not);
+        expect(url).toContain(`/blog/${id}/${vid}/private/`);
         expect(p.body).toBe(page(url, " More."));
         expect(p.cover?.url).toMatch(new RegExp(`/blog/${id}/${vid}/public/cover-i-`));
       }, slow);
@@ -293,18 +292,18 @@ describe("content hooks against the real ContentKit", () => {
       return url;
     };
     const first = await readerSees();
-    // An editor opening the published item edits the public files and stores references.
+    // An editor opening the published item edits the signed files and stores references.
     const reopened = renderHook(() => useContent(id, "blog", "en"), { wrapper: wrap(client("editor"), "editor") });
-    await waitFor(() => expect(reopened.result.current.text?.body).toBe(page(first, " More.")), wait);
+    await waitFor(() => expect(reopened.result.current.text?.body).toContain("/private/"), wait);
     expect(reopened.result.current.storedBody(`${reopened.result.current.text!.body} Again.`)).toBe(page(imageRef(name), " More. Again."));
     reopened.unmount();
+    expect((await fetch(first.split("?")[0]!)).status).not.toBe(200);
 
-    // Unpublished and published again, the image publishes a new generation and the old file goes; the body follows.
+    // Unpublished, readers lose the item; published again, its images show again.
     await act(async () => void (await result.current.unpublish()));
-    await waitFor(async () => expect(Object.values((await client("editor").contents.get(id)).images ?? {}).some((u) => u.includes("/public/"))).toBe(false), slow);
+    await waitFor(async () => expect(client().contents.get(id, "en")).rejects.toMatchObject({ code: "not_found" }), slow);
     await act(async () => void (await result.current.publish()));
-    await readerSees(first);
-    await waitFor(async () => expect((await fetch(first)).status).toBe(404), slow);
+    await readerSees();
   });
 
   it("useModerationQueue and useCommentBans: a resolved item leaves the queue; a ban joins the list", async () => {
