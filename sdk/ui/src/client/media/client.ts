@@ -406,7 +406,10 @@ export class MediaClient {
   private async bodyPath(item: RefBody, file: Uploadable): Promise<string> {
     let dir = this.bodyDirs.get(item.kind);
     if (dir === undefined) {
-      const rule = (await this.read(item, { editor: true, limit: 1 })).uploads?.find((r) => r.body);
+      const { uploads } = await this.read(item, { editor: true, limit: 1 });
+      // Non-editors get the reader view, which carries no upload rules.
+      if (!uploads) throw new ContentKitError("forbidden", `only editors of ${item.kind} ${item.id} upload to it`);
+      const rule = uploads.find((r) => r.body);
       if (!rule) throw new ContentKitError("invalid_request", `kind ${item.kind} takes no body images`);
       dir = rule.path.endsWith("{name}") ? rule.path.slice(0, -"{name}".length) : rule.path;
       this.bodyDirs.set(item.kind, dir);
