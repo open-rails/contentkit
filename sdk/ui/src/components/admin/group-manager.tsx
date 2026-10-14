@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/group-fields.js";
 import type { ContentModel, Membership } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useGroups, useKinds, type GroupSort } from "../../react/groups.js";
 import { Button } from "#ckui/ui/button";
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
 import { GroupMembers } from "../groups/memberships.js";
-import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {

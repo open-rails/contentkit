@@ -61,6 +61,7 @@ export const es: ContentKitUiMessageBundle = {
     adding: "Añadiendo…",
     queued: "En espera",
     uploaded: "Subido",
+    notAdded: "Subido, aún sin añadir",
     processing: "Procesando…",
     processingPercent: "Procesando {percent} %",
     edited: "Editado",

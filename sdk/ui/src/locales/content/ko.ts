@@ -92,4 +92,10 @@ export const content: typeof en = {
     addSegment: "챕터 추가",
     saveSegments: "챕터 저장",
   },
+  myStats: {
+    completed: "완료한 {kind}",
+    comments: "댓글",
+    likes: "받은 좋아요",
+    dislikes: "받은 싫어요",
+  },
 };

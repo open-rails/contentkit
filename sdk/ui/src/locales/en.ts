@@ -60,6 +60,7 @@ export const en = {
     adding: "Adding…",
     queued: "Waiting",
     uploaded: "Uploaded",
+    notAdded: "Uploaded, not added yet",
     processing: "Processing…",
     processingPercent: "Processing {percent}%",
     edited: "Edited",

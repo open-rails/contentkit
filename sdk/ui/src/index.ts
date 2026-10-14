@@ -47,7 +47,8 @@ export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStan
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
 export { ContentEditor, ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
 export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./components/admin/group-manager.js";
-export { MediaItemPanel, type MediaItemPanelProps } from "./components/admin/media-item-panel.js";
+export { MediaItemPanel, VideoMediaEditor, videoPaths, type MediaItemPanelProps, type VideoMediaEditorProps } from "./components/admin/media-item-panel.js";
+export { StatsDashboard, type StatsDashboardProps } from "./components/admin/stats-dashboard.js";
 export { ReaderManifestEditor, type ReaderManifestEditorProps } from "./components/admin/reader-manifest.js";
 export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";

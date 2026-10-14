@@ -61,6 +61,7 @@ export const de: ContentKitUiMessageBundle = {
     adding: "Wird hinzugefügt…",
     queued: "Wartet",
     uploaded: "Hochgeladen",
+    notAdded: "Hochgeladen, noch nicht hinzugefügt",
     processing: "Wird verarbeitet…",
     processingPercent: "Wird verarbeitet: {percent} %",
     edited: "Bearbeitet",

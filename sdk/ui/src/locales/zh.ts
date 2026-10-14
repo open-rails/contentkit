@@ -61,6 +61,7 @@ export const zh: ContentKitUiMessageBundle = {
     adding: "正在添加…",
     queued: "等待中",
     uploaded: "已上传",
+    notAdded: "已上传，尚未添加",
     processing: "处理中…",
     processingPercent: "处理中 {percent}%",
     edited: "已编辑",

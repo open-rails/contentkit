@@ -91,4 +91,10 @@ export const content = {
     addSegment: "Add chapter",
     saveSegments: "Save chapters",
   },
+  myStats: {
+    completed: "{kind} finished",
+    comments: "Comments",
+    likes: "Likes received",
+    dislikes: "Dislikes received",
+  },
 };

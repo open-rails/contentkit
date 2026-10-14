@@ -339,7 +339,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			if k.Versions.Hidden {
 				switch {
 				case c.Text != nil:
-					vr.Languages = s.hiddenLanguages(k, c.Text)
+					vr.Languages = s.textLanguages(k, c.Text)
 				case !had:
 					vr.Languages = []string{s.defaultLanguage()}
 				default:
