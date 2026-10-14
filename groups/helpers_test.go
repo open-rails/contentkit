@@ -23,7 +23,8 @@ func config() kinds.Config {
 		Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"},
 				Groups: []string{"tag", "artist", "series", "character", "voice_actor", "rail"}},
-			"video": {Route: "watch", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}, Groups: []string{"tag", "channel"}},
+			"video": {Route: "watch", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}, Groups: []string{"tag", "channel"},
+				Locked: &kinds.Locked{Show: []string{kinds.ShowGroups}}},
 		},
 		GroupKinds: map[string]kinds.GroupKind{
 			"tag": {Route: "tags", VersionLevel: true},

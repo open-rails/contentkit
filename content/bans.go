@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // Comment bans hold current state only: who is banned, in which scope, why
@@ -374,8 +375,9 @@ type CommentStanding struct {
 	CanComment bool `json:"can_comment"`
 	// Comments is the target's comments setting: open, closed or hidden.
 	Comments string `json:"comments"`
-	// Locked: the caller can't open the content (or the version), so its
-	// comments are withheld from them and take none of their writes.
+	// Locked: the caller can't open the content (or the version) and its
+	// kind's locked view hides comments, so they are withheld from them and
+	// take none of their writes.
 	Locked bool       `json:"locked"`
 	Ban    *BanNotice `json:"ban,omitempty"`
 	// Anonymous: signed-out visitors may comment here, under a name
@@ -406,7 +408,7 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, ta
 	}
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{},
 		Comments: cmp.Or(res.Comments, CommentsOpen)}
-	out.Locked = !opensComments(res)
+	out.Locked = !rt.shows(target, res, kinds.ShowComments)
 	out.CanComment = !out.Locked && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
 	err = rt.checkCommentBan(ctx, viewerID(actor), res)
 	if err == nil {

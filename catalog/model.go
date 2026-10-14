@@ -155,7 +155,9 @@ type GroupSummary struct {
 
 // Content is a content item as a viewer sees it: its text in the viewer's
 // language (falling back), its live versions (every version for editors),
-// groups and attributes.
+// groups and attributes. A viewer who opens none of its versions gets what
+// its kind's locked view shows (kinds.Locked), and of each locked version
+// what that view shows.
 type Content struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
@@ -195,8 +197,9 @@ type Content struct {
 	Groups   []GroupSummary    `json:"groups"`
 	Versions []Version         `json:"versions"`
 	// Views counts its distinct viewers of all time plus its imported legacy
-	// view count, as cards' counts.views do.
-	Views int64 `json:"views"`
+	// view count, as cards' counts.views do; absent when its kind's locked
+	// view hides views from this viewer.
+	Views *int64 `json:"views,omitempty"`
 	// Viewer is the signed-in reader's standing with the item, to resume
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`

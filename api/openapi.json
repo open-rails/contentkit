@@ -1211,7 +1211,7 @@
         "tags": [
           "reactions"
         ],
-        "summary": "The like and dislike counts of a content item or one of its versions and the caller's own reaction.",
+        "summary": "The like and dislike counts of a content item or one of its versions (absent where its kind's locked view hides them) and the caller's own reaction.",
         "parameters": [
           {
             "name": "id",
@@ -1587,7 +1587,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible).",
+        "summary": "The favorite count of a content item or one of its versions (absent where its kind's locked view hides it) and whether the caller favorited it (never, signed out: then it must be visible).",
         "parameters": [
           {
             "name": "id",
@@ -11690,7 +11690,6 @@
           "creators",
           "groups",
           "versions",
-          "views",
           "editor",
           "revision",
           "created_at",
@@ -12170,13 +12169,7 @@
           "views": {
             "type": "integer"
           }
-        },
-        "required": [
-          "likes",
-          "dislikes",
-          "favorites",
-          "views"
-        ]
+        }
       },
       "Creator": {
         "type": "object",
@@ -12663,8 +12656,7 @@
           }
         },
         "required": [
-          "favorited",
-          "count"
+          "favorited"
         ]
       },
       "FeedItem": {
@@ -13843,8 +13835,8 @@
           "sort": {
             "type": "string"
           },
-          "preview": {
-            "$ref": "#/components/schemas/Preview"
+          "locked": {
+            "$ref": "#/components/schemas/Locked"
           },
           "draft_ttl": {
             "type": "integer"
@@ -13930,6 +13922,23 @@
         "required": [
           "items",
           "complete"
+        ]
+      },
+      "Locked": {
+        "type": "object",
+        "properties": {
+          "show": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preview": {
+            "$ref": "#/components/schemas/Preview"
+          }
+        },
+        "required": [
+          "show"
         ]
       },
       "MemberPage": {
@@ -15241,8 +15250,6 @@
           }
         },
         "required": [
-          "likes",
-          "dislikes",
           "mine"
         ]
       },

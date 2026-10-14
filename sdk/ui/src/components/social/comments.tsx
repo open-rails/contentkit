@@ -158,7 +158,7 @@ export function Comments(p: CommentsProps) {
   if (standing?.locked)
     return (
       <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments" data-locked="">
-        {heading !== false && <h2 className="text-base font-semibold">{heading}</h2>}
+        {heading !== false && <h2 className="text-base font-semibold">{p.heading ?? t("comments.title")}</h2>}
         <p className="rounded-lg border border-border p-3 text-muted-foreground" data-ckui="comments-locked">
           {t("comments.unlock")}
         </p>

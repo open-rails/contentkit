@@ -30,18 +30,24 @@ type ContentModel struct {
 	Avatars *media.PresetRule `json:"avatars,omitempty"`
 }
 
-// Public is c's public part, with empty lists and maps rather than null.
+// Public is c's public part, with empty lists and maps rather than null and
+// each kind's locked view spelled out.
 func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: c.Kinds, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters, Signals: signals,
-		Avatars: avatars}
+	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters,
+		Signals: signals, Avatars: avatars}
+	for name, k := range c.Kinds {
+		l := k.LockedView()
+		if l.Show == nil {
+			l.Show = []string{}
+		}
+		k.Locked = &l
+		m.Kinds[name] = k
+	}
 	if m.Languages == nil {
 		m.Languages = []string{}
 	}
 	if m.Tiers == nil {
 		m.Tiers = []string{}
-	}
-	if m.Kinds == nil {
-		m.Kinds = map[string]kinds.Kind{}
 	}
 	if m.GroupKinds == nil {
 		m.GroupKinds = map[string]kinds.GroupKind{}

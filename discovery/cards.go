@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
@@ -23,7 +24,8 @@ import (
 )
 
 // Card is one content item as a grid shows it, with the version that fits
-// the reader best.
+// the reader best. Of a version the reader does not open it shows what its
+// kind's locked view does (kinds.Locked).
 type Card struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
@@ -68,12 +70,13 @@ type Chip struct {
 }
 
 // Counts are a content item's interaction counts; Views counts its distinct
-// viewers of all time plus its imported legacy view count.
+// viewers of all time plus its imported legacy view count. A count its
+// kind's locked view hides from the reader is absent.
 type Counts struct {
-	Likes     int   `json:"likes"`
-	Dislikes  int   `json:"dislikes"`
-	Favorites int   `json:"favorites"`
-	Views     int64 `json:"views"`
+	Likes     *int   `json:"likes,omitempty"`
+	Dislikes  *int   `json:"dislikes,omitempty"`
+	Favorites *int   `json:"favorites,omitempty"`
+	Views     *int64 `json:"views,omitempty"`
 }
 
 // CardAccess is the reader's access decision on the card's version.
@@ -123,6 +126,43 @@ type cardRow struct {
 	owner       string
 	creator     bool
 	slug        string
+	counts      struct {
+		likes, dislikes, favorites int
+		views                      int64
+	}
+}
+
+// shows reports whether the reader sees property p of the card: all of what
+// they open, of the rest what its kind's locked view shows.
+func (s *Service) shows(c *cardRow, p string) bool {
+	return c.Access.Allowed || s.o.Kinds.Kinds[c.Kind].LockedView().Shows(p)
+}
+
+// lock withholds from the cards the reader does not open what their kinds'
+// locked views hide; counts show only where shown.
+func (s *Service) lock(rows []cardRow) {
+	for i := range rows {
+		c := &rows[i]
+		n := c.counts
+		if s.shows(c, kinds.ShowReactions) {
+			c.Counts.Likes, c.Counts.Dislikes = &n.likes, &n.dislikes
+		}
+		if s.shows(c, kinds.ShowFavorites) {
+			c.Counts.Favorites = &n.favorites
+		}
+		if s.shows(c, kinds.ShowViews) {
+			c.Counts.Views = &n.views
+		}
+		if !s.shows(c, kinds.ShowAttributes) {
+			c.Attributes = map[string]any{}
+		}
+		if !s.shows(c, kinds.ShowLength) {
+			c.Version.Pages, c.Version.DurationMS = nil, nil
+		}
+		if !s.shows(c, kinds.ShowGroups) {
+			c.groupIDs = nil
+		}
+	}
 }
 
 // cards hydrates picks in order. In hide mode a card the reader does not
@@ -158,8 +198,8 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var pop []byte
 		var code string
 		var baseline int64
-		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
-			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
+		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
+			&c.counts.dislikes, &c.counts.favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
 		if err != nil {
 			return c, err
@@ -170,7 +210,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 				return c, err
 			}
 		}
-		c.Counts.Views = p.Views + baseline
+		c.counts.views = p.Views + baseline
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
 			c.Path = contenturl.Path(s.o.Kinds.Languages, q.display, route, contenturl.Code(code), c.slug)
@@ -190,6 +230,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	if q.reader.Mode == access.Hide {
 		got = slices.DeleteFunc(got, func(c cardRow) bool { return !c.Access.Allowed })
 	}
+	s.lock(got)
 	if err := s.covers(ctx, got); err != nil {
 		return nil, err
 	}
@@ -271,17 +312,23 @@ func (s *Service) covers(ctx context.Context, rows []cardRow) error {
 	if s.o.Covers == nil || len(rows) == 0 {
 		return nil
 	}
-	asked := make([]versions.CoverOf, len(rows))
-	for i, c := range rows {
-		asked[i] = versions.CoverOf{Kind: c.Kind, ID: c.ID}
+	var asked []versions.CoverOf
+	var at []int
+	for i := range rows {
+		if s.shows(&rows[i], kinds.ShowCover) {
+			asked, at = append(asked, versions.CoverOf{Kind: rows[i].Kind, ID: rows[i].ID}), append(at, i)
+		}
+	}
+	if len(asked) == 0 {
+		return nil
 	}
 	got, err := s.o.Covers.Covers(ctx, asked)
 	if err != nil {
 		return err
 	}
-	for i := range rows {
-		if got[i] != nil {
-			rows[i].Cover = got[i]
+	for j, i := range at {
+		if got[j] != nil {
+			rows[i].Cover = got[j]
 		}
 	}
 	return nil

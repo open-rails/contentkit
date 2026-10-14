@@ -2,6 +2,7 @@ package kinds
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func doujins() Config {
 		},
 		ContentFilters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}},
 		Kinds: map[string]Kind{
-			"gallery": {Route: "g", Presentation: "reader", Segments: true, Preview: &Preview{Pages: 3},
+			"gallery": {Route: "g", Presentation: "reader", Segments: true, Locked: &Locked{Show: []string{ShowCover, ShowGroups}, Preview: &Preview{Pages: 3}},
 				Versions:   VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Groups:     []string{"tag", "series", "character", "voice_actor"},
 				Attributes: map[string]Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
@@ -53,14 +54,35 @@ func TestValidate(t *testing.T) {
 		"cap on a site kind":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", MaxPerOwner: 3} },
 		"negative cap":        func(c *Config) { c.GroupKinds["channel"] = GroupKind{Owner: "user", MaxPerOwner: -1} },
 		"site kind uploads":   func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", Uploads: UploadLimits{QuotaBytes: 1}} },
-		"empty preview":       func(c *Config) { k := c.Kinds["gallery"]; k.Preview = &Preview{}; c.Kinds["gallery"] = k },
-		"segmentless preview": func(c *Config) { k := c.Kinds["blog"]; k.Preview = &Preview{Segments: 1}; c.Kinds["blog"] = k },
+		"empty preview":       func(c *Config) { c.Kinds["gallery"].Locked.Preview = &Preview{} },
+		"segmentless preview": func(c *Config) {
+			k := c.Kinds["blog"]
+			k.Locked = &Locked{Preview: &Preview{Segments: 1}}
+			c.Kinds["blog"] = k
+		},
+		"unknown property":  func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{"body"} },
+		"repeated property": func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{ShowCover, ShowCover} },
 	} {
 		c := doujins()
 		mutate(&c)
 		if err := c.Validate(); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: got %v, want ErrInvalid", name, err)
 		}
+	}
+}
+
+func TestLockedView(t *testing.T) {
+	c := doujins()
+	if l := c.Kinds["blog"].LockedView(); !l.Shows(ShowCover) || l.Shows(ShowComments) || l.Shows(ShowReactions) || l.Preview != nil {
+		t.Fatalf("default locked view %+v", l)
+	}
+	if l := c.Kinds["gallery"].LockedView(); l.Shows(ShowDescription) || !l.Shows(ShowGroups) || l.Preview.Pages != 3 {
+		t.Fatalf("configured locked view %+v", l)
+	}
+	k := c.Kinds["blog"]
+	k.Locked = &Locked{}
+	if l := k.LockedView(); slices.ContainsFunc(Shown, l.Shows) {
+		t.Fatalf("an empty locked view shows %+v", l)
 	}
 }
 

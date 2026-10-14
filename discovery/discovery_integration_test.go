@@ -55,17 +55,17 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/en/g/"+f.codes[1]+"/alpha" {
 		t.Fatalf("card: %+v", alpha)
 	}
-	if !alpha.Access.Allowed || alpha.Counts.Favorites != 5 || alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
+	if !alpha.Access.Allowed || *alpha.Counts.Favorites != 5 || *alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
 		t.Fatalf("card access and counts: %+v", alpha)
 	}
-	if views := page.Contents[0].Counts.Views; views != 100 {
-		t.Fatalf("an imported view baseline counts as views: %d", views)
+	if views := page.Contents[0].Counts.Views; *views != 100 {
+		t.Fatalf("an imported view baseline counts as views: %d", *views)
 	}
 	v, err := f.cat.Viewer(f.ctx, catalog.ViewerOptions{Actor: access.Actor{Anonymous: true}, Host: host})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if items, err := f.cat.Contents(f.ctx, v, []string{f.cid(1), f.cid(3)}); err != nil || items[0].Views != 40 || items[1].Views != 100 {
+	if items, err := f.cat.Contents(f.ctx, v, []string{f.cid(1), f.cid(3)}); err != nil || *items[0].Views != 40 || *items[1].Views != 100 {
 		t.Fatalf("detail views %v: viewers %+v, baseline %+v", err, items[0], items[1])
 	}
 	if alpha.Attributes["format"] != "manga" || alpha.PublishedAt == nil || alpha.Viewer != nil {
@@ -364,7 +364,8 @@ func sorted(s []string) []string {
 
 // Lists filter by access (what anyone opens, what stays locked at a level or
 // behind a tier) and by credited creator; search shares the filters. Locked
-// cards preview the kind's default pages when their rule names none.
+// cards preview the pages their kind's locked view names when their rule
+// names none.
 func TestListFiltersByAccessAndCreator(t *testing.T) {
 	f := newFixture(t, nil, "")
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)

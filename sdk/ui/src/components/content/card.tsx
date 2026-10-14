@@ -66,7 +66,7 @@ function useLink(url: string | undefined, before?: () => void) {
   );
 }
 
-/** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked. */
+/** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
 export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, children, className }: ContentCardProps) {
   const m = useMessages();
   const { t } = m;
@@ -135,18 +135,24 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
             )}
           </ul>
         )}
-        <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
-          <span className="inline-flex items-center gap-1" title={t("contents.favorites")}>
-            <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
-            <span className="sr-only">{t("contents.favorites")}</span>
-            {compact(card.counts.favorites, m.language)}
-          </span>
-          <span className="inline-flex items-center gap-1" title={t("contents.likes")}>
-            <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} className="size-3.5" aria-hidden />
-            <span className="sr-only">{t("contents.likes")}</span>
-            {compact(card.counts.likes, m.language)}
-          </span>
-        </p>
+        {(card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
+          <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
+            {card.counts.favorites !== undefined && (
+              <span className="inline-flex items-center gap-1" title={t("contents.favorites")}>
+                <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
+                <span className="sr-only">{t("contents.favorites")}</span>
+                {compact(card.counts.favorites, m.language)}
+              </span>
+            )}
+            {card.counts.likes !== undefined && (
+              <span className="inline-flex items-center gap-1" title={t("contents.likes")}>
+                <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} className="size-3.5" aria-hidden />
+                <span className="sr-only">{t("contents.likes")}</span>
+                {compact(card.counts.likes, m.language)}
+              </span>
+            )}
+          </p>
+        )}
         {children}
       </div>
     </article>
@@ -214,11 +220,13 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
       <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {card.published_at && <RelativeTime at={card.published_at} />}
         {!card.cover.length && lock && <span data-ckui="card-lock">{lock}</span>}
-        <span className="inline-flex items-center gap-1 tabular-nums">
-          <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
-          <span className="sr-only">{m.t("contents.favorites")}</span>
-          {compact(card.counts.favorites, m.language)}
-        </span>
+        {card.counts.favorites !== undefined && (
+          <span className="inline-flex items-center gap-1 tabular-nums" data-ckui="card-counts">
+            <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
+            <span className="sr-only">{m.t("contents.favorites")}</span>
+            {compact(card.counts.favorites, m.language)}
+          </span>
+        )}
       </p>
       {children}
     </article>

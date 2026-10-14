@@ -350,7 +350,7 @@ export interface Content {
   creators: Creator[];
   groups: GroupSummary[];
   versions: Version[];
-  views: number;
+  views?: number;
   viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
@@ -498,10 +498,10 @@ export interface Count {
 }
 
 export interface Counts {
-  likes: number;
-  dislikes: number;
-  favorites: number;
-  views: number;
+  likes?: number;
+  dislikes?: number;
+  favorites?: number;
+  views?: number;
 }
 
 export interface Creator {
@@ -664,7 +664,7 @@ export interface FavoriteRecord {
 
 export interface FavoriteState {
   favorited: boolean;
-  count: number;
+  count?: number;
 }
 
 export interface FeedItem {
@@ -1012,7 +1012,7 @@ export interface Kind {
   groups?: string[];
   attributes?: Record<string, Attribute>;
   sort?: string;
-  preview?: Preview;
+  locked?: Locked;
   draft_ttl?: number;
 }
 
@@ -1035,6 +1035,11 @@ export interface LibraryPage {
   items: LibraryItem[];
   next_cursor?: string;
   complete: boolean;
+}
+
+export interface Locked {
+  show: string[];
+  preview?: Preview;
 }
 
 export interface MemberPage {
@@ -1437,8 +1442,8 @@ export interface RankedContent {
 }
 
 export interface ReactionCounts {
-  likes: number;
-  dislikes: number;
+  likes?: number;
+  dislikes?: number;
   mine: number;
 }
 

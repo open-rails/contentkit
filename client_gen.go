@@ -362,7 +362,7 @@ func (q GetContentReactionQuery) values() url.Values {
 	return v
 }
 
-// GetContentReaction is GET /v1/contents/{id}/reaction (public). The like and dislike counts of a content item or one of its versions and the caller's own reaction.
+// GetContentReaction is GET /v1/contents/{id}/reaction (public). The like and dislike counts of a content item or one of its versions (absent where its kind's locked view hides them) and the caller's own reaction.
 func (c *Client) GetContentReaction(ctx context.Context, id string, q GetContentReactionQuery) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/reaction", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -453,7 +453,7 @@ func (q GetContentFavoriteQuery) values() url.Values {
 	return v
 }
 
-// GetContentFavorite is GET /v1/contents/{id}/favorite (public). The favorite count of a content item or one of its versions and whether the caller favorited it (never, signed out: then it must be visible).
+// GetContentFavorite is GET /v1/contents/{id}/favorite (public). The favorite count of a content item or one of its versions (absent where its kind's locked view hides it) and whether the caller favorited it (never, signed out: then it must be visible).
 func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContentFavoriteQuery) (content.FavoriteState, error) {
 	var out content.FavoriteState
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/favorite", "{id}", url.PathEscape(id)), q.values(), nil, &out)

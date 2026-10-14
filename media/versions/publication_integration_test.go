@@ -239,10 +239,11 @@ func TestPreviewsFollowReleases(t *testing.T) {
 }
 
 // Reader content gets what its host never uploads: a cover from its first
-// published page, and while locked without a preview of its own, its kind's
-// default preview pages. A cover an editor uploads is never replaced.
+// published page, and while locked without a preview of its own, the preview
+// pages its kind's locked view names; a view hiding length hides its page
+// count and locked pages. A cover an editor uploads is never replaced.
 func TestDerivedCoversAndPreviews(t *testing.T) {
-	s := newSite(t, siteOptions{gallery: func(k *kinds.Kind) { k.Preview = &kinds.Preview{Pages: 2} }})
+	s := newSite(t, siteOptions{gallery: func(k *kinds.Kind) { k.Locked = &kinds.Locked{Preview: &kinds.Preview{Pages: 2}} }})
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
 	v := s.version(c)
 	ref, top := s.ref("gallery", v), s.ref("gallery", versions.Target{Content: c})
@@ -251,7 +252,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	}
 	anon := access.Actor{Anonymous: true, IP: "203.0.113.5"}
 	p := s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 2 })
-	if !eq(locks(p), []bool{true}) || p.Previews[0].Name != "001" || p.Previews[1].Name != "002" || p.Segments[0].Item != nil {
+	if len(p.Segments) != 0 || p.Pages != 0 || p.Previews[0].Name != "001" || p.Previews[1].Name != "002" {
 		t.Fatalf("anonymous plan %+v", p)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -304,8 +305,8 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 		method, suffix, _ := strings.Cut(action, " ")
 		rec := doJSON(t, h, actor, method, path+suffix, nil)
 		var counts ReactionCounts
-		want := []ReactionCounts{{Likes: 1, Mine: 1}, {Dislikes: 1, Mine: -1}, {}}[i]
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || counts != want {
+		want := []ReactionCounts{{Likes: ptr(1), Dislikes: ptr(0), Mine: 1}, {Likes: ptr(0), Dislikes: ptr(1), Mine: -1}, {Likes: ptr(0), Dislikes: ptr(0)}}[i]
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || !reflect.DeepEqual(counts, want) {
 			t.Fatalf("open target %s: %d %s, want %+v", action, rec.Code, rec.Body.String(), want)
 		}
 	}

@@ -67,7 +67,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) ||
-		page.Contents[0].Counts.Views != 4 {
+		*page.Contents[0].Counts.Views != 4 {
 		t.Fatalf("popular:all = %v %+v", got, page.Contents)
 	}
 

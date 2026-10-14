@@ -411,7 +411,10 @@ free-text answer and its groups; `results="always"` shows results before
 voting). Signed-out visitors comment under a name, react and vote where the
 server allows it (`content.Options.Anonymous`, read from the comment standing
 and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
-provider's or their own) or, without one, told to.
+provider's or their own) or, without one, told to. On locked content they
+follow its kind's locked view (`kinds.Kind.Locked`): hidden comments show an
+unlock note without a count, hidden reactions render nothing, a hidden
+favorite count is left out, and cards drop hidden counts, never showing 0.
 
 Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 `PollEditor` (deleting asks for a typed confirmation). The complete staff screens are the admin flows below.

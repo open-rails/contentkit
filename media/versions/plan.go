@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -18,7 +19,9 @@ import (
 // segments, each with its release state and, when the viewer opens it, the
 // published item to read through the media read API; the public previews
 // of a locked version; the playback item; and the reader metadata naming
-// what the viewer can read. It signs nothing.
+// what the viewer can read. It signs nothing. A viewer locked out of a
+// version whose kind's locked view hides its length gets neither its page
+// count (0) nor its locked segments.
 type ReaderPlan struct {
 	Content     string        `json:"content_id"`
 	Version     string        `json:"version_id"`
@@ -158,8 +161,11 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		return nil, ErrNotReady
 	}
 	cut := released(d.segs, d.pages, d.now)
-	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Pages: len(snap.Pages), Segments: []PlanSegment{},
-		Previews: []PlanPreview{}}
+	length := d.res.Accessible || d.res.Editor || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
+	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Segments: []PlanSegment{}, Previews: []PlanPreview{}}
+	if length {
+		plan.Pages = len(snap.Pages)
+	}
 	byPos := map[int]segment{}
 	for _, g := range d.segs {
 		byPos[g.Position] = g
@@ -170,6 +176,9 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 			Locked: !d.shows(it.End) || !d.opens(it.End)}
 		if it.Segment != nil {
 			seg.Title, seg.ReleaseAt = byPos[*it.Segment].Title, byPos[*it.Segment].ReleaseAt
+		}
+		if seg.Locked && !length {
+			continue
 		}
 		if !seg.Locked {
 			ref := s.publishedRef(k, it.ID)

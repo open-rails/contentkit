@@ -17,9 +17,13 @@ export interface UseReaction {
   toggle: (value: 1 | -1) => Promise<void>;
 }
 
-const ZERO: ReactionCounts = { likes: 0, dislikes: 0, mine: 0 };
+const ZERO: ReactionCounts = { mine: 0 };
 
-/** A target's likes and dislikes and the caller's own reaction (initial: counts the host already has). */
+/**
+ * A target's likes and dislikes and the caller's own reaction (initial:
+ * counts the host already has). The counts are absent where the target's
+ * kind's locked view hides them.
+ */
 export function useReaction(target: Target, o: { initial?: ReactionCounts; client?: ContentKitClient } = {}): UseReaction {
   const { client, store, scope } = useContentScope(o.client);
   const { type, id, version } = target;
@@ -48,7 +52,7 @@ export function useReaction(target: Target, o: { initial?: ReactionCounts; clien
 
 export interface UseFavorite {
   favorited: boolean;
-  /** How many favorited the item; undefined until read. */
+  /** How many favorited the item; undefined until read, or where its kind's locked view hides it. */
   count?: number;
   loading: boolean;
   /** A write is in flight. */
@@ -76,7 +80,8 @@ export function useFavorite(target: Target, o: { initial?: FavoriteState; client
     async (next: boolean) => {
       const prev = store.snapshot<FavoriteState>(key).data;
       const token = store.mark(key);
-      if (prev && prev.favorited !== next) store.set<FavoriteState>(key, { favorited: next, count: Math.max(0, prev.count + (next ? 1 : -1)) });
+      if (prev && prev.favorited !== next)
+        store.set<FavoriteState>(key, { favorited: next, count: prev.count === undefined ? undefined : Math.max(0, prev.count + (next ? 1 : -1)) });
       setPending(true);
       try {
         await client.favorites.set({ type, id, version }, next);

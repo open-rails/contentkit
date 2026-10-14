@@ -344,7 +344,7 @@ func (m *testMedia) deletions() []string {
 }
 
 // favErr adapts favorites add/remove's (reference, error) return for error-only assertions.
-func favErr(_ contentref.ContentRef, err error) error { return err }
+func favErr(_ contentref.ContentRef, _ resolve.Resolution, err error) error { return err }
 
 // reactErr adapts react's (reference, error) return for error-only assertions.
 func reactErr(_ contentref.ContentRef, err error) error { return err }

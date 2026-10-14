@@ -344,18 +344,19 @@ func (rt *Runtime) routable(ref contentref.ContentRef) bool {
 	return ref.TenantID == rt.tenant && rt.isRegistered(ref.ContentKind) && ref.ContentID != ""
 }
 
-// canonical maps a requested target to the resolver's canonical one for
-// paths that must succeed even when the target is hidden (unfavoriting
-// deleted content): a resolve failure keeps the requested one.
-func (rt *Runtime) canonical(ctx context.Context, requested contentref.ContentRef, actor access.Actor) contentref.ContentRef {
+// canonical maps a requested target to the resolver's canonical one, with
+// its resolution, for paths that must succeed even when the target is hidden
+// (unfavoriting deleted content): a resolve failure keeps the requested one
+// and resolves nothing.
+func (rt *Runtime) canonical(ctx context.Context, requested contentref.ContentRef, actor access.Actor) (contentref.ContentRef, resolve.Resolution) {
 	if rt.routable(requested) {
 		if res, err := resolve.One(ctx, rt.resolver, requested, actor); err == nil {
 			if ref, err := rt.canonicalRef(requested, res.Ref); err == nil {
-				return ref
+				return ref, res
 			}
 		}
 	}
-	return requested
+	return requested, resolve.Resolution{}
 }
 
 // requirePerm asks the actor's Verified whether it holds perm in the

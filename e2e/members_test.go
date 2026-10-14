@@ -23,10 +23,10 @@ import (
 
 // A channel's members-only post over the real engine, AuthKit and OpenRails.
 // Its owner reads the offer they sell, which no paywall offers them; nobody
-// joins a channel that sells nothing (not_joinable). Comments follow the
-// post's access: a member and the channel's owner read and write them; a
-// signed-in stranger and an anonymous visitor get none of their text, in the
-// thread, its replies or the latest feed, and can neither post, reply,
+// joins a channel that sells nothing (not_joinable). The blog kind's default
+// locked view hides comments: a member and the channel's owner read and write
+// them; a signed-in stranger and an anonymous visitor get none of their text,
+// in the thread, its replies or the latest feed, and can neither post, reply,
 // react nor edit; the standing says why.
 func TestMembersOnlyChannelComments(t *testing.T) {
 	w := newWorld(t)

@@ -343,10 +343,10 @@ func TestImportCommentsAndViewBaseline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if item.Views != c.Counts.Views {
-				t.Fatalf("detail views %d, card views %d", item.Views, c.Counts.Views)
+			if *item.Views != *c.Counts.Views {
+				t.Fatalf("detail views %d, card views %d", *item.Views, *c.Counts.Views)
 			}
-			state[c.ID] = fmt.Sprintf("%s %d", item.Comments, item.Views)
+			state[c.ID] = fmt.Sprintf("%s %d", item.Comments, *item.Views)
 			order = append(order, c.ID)
 		}
 		return state, order

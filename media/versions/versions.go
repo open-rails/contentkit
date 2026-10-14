@@ -168,7 +168,7 @@ func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, t
 }
 
 // previews are versions' rules' free parts (access.Rule.Preview), else
-// their kind's default.
+// their kind's locked preview.
 func (s *Service) previews(ctx context.Context, q querier, versions []string) (map[string]access.Preview, error) {
 	rows, err := q.Query(ctx, `SELECT v.id, c.kind, c.access, v.access FROM `+s.t.versions+` v
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = ANY($2)`, s.o.Tenant, versions)

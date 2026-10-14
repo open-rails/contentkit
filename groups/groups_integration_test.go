@@ -359,7 +359,8 @@ func TestMerge(t *testing.T) {
 
 // Counts are distinct live, listed contents per group, content kind and
 // language ("" for all), descendants included; the automatic cover is the
-// most-favorited live member, a selected cover stays.
+// most-favorited live member anyone sees the cover of, a selected cover
+// stays.
 func TestRecount(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"), live("es"))
@@ -395,6 +396,14 @@ func TestRecount(t *testing.T) {
 	covers, _ := f.s.Groups(f.ctx, []GroupID{tag.ID, picked.ID, child.ID})
 	if c := covers[0].Cover; c == nil || c.ContentID != cid(4) || !c.Auto {
 		t.Fatalf("auto cover %+v", c)
+	}
+	// Videos' locked view hides covers: a premium video's is no group's.
+	f.exec(`UPDATE {s}.content_facets SET access_level = 'tier' WHERE content_id = $1`, cid(4))
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.s.Groups(f.ctx, []GroupID{tag.ID}); got[0].Cover == nil || got[0].Cover.ContentID != cid(1) {
+		t.Fatalf("auto cover of a premium video %+v", got[0].Cover)
 	}
 	if c := covers[1].Cover; c == nil || c.ContentID != cid(1) || c.Auto {
 		t.Fatalf("picked cover %+v", c)
