@@ -38,7 +38,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}
-	srt, err := s.parseSort(o.Sort, o.Filter)
+	srt, err := s.parseSort(ctx, o.Sort, o.Filter)
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}

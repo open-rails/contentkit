@@ -41,12 +41,8 @@ type Rule struct {
 	FreeAfter *time.Time `json:"free_after,omitempty"`
 }
 
-// Preview is the free part of locked content: its first Pages pages or first
-// Segments segments (chapters).
-type Preview struct {
-	Pages    int `json:"pages,omitempty"`
-	Segments int `json:"segments,omitempty"`
-}
+// Preview is the free part of locked content (kinds.Preview).
+type Preview = kinds.Preview
 
 // UnmarshalJSON refuses unknown fields; Validate checks the rest.
 func (r *Rule) UnmarshalJSON(b []byte) error {
@@ -91,8 +87,10 @@ func (r Rule) Validate(cfg kinds.Config) error {
 	if r.Level == Public && (r.Preview != nil || r.FreeAfter != nil) {
 		return fmt.Errorf("%w: a public rule takes no preview or free_after", ErrRule)
 	}
-	if p := r.Preview; p != nil && (p.Pages < 0 || p.Segments < 0 || p.Pages == 0 && p.Segments == 0) {
-		return fmt.Errorf("%w: preview needs positive pages or segments", ErrRule)
+	if p := r.Preview; p != nil {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrRule, err)
+		}
 	}
 	return nil
 }
@@ -108,6 +106,16 @@ func Effective(content Rule, override *Rule) Rule {
 		return *override
 	}
 	return content
+}
+
+// Previewed is r with its content kind's default preview when r locks and
+// names none of its own.
+func (r Rule) Previewed(k kinds.Kind) Rule {
+	if r.Preview == nil && r.Level != Public && k.Preview != nil {
+		p := *k.Preview
+		r.Preview = &p
+	}
+	return r
 }
 
 // Facet is a rule as the content_facets listing projection stores it:

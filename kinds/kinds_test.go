@@ -18,7 +18,7 @@ func doujins() Config {
 		},
 		ContentFilters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}},
 		Kinds: map[string]Kind{
-			"gallery": {Route: "g", Presentation: "reader", Segments: true,
+			"gallery": {Route: "g", Presentation: "reader", Segments: true, Preview: &Preview{Pages: 3},
 				Versions:   VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Groups:     []string{"tag", "series", "character", "voice_actor"},
 				Attributes: map[string]Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
@@ -53,6 +53,8 @@ func TestValidate(t *testing.T) {
 		"cap on a site kind":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", MaxPerOwner: 3} },
 		"negative cap":        func(c *Config) { c.GroupKinds["channel"] = GroupKind{Owner: "user", MaxPerOwner: -1} },
 		"site kind uploads":   func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", Uploads: UploadLimits{QuotaBytes: 1}} },
+		"empty preview":       func(c *Config) { k := c.Kinds["gallery"]; k.Preview = &Preview{}; c.Kinds["gallery"] = k },
+		"segmentless preview": func(c *Config) { k := c.Kinds["blog"]; k.Preview = &Preview{Segments: 1}; c.Kinds["blog"] = k },
 	} {
 		c := doujins()
 		mutate(&c)

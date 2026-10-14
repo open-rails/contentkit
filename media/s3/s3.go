@@ -37,10 +37,13 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	UsePathStyle    bool
-	// Capabilities of the backend as recorded for its release. Nil: Check
-	// probes them once the bucket answers; until then the store claims none
-	// (manifest edits and presigns are refused, uploads rehash).
+	// Capabilities of the backend as recorded for its release. Nil: the
+	// first use probes them (media.Probe), again on each use until one
+	// succeeds; writes needing them meanwhile fail with ErrUnavailable.
 	Capabilities *media.Capabilities
+	// ProbePrefix holds the probe's and Check's scratch objects; default
+	// "_probe/".
+	ProbePrefix string
 	// CopyPartSize is the part size of a multipart copy, used for objects
 	// larger than it; default MaxSingleCopy (tests set a few MiB).
 	CopyPartSize int64
@@ -59,8 +62,9 @@ type Store struct {
 	internal *url.URL
 	public   *url.URL
 	pathSty  bool
-	caps     atomic.Pointer[media.Capabilities]
-	probed   atomic.Bool
+	caps     atomic.Pointer[media.Capabilities] // nil until known
+	probing  chan struct{}                      // held while probing
+	probe    string
 	part     int64
 }
 
@@ -78,6 +82,9 @@ func New(cfg Config) (*Store, error) {
 	}
 	if cfg.PublicEndpoint == "" {
 		cfg.PublicEndpoint = cfg.Endpoint
+	}
+	if cfg.ProbePrefix == "" {
+		cfg.ProbePrefix = "_probe/"
 	}
 	if cfg.CopyPartSize <= 0 || cfg.CopyPartSize > MaxSingleCopy {
 		cfg.CopyPartSize = MaxSingleCopy
@@ -102,35 +109,49 @@ func New(cfg Config) (*Store, error) {
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 	st := &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
-		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize}
-	caps := media.Capabilities{}
+		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize, probing: make(chan struct{}, 1),
+		probe: cfg.ProbePrefix}
 	if cfg.Capabilities != nil {
-		caps = *cfg.Capabilities
+		caps := *cfg.Capabilities
+		st.caps.Store(&caps)
 	}
-	st.caps.Store(&caps)
-	st.probed.Store(cfg.Capabilities != nil)
 	return st, nil
 }
 
-func (s *Store) Capabilities() media.Capabilities { return *s.caps.Load() }
-
-// Check reports whether the bucket answers, probing the backend's
-// capabilities (media.Probe under prefix) until that has succeeded once. New
-// never dials, so hosts start without the bucket and run Check as their S3
-// dependency probe.
-func (s *Store) Check(ctx context.Context, prefix string) error {
-	if s.probed.Load() {
-		for _, err := range s.List(ctx, prefix+"_health/") {
-			return err
-		}
-		return nil
+// Capabilities are the configured ones, else probed on first use, one probe
+// at a time; a failed probe is ErrUnavailable and the next call probes again.
+func (s *Store) Capabilities(ctx context.Context) (media.Capabilities, error) {
+	if c := s.caps.Load(); c != nil {
+		return *c, nil
 	}
-	caps, err := media.Probe(ctx, s, prefix)
+	select {
+	case s.probing <- struct{}{}:
+		defer func() { <-s.probing }()
+	case <-ctx.Done():
+		return media.Capabilities{}, fmt.Errorf("%w: waiting for the capability probe: %w", media.ErrUnavailable, ctx.Err())
+	}
+	if c := s.caps.Load(); c != nil {
+		return *c, nil
+	}
+	caps, err := media.Probe(ctx, s, s.probe)
 	if err != nil {
-		return err
+		return media.Capabilities{}, fmt.Errorf("%w: capabilities unknown until a probe succeeds: %w", media.ErrUnavailable, err)
 	}
 	s.caps.Store(&caps)
-	s.probed.Store(true)
+	return caps, nil
+}
+
+// Check reports whether the bucket answers, probing the capabilities while
+// they are unknown. New never dials, so hosts start without the bucket and
+// run Check as their S3 dependency probe.
+func (s *Store) Check(ctx context.Context) error {
+	if s.caps.Load() == nil {
+		_, err := s.Capabilities(ctx)
+		return err
+	}
+	for _, err := range s.List(ctx, s.probe+"_health/") {
+		return err
+	}
 	return nil
 }
 

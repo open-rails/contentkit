@@ -104,13 +104,16 @@ func Open(t testing.TB) *Env {
 	if Require("checksum") && !caps.ChecksumSHA256 {
 		t.Fatal("backend lacks required x-amz-checksum-sha256 enforcement")
 	}
-	cfg.Capabilities = &caps
+	cfg.Capabilities, cfg.ProbePrefix = &caps, env.Tenant+"/"
 	if env.Store, err = mediaS3.New(cfg); err != nil {
 		t.Fatal(err)
 	}
 	env.Config = cfg
 	return env
 }
+
+// Caps are the capabilities the env's store declares.
+func (e *Env) Caps() media.Capabilities { return *e.Config.Capabilities }
 
 // WithCapabilities returns a store over the same bucket claiming caps.
 func (e *Env) WithCapabilities(t testing.TB, caps media.Capabilities) *mediaS3.Store {
@@ -126,7 +129,7 @@ func (e *Env) WithCapabilities(t testing.TB, caps media.Capabilities) *mediaS3.S
 // WithoutConditionalPut returns the env over a store claiming the probed
 // capabilities minus conditional PUT, as on Ceph RGW.
 func (e *Env) WithoutConditionalPut(t testing.TB) *Env {
-	caps := e.Store.Capabilities()
+	caps := e.Caps()
 	caps.ConditionalPut = false
 	c := *e
 	c.Store = e.WithCapabilities(t, caps)

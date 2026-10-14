@@ -135,7 +135,7 @@ var imageTimeout time.Duration
 func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHooks ...rivertype.Hook) *host {
 	t.Helper()
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
+	if !env.Caps().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
 	ctx := context.Background()

@@ -23,9 +23,9 @@ require (
 	github.com/open-rails/migratekit v1.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/riverqueue/river v0.47.0
-	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.47.0
-	github.com/riverqueue/river/rivertype v0.47.0
+	github.com/riverqueue/river v0.49.0
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.49.0
+	github.com/riverqueue/river/rivertype v0.49.0
 	golang.org/x/image v0.46.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/text v0.42.0
@@ -57,8 +57,8 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
-	github.com/riverqueue/river/riverdriver v0.47.0 // indirect
-	github.com/riverqueue/river/rivershared v0.47.0 // indirect
+	github.com/riverqueue/river/riverdriver v0.49.0 // indirect
+	github.com/riverqueue/river/rivershared v0.49.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect

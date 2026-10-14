@@ -167,9 +167,10 @@ func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, t
 	return out, nil
 }
 
-// previews are versions' rules' free parts (access.Rule.Preview).
+// previews are versions' rules' free parts (access.Rule.Preview), else
+// their kind's default.
 func (s *Service) previews(ctx context.Context, q querier, versions []string) (map[string]access.Preview, error) {
-	rows, err := q.Query(ctx, `SELECT v.id, c.access, v.access FROM `+s.t.versions+` v
+	rows, err := q.Query(ctx, `SELECT v.id, c.kind, c.access, v.access FROM `+s.t.versions+` v
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = ANY($2)`, s.o.Tenant, versions)
 	if err != nil {
 		return nil, err
@@ -177,13 +178,13 @@ JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE 
 	defer rows.Close()
 	out := map[string]access.Preview{}
 	for rows.Next() {
-		var id string
+		var id, kind string
 		var content access.Rule
 		var override *access.Rule
-		if err := rows.Scan(&id, &content, &override); err != nil {
+		if err := rows.Scan(&id, &kind, &content, &override); err != nil {
 			return nil, err
 		}
-		if p := access.Effective(content, override).Preview; p != nil {
+		if p := access.Effective(content, override).Previewed(s.o.Kinds.Kinds[kind]).Preview; p != nil {
 			out[id] = *p
 		}
 	}

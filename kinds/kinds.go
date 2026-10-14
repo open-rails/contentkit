@@ -70,9 +70,27 @@ type Kind struct {
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
+	// Preview is what locked content of the kind shows anyone when its
+	// access rule names no preview; nil shows nothing.
+	Preview *Preview `json:"preview,omitempty" yaml:"preview"`
 	// DraftTTL expires drafts that never went live this long after their
 	// creation: they are deleted, media included. Zero keeps them.
 	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
+}
+
+// Preview is the free part of locked content: its first Pages pages or first
+// Segments segments (chapters).
+type Preview struct {
+	Pages    int `json:"pages,omitempty" yaml:"pages"`
+	Segments int `json:"segments,omitempty" yaml:"segments"`
+}
+
+// Validate refuses a preview of nothing or of negative parts.
+func (p Preview) Validate() error {
+	if p.Pages < 0 || p.Segments < 0 || p.Pages == 0 && p.Segments == 0 {
+		return errors.New("preview needs positive pages or segments")
+	}
+	return nil
 }
 
 // VersionRules shape a kind's versions.
@@ -245,6 +263,14 @@ func (c Config) Validate() error {
 		}
 		if k.DraftTTL < 0 {
 			return fmt.Errorf("%w: kind %s draft_ttl is negative", ErrInvalid, name)
+		}
+		if p := k.Preview; p != nil {
+			if err := p.Validate(); err != nil {
+				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
+			}
+			if p.Segments > 0 && !k.Segments {
+				return fmt.Errorf("%w: kind %s previews segments but has none", ErrInvalid, name)
+			}
 		}
 	}
 	for _, r := range c.groupRefs() {

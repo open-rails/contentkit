@@ -69,8 +69,22 @@ type Manifests struct {
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
 
 // ErrConditionalPutRequired refuses mutations on a backend that cannot fence
-// a delayed manifest PUT. Probe or declare the backend's capabilities first.
+// a delayed manifest PUT.
 var ErrConditionalPutRequired = errors.New("media: manifest writes require conditional PUT support")
+
+// RequireConditionalPut is nil when store fences writes with conditional
+// PUT: ErrUnavailable while its capabilities are unknown, else
+// ErrConditionalPutRequired when it cannot.
+func RequireConditionalPut(ctx context.Context, store Store) error {
+	c, err := store.Capabilities(ctx)
+	if err != nil {
+		return err
+	}
+	if !c.ConditionalPut {
+		return ErrConditionalPutRequired
+	}
+	return nil
+}
 
 func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, error) {
 	if store == nil || reg == nil || o.Locker == nil || o.Journal == nil {
@@ -366,8 +380,8 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 	if err != nil {
 		return nil, err
 	}
-	if !m.store.Capabilities().ConditionalPut {
-		return nil, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, m.store); err != nil {
+		return nil, err
 	}
 	key := item.ManifestKey()
 	unlock, err := m.locker.Lock(ctx, key)
@@ -565,8 +579,8 @@ func (m *Manifests) recoverLocked(ctx context.Context, item Item) (*Manifest, bo
 }
 
 func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operation *uuid.UUID) (*Manifest, bool, error) {
-	if !m.store.Capabilities().ConditionalPut {
-		return nil, false, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, m.store); err != nil {
+		return nil, false, err
 	}
 	commit, err := m.journal.freeze(ctx, item.Ref().TenantID, item.Prefix(), operation)
 	if err != nil || commit == nil {

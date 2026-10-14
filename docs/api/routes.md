@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (159). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (160). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -226,6 +226,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | POST | `/v1/import` | staff `root:import:write` | `Batch` | 200 `Result` | Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued. |
+| POST | `/v1/import/external-ids` | staff `root:import:write` | `ExternalIDsQuery` | 200 `ExternalIDs` | Pages the external ids imports under a source hold, per entity, with their ids and whether each is deleted: a persistent sync compares them with its source to find the deletes to send. |
 
 ## Error codes
 

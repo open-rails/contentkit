@@ -25,9 +25,15 @@ var routes = []httpapi.Route[*Service]{
 			"external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
 		Request: Batch{}, Responses: []httpapi.Reply{httpapi.OK(Result{})}},
 		Serve: httpapi.H((*Service).handleImport)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/import/external-ids", Resource: "import", Auth: httpapi.Staff, Perm: string(access.ImportWrite),
+		Doc: "Pages the external ids imports under a source hold, per entity, with their ids and whether each is deleted: " +
+			"a persistent sync compares them with its source to find the deletes to send.",
+		Request: ExternalIDsQuery{}, Responses: []httpapi.Reply{httpapi.OK(ExternalIDs{})}},
+		Serve: httpapi.H((*Service).handleExternalIDs)},
 }
 
-// Handler serves POST /v1/import to holders of access.ImportWrite.
+// Handler serves POST /v1/import and /v1/import/external-ids to holders of
+// access.ImportWrite.
 func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 	if err := gate.Check(a, access.ImportWrite); err != nil {
 		return nil, fmt.Errorf("importer: Handler: %w", err)
@@ -40,18 +46,38 @@ func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 
 func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 	var b Batch
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	dec.DisallowUnknownFields()
-	err := dec.Decode(&b)
-	if err != nil {
-		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.BodyError(err))
-		return
-	}
-	if _, extra := dec.Token(); extra != io.EOF {
-		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, "the body holds more than one JSON value")
+	if !decode(w, r, &b) {
 		return
 	}
 	res, err := s.Import(r.Context(), b)
+	s.answer(w, r, res, err)
+}
+
+func (s *Service) handleExternalIDs(w http.ResponseWriter, r *http.Request) {
+	var q ExternalIDsQuery
+	if !decode(w, r, &q) {
+		return
+	}
+	res, err := s.ExternalIDs(r.Context(), q)
+	s.answer(w, r, res, err)
+}
+
+// decode reads one JSON value into v, or answers 400.
+func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.BodyError(err))
+		return false
+	}
+	if _, extra := dec.Token(); extra != io.EOF {
+		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, "the body holds more than one JSON value")
+		return false
+	}
+	return true
+}
+
+func (s *Service) answer(w http.ResponseWriter, r *http.Request, res any, err error) {
 	switch {
 	case errors.Is(err, ErrInvalid):
 		reply(w, http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest))

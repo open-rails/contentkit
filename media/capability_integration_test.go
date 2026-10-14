@@ -749,7 +749,7 @@ func (s *uncertainManifestStore) Put(ctx context.Context, key string, body io.Re
 // writer outside that lock (for example a process whose session died).
 func TestManifestsLockAndUseIfMatch(t *testing.T) {
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
+	if !env.Caps().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
 	kinds := miniRegistry(t, env.Tenant)
@@ -982,7 +982,7 @@ func TestManifestRevisionFencesReturningToEarlierContent(t *testing.T) {
 // If-None-Match create) must not be recorded as "no conditional PUT".
 func TestProbeDoesNotRecordTransientFailures(t *testing.T) {
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
+	if !env.Caps().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
 	target, _ := url.Parse(env.Config.Endpoint)
@@ -1010,18 +1010,74 @@ func TestProbeDoesNotRecordTransientFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := store.Check(ctx, env.Tenant+"/"); err == nil {
-		t.Fatalf("a throttled probe succeeded and recorded %+v", store.Capabilities())
+	if err := store.Check(ctx); err == nil {
+		t.Fatal("a throttled probe succeeded")
 	}
-	if store.Capabilities() != (media.Capabilities{}) {
-		t.Fatalf("a throttled probe recorded %+v", store.Capabilities())
+	if caps, err := store.Capabilities(ctx); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("a throttled probe recorded %+v (%v)", caps, err)
 	}
 	healthy.Store(true)
-	if err := store.Check(ctx, env.Tenant+"/"); err != nil {
+	if err := store.Check(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := store.Capabilities(), env.Store.Capabilities(); got != want {
-		t.Fatalf("probed %+v after recovery, want %+v", got, want)
+	if got, err := store.Capabilities(ctx); err != nil || got != env.Caps() {
+		t.Fatalf("probed %+v (%v) after recovery, want %+v", got, err, env.Caps())
+	}
+}
+
+// Writes probe the capabilities on first use, without a Check first: one
+// probe however many writes wait for it.
+func TestCapabilitiesProbeOnFirstUse(t *testing.T) {
+	env := s3test.Open(t)
+	target, _ := url.Parse(env.Config.Endpoint)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var mu sync.Mutex
+	probes := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if i := strings.Index(r.URL.Path, "probe-"); i >= 0 && r.Method == http.MethodPut {
+			mu.Lock()
+			probes[r.URL.Path[i:]] = true
+			mu.Unlock()
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	cfg := env.Config
+	cfg.Endpoint, cfg.PublicEndpoint, cfg.Capabilities = srv.URL, "", nil
+	store, err := mediaS3.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	got := make([]media.Capabilities, 8)
+	errs := make([]error, len(got))
+	for i := range got {
+		wg.Go(func() { got[i], errs[i] = store.Capabilities(t.Context()) })
+	}
+	wg.Wait()
+	for i := range got {
+		if errs[i] != nil || got[i] != env.Caps() {
+			t.Fatalf("caller %d: %+v %v, want %+v", i, got[i], errs[i], env.Caps())
+		}
+	}
+	if len(probes) != 1 {
+		t.Fatalf("%d probes for concurrent first uses", len(probes))
+	}
+	if !env.Caps().ConditionalPut {
+		return
+	}
+	ms, err := media.NewManifests(store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: media.PGLocker(pgtest.Pool(t, nil)), Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.Edit(t.Context(), contentref.New(env.Tenant, "post", cid(8)), func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "first"}
+		return nil
+	}); err != nil {
+		t.Fatalf("a write on a probed store: %v", err)
+	}
+	if len(probes) != 1 {
+		t.Fatalf("a known store probed again: %d", len(probes))
 	}
 }
 
@@ -1030,11 +1086,11 @@ func TestProbeDoesNotRecordTransientFailures(t *testing.T) {
 func TestDeclaredCapabilitiesAreNotReprobed(t *testing.T) {
 	env := s3test.Open(t)
 	store := env.WithCapabilities(t, media.Capabilities{})
-	if err := store.Check(context.Background(), env.Tenant+"/"); err != nil {
+	if err := store.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if store.Capabilities() != (media.Capabilities{}) {
-		t.Fatalf("declared capabilities re-probed: %+v", store.Capabilities())
+	if caps, err := store.Capabilities(context.Background()); err != nil || caps != (media.Capabilities{}) {
+		t.Fatalf("declared capabilities re-probed: %+v %v", caps, err)
 	}
 }
 
@@ -1067,10 +1123,10 @@ func TestProbeAcceptsABackendIgnoringIfNoneMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Check(context.Background(), env.Tenant+"/"); err != nil {
+	if err := store.Check(context.Background()); err != nil {
 		t.Fatalf("probe against an If-None-Match-ignoring backend: %v", err)
 	}
-	if caps := store.Capabilities(); caps.ConditionalPut || caps.ChecksumSHA256 != env.Store.Capabilities().ChecksumSHA256 {
+	if caps, _ := store.Capabilities(context.Background()); caps.ConditionalPut || caps.ChecksumSHA256 != env.Caps().ChecksumSHA256 {
 		t.Fatalf("capabilities %+v; want no conditional PUT, checksum as the backend", caps)
 	}
 }

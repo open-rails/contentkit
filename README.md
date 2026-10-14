@@ -313,9 +313,11 @@ uploads were charged, so deleting an item never needs it to decode, and
 hiding deletes `public/` before touching it.
 
 **The bucket is optional at startup.** `s3.New` never dials; register
-`store.Check(ctx, prefix)` as the host's optional S3 dependency probe. Its
-first success probes the backend's capabilities unless `Config.Capabilities`
-declares them; a throttled or cut-off probe records nothing. An unreachable
+`store.Check(ctx)` as the host's optional S3 dependency probe. Unless
+`Config.Capabilities` declares them, the first use (a write, or `Check`)
+probes the backend's capabilities, one probe at a time; a failed, throttled
+or cut-off probe records nothing, its write is `media.ErrUnavailable` and the
+next use probes again. An unreachable
 or 5xx bucket is `media.ErrUnavailable`: 503 `unavailable` over HTTP, and in
 media jobs a River snooze (not an attempt) while a fresh `Check` confirms the
 outage, capped by `MaxOutageSnoozes` (`media.SnoozeUnavailable`).

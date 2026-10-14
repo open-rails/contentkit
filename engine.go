@@ -658,7 +658,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 	if e.media != nil {
 		store := e.media.store
 		out = append(out, Probe{Name: "contentkit_media_store", Check: func(ctx context.Context) error {
-			return store.Check(ctx, "_contentkit/")
+			return store.Check(ctx)
 		}})
 	}
 	if deps.Redis != nil {

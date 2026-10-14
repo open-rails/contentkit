@@ -10455,6 +10455,53 @@
           "request"
         ]
       }
+    },
+    "/v1/import/external-ids": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "Pages the external ids imports under a source hold, per entity, with their ids and whether each is deleted: a persistent sync compares them with its source to find the deletes to send.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalIDsQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalIDs"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "import",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:import:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:import",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -12487,6 +12534,88 @@
           }
         }
       },
+      "ExternalID": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "external_id",
+          "id",
+          "deleted"
+        ]
+      },
+      "ExternalIDList": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "ExternalIDPage": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalID"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity",
+          "ids"
+        ]
+      },
+      "ExternalIDs": {
+        "type": "object",
+        "properties": {
+          "lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIDPage"
+            }
+          }
+        },
+        "required": [
+          "lists"
+        ]
+      },
+      "ExternalIDsQuery": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIDList"
+            }
+          }
+        }
+      },
       "Failure": {
         "type": "object",
         "properties": {
@@ -13713,6 +13842,9 @@
           },
           "sort": {
             "type": "string"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/Preview"
           },
           "draft_ttl": {
             "type": "integer"

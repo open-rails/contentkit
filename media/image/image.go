@@ -707,7 +707,11 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 		return "", err
 	}
 	opts := media.PutOptions{ContentType: contentType, ChecksumSHA256: sum}
-	if p.c.Store.Capabilities().ConditionalPut {
+	caps, err := p.c.Store.Capabilities(ctx)
+	if err != nil {
+		return "", err
+	}
+	if caps.ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
 	if _, err := p.c.Store.Put(ctx, key, body, size, opts); err != nil && !errors.Is(err, media.ErrPreconditionFailed) {

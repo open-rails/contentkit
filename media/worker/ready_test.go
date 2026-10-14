@@ -73,7 +73,7 @@ func (*readinessStore) Get(context.Context, string, media.GetOptions) (io.ReadCl
 	return nil, media.Object{}, media.ErrUnavailable
 }
 
-func (s *readinessStore) Check(context.Context, string) error {
+func (s *readinessStore) Check(context.Context) error {
 	s.checks++
 	return s.checkErr
 }

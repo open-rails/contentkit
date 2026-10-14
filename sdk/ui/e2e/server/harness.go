@@ -302,7 +302,7 @@ func openBucket(ctx context.Context, c config) (*mediaS3.Store, error) {
 		_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &c.bucket})
 		var owned *types.BucketAlreadyOwnedByYou
 		if err == nil || errors.As(err, &owned) {
-			return store, store.Check(ctx, "_probe/")
+			return store, store.Check(ctx)
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return nil, fmt.Errorf("minio: %w", err)

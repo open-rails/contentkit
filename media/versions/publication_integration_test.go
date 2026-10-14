@@ -1,15 +1,20 @@
 package versions_test
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -232,3 +237,72 @@ func TestPreviewsFollowReleases(t *testing.T) {
 	}
 	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
 }
+
+// Reader content gets what its host never uploads: a cover from its first
+// published page, and while locked without a preview of its own, its kind's
+// default preview pages. A cover an editor uploads is never replaced.
+func TestDerivedCoversAndPreviews(t *testing.T) {
+	s := newSite(t, siteOptions{gallery: func(k *kinds.Kind) { k.Preview = &kinds.Preview{Pages: 2} }})
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
+	v := s.version(c)
+	ref, top := s.ref("gallery", v), s.ref("gallery", versions.Target{Content: c})
+	for i := range 3 {
+		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
+	}
+	anon := access.Actor{Anonymous: true, IP: "203.0.113.5"}
+	p := s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 2 })
+	if !eq(locks(p), []bool{true}) || p.Previews[0].Name != "001" || p.Previews[1].Name != "002" || p.Segments[0].Item != nil {
+		t.Fatalf("anonymous plan %+v", p)
+	}
+
+	// The cover is the leading page, rendered public, and follows it.
+	coverOf := func(page string) media.File {
+		t.Helper()
+		var cover media.File
+		eventually(t, "the automatic cover of "+page, 2*time.Minute, func() bool {
+			m, _, err := s.ms.Get(s.ctx, top)
+			if err != nil {
+				return false
+			}
+			src, _ := s.manifest(ref).Get(page)
+			cover, _ = m.Get("cover.png")
+			return cover.Meta["auto_cover"] == true && sameBytes(cover.Blob, src.Blob)
+		})
+		return cover
+	}
+	coverOf("originals/001.png")
+	eventually(t, "the public cover", 2*time.Minute, func() bool {
+		got, err := s.svc.Covers(s.ctx, []versions.CoverOf{{Kind: "gallery", ID: c}})
+		return err == nil && len(got[0]) > 0 && strings.Contains(got[0][0].URL, "/gallery/"+c+"/public/cover-")
+	})
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 9))
+	coverOf("originals/001.png")
+
+	// An editor's cover stays through later publications.
+	mine := pngOf(t, 64, 64, 5)
+	s.mustUpload(s.creator, top, "cover", "image/png", mine)
+	s.mustUpload(s.creator, ref, "originals/004", "image/png", pngOf(t, 30, 40, 4))
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 4 })
+	if err := versions.Publish(s.svc, s.ctx, v); err != nil && !errors.Is(err, versions.ErrNotReady) {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(mine)
+	eventually(t, "the editor's cover placed", 2*time.Minute, func() bool {
+		cover, _ := s.manifest(top).Get("cover.png")
+		return layout.ValidBlobName(cover.Blob)
+	})
+	if cover, _ := s.manifest(top).Get("cover.png"); cover.Meta["auto_cover"] != nil || !bytes.Equal(digest(cover.Blob), sum[:]) {
+		t.Fatalf("the editor's cover was replaced: %+v", cover)
+	}
+
+	// A rule's own preview wins over the kind's.
+	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"tier","tiers":["premium"],"preview":{"pages":1}}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
+	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 1 })
+}
+
+func digest(blob string) []byte {
+	d, _ := layout.BlobDigest(blob)
+	return d
+}
+
+func sameBytes(a, b string) bool { return a != "" && b != "" && bytes.Equal(digest(a), digest(b)) }

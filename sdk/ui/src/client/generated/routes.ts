@@ -198,6 +198,7 @@ export const CONTENTKIT_ROUTES = [
   { method: "GET", module: "discovery", path: "/stats/top", auth: "staff", permission: "root:content:view-restricted", query: ["kind", "metric", "period", "access", "tiers", "language", "limit"], request: null, responses: { 200: "TopContents" }, errors: ["not_configured"], errorSets: ["module:discovery", "auth", "request"] },
   { method: "GET", module: "discovery", path: "/me/stats", auth: "user", permission: null, query: [], request: null, responses: { 200: "MyStats" }, errors: [], errorSets: ["module:discovery", "auth"] },
   { method: "POST", module: "import", path: "/import", auth: "staff", permission: "root:import:write", query: [], request: "Batch", responses: { 200: "Result" }, errors: [], errorSets: ["module:import", "auth", "request"] },
+  { method: "POST", module: "import", path: "/import/external-ids", auth: "staff", permission: "root:import:write", query: [], request: "ExternalIDsQuery", responses: { 200: "ExternalIDs" }, errors: [], errorSets: ["module:import", "auth", "request"] },
 ] as const satisfies readonly ContentKitRoute[];
 
 // The codes every route of a kind answers, by set name.

@@ -2935,3 +2935,10 @@ func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.
 	err := c.call(ctx, http.MethodPost, "/v1/import", nil, body, &out)
 	return out, err
 }
+
+// PostImportExternalIds is POST /v1/import/external-ids (staff). Pages the external ids imports under a source hold, per entity, with their ids and whether each is deleted: a persistent sync compares them with its source to find the deletes to send.
+func (c *Client) PostImportExternalIds(ctx context.Context, body importer.ExternalIDsQuery) (importer.ExternalIDs, error) {
+	var out importer.ExternalIDs
+	err := c.call(ctx, http.MethodPost, "/v1/import/external-ids", nil, body, &out)
+	return out, err
+}

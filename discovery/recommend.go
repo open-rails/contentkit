@@ -110,8 +110,8 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 }
 
 // Recommendations lists contents for the signed-in reader from their
-// history, filled from what is popular, that their listing shows; seen and
-// disliked content left out.
+// history, filled from what is popular lately, then ever, then newest, that
+// their listing shows; seen and disliked content left out.
 func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}
 	recs, err := s.recommender()
@@ -127,9 +127,29 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
 	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.ID}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
-		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Admit: a.admit})
+		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Backfill: s.newest(q), Admit: a.admit})
 	if err != nil {
 		return empty, err
 	}
 	return a.cards(ctx, hits, o)
+}
+
+// newest backfills a "for you" list with the newest contents q lists.
+func (s *Service) newest(q *sel) Backfill {
+	return func(ctx context.Context, kind string, exclude []string, limit int) ([]contentref.ContentRef, error) {
+		o, err := s.parseSort(ctx, SortNewest, Filter{})
+		if err != nil {
+			return nil, err
+		}
+		picks, _, err := s.page(ctx, q.with("f.kind = @b_kind AND f.content_id <> ALL(@b_exclude::text[])",
+			pgx.NamedArgs{"b_kind": kind, "b_exclude": nonNil(exclude)}), o, "", limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]contentref.ContentRef, len(picks))
+		for i, p := range picks {
+			out[i] = contentref.New(s.o.Tenant, kind, p.content)
+		}
+		return out, nil
+	}
 }

@@ -11,6 +11,7 @@ import (
 	pngenc "image/png"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -523,6 +524,34 @@ func TestImportRoute(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["groups"] != 1 {
 		t.Fatalf("import: %d %s", rec.Code, rec.Body)
 	}
+	ids := func(actor string, q any) *httptest.ResponseRecorder {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(q)
+		req := testauth.As(httptest.NewRequest(http.MethodPost, "/api/v1/import/external-ids", &buf), access.Actor{ID: actor})
+		rec := httptest.NewRecorder()
+		f.routes.ServeHTTP(rec, req)
+		return rec
+	}
+	q := importer.ExternalIDsQuery{Source: "test-legacy", Lists: []importer.ExternalIDList{{Entity: "group"}}}
+	if rec := ids("staff", q); rec.Code != http.StatusForbidden {
+		t.Fatalf("external ids, staff without the permission: %d", rec.Code)
+	}
+	var got importer.ExternalIDs
+	if rec := ids("importer", q); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil ||
+		len(got.Lists) != 1 || len(got.Lists[0].IDs) != 1 || got.Lists[0].IDs[0].ExternalID != "t" || got.Lists[0].IDs[0].ID != res.IDs["group"]["t"] {
+		t.Fatalf("external ids: %d %s", rec.Code, rec.Body)
+	}
+	for _, bad := range []importer.ExternalIDsQuery{
+		{Source: "test-legacy"},
+		{Source: "test-legacy", Lists: []importer.ExternalIDList{{Entity: "gallery"}}},
+		{Source: "test-legacy", Lists: []importer.ExternalIDList{{Entity: "group"}, {Entity: "group"}}},
+		{Source: "test-legacy", Lists: []importer.ExternalIDList{{Entity: "group", Cursor: "%%"}}},
+		{Source: "test-legacy", Lists: []importer.ExternalIDList{{Entity: "group", Limit: 10_001}}},
+	} {
+		if rec := ids("importer", bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("external ids %+v: %d", bad, rec.Code)
+		}
+	}
 }
 
 // After an import the engine's jobs rebuild what it changed: search
@@ -737,5 +766,65 @@ func TestImportDeletes(t *testing.T) {
 	}
 	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{del("version", id("version", 9))}}); len(res.Failed) != 1 {
 		t.Errorf("a delete names an external id: %+v", res)
+	}
+}
+
+// A persistent sync pages the external ids its imports hold, per entity, and
+// sends deletes for those its source lost; deleted ones say so.
+func TestImportExternalIDs(t *testing.T) {
+	f := newEngine(t)
+	if res := f.importBatch(t, catalogBatch()); len(res.Failed) > 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	list := func(lists ...importer.ExternalIDList) importer.ExternalIDs {
+		t.Helper()
+		out, err := f.e.Client().PostImportExternalIds(t.Context(), importer.ExternalIDsQuery{Source: "test-legacy", Lists: lists})
+		if err != nil || len(out.Lists) != len(lists) {
+			t.Fatalf("external ids %+v: %+v %v", lists, out, err)
+		}
+		return out
+	}
+	held := func(p importer.ExternalIDPage) []string {
+		out := []string{}
+		for _, x := range p.IDs {
+			out = append(out, fmt.Sprintf("%s=%t", x.ExternalID, x.Deleted))
+		}
+		return out
+	}
+	// The source lost gallery:3; gallery:2 was imported deleted.
+	source := map[string]bool{"gallery:1": true, "gallery:2": true, "post:1": true}
+	var contents []string
+	var deletes []importer.DeleteRecord
+	got := list(importer.ExternalIDList{Entity: "content", Limit: 3}, importer.ExternalIDList{Entity: "comment"})
+	for page := got.Lists[0]; ; {
+		for _, x := range page.IDs {
+			contents = append(contents, x.ExternalID)
+			if x.ID != f.scalar(t, `SELECT id FROM $s.content_external_ids WHERE entity = 'content' AND external_id = $1`, x.ExternalID) {
+				t.Fatalf("%s maps to %s", x.ExternalID, x.ID)
+			}
+			if !source[x.ExternalID] && !x.Deleted {
+				deletes = append(deletes, importer.DeleteRecord{Entity: importer.EntityContent, ExternalID: x.ExternalID})
+			}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		page = list(importer.ExternalIDList{Entity: "content", Limit: 3, Cursor: page.NextCursor}).Lists[0]
+	}
+	if want := []string{"gallery:1", "gallery:2", "gallery:3", "post:1"}; !reflect.DeepEqual(contents, want) {
+		t.Fatalf("contents paged %v, want %v", contents, want)
+	}
+	if want := []string{"comment:1=false", "comment:2=false", "comment:3=true", "comment:4=false"}; !reflect.DeepEqual(held(got.Lists[1]), want) {
+		t.Fatalf("comments %v, want %v", held(got.Lists[1]), want)
+	}
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: deletes}); res.Written["deletes"] != 1 || len(res.Failed) > 0 {
+		t.Fatalf("deletes %+v: %+v", deletes, res)
+	}
+	if want := []string{"gallery:1=false", "gallery:2=true", "gallery:3=true", "post:1=false"}; !reflect.DeepEqual(held(list(importer.ExternalIDList{Entity: "content"}).Lists[0]), want) {
+		t.Fatalf("after the sync's deletes: %v, want %v", held(list(importer.ExternalIDList{Entity: "content"}).Lists[0]), want)
+	}
+	other, err := f.e.Client().PostImportExternalIds(t.Context(), importer.ExternalIDsQuery{Source: "other-legacy", Lists: []importer.ExternalIDList{{Entity: "poll_option"}}})
+	if err != nil || len(other.Lists) != 1 || len(other.Lists[0].IDs) != 0 {
+		t.Fatalf("another source's ids: %+v %v", other, err)
 	}
 }

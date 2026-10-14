@@ -65,7 +65,7 @@ func (keepHTML) Sanitize(_ context.Context, raw string) (string, error) { return
 // the real worker rendering. A draft's images are its editors' alone.
 func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
+	if !env.Caps().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
 	ctx := t.Context()

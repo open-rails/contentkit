@@ -18,7 +18,8 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// Construction never dials. Writes require a successful capability probe;
+// Construction never dials. Writes probe the capabilities on first use: while
+// the store is down they are ErrUnavailable and the next write probes again;
 // once qualified, storage outages still return ErrUnavailable.
 func TestStoreOutage(t *testing.T) {
 	env := s3test.Open(t)
@@ -71,33 +72,30 @@ func TestStoreOutage(t *testing.T) {
 		return err
 	}
 
-	if err := store.Check(ctx, env.Tenant+"/"); !errors.Is(err, media.ErrUnavailable) {
+	if err := store.Check(ctx); !errors.Is(err, media.ErrUnavailable) {
 		t.Fatalf("Check while down: %v", err)
 	}
-	if store.Capabilities() != (media.Capabilities{}) {
-		t.Fatalf("capabilities before a probe: %+v", store.Capabilities())
+	if caps, err := store.Capabilities(ctx); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("capabilities while down: %+v %v", caps, err)
 	}
-	if err := edit(); !errors.Is(err, media.ErrConditionalPutRequired) {
-		t.Fatalf("edit before capability probe: %v", err)
+	if err := edit(); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("edit while the probe cannot run: %v", err)
 	}
 	if status, code := get(); status != http.StatusServiceUnavailable || code != "unavailable" {
 		t.Fatalf("read while down: %d %q", status, code)
 	}
 
 	proxy.Up(t)
-	if err := store.Check(ctx, env.Tenant+"/"); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := store.Capabilities(), env.Store.Capabilities(); got != want {
-		t.Fatalf("probed capabilities %+v, want %+v", got, want)
-	}
 	names, err := ms.NewBlobs(ctx, ref, [][]byte{mustSum(blobOf([]byte("a")))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	name = names[0]
 	if err := edit(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("the first write once up probes and lands: %v", err)
+	}
+	if got, err := store.Capabilities(ctx); err != nil || got != env.Caps() {
+		t.Fatalf("probed capabilities %+v %v, want %+v", got, err, env.Caps())
 	}
 	if status, _ := get(); status != http.StatusOK {
 		t.Fatalf("read after recovery: %d", status)
@@ -110,7 +108,7 @@ func TestStoreOutage(t *testing.T) {
 		t.Fatalf("qualified read while down: %d %q", status, code)
 	}
 	proxy.Up(t)
-	if err := store.Check(ctx, env.Tenant+"/"); err != nil {
+	if err := store.Check(ctx); err != nil {
 		t.Fatalf("health check once probed: %v", err)
 	}
 }

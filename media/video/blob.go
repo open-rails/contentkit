@@ -80,7 +80,11 @@ func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt
 		return name, size, nil
 	}
 	opts := media.PutOptions{ContentType: contentType, CacheControl: blobCacheControl, ChecksumSHA256: sum}
-	if e.store.Capabilities().ConditionalPut {
+	caps, err := e.store.Capabilities(ctx)
+	if err != nil {
+		return "", 0, err
+	}
+	if caps.ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
 	_, err = e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts)

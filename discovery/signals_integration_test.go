@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/signal"
 )
 
 const signalCHDB = "contentkit_discovery_signal_test"
@@ -128,5 +130,31 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	}
 	if ids, _ := f.list(host, "u1", "/me/history"); len(ids) != 0 {
 		t.Fatalf("history after forget = %v", ids)
+	}
+}
+
+// A reader who has seen everything popular lately still gets what they have
+// not seen: popular of all time past the 30-day window, then the newest.
+func TestRecommendationsFillPastRecentPopularity(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	f := seededOn(t, env.Fresh(t, signalCHDB), signalCHDB)
+	f.seed(item{n: 8, titles: map[string]string{"en": "Hotel"}, age: 6 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 9, titles: map[string]string{"en": "India"}, age: 90 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}})
+	const host = "main.test"
+	at := time.Now().UTC().Add(-time.Hour)
+	in := Signals{}
+	for _, n := range []int{1, 3} {
+		in.Signals = append(in.Signals, SignalInput{ContentID: f.cid(n), Type: TypeView, EventID: fmt.Sprintf("u1-%d", n), OccurredAt: at, Progress: 5, DurationS: 60})
+	}
+	if status, code := f.call(http.MethodPost, host, "u1", "/signals", in, nil); status != http.StatusNoContent {
+		t.Fatalf("POST signals: %d %s", status, code)
+	}
+	old := signal.Signal{ContentRef: contentref.New(tenant, "gallery", f.cid(9)), Subject: signal.Subject{UserID: "u2"}, Type: signal.TypeView,
+		EventID: "u2-9", OccurredAt: time.Now().UTC().AddDate(0, 0, -40), Progress: 10, ProgressMax: 10}
+	if err := f.svc.o.Hub.Signals().RecordSignals(f.ctx, tenant, []signal.Signal{old}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.list(host, "u1", q("/recommendations", "kind", "gallery")); !reflect.DeepEqual(got, []string{f.cid(9), f.cid(8)}) {
+		t.Fatalf("recommendations = %v, want all-time popular then newest unseen", got)
 	}
 }

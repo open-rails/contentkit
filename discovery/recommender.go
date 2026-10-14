@@ -56,12 +56,21 @@ type RecommendOptions struct {
 	IncludeSeen bool
 
 	// PopularWindow is the popularity window used to fill out results on
-	// cold start or thin candidate sets (zero = all time, like every Window).
+	// cold start or thin candidate sets (zero = all time, like every Window);
+	// all-time popularity fills what it leaves short.
 	PopularWindow signal.Window
+
+	// Backfill fills what popularity leaves short, from works no signal
+	// names; nil leaves the list short.
+	Backfill Backfill
 
 	// Admit keeps the works the reader may be shown; nil admits all.
 	Admit Admit
 }
+
+// Backfill lists up to limit works of kind, best first (e.g. newest), none of
+// exclude (content ids): the last fill of a "for you" list.
+type Backfill func(ctx context.Context, kind string, exclude []string, limit int) ([]contentref.ContentRef, error)
 
 // Recommender turns a Candidates source into tenant-scoped discovery lists.
 type Recommender struct {
@@ -165,8 +174,9 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 }
 
 // Recommend returns "for you" works for a subject: excluding already-seen
-// (unless IncludeSeen) and always disliked works, filled from popularity on
-// cold start or thin candidates.
+// (unless IncludeSeen) and always disliked works, filled on cold start or
+// thin candidates from popularity in PopularWindow, then of all time, then
+// Backfill.
 func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]Hit, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
@@ -216,37 +226,64 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		}
 	}
 
-	// Popular scores live on another scale, so fill hits follow the
-	// candidates with decaying tail scores.
+	windows := []signal.Window{opts.PopularWindow}
+	if opts.PopularWindow != signal.AllTime() {
+		windows = append(windows, signal.AllTime())
+	}
 	for _, kind := range kinds {
-		var tail float32
-		if n := len(f.out); n > 0 {
-			tail = f.out[n-1].Score
+		for _, w := range windows {
+			if err := r.fillPopular(ctx, f, kind, w, limit); err != nil {
+				return nil, err
+			}
 		}
-		// Oversample so exclusions still leave enough to fill, deeper while
-		// a full read leaves the list short.
-		for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
-			pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: opts.PopularWindow, Limit: depth})
-			if err != nil {
-				return nil, err
-			}
-			fill := make([]Candidate, len(pop))
-			for i, p := range pop {
-				score := tail / 2
-				if tail == 0 {
-					score = 1 / float32(r.rrfK()+i+1)
-				}
-				fill[i] = Candidate{Ref: p.ContentRef, Score: float64(score)}
-			}
-			if err := f.pushAll(ctx, fill); err != nil {
-				return nil, err
-			}
-			if len(pop) < depth || depth >= maxFillDepth {
-				break
-			}
+		if f.full() || opts.Backfill == nil {
+			continue
+		}
+		refs, err := opts.Backfill(ctx, kind, f.excluded(kind), limit-len(f.out))
+		if err != nil {
+			return nil, err
+		}
+		fill := make([]Candidate, len(refs))
+		for i, ref := range refs {
+			fill[i] = Candidate{Ref: ref, Score: float64(r.fillScore(f, i))}
+		}
+		if err := f.pushAll(ctx, fill); err != nil {
+			return nil, err
 		}
 	}
 	return f.out, nil
+}
+
+// fillPopular fills f from kind's popularity in w.
+func (r Recommender) fillPopular(ctx context.Context, f *filter, kind string, w signal.Window, limit int) error {
+	// Oversample so exclusions still leave enough to fill, deeper while a
+	// full read leaves the list short.
+	for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
+		pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: w, Limit: depth})
+		if err != nil {
+			return err
+		}
+		fill := make([]Candidate, len(pop))
+		for i, p := range pop {
+			fill[i] = Candidate{Ref: p.ContentRef, Score: float64(r.fillScore(f, i))}
+		}
+		if err := f.pushAll(ctx, fill); err != nil {
+			return err
+		}
+		if len(pop) < depth || depth >= maxFillDepth {
+			return nil
+		}
+	}
+	return nil
+}
+
+// fillScore is the i-th fill's score: fills live on another scale than
+// candidates, so they follow the list's tail with decaying scores.
+func (r Recommender) fillScore(f *filter, i int) float32 {
+	if n := len(f.out); n > 0 {
+		return f.out[n-1].Score / 2
+	}
+	return 1 / float32(r.rrfK()+i+1)
 }
 
 // maxFillDepth bounds the popularity read a filtered fill goes to.
@@ -317,6 +354,21 @@ func (f *filter) loadSeen(ctx context.Context, r Recommender, subject signal.Sub
 }
 
 func (f *filter) full() bool { return len(f.out) >= f.limit }
+
+// excluded are kind's content ids the list may no longer show: seen,
+// disliked or already in it.
+func (f *filter) excluded(kind string) []string {
+	out := make([]string, 0, len(f.seen[kind])+len(f.exclude))
+	for id := range f.seen[kind] {
+		out = append(out, id)
+	}
+	for key := range f.exclude {
+		if key.ContentKind == kind {
+			out = append(out, key.ContentID)
+		}
+	}
+	return out
+}
 
 // pushAll appends candidates in order until full: those the policy keeps,
 // then admitted in one batch.

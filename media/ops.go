@@ -36,7 +36,7 @@ type Op struct {
 	Blob       string         `json:"blob,omitempty"`      // put: the staged upload (u-{uuid}) or a blob in the folder
 	CreateID   string         `json:"create_id,omitempty"` // put: create-only UUID; repeat the same ID to retry
 	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload
-	Meta       map[string]any `json:"meta,omitempty"`      // put: the upload's meta; attach: merged into it; meta: the item's
+	Meta       map[string]any `json:"meta,omitempty"`      // put, copy: upload meta; attach: merged; meta: item meta; remove: auto_cover guards ownership
 	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`
 	To         string         `json:"to,omitempty"`   // rename, copy (default the source's path)
@@ -204,6 +204,9 @@ func (o *opRun) apply(n int, op Op) error {
 		return uploadErr(CodeNotFound, "no upload %q", op.Path)
 	}
 	f := m.Files[i]
+	if op.Op == OpRemove && op.Meta[MetaAutoCover] == true && f.Meta[MetaAutoCover] != true {
+		return uploadErr(CodeConflict, "an editor owns cover %q", f.Path)
+	}
 	switch op.Op {
 	case OpEdit:
 		if !isImageType(f.Type) {
@@ -316,6 +319,10 @@ func (o *opRun) put(op Op) error {
 		f.Unattached = old.Unattached && op.Unattached
 	} else if u.Max > 0 && o.count(g) >= u.Max {
 		return tooManyFiles(u.Max, "kind %q allows at most %d uploads at %s", k.Name, u.Max, u.Path)
+	}
+	if f.Meta[MetaAutoCover] != nil {
+		f.Meta = maps.Clone(f.Meta)
+		delete(f.Meta, MetaAutoCover)
 	}
 	if op.Edit != nil {
 		if !isImageType(f.Type) {
@@ -487,6 +494,12 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	f := src[0]
 	f.Public = nil // copied originals never transfer another item's allocation
+	if op.Meta != nil {
+		f.Meta = maps.Clone(op.Meta)
+	} else if f.Meta[MetaAutoCover] != nil {
+		f.Meta = maps.Clone(f.Meta)
+		delete(f.Meta, MetaAutoCover)
+	}
 	to := op.To
 	if to == "" {
 		to = f.Path
@@ -526,6 +539,9 @@ func (o *opRun) copy(op Op, src []File) error {
 		src = src[:1]
 	}
 	i := o.stem(stem)
+	if i >= 0 && op.Meta[MetaAutoCover] == true && m.Files[i].Meta[MetaAutoCover] != true {
+		return uploadErr(CodeConflict, "an editor owns cover %q", m.Files[i].Path)
+	}
 	if i < 0 && k.Uploads[g].Max > 0 && o.count(g) >= k.Uploads[g].Max {
 		return tooManyFiles(k.Uploads[g].Max, "kind %q allows at most %d uploads at %s", k.Name, k.Uploads[g].Max, k.Uploads[g].Path)
 	}

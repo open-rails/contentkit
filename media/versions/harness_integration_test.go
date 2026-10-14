@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -225,12 +226,14 @@ type site struct {
 type siteOptions struct {
 	watermark versions.Watermarker
 	downloads versions.Downloads
+	// gallery edits the site's gallery kind.
+	gallery func(*kinds.Kind)
 }
 
 func newSite(t *testing.T, o siteOptions) *site {
 	t.Helper()
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
+	if !env.Caps().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
 	ctx := context.Background()
@@ -241,6 +244,13 @@ func newSite(t *testing.T, o siteOptions) *site {
 		tiers: map[string][]string{s.fan.ID: {"premium"}}}
 	s.grants = &grants{staff: s.staff.ID, scoped: map[string]string{}}
 	authn := testauth.Auth{Authz: s.grants, Claims: map[string][]string{s.fan.ID: {"premium"}}}
+	siteKinds := siteKinds
+	if o.gallery != nil {
+		siteKinds.Kinds = maps.Clone(siteKinds.Kinds)
+		g := siteKinds.Kinds["gallery"]
+		o.gallery(&g)
+		siteKinds.Kinds["gallery"] = g
+	}
 	gate, err := access.NewGate(access.GateConfig{Tenant: s.tenant, Kinds: siteKinds})
 	if err != nil {
 		t.Fatal(err)

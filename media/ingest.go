@@ -112,8 +112,8 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if err != nil {
 		return IngestResult{}, err
 	}
-	if !u.o.Store.Capabilities().ConditionalPut {
-		return IngestResult{}, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+		return IngestResult{}, err
 	}
 	if req.From != "" {
 		return u.ingestCopy(ctx, actor, item, g, grant, req)
@@ -220,8 +220,8 @@ func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref conte
 	if err != nil {
 		return nil, err
 	}
-	if !u.o.Store.Capabilities().ConditionalPut {
-		return nil, ErrConditionalPutRequired
+	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+		return nil, err
 	}
 	out := make([]StagedCopy, 0, len(reqs))
 	for _, r := range reqs {
