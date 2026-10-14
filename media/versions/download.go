@@ -450,7 +450,6 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	return item, m, nil
 }
 
-
 // zipPages are the files the archive zips, in manifest order: each page's
 // output under the zip's prefix. ErrNotReady while one is missing.
 func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File, error) {

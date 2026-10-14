@@ -66,7 +66,7 @@ type Options struct {
 	// Gate answers the tiers a viewer holds for download quotas; optional.
 	Gate      *access.Gate
 	Facets    Facets
-	Others    Others      // nil refuses every other kind
+	Others    Others         // nil refuses every other kind
 	Policy    DownloadPolicy // the host's download policy; nil allows every download and marks none
 	Downloads Downloads
 	Logger    *slog.Logger
