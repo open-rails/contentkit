@@ -4852,7 +4852,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Takes a body image uploaded to one version's body item ({kind}.body): copies it into every other version's, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4868,7 +4868,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ImageInput"
+                "$ref": "#/components/schemas/BodyImageInput"
               }
             }
           }
@@ -11114,6 +11114,24 @@
           }
         }
       },
+      "BodyImageInput": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "Card": {
         "type": "object",
         "properties": {
@@ -11292,11 +11310,14 @@
           },
           "url": {
             "type": "string"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRendition"
+            }
           }
-        },
-        "required": [
-          "image"
-        ]
+        }
       },
       "CatalogText": {
         "type": "object",
@@ -12062,9 +12083,6 @@
               "$ref": "#/components/schemas/Creator"
             }
           },
-          "cover": {
-            "type": "string"
-          },
           "revision": {
             "type": "integer"
           }
@@ -12121,9 +12139,6 @@
           },
           "owner_group": {
             "$ref": "#/components/schemas/Ref"
-          },
-          "cover": {
-            "type": "string"
           },
           "creators": {
             "type": "array",
@@ -16068,6 +16083,9 @@
           },
           "path": {
             "type": "string"
+          },
+          "image": {
+            "type": "string"
           }
         },
         "required": [
@@ -16417,6 +16435,9 @@
           "ordinal": {
             "type": "integer"
           },
+          "cover": {
+            "$ref": "#/components/schemas/CatalogCover"
+          },
           "segments": {
             "type": "array",
             "items": {
@@ -16516,6 +16537,9 @@
           "ordinal": {
             "type": "integer"
           },
+          "cover": {
+            "type": "string"
+          },
           "fork": {
             "$ref": "#/components/schemas/VersionFork"
           }
@@ -16572,6 +16596,9 @@
           },
           "ordinal": {
             "type": "integer"
+          },
+          "cover": {
+            "type": "string"
           },
           "text": {
             "type": "object",

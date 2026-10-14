@@ -1077,8 +1077,8 @@ func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog
 	return out, err
 }
 
-// PostContentImages is POST /v1/contents/{id}/images (public). The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
-func (c *Client) PostContentImages(ctx context.Context, id string, body content.ImageInput) (catalog.InlineImage, error) {
+// PostContentImages is POST /v1/contents/{id}/images (public). Takes a body image uploaded to one version's body item ({kind}.body): copies it into every other version's, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+func (c *Client) PostContentImages(ctx context.Context, id string, body catalog.BodyImageInput) (catalog.InlineImage, error) {
 	var out catalog.InlineImage
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err

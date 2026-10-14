@@ -18,7 +18,6 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -43,7 +42,7 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}
 	}
 	blog := folder("blog")
-	blog.Uploads[0].Content = true
+	blog.Uploads[0].Body = true
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: images, MaxBytes: 1 << 20})
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
@@ -74,7 +73,9 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 
 	var post catalog.Content
 	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Draft", Body: "text"}}}, &post)
-	ref := media.RefBody{Kind: "blog", ID: post.ID}
+	vid := post.Versions[0].ID
+	ref := media.RefBody{Kind: "blog" + media.BodySuffix, ID: post.ID, Version: vid}
+	item := "/api/ck/v1/media/blog.body/" + post.ID + "/versions/" + vid
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
 	var plan media.PresignReply
@@ -94,28 +95,28 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 		Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
 	name := strings.TrimSuffix(plan.Path, ".png")
 	var inline catalog.InlineImage
-	s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+post.ID+"/images", content.ImageInput{Image: &name}, &inline)
+	s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+post.ID+"/images", catalog.BodyImageInput{Image: &name, Version: vid}, &inline)
 	if inline.Ref != catalog.ImageRef(name) || inline.URL != nil {
 		t.Fatalf("inline image %+v", inline)
 	}
 
 	var read media.ReadResult
-	s.call(http.StatusOK, staff, "GET", "/api/ck/v1/media/blog/"+post.ID+"?editor", nil, &read)
+	s.call(http.StatusOK, staff, "GET", item+"?editor", nil, &read)
 	if read.Access != media.AccessFull || len(read.Files) != 1 || read.Files[0].Path != plan.Path || !read.Files[0].Upload {
 		t.Fatalf("editor read of the draft %+v", read)
 	}
-	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/media/blog/"+post.ID, nil, nil)
-	s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/blog/"+post.ID+"?editor", nil, nil)
+	s.call(http.StatusNotFound, anon, "GET", item, nil, nil)
+	s.call(http.StatusNotFound, user, "GET", item+"?editor", nil, nil)
 
 	s.call(http.StatusOK, staff, "POST", "/api/ck/v1/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 	var viewer media.ReadResult
-	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog/"+post.ID, nil, &viewer)
+	s.call(http.StatusOK, anon, "GET", item, nil, &viewer)
 	if viewer.Uploads != nil {
 		t.Fatalf("anonymous read of the published item %+v", viewer)
 	}
 	s.call(http.StatusNoContent, staff, "DELETE", "/api/ck/v1/contents/"+post.ID, nil, nil)
-	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/media/blog/"+post.ID, nil, nil)
-	s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/blog/"+post.ID+"?editor", nil, nil)
+	s.call(http.StatusNotFound, anon, "GET", item, nil, nil)
+	s.call(http.StatusNotFound, user, "GET", item+"?editor", nil, nil)
 }
 
 // A content item's body images are its version's body item's ({kind}.body,
