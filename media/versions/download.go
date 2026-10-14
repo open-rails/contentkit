@@ -168,7 +168,7 @@ type Archive struct {
 // serves none, ErrNoDownload when the version has nothing to serve,
 // ErrNotReady while it is placed or produced, a QuotaError past the quota.
 func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*FileDownload, error) {
-	v, k, item, m, err := s.downloadable(ctx, t)
+	v, k, err := s.downloadKind(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +187,10 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 		} else if !ok {
 			return nil, ErrForbidden
 		}
+	}
+	item, m, err := s.downloadItem(ctx, k, t)
+	if err != nil {
+		return nil, err
 	}
 	title, code := s.title(ctx, v)
 	ttl := cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL)
@@ -247,7 +251,11 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, ticket string) 
 	if s.m.Reader == nil || viewer == "" || s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer)) != nil {
 		return nil, ErrNotFound
 	}
-	v, k, item, m, err := s.downloadable(ctx, t)
+	v, k, err := s.downloadKind(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	item, m, err := s.downloadItem(ctx, k, t)
 	if err != nil {
 		return nil, err
 	}
@@ -303,36 +311,40 @@ func archiveScope(tenant string, t Target, viewer string) string {
 	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer
 }
 
-// downloadable is t's version, its kind's version view serving a download,
-// its item and manifest.
-func (s *Service) downloadable(ctx context.Context, t Target) (version, *media.Kind, media.Item, *media.Manifest, error) {
+// downloadKind is t's version and its kind's version view, which serves a
+// download.
+func (s *Service) downloadKind(ctx context.Context, t Target) (version, *media.Kind, error) {
 	v, err := s.one(ctx, t)
 	if err != nil {
-		return version{}, nil, media.Item{}, nil, err
+		return version{}, nil, err
 	}
 	mk, err := s.reg.Kind(v.Kind)
 	if err != nil || mk.VersionKind() == nil || mk.VersionKind().Download == "" || s.m.Reader == nil {
-		return version{}, nil, media.Item{}, nil, ErrNotFound
+		return version{}, nil, ErrNotFound
 	}
-	k := mk.VersionKind()
+	return v, mk.VersionKind(), nil
+}
+
+// downloadItem is t's media item and manifest under k.
+func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (media.Item, *media.Manifest, error) {
 	ref, err := s.ref(k.Name, t)
 	if err != nil {
-		return version{}, nil, media.Item{}, nil, err
+		return media.Item{}, nil, err
 	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
-		return version{}, nil, media.Item{}, nil, err
+		return media.Item{}, nil, err
 	}
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if errors.Is(err, media.ErrNotFound) {
-		return version{}, nil, media.Item{}, nil, ErrNoDownload
+		return media.Item{}, nil, ErrNoDownload
 	} else if err != nil {
-		return version{}, nil, media.Item{}, nil, err
+		return media.Item{}, nil, err
 	}
 	if m.Meta[forkMeta] != nil {
-		return version{}, nil, media.Item{}, nil, ErrNotReady
+		return media.Item{}, nil, ErrNotReady
 	}
-	return v, k, item, m, nil
+	return item, m, nil
 }
 
 // marked are the pages (from 0) of v's pages its kind's watermark marks for

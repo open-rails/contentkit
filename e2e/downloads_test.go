@@ -26,6 +26,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
@@ -208,7 +209,7 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 		Anonymous: []versions.Quota{{Limit: 2, Per: time.Hour}},
 		User:      []versions.Quota{{Limit: 3, Per: time.Hour}},
 		Tiers:     []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 4, Per: time.Hour}}}},
-		TTL:       3 * time.Second})
+		TTL:       10 * time.Second})
 	free := d.content("movie", "Night Train: Episode 2", access.Rule{Level: access.Public})
 	premium := d.content("movie", "Locked Movie", access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}})
 	empty := d.content("movie", "Nothing Yet", access.Rule{Level: access.Public})
@@ -228,7 +229,7 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 
 	got := d.file("", free)
 	name := "Night Train: Episode 2 [" + free.Versions[0].Code + "].mkv"
-	if got.Name != name || got.Type != "video/x-matroska" || got.Size != int64(len(original)) || time.Until(got.ExpiresAt) > 3*time.Second {
+	if got.Name != name || got.Type != "video/x-matroska" || got.Size != int64(len(original)) || time.Until(got.ExpiresAt) > 10*time.Second {
 		t.Fatalf("file download %+v", got)
 	}
 	status, body, hdr := d.fetch(got.URL)
@@ -420,6 +421,12 @@ func TestBookDownloadsMarkTheWatermarkedPages(t *testing.T) {
 	theirs := d.content("book", "Theirs", premium)
 	free := d.content("book", "Free", access.Rule{Level: access.Public})
 	join(free)
+	// The public model says the book downloads, never which pages it marks.
+	var model kindsroute.ContentModel
+	d.f.want(http.StatusOK, "", "GET", "/kinds", nil, &model)
+	if b := model.Kinds["book"].Download; b == nil || b.Watermark != nil {
+		t.Fatalf("the public model's book download %+v", b)
+	}
 	prepared := map[string][]byte{}
 	for _, c := range []catalog.Content{ours, theirs, free} {
 		prepared[c.ID] = d.pages(c, 8)

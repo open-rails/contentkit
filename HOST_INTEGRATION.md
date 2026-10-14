@@ -1281,8 +1281,8 @@ the host's periodic jobs. The worker migrates its schema itself.
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
     token of per hour (default 120 per account, 600 per anonymous IP;
     `Issuance.Redis` shares the count across replicas, else it is per
-    process). It is enforced in `Reader.Grant`, so reads, playlists and
-    `HostURL` routes all pass it; over the limit the read API answers 429
+    process). It is enforced in `Reader.Grant`, so reads and playlists
+    pass it (downloads have their own `media.downloads` quotas); over the limit the read API answers 429
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
     (`ErrRateLimited`). Opening the same item again within the hour is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
