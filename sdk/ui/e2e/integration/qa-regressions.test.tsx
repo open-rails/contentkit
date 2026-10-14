@@ -36,7 +36,8 @@ it("the content manager creates video content and opens an added version as a dr
   await user.click(within(versions).getByRole("button", { name: "Add version" }));
   await waitFor(() => expect(versions.querySelectorAll('[data-ckui="version-row"]')).toHaveLength(2), wait);
   const added = versions.querySelectorAll<HTMLElement>('[data-ckui="version-row"]')[1]!;
-  expect(within(added).getByText("Draft", { exact: true })).toBeInTheDocument();
+  expect(added.querySelector('[data-slot="badge"]')).toHaveTextContent("Draft");
+  expect(within(added).getByRole("switch", { name: "Draft" })).toBeChecked();
   expect(within(added).getByRole("button", { name: "Close" })).toHaveAttribute("aria-expanded", "true");
   const source = await within(added).findByLabelText("Video file", undefined, wait);
   expect(source).toHaveAttribute("accept", expect.stringContaining("video/mp4"));
@@ -63,7 +64,9 @@ it("an earlier visit's uploads return, reserve their names and are added beside 
   await waitFor(() => expect(container.querySelector('[data-ckui="pending-row"]')).toHaveTextContent("a.png"), wait);
   await user.upload(container.querySelector<HTMLInputElement>('[data-ckui="folder-add"] input')!, png("a.png", 81));
   await waitFor(() => expect(record.presigns.map((p) => p.path)).toEqual(["originals/a-2.png"]), wait);
-  await user.click(await screen.findByRole("button", { name: "Add 2" }, wait));
+  const add = await screen.findByRole("button", { name: "Add 2" }, wait);
+  await waitFor(() => expect(add).toBeEnabled(), wait);
+  await user.click(add);
   await waitFor(() => expect(container.querySelectorAll('[data-ckui="upload-row"]')).toHaveLength(2), wait);
   expect(record.commits[0]!.map((op) => [op.op, op.path])).toEqual([["put", "originals/a-2.png"], ["attach", "originals/a.png"]]);
   expect(container.querySelector('[data-ckui="pending-row"]')).toBeNull();
@@ -99,7 +102,8 @@ it("earlier unattached uploads count toward the folder's upload cap", async () =
 
 it("staff statistics expose missing view collection and still rank comments; readers see their own totals", async () => {
   const c = client(h, cfg, staff);
-  const blog = await c.contents.create({ kind: "blog", text: { en: { title: "QA statistics" } } });
+  const title = `QA statistics ${crypto.randomUUID()}`;
+  const blog = await c.contents.create({ kind: "blog", text: { en: { title } } });
   await c.contents.publish(blog.id);
   const author = await h.user();
   const reader = client(h, cfg, author);
@@ -109,7 +113,7 @@ it("staff statistics expose missing view collection and still rank comments; rea
   await waitFor(() => expect(screen.getAllByText("View statistics aren't available on this site.")).toHaveLength(2), wait);
   await user.click(screen.getByRole("combobox", { name: "Ranked by" }));
   await user.click(await screen.findByRole("option", { name: "Comments" }));
-  expect(await screen.findByRole("link", { name: "QA statistics" }, wait)).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: title }, wait)).toBeInTheDocument();
   dashboard.unmount();
   const own = await reader.stats.mine();
   expect(own.comments).toBe(1);
