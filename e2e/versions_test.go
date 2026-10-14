@@ -2,12 +2,14 @@ package e2e
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 )
@@ -24,6 +26,29 @@ func versionsScenario(t *testing.T, w *world, f *server, staff, ownerID, owner, 
 	f.want(http.StatusOK, staff, "POST", "/contents/"+made.ID+"/publish", catalog.PublishInput{}, &made)
 	book, v1, v2 := made.ID, made.Versions[0].ID, made.Versions[1].ID
 	missing := uuid.Must(uuid.NewV7()).String()
+	// Each version has a code of its own, unique within the book: a version
+	// read takes it, as does the codes route's ?v=; the page path stays the
+	// language page.
+	c1, c2 := made.Versions[0].Code, made.Versions[1].Code
+	if _, err := contenturl.ParseVersionCode(c1); err != nil || c1 == c2 || c2 == "" {
+		t.Fatalf("version codes %q %q", c1, c2)
+	}
+	var byCode catalog.Version
+	f.want(200, anon, "GET", "/contents/"+book+"/versions/"+strings.ToLower(c2), nil, &byCode)
+	if byCode.ID != v2 || byCode.Code != c2 {
+		t.Fatalf("version by code %+v", byCode)
+	}
+	f.want(404, anon, "GET", "/contents/"+book+"/versions/0000", nil, nil)
+	var resolved contenturl.Resolved
+	f.want(200, anon, "GET", "/codes/"+made.Code+"?v="+strings.ToLower(c2), nil, &resolved)
+	if resolved.VersionID != v2 || resolved.Path != "/en/b/"+made.Code+"/book" {
+		t.Fatalf("resolved with ?v= %+v", resolved)
+	}
+	resolved = contenturl.Resolved{}
+	f.want(200, anon, "GET", "/codes/"+made.Code+"?lang=ja&v=nope", nil, &resolved)
+	if resolved.VersionID != "" || resolved.Path != "/ja/b/"+made.Code+"/book" {
+		t.Fatalf("an unknown ?v= names no version %+v", resolved)
+	}
 	path := "/contents/" + book + "/versions/" + v1
 	var pending versions.Pending
 	f.want(202, anon, "GET", path+"/reader", nil, &pending)

@@ -89,7 +89,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 |---|---|---|---|---|---|
 | GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
 | GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state. Query: `language`. |
-| GET | `/v1/contents/{id}/versions/{vid}` | public | — | 200 `Version` | One version of a content item as the viewer sees it, with its segments and access decision. Query: `language`. |
+| GET | `/v1/contents/{id}/versions/{vid}` | public | — | 200 `Version` | One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code. Query: `language`. |
 | GET | `/v1/manage/contents` | public | — | 200 `Content[]` | Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit. Query: `kind`, `state`, `owner_group`, `q`, `language`, `limit`, `offset`. |
 | POST | `/v1/contents` | public | `ContentInput` | 201 `Content` | Creates a content item as a draft. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it. |
 | PATCH | `/v1/contents/{id}` | public | `ContentPatch` | 200 `Content` | Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only. |
@@ -134,7 +134,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
+| GET | `/v1/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. Query: `lang`, `v`. |
 | POST | `/v1/codes/aliases` | open | `AliasLookup` | 200 `AliasResults` | Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: found, not_found (unknown or hidden) or gone; at most 100. Query: `lang`. |
 
 ## Groups: listings, pages, writes and memberships (`/v1`)

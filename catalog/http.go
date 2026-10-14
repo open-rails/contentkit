@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
@@ -39,7 +41,7 @@ var routes = []httpapi.Route[*Store]{
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGet)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:   "One version of a content item as the viewer sees it, with its segments and access decision.",
+		Doc:   "One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code.",
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGetVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/contents", Resource: "contents", Auth: httpapi.Public,
@@ -264,16 +266,7 @@ func (s *Store) requestLanguage(r *http.Request) string {
 	if l := r.URL.Query().Get("language"); l != "" {
 		return l
 	}
-	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
-		tag, _, _ := strings.Cut(strings.TrimSpace(part), ";")
-		tag = strings.ToLower(tag)
-		for _, l := range s.cfg.Languages {
-			if tag == l || strings.HasPrefix(tag, l+"-") {
-				return l
-			}
-		}
-	}
-	return ""
+	return contenturl.AcceptLanguage(s.cfg.Languages, r.Header.Get("Accept-Language"))
 }
 
 // respond answers the item as the actor now sees it.
@@ -352,17 +345,21 @@ func (s *Store) handleGetVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if got[0] != nil {
-		for _, ver := range got[0].Versions {
-			if ver.ID == r.PathValue("vid") {
-				got[0].Versions = []Version{ver}
-				if err := s.fillStanding(r.Context(), v.actor, got); err != nil {
-					writeErr(w, err)
-					return
-				}
-				writeJSON(w, http.StatusOK, got[0].Versions[0])
+	if c := got[0]; c != nil {
+		vid := r.PathValue("vid")
+		code, _ := contenturl.ParseVersionCode(vid)
+		i := slices.IndexFunc(c.Versions, func(v Version) bool { return v.ID == vid })
+		if i < 0 && code != "" {
+			i = slices.IndexFunc(c.Versions, func(v Version) bool { return v.Code == string(code) })
+		}
+		if i >= 0 {
+			c.Versions = c.Versions[i : i+1]
+			if err := s.fillStanding(r.Context(), v.actor, got); err != nil {
+				writeErr(w, err)
 				return
 			}
+			writeJSON(w, http.StatusOK, c.Versions[0])
+			return
 		}
 	}
 	writeErr(w, ErrNotFound)

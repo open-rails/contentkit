@@ -21,7 +21,10 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   segments, names, group text, edges, poll options); omitted ones stay.
   Versions not listed stay. `memberships` replace a content item's
   memberships in the group `kinds` they name.
-- Content `code` and group `code` keep an existing content code.
+- Content `code` and group `code` keep an existing content code; a version's
+  `code` keeps its version code (`?v=`). Without one, a stored record keeps
+  its code and a new one is assigned one; a code another record holds is a
+  conflict.
 - `aliases` record the old site's identifiers; hosts 301 old URLs through
   `POST /v1/codes/aliases` (`Client.PostCodesAliases`), which answers each
   `(source, kind, key)` with `found` (link, canonical path, locator),

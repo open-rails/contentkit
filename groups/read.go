@@ -40,8 +40,8 @@ type ListOptions struct {
 	// anything else ("#").
 	Letter string
 	// Language resolves names, sort keys and slugs, scopes counts and
-	// prefixes paths. Empty: names in the first configured language, counts
-	// over every language, unprefixed paths.
+	// prefixes paths. Empty: names and paths in the first configured
+	// language, counts over every language.
 	Language string
 	// ContentKind scopes counts to one content kind; empty sums them.
 	ContentKind string
@@ -267,7 +267,7 @@ func (s *Store) path(kind, code, slug, language string) string {
 	if route == "" || code == "" {
 		return ""
 	}
-	return contenturl.Path(contenturl.Prefix(s.cfg.Languages, language), route, contenturl.Code(code), slug)
+	return contenturl.Path(s.cfg.Languages, language, route, contenturl.Code(code), slug)
 }
 
 // List pages active groups with their display name, code, path, cover,
