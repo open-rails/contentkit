@@ -1,12 +1,13 @@
 import { FavouriteIcon, LockIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useCallback, useContext, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useContext, useState, type MouseEvent, type ReactNode } from "react";
 import type { Card, CardAccess } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
 import { Badge } from "#ckui/ui/badge";
+import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
 import { formatDate, RelativeTime } from "../social/parts.js";
 import { GroupAvatar, GroupLink, labelOf, type GroupLike, type Labels } from "../groups/parts.js";
@@ -79,7 +80,7 @@ function useLink(url: string | undefined, before?: () => void) {
   );
 }
 
-/** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
+/** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
 export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
   const m = useMessages();
   const { t } = m;
@@ -99,8 +100,9 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
     minutes ? m.plural("contents.minutes", minutes) : null,
   ].filter(Boolean);
   const title = card.title || card.code;
+  const [article, setArticle] = useState<HTMLElement | null>(null);
   return (
-    <article className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+    <article ref={setArticle} className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg">
         <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div className={shape === "landscape" ? "aspect-video" : "aspect-[3/4]"}>
@@ -113,6 +115,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
               fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
             />
           </div>
+          {v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
           {lock && (
             <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
               <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />

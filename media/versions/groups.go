@@ -233,6 +233,24 @@ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant
 	return out, nil
 }
 
+// Ladder is the folder of the kind's first HLS ladder (a read's hls entry),
+// "" when it streams none or one per upload.
+func (s *Service) Ladder(kind string) string {
+	k, err := s.reg.Kind(kind)
+	if err != nil {
+		return ""
+	}
+	for _, p := range k.Private {
+		if p.HLS != nil {
+			if strings.Contains(p.To, "{") {
+				return ""
+			}
+			return p.To
+		}
+	}
+	return ""
+}
+
 // GroupCovers is Covers for the groups API's cards and pages
 // (groups.Options.Covers).
 func (s *Service) GroupCovers() groups.CoverResolver { return groupCovers{s} }

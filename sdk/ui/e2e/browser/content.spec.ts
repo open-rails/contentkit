@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { shared } from "../support/fixtures.ts";
 import { contentKit, seedContent } from "../support/seed.ts";
 import { admin, harness, page as demo, screenshots as dir } from "./pages.ts";
 
@@ -58,6 +59,22 @@ for (const theme of ["light", "dark"] as const) {
     await expect(titles).toHaveText([`Cherry ${r} (Premium)`]);
   });
 }
+
+test("listing: a video card previews its stream muted on hover", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "hover needs a fine pointer");
+  const f = shared();
+  await page.goto(demo("content.html", f.viewer, { view: "listing", kind: "abr" }));
+  const card = page.locator(`[data-ckui=content-card][data-id="${f.abr.id}"]`);
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  const manifest = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith(`/media/abr/${f.abr.id}/versions/${f.abr.version}/hls/hls/master.m3u8`));
+  await card.hover();
+  expect((await manifest).status()).toBe(200);
+  const preview = card.locator("[data-ckui=hover-preview]");
+  await expect(preview).toHaveAttribute("data-playing", "", { timeout: 30_000 });
+  expect(await preview.evaluate((v: HTMLVideoElement) => v.muted)).toBe(true);
+  await page.mouse.move(0, 0);
+  await expect(preview).not.toHaveAttribute("data-playing");
+});
 
 test("rails: a featured group in its order and windows, a list, no continue watching without the signal plane", async ({ page }, info) => {
   const ck = await staffClient();

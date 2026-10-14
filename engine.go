@@ -513,7 +513,7 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 		o.Candidates = nil
 	}
 	if e.media != nil {
-		o.Covers = e.media.versions
+		o.Media = e.media.versions
 	}
 	if e.offers != nil {
 		o.Sales = e.offers
