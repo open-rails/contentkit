@@ -17,86 +17,77 @@ import (
 type kindState struct {
 	ns       string
 	patterns []pattern // parallel to Uploads
-	content  *Kind     // a Versions kind's content-level item, nil without Content uploads
-	version  *Kind     // a Versions kind's versions
+	version  *Kind     // a Versions kind's versions: without its Body uploads
+	base     string    // a body kind's content kind
 	of       *Kind     // a published kind's Publish kind
 }
 
 // Of is a published kind's Publish kind, nil for any other.
 func (k *Kind) Of() *Kind { return k.of }
 
-// VersionKind is a Versions kind as its versions see it: without the
-// content-level uploads.
+// VersionKind is a Versions kind as its version items see it: without its
+// Body uploads, which live in the body item.
 func (k *Kind) VersionKind() *Kind { return k.version }
 
-// levels splits a Versions kind into its content-level and version views
-// and derives its published kind (nil without Publish).
+// Versioned reports a kind whose items are versions: a Versions kind and its
+// body kind.
+func (k *Kind) Versioned() bool { return k.Versions || k.base != "" }
+
+// levels derives a Versions kind's version view, without its Body uploads
+// and what they feed, and its published kind (nil without Publish).
 func (k *Kind) levels() (*Kind, error) {
 	if !k.Versions {
-		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Content }) || k.Publish != nil {
-			return nil, errors.New("Content uploads and Publish need Versions")
+		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Body }) || k.Publish != nil {
+			return nil, errors.New("Body uploads and Publish need Versions")
 		}
 		return nil, nil
 	}
-	content := map[string]bool{}
-	for _, u := range k.Uploads {
-		content[u.Path] = u.Content
-	}
-	views := [2]Kind{}
-	for i := range views {
-		views[i] = Kind{Name: k.Name, Namespace: k.Namespace, KeepOriginals: k.KeepOriginals, ServeOriginals: k.ServeOriginals,
-			Defaults: k.Defaults}
-		views[i].ns = k.ns
-	}
-	views[1].Versions, views[1].Publish, views[1].Download = true, k.Publish, k.Download
 	if err := k.validateDownloads(); err != nil {
 		return nil, err
 	}
-	at := func(content bool) *Kind {
-		if content {
-			return &views[0]
-		}
-		return &views[1]
-	}
+	body := map[string]bool{}
 	for _, u := range k.Uploads {
-		v := at(u.Content)
-		v.Uploads = append(v.Uploads, u)
+		body[u.Path] = u.Body
+	}
+	v := &Kind{Name: k.Name, Namespace: k.Namespace, Versions: true, Publish: k.Publish, Download: k.Download, KeepOriginals: k.KeepOriginals,
+		ServeOriginals: k.ServeOriginals, Defaults: k.Defaults}
+	v.ns = k.ns
+	for _, u := range k.Uploads {
+		if !u.Body {
+			v.Uploads = append(v.Uploads, u)
+		}
 	}
 	for _, p := range k.Private {
-		v := at(content[p.From])
-		v.Private = append(v.Private, p)
+		if !body[p.From] {
+			v.Private = append(v.Private, p)
+		}
 	}
 	for _, d := range k.Downloads {
-		level := content[d]
+		from := d
 		if p := k.private(d); p != nil {
-			level = content[p.From]
+			from = p.From
 		}
-		v := at(level)
+		if body[from] {
+			return nil, fmt.Errorf("downloads: %q is a body image's", d)
+		}
 		v.Downloads = append(v.Downloads, d)
 	}
 	for _, p := range k.Public {
-		v := at(content[p.From])
-		v.Public = append(v.Public, p)
-	}
-	for i, level := range []string{"content", "version"} {
-		if len(views[i].Uploads) == 0 {
-			continue
-		}
-		if err := views[i].validate(); err != nil {
-			return nil, fmt.Errorf("%s level: %w", level, err)
+		if !body[p.From] {
+			v.Public = append(v.Public, p)
 		}
 	}
-	if len(views[0].Uploads) > 0 {
-		k.content = &views[0]
-	}
-	if len(views[1].Uploads) == 0 {
+	if len(v.Uploads) == 0 {
 		return nil, errors.New("a Versions kind needs uploads of its versions")
 	}
-	k.version = &views[1]
+	if err := v.validate(); err != nil {
+		return nil, fmt.Errorf("versions: %w", err)
+	}
+	k.version = v
 	if k.Publish == nil {
 		return nil, nil
 	}
-	pub, err := k.version.published()
+	pub, err := v.published()
 	if err != nil {
 		return nil, fmt.Errorf("Publish: %w", err)
 	}

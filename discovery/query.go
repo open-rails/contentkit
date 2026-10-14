@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -486,9 +487,9 @@ type pick struct {
 	content, version string
 }
 
-// preference orders a content's matching versions: the display language's
-// first, then position.
-const preference = `(@d_display::text = ANY(f.languages)) DESC, f.position, f.version_id`
+// preference orders a content's matching versions by the default-version
+// rule in the display language (internal/edition).
+var preference = edition.Order("f", "@d_display::text")
 
 // page lists one sorted page of contents and the cursor after it.
 func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit int) ([]pick, string, error) {

@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -24,12 +25,15 @@ import (
 )
 
 // Card is one content item as a grid shows it, with the version that fits
-// the reader best. Of a version the reader does not open it shows what its
-// kind's locked view does (kinds.Locked).
+// the reader best: of the versions the query matches, the one the display
+// language opens by default (internal/edition), whose cover it shows. Of a
+// version the reader does not open it shows what its kind's locked view does
+// (kinds.Locked).
 type Card struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
-	// Code and Path are its page: /{lang}/{route}/{code}/{slug}.
+	// Code and Path are its page, /{lang}/{route}/{code}/{slug}, which opens
+	// the card's version: with ?v= when that is not the page's default.
 	Code string `json:"code"`
 	Path string `json:"path"`
 	// Title is in Language: the display language, else a fallback.
@@ -181,10 +185,19 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 	for i, p := range picks {
 		vids[i] = p.version
 	}
+	// The page opens the version its language does by default among those
+	// the reader may see; another one needs ?v=.
+	listed, largs := q.viewer.Shown("g")
+	args := pgx.NamedArgs{"d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages(), "d_user": person(q.reader.Actor)}
+	for k, v := range largs {
+		args[k] = v
+	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
  f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
- coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
+ coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
+ coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
+  ORDER BY %[9]s LIMIT 1) = f.version_id, true)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
 JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.vid
 JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
@@ -193,8 +206,8 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AN
 LEFT JOIN LATERAL (SELECT x.title, x.language FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
 LEFT JOIN %[6]s vt ON vt.tenant_id = v.tenant_id AND vt.version_id = v.id AND vt.language = t.language
-ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators),
-		pgx.NamedArgs{"d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages(), "d_user": person(q.reader.Actor)})
+ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text")),
+		args)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +216,10 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var pop []byte
 		var code string
 		var baseline int64
+		var isDefault bool
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
+			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator, &isDefault)
 		if err != nil {
 			return c, err
 		}
@@ -219,6 +233,9 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
 			c.Path = contenturl.Path(s.o.Kinds.Languages, q.display, route, contenturl.Code(code), c.slug)
+			if !isDefault {
+				c.Path = contenturl.Versioned(c.Path, contenturl.VersionCode(c.Version.Code))
+			}
 		}
 		if c.Attributes == nil {
 			c.Attributes = map[string]any{}
@@ -325,7 +342,7 @@ func (s *Service) covers(ctx context.Context, rows []cardRow) error {
 	var at []int
 	for i := range rows {
 		if s.shows(&rows[i], kinds.ShowCover) {
-			asked, at = append(asked, versions.CoverOf{Kind: rows[i].Kind, ID: rows[i].ID}), append(at, i)
+			asked, at = append(asked, versions.CoverOf{Kind: rows[i].Kind, ID: rows[i].ID, Version: rows[i].Version.ID}), append(at, i)
 		}
 	}
 	if len(asked) == 0 {

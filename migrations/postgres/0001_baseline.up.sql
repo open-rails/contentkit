@@ -120,7 +120,6 @@ CREATE TABLE content_items (
     restrictions text[] DEFAULT '{}'::text[] NOT NULL,
     attributes jsonb DEFAULT '{}'::jsonb NOT NULL,
     owner_group_id text,
-    cover jsonb,
     moderation text DEFAULT 'approved'::text NOT NULL,
     moderation_reason text,
     moderation_verdict jsonb,
@@ -204,6 +203,7 @@ CREATE TABLE content_versions (
     height integer,
     has_audio boolean DEFAULT false NOT NULL,
     ordinal integer,
+    cover jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
@@ -211,6 +211,7 @@ CREATE TABLE content_versions (
     CONSTRAINT content_versions_code_key UNIQUE (tenant_id, content_id, code),
     CONSTRAINT content_versions_code_check CHECK (((code ~ '^[0-9A-HJKMNP-TV-Z]{4}$'::text) AND (code ~ '[A-Z]'::text))),
     CONSTRAINT content_versions_access_check CHECK (((access IS NULL) OR (jsonb_typeof(access) = 'object'::text))),
+    CONSTRAINT content_versions_cover_check CHECK (((cover IS NULL) OR (jsonb_typeof(cover) = 'object'::text))),
     CONSTRAINT content_versions_languages_check CHECK ((cardinality(languages) > 0)),
     CONSTRAINT content_versions_state_check CHECK ((state = ANY (ARRAY['draft'::text, 'published'::text, 'deleted'::text]))),
     CONSTRAINT content_versions_tenant_id_content_id_fkey FOREIGN KEY (tenant_id, content_id) REFERENCES content_items(tenant_id, id) ON DELETE CASCADE

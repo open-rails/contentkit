@@ -44,7 +44,6 @@ type ImportContent struct {
 	Restrictions []string
 	Attributes   map[string]any
 	OwnerGroupID string
-	Cover        string
 	Creators     []Creator
 	Text         map[string]Text
 	Versions     []ImportVersion
@@ -69,10 +68,12 @@ type ImportVersion struct {
 	Access      *access.Rule
 	Attributes  map[string]any
 	Ordinal     *int
-	Text        map[string]VersionText
-	Segments    []Segment
-	CreatedAt   *time.Time
-	UpdatedAt   *time.Time
+	// Cover selects one of the version's cover uploads (i-{uuid}).
+	Cover     string
+	Text      map[string]VersionText
+	Segments  []Segment
+	CreatedAt *time.Time
+	UpdatedAt *time.Time
 }
 
 // stamped is a stored item's or version's state and times.
@@ -97,7 +98,6 @@ type importItemRow struct {
 	Restrictions []string        `json:"restrictions"`
 	Attributes   map[string]any  `json:"attributes"`
 	OwnerGroupID *string         `json:"owner_group_id"`
-	Cover        *Cover          `json:"cover"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 }
@@ -117,6 +117,7 @@ type importVersionRow struct {
 	Access      json.RawMessage `json:"access"`
 	Attributes  map[string]any  `json:"attributes"`
 	Ordinal     *int            `json:"ordinal"`
+	Cover       *Cover          `json:"cover"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 }
@@ -304,9 +305,6 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			row.OwnerGroupID = &c.OwnerGroupID
 			owners = append(owners, c.OwnerGroupID)
 		}
-		if c.Cover != "" {
-			row.Cover = &Cover{Image: c.Cover}
-		}
 		row.CreatedAt, row.UpdatedAt = importStamps(c.CreatedAt, c.UpdatedAt, oldp, now)
 		b.items = append(b.items, row)
 		if c.Code != "" {
@@ -346,6 +344,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				State: v.State, Attributes: v.Attributes, Ordinal: v.Ordinal}
 			if v.Code != "" {
 				vr.Code = &v.Code
+			}
+			if v.Cover != "" {
+				vr.Cover = &Cover{Image: v.Cover}
 			}
 			if k.Versions.Hidden {
 				switch {
@@ -399,20 +400,20 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
 	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, listing, comments,
- view_baseline, access, restrictions, attributes, owner_group_id, cover, created_at, updated_at)
+ view_baseline, access, restrictions, attributes, owner_group_id, created_at, updated_at)
  SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.listing, r.comments, r.view_baseline, r.access, r.restrictions,
-  r.attributes, r.owner_group_id, r.cover, r.created_at, r.updated_at
+  r.attributes, r.owner_group_id, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, state text, publish_at timestamptz, published_at timestamptz, deleted_at timestamptz,
-  listing text, comments text, view_baseline bigint, access jsonb, restrictions text[], attributes jsonb, owner_group_id text, cover jsonb,
+  listing text, comments text, view_baseline bigint, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
   created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at,
   deleted_at = EXCLUDED.deleted_at, listing = EXCLUDED.listing, comments = EXCLUDED.comments, view_baseline = EXCLUDED.view_baseline,
   access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_group_id = EXCLUDED.owner_group_id,
-  cover = EXCLUDED.cover, created_at = EXCLUDED.created_at
+  created_at = EXCLUDED.created_at
  WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.listing, c.comments, c.view_baseline, c.access, c.restrictions, c.attributes,
-  c.owner_group_id, c.cover, c.created_at)
+  c.owner_group_id, c.created_at)
   IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.listing, EXCLUDED.comments,
-  EXCLUDED.view_baseline, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.cover, EXCLUDED.created_at)
+  EXCLUDED.view_baseline, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at)
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
 		return nil, nil, err
 	}
@@ -448,18 +449,20 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	if err := run(changed, `INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
- published_at, deleted_at, access, attributes, ordinal, created_at, updated_at)
+ published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at)
  SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
-  r.access, r.attributes, r.ordinal, r.created_at, r.updated_at
+  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text, position int, languages text[], traits text[], label text, state text,
-  publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, created_at timestamptz, updated_at timestamptz)
+  publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, cover jsonb, created_at timestamptz,
+  updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
-  access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, created_at = EXCLUDED.created_at,
+  access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = EXCLUDED.cover, created_at = EXCLUDED.created_at,
   updated_at = EXCLUDED.updated_at, revision = v.revision + 1
- WHERE (v.position, v.languages, v.traits, v.label, v.state, v.publish_at, v.published_at, v.deleted_at, v.access, v.attributes, v.ordinal, v.created_at)
+ WHERE (v.position, v.languages, v.traits, v.label, v.state, v.publish_at, v.published_at, v.deleted_at, v.access, v.attributes, v.ordinal, v.cover,
+  v.created_at)
   IS DISTINCT FROM (EXCLUDED.position, coalesce(EXCLUDED.languages, v.languages), EXCLUDED.traits, EXCLUDED.label, EXCLUDED.state, EXCLUDED.publish_at,
-  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, EXCLUDED.created_at)
+  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, EXCLUDED.cover, EXCLUDED.created_at)
  RETURNING v.content_id`, s.tenant, data(b.versions)); err != nil {
 		return nil, nil, err
 	}
@@ -652,9 +655,6 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 			return invalid("owner group: %v", err)
 		}
 	}
-	if c.Cover != "" && !media.ValidNamed(c.Cover) {
-		return invalid("cover must be an inline image name (i-{uuid})")
-	}
 	if c.Code != "" && !codes.ValidCode(c.Code) {
 		return invalid("code %q is not a content code", c.Code)
 	}
@@ -690,6 +690,9 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
+	}
+	if v.Cover != "" && !media.ValidNamed(v.Cover) {
+		return invalid("cover must be an image name (i-{uuid})")
 	}
 	if v.Code != "" {
 		code, err := contenturl.ParseVersionCode(v.Code)

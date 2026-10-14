@@ -100,7 +100,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 	for i := range page.Groups {
 		shows[i] = cardShown(&page.Groups[i])
 	}
-	if err := s.fill(ctx, shows); err != nil {
+	if err := s.fill(ctx, shows, opts.Language); err != nil {
 		return out, err
 	}
 	for _, g := range page.Groups {

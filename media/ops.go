@@ -56,7 +56,7 @@ type Op struct {
 }
 
 // CopyFrom names an upload of an item of the same kind, including this item:
-// of a Versions kind, one version's, or ("") its content-level item's. Into
+// of a versioned kind, one version's. Into
 // a published kind's item, it names a file of a version of the kind it
 // publishes: an upload, or a finished output, which comes alone, as an upload.
 type CopyFrom struct {

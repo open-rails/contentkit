@@ -17,9 +17,11 @@ const CoverPreset = "cover"
 const AvatarPreset = "avatar"
 
 // BodySuffix names a content kind's body kind: {Name}.body holds each
-// content item's body images, one item per content ({kind}.body, id), which
-// shows only to viewers who open the content. A locked item's body images
-// never reach a viewer who has not opened it; an open item's keep public files.
+// version's body images (its Body uploads), one item per version ({kind}.body,
+// content, version), which shows only to viewers who open the version. A
+// locked version's body images never reach a viewer who has not opened it; an
+// open version's keep public files. Versions share no files: each holds its
+// own copy of its content's body images.
 const BodySuffix = ".body"
 
 // BodyOf is the content kind of a body kind.
@@ -130,17 +132,19 @@ func GroupKind(name string, gk kinds.GroupKind) Kind {
 	return k
 }
 
-// bodyKind is a content kind's body kind (Upload.Named and Content images
-// with a public preset): its named content images, their
-// public presets, and for each a private image the item token serves to a
-// viewer who opened the content while it has no public files.
-func bodyKind(k Kind) (Kind, bool) {
+// bodyKind is a content kind's body kind: its Body uploads, their public
+// presets, and for each a private image the item token serves to a viewer
+// who opened the version while it has no public files.
+func bodyKind(k Kind) (Kind, bool, error) {
 	body := Kind{Name: k.Name + BodySuffix, KeepOriginals: k.KeepOriginals}
 	for _, u := range k.Uploads {
-		if !u.Content || !u.Named || !slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == u.Path }) {
+		if !u.Body {
 			continue
 		}
-		u.Content = false
+		if !u.Named || !slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == u.Path && p.First == 0 }) {
+			return Kind{}, false, fmt.Errorf("body upload %q needs Named and a public preset", u.Path)
+		}
+		u.Body = false
 		body.Uploads = append(body.Uploads, u)
 		for _, p := range k.Public {
 			if p.From != u.Path || p.First > 0 {
@@ -154,5 +158,5 @@ func bodyKind(k Kind) (Kind, bool) {
 			body.Private = append(body.Private, Private{Name: p.Name + "-open", From: p.From, To: p.Name + "-open/{name}.webp", Image: &img})
 		}
 	}
-	return body, len(body.Uploads) > 0
+	return body, len(body.Uploads) > 0, nil
 }

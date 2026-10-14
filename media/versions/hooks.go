@@ -16,11 +16,11 @@ import (
 
 type resolver struct{ s *Service }
 
-// Resolve decides media reads. A content-level item shows like its content,
-// its public files only; a body item ({kind}.body) only to its content's
-// openers and editors, every file. A version's item shows like the version; its
+// Resolve decides media reads. A version's item shows like the version; its
 // private files open only for a kind that publishes nothing, since a
 // publishing kind's originals reach viewers through published items alone.
+// A version's body item ({kind}.body) shows only to the version's openers
+// and editors, every file.
 // A published item shows while its publication is current and its pages
 // are released, and opens like its version, or within the free segments.
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
@@ -30,7 +30,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
 		switch {
-		case err != nil || ref.TenantID != k.NS():
+		case err != nil || ref.TenantID != k.NS() || k.Versioned() && ref.Version() == "":
 		case s.bodyOf(k.Name) != "":
 			bodies = append(bodies, ref)
 		case k.Versions:
@@ -130,7 +130,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		}
 		k, _ := s.reg.Kind(ref.ContentKind)
 		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
-			Accessible: r.Accessible && ref.Version() != "" && k.VersionKind().Publish == nil}
+			Accessible: r.Accessible && k.VersionKind().Publish == nil}
 	}
 	return nil
 }
@@ -145,24 +145,24 @@ func (s *Service) bodyOf(kind string) string {
 }
 
 // resolveBodies decides body items: one shows, and opens, only to a viewer
-// who opens its content or edits it, so a locked item's body images reach
+// who opens its version or edits it, so a locked version's body images reach
 // nobody else and have public files only while anyone opens it.
 func (s *Service) resolveBodies(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
 	if len(refs) == 0 {
 		return nil
 	}
-	contents := make([]contentref.ContentRef, len(refs))
+	versions := make([]contentref.ContentRef, len(refs))
 	for i, ref := range refs {
-		contents[i] = contentref.New(ref.TenantID, s.bodyOf(ref.ContentKind), ref.ContentID)
+		versions[i] = contentref.New(ref.TenantID, s.bodyOf(ref.ContentKind), ref.ContentID).WithVersion(ref.Version())
 	}
-	found, err := s.existing(ctx, contents)
+	found, err := s.existing(ctx, versions)
 	if err != nil || len(found) == 0 {
 		return err
 	}
 	var asked []contentref.ContentRef
-	for _, c := range contents {
-		if _, ok := found[c.Key()]; ok && c.Version() == "" {
-			asked = append(asked, c)
+	for _, v := range versions {
+		if _, ok := found[v.Key()]; ok && v.Version() != "" {
+			asked = append(asked, v)
 		}
 	}
 	res, err := s.o.Resolver.Resolve(ctx, asked, actor)
@@ -170,8 +170,8 @@ func (s *Service) resolveBodies(ctx context.Context, refs []contentref.ContentRe
 		return err
 	}
 	for i, ref := range refs {
-		r, ok := res[contents[i].Key()]
-		if ref.ContentVersionID != nil || !ok || !r.Visible || !r.Accessible && !r.Editor {
+		r, ok := res[versions[i].Key()]
+		if ref.Version() == "" || !ok || !r.Visible || !r.Accessible && !r.Editor {
 			continue
 		}
 		out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: r.Editor, Owner: r.Owner}
@@ -282,12 +282,12 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case k.Of() != nil:
 		return media.UploadGrant{}, nil
 	case s.bodyOf(k.Name) != "":
-		// A body item is written by its content's editors.
-		if t.Ref.ContentVersionID != nil {
+		// A body item is written by its version's editors.
+		if t.Ref.Version() == "" {
 			return media.UploadGrant{}, nil
 		}
 		base, _ := s.reg.Kind(s.bodyOf(k.Name))
-		t.Ref = contentref.New(t.Ref.TenantID, base.Name, t.Ref.ContentID)
+		t.Ref, t.Path = contentref.New(t.Ref.TenantID, base.Name, t.Ref.ContentID).WithVersion(t.Ref.Version()), ""
 		return s.canEdit(ctx, actor, base, t)
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)

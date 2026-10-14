@@ -5,8 +5,9 @@
 // are updated and nothing is duplicated. A record that fails is reported and
 // the rest are written; sending it again resumes. Counts, group counts and
 // search documents are rebuilt by the engine's jobs, which an import queues.
-// Media is not imported here: importers ingest files into each version's
-// folder through the media upload API (docs/import.md).
+// Media is not imported here: importers ingest files, covers and body images
+// included, into each version's folders through the media upload API
+// (docs/import.md).
 package importer
 
 import (
@@ -138,14 +139,12 @@ type ContentRecord struct {
 	// counts; popularity and trending never see it.
 	ViewBaseline int64 `json:"view_baseline,omitempty"`
 	// Access defaults to public. A group rule names the group's id.
-	Access       *access.Rule   `json:"access,omitempty"`
-	Restrictions []string       `json:"restrictions,omitempty"`
-	Attributes   map[string]any `json:"attributes,omitempty"`
-	OwnerGroup   *Ref           `json:"owner_group,omitempty"`
-	// Cover is an inline image name of the item's media folder (i-{uuid}).
-	Cover    string                  `json:"cover,omitempty"`
-	Creators []catalog.Creator       `json:"creators,omitempty"`
-	Text     map[string]catalog.Text `json:"text,omitempty"`
+	Access       *access.Rule            `json:"access,omitempty"`
+	Restrictions []string                `json:"restrictions,omitempty"`
+	Attributes   map[string]any          `json:"attributes,omitempty"`
+	OwnerGroup   *Ref                    `json:"owner_group,omitempty"`
+	Creators     []catalog.Creator       `json:"creators,omitempty"`
+	Text         map[string]catalog.Text `json:"text,omitempty"`
 	// Versions: a kind with hidden versions takes none or one.
 	Versions  []VersionRecord `json:"versions,omitempty"`
 	Code      string          `json:"code,omitempty"`
@@ -164,17 +163,20 @@ type VersionRecord struct {
 	Traits    []string `json:"traits,omitempty"`
 	Label     string   `json:"label,omitempty"`
 	// State is published (the default), draft or deleted; times as ContentRecord's.
-	State       string                         `json:"state,omitempty"`
-	PublishAt   *time.Time                     `json:"publish_at,omitempty"`
-	PublishedAt *time.Time                     `json:"published_at,omitempty"`
-	DeletedAt   *time.Time                     `json:"deleted_at,omitempty"`
-	Access      *access.Rule                   `json:"access,omitempty"`
-	Attributes  map[string]any                 `json:"attributes,omitempty"`
-	Ordinal     *int                           `json:"ordinal,omitempty"`
-	Text        map[string]catalog.VersionText `json:"text,omitempty"`
-	Segments    []catalog.Segment              `json:"segments,omitempty"`
-	CreatedAt   *time.Time                     `json:"created_at,omitempty"`
-	UpdatedAt   *time.Time                     `json:"updated_at,omitempty"`
+	State       string         `json:"state,omitempty"`
+	PublishAt   *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt *time.Time     `json:"published_at,omitempty"`
+	DeletedAt   *time.Time     `json:"deleted_at,omitempty"`
+	Access      *access.Rule   `json:"access,omitempty"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+	Ordinal     *int           `json:"ordinal,omitempty"`
+	// Cover selects one of the version's cover uploads (i-{uuid}): a
+	// record's one legacy cover is uploaded to each of its versions.
+	Cover     string                         `json:"cover,omitempty"`
+	Text      map[string]catalog.VersionText `json:"text,omitempty"`
+	Segments  []catalog.Segment              `json:"segments,omitempty"`
+	CreatedAt *time.Time                     `json:"created_at,omitempty"`
+	UpdatedAt *time.Time                     `json:"updated_at,omitempty"`
 }
 
 // MembershipSet replaces a content item's memberships in the listed group

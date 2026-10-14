@@ -63,6 +63,7 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &importWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
+			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &recoverWorker{s: s}) },
 		} {
 			if err := add(cfg.Workers); err != nil {
@@ -139,8 +140,8 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	return outcome(w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
 }
 
-// publish brings v's pages publication, previews, its content's automatic
-// cover and playback to its media.
+// publish brings v's pages publication, previews, automatic cover and
+// playback to its media.
 func (s *Service) publish(ctx context.Context, t Target) error {
 	v, err := s.one(ctx, t)
 	if err != nil {
@@ -160,7 +161,7 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	if err := s.applyPreviews(ctx, k, t); err != nil {
 		return err
 	}
-	if err := s.applyCover(ctx, v.Kind, t.Content); err != nil {
+	if err := s.applyCover(ctx, k, t); err != nil {
 		return err
 	}
 	if k.Publish.Playback == "" {

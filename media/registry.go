@@ -29,7 +29,7 @@ type Registry struct {
 }
 
 // NewRegistry validates c and derives its kinds' body kinds (a Versions
-// kind with named content images: BodySuffix) and published kinds.
+// kind with Body uploads: BodySuffix) and published kinds.
 func NewRegistry(c Config) (*Registry, error) {
 	if !layout.ValidSegment(c.Namespace) {
 		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
@@ -54,7 +54,14 @@ func NewRegistry(c Config) (*Registry, error) {
 		if _, ok := BodyOf(k.Name); ok {
 			return nil, fmt.Errorf("media: kind %q: %s names a content kind's body kind", k.Name, BodySuffix)
 		}
-		if body, ok := bodyKind(k); k.Versions && ok {
+		if !k.Versions {
+			continue
+		}
+		body, ok, err := bodyKind(k)
+		if err != nil {
+			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
+		}
+		if ok {
 			kinds = append(kinds, body)
 		}
 	}
@@ -73,6 +80,9 @@ func NewRegistry(c Config) (*Registry, error) {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
 		k.ns = cmpOr(k.Namespace, c.Namespace)
+		if i >= len(c.Kinds) {
+			k.base, _ = BodyOf(k.Name)
+		}
 		pub, err := k.levels()
 		if err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
@@ -138,13 +148,13 @@ func (r *Registry) Namespaces() []string {
 	return out
 }
 
-// Ref is the ref of item id of kind, in the kind's namespace: a Versions
-// kind's content-level item.
+// Ref is the ref of item id of kind, in the kind's namespace: a kind whose
+// items are no versions.
 func (r *Registry) Ref(kind, id string) (contentref.ContentRef, error) {
 	return r.VersionRef(kind, id, "")
 }
 
-// VersionRef is the ref of version of a Versions kind's content id, or ("")
+// VersionRef is the ref of version of a versioned kind's content id, or ("")
 // Ref.
 func (r *Registry) VersionRef(kind, id, version string) (contentref.ContentRef, error) {
 	k, err := r.Kind(kind)
@@ -165,9 +175,9 @@ type Item struct {
 }
 
 // Item validates ref: a registered kind, its namespace and a UUIDv7 id. A
-// Versions kind's ref names a version (a UUIDv7) or its content-level item;
-// any other kind's has no version. Item.Kind is the kind as that item sees
-// it: a content-level item's uploads only, or a version's.
+// versioned kind's ref names a version (a UUIDv7): a content has no item of
+// its own; any other kind's has no version. Item.Kind is the kind as that
+// item sees it: a Versions kind's without its Body uploads.
 func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	k, err := r.Kind(ref.ContentKind)
 	if err != nil {
@@ -181,18 +191,17 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	}
 	view, version := k, ref.Version()
 	switch {
-	case !k.Versions && ref.ContentVersionID != nil:
+	case !k.Versioned() && ref.ContentVersionID != nil:
 		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q has no versions", ref, k.Name)
-	case k.Versions && version != "":
+	case k.Versioned() && version == "":
+		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q keeps its media in versions", ref, k.Name)
+	case k.Versioned():
 		if err := contentref.ValidateID(version); err != nil {
 			return Item{}, fmt.Errorf("media: invalid ref %s: version: %w", ref, err)
 		}
-		view = k.version
-	case k.Versions:
-		view = k.content
-	}
-	if view == nil {
-		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q has no uploads at that level", ref, k.Name)
+		if k.Versions {
+			view = k.version
+		}
 	}
 	return Item{ref: ref, kind: view, prefix: layout.Prefix(k.ns, k.Name, ref.ContentID, version)}, nil
 }

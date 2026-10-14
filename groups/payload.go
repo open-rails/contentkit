@@ -73,10 +73,10 @@ func cardShown(g *GroupCard) shown {
 	return shown{kind: g.Kind, id: g.ID, cover: g.Cover, avatar: &g.Avatar, access: &g.Access}
 }
 
-// fill resolves the covers and the user-owned groups' avatars of a page in
-// one call, and the sellable groups' sales, for the store's viewer, in one
-// more.
-func (s *Store) fill(ctx context.Context, list []shown) error {
+// fill resolves the covers (contents' in language) and the user-owned
+// groups' avatars of a page in one call, and the sellable groups' sales, for
+// the store's viewer, in one more.
+func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 	var asked []CoverOf
 	var put []func([]Rendition)
 	var sold []string
@@ -85,7 +85,7 @@ func (s *Store) fill(ctx context.Context, list []shown) error {
 		gk := s.cfg.GroupKinds[sh.kind]
 		if s.covers != nil && sh.cover != nil {
 			c := sh.cover
-			asked, put = append(asked, CoverOf{Kind: sh.kind, ID: sh.id, Cover: *c}), append(put, func(r []Rendition) { c.Renditions = r })
+			asked, put = append(asked, CoverOf{Kind: sh.kind, ID: sh.id, Cover: *c, Language: language}), append(put, func(r []Rendition) { c.Renditions = r })
 		}
 		if s.covers != nil && gk.Owner == "user" && sh.avatar != nil {
 			a, image := sh.avatar, ""

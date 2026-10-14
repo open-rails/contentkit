@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -68,10 +70,13 @@ type Segment struct {
 	Released bool `json:"released"`
 }
 
-// Cover is a content item's cover: an inline image of its media folder.
+// Cover is a version's cover: Image is the cover upload its editors
+// selected ("i-{uuid}"; empty shows its first, else its kind's default);
+// URL is its widest public rendition.
 type Cover struct {
-	Image string  `json:"image"`
-	URL   *string `json:"url,omitempty"`
+	Image      string                  `json:"image,omitempty"`
+	URL        *string                 `json:"url,omitempty"`
+	Renditions []media.PublicRendition `json:"renditions,omitempty"`
 }
 
 // Decision is a viewer's access verdict on a version.
@@ -118,8 +123,10 @@ type Version struct {
 	Height     *int           `json:"height,omitempty"`
 	HasAudio   bool           `json:"has_audio"`
 	Ordinal    *int           `json:"ordinal,omitempty"`
-	Segments   []Segment      `json:"segments"`
-	Decision   Decision       `json:"decision"`
+	// Cover is absent when its kind's locked view hides it from the viewer.
+	Cover    *Cover    `json:"cover,omitempty"`
+	Segments []Segment `json:"segments"`
+	Decision Decision  `json:"decision"`
 	// Text is every language's override, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
 	// Offer is the version's current offer, for its offer editors.
@@ -176,11 +183,14 @@ type Content struct {
 	// Decision is the viewer's access to the item: allowed when they open any
 	// of its versions, else its first version's paywall.
 	Decision Decision `json:"decision"`
-	// Images maps each resolved image name of Body and the cover to its URL.
-	Images  map[string]string `json:"images,omitempty"`
-	Cover   *Cover            `json:"cover,omitempty"`
-	State   string            `json:"state"`
-	Listing string            `json:"listing"`
+	// Images maps each resolved image name of Body to its URL: the body
+	// images of the edition the viewer opens (DefaultVersion among them).
+	Images map[string]string `json:"images,omitempty"`
+	// Cover is the cover of the edition the request's language opens by
+	// default (DefaultVersion): what cards and meta tags show.
+	Cover   *Cover `json:"cover,omitempty"`
+	State   string `json:"state"`
+	Listing string `json:"listing"`
 	// Comments is open, closed or hidden.
 	Comments     string         `json:"comments"`
 	PublishAt    *time.Time     `json:"publish_at,omitempty"`
@@ -215,6 +225,30 @@ type Content struct {
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 	DeletedAt *time.Time    `json:"deleted_at,omitempty"`
+}
+
+// DefaultVersion is the version a reader of language opens by default, the
+// one rule cards and contentkit-ui's defaultVersion follow (internal/edition):
+// the first live version serving language, else the first live one, else
+// the first; vs in position order. Nil when vs is empty.
+func DefaultVersion(vs []Version, language string) *Version {
+	rank := func(v *Version) int {
+		r := 0
+		if v.Live {
+			r += 2
+		}
+		if language != "" && slices.Contains(v.Languages, language) {
+			r++
+		}
+		return r
+	}
+	var best *Version
+	for i := range vs {
+		if best == nil || rank(&vs[i]) > rank(best) {
+			best = &vs[i]
+		}
+	}
+	return best
 }
 
 // ImageScheme is the URL scheme of an inline image reference in a body.

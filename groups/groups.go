@@ -74,8 +74,9 @@ type Text struct {
 }
 
 // Cover is a group's picture: an image uploaded to the group's media folder
-// ("i-{uuid}") or a member content's cover. Auto covers are the
-// most-favorited live member, chosen by Recount when none is selected.
+// ("i-{uuid}") or a member content's cover, the cover of the edition a
+// reader's language opens by default. Auto covers are the most-favorited live
+// member, chosen by Recount when none is selected.
 type Cover struct {
 	Image     string `json:"image,omitempty"`
 	ContentID string `json:"content_id,omitempty"`
@@ -107,12 +108,14 @@ type CoverResolver interface {
 }
 
 // CoverOf is one group's picture to resolve: its cover, or with Preset
-// "avatar" its avatar (Cover.Image the selected one, if any).
+// "avatar" its avatar (Cover.Image the selected one, if any). A content's
+// cover is its default edition's in Language.
 type CoverOf struct {
-	Kind   string
-	ID     GroupID
-	Cover  Cover
-	Preset string
+	Kind     string
+	ID       GroupID
+	Cover    Cover
+	Language string
+	Preset   string
 }
 
 // Group is one group record.

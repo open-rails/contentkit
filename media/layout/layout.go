@@ -10,9 +10,9 @@
 //	{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
 //
-// A content kind's {id} folder is its content-level item; each of its
-// versions is a folder within it. The URL of an object is its key under /v1/
-// on the site's media host.
+// A content kind's media lives in its versions' folders, within its {id}
+// folder, which holds no item of its own. The URL of an object is its key
+// under /v1/ on the site's media host.
 package layout
 
 import (
