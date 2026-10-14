@@ -32,7 +32,7 @@ import {
 import { useHlsPlayer, type HlsPlayerOptions } from "../react/gallery.js";
 import { useInlinePreview } from "../react/inline-preview.js";
 import { useActiveCues, useFullscreen, useMediaState, usePictureInPicture, useProgressReports, useSprite, type PlaybackProgress } from "../react/player.js";
-import { useMessages } from "../i18n/context.js";
+import { useLanguageName, useMessages } from "../i18n/context.js";
 import { ContentKitUiRoot } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
@@ -159,6 +159,12 @@ const TEXT_ENTRY =
 const MENU = "[role=menu], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=listbox], [role=option]";
 const OUTSIDE_INTERACTIVE = "a, button, input, [role=button], [role=dialog], [role=alertdialog]";
 
+/** A track's name: its playlist name, or its language's name when the name is only the language code. */
+export function trackLabel(tr: Pick<PlayerTrack, "label" | "lang">, languageName: (code: string) => string): string {
+  const code = tr.lang && (!tr.label || tr.label.toLowerCase() === tr.lang.toLowerCase()) ? tr.lang : undefined;
+  return code ? languageName(code) : tr.label;
+}
+
 /**
  * Whether a shortcut key belongs to the player: never while typing or in a
  * menu, not the arrows on a slider (it steps itself), and outside the
@@ -213,6 +219,7 @@ export function VideoPlayer({
   ...options
 }: VideoPlayerProps) {
   const { t } = useMessages();
+  const languageName = useLanguageName();
   const playable = !!base && !pending && !failed;
   const src = playable ? `${base}master.m3u8` : null;
   const start = resumeAt(startAt, duration);
@@ -512,7 +519,7 @@ export function VideoPlayer({
   const sections = settingsSections();
 
   function trackName(tr: PlayerTrack) {
-    const name = tr.label || t("player.track", { number: tr.index + 1 });
+    const name = trackLabel(tr, languageName) || t("player.track", { number: tr.index + 1 });
     return tr.forced ? t("player.forced", { label: name }) : name;
   }
   function settingsSections(): MenuSection[] {

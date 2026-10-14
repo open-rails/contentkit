@@ -57,6 +57,11 @@ export interface UseMediaFolder {
   /** The upload queue; a file leaves it once the editor read lists it. */
   queue: UseUploadQueue;
   /**
+   * Uploads on the server not yet added and not in the queue: an earlier
+   * visit's, or another editor's. commit() adds them; remove() discards them.
+   */
+  pending: FileInfo[];
+  /**
    * Files added before the item and its editor read (the upload rules) were
    * known. They are screened and queued when the rules arrive, or refused
    * when the read fails or states no rules (the actor may not edit the item).
@@ -75,7 +80,7 @@ export interface UseMediaFolder {
   edit: (path: string, edit: Edit | null) => Promise<void>;
   /** Uploads file in place of the upload at path (same position and meta, no edit). */
   replace: (path: string, file: File) => Promise<void>;
-  /** Commits the uploaded files in queue order. */
+  /** Commits the uploaded files in queue order, then the pending ones. */
   commit: () => Promise<FileInfo[]>;
   /** Stops every upload, aborts its multipart upload and empties the queue (before deleting a draft). */
   discard: () => void;
@@ -88,7 +93,7 @@ export interface UseMediaFolder {
    * Leaving the page now interrupts it.
    */
   busy: boolean;
-  /** The item's uploads plus the files on their way in (waiting, queued, uploading, uploaded, being added); failed uploads are not counted. */
+  /** The item's uploads plus the files on their way in (waiting, queued, uploading, uploaded, pending, being added); failed uploads are not counted. */
   fileCount: number;
   /** The last update's or commit's failure; cleared by the next success. */
   error?: ContentKitError;
@@ -153,6 +158,11 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   }, [groupPaths, rules, read.read]);
   const uploads = useMemo(() => groups.flatMap((g) => g.files), [groups]);
   const listed = useMemo(() => new Set(uploads.map((f) => f.path)), [uploads]);
+  // Unattached uploads under the folder's paths: this session's while it adds them, or left by another.
+  const unattached = useMemo(() => {
+    const known: { path: string }[] = rules.length ? rules : groupPaths.map((path) => ({ path }));
+    return (read.read?.files ?? []).filter((f) => f.upload && f.unattached && groupPaths.includes(ruleFor(known, f.path)?.path ?? ""));
+  }, [read.read, rules, groupPaths]);
 
   const raw = useUploadQueue({ client, ref: target, path: `${ruleDir(groupPaths[0] ?? "{name}")}{name}`, concurrency: o.concurrency });
   // The ItemUploadQueue itself is stable per item; the hook's wrapper is new every render.
@@ -160,6 +170,10 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   // A committed file stays in the queue until the read lists it, so it never drops out of view.
   const items = useMemo(() => raw.items.filter((i) => !(i.status === "committed" && listed.has(i.path))), [raw.items, listed]);
   const queue = { ...raw, items };
+  const leftover = useMemo(() => {
+    const held = new Set(raw.items.map((i) => stem(i.path)));
+    return unattached.filter((f) => !held.has(stem(f.path)));
+  }, [unattached, raw.items]);
   const [refused, setRefused] = useState<Screened["refused"]>([]);
   const [waiting, setWaiting] = useState<readonly File[]>([]);
   const pending = useRef<File[]>([]);
@@ -176,22 +190,24 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   // viewer's read, so nothing uploads here.
   const ready = !!item && !!read.read?.uploads;
   const loadError = !item ? undefined : !read.read ? read.error : !read.read.uploads ? notEditor(read.read) : undefined;
-  const live = useRef({ groups, ref: target, listed, ready, loadError });
-  live.current = { groups, ref: target, listed, ready, loadError };
+  const live = useRef({ groups, ref: target, listed, unattached, leftover, ready, loadError });
+  live.current = { groups, ref: target, listed, unattached, leftover, ready, loadError };
 
   const place = useCallback(
     (files: File[]) => {
-      const { groups, listed } = live.current;
+      const { groups, listed, unattached, leftover } = live.current;
       const gs = groups.map((g) => g.rule ?? { path: g.path, types: [], max_bytes: 0 });
       const queued = inbound(q.getSnapshot().items, listed);
       const inGroup = (path: string, rule: UploadRule) => ruleFor(gs, path)?.path === rule.path;
-      const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + queued.filter((i) => inGroup(i.path, rule)).length);
+      const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + leftover.filter((f) => inGroup(f.path, rule)).length + queued.filter((i) => inGroup(i.path, rule)).length);
       const taken = new Map<string, string[]>();
       const takenIn = (rule: UploadRule) => {
         let t = taken.get(rule.path);
         if (!t) {
           const g = groups.find((x) => x.path === rule.path)!;
-          t = [...g.files.map((f) => nameIn(g, f.path)), ...queued.filter((i) => inGroup(i.path, rule)).map((i) => nameIn(g, i.path))];
+          // Unattached uploads hold their names too: a put over one is refused.
+          t = [g.files, unattached].flat().filter((f) => inGroup(f.path, rule)).map((f) => nameIn(g, f.path));
+          t.push(...queued.filter((i) => inGroup(i.path, rule)).map((i) => nameIn(g, i.path)));
           taken.set(rule.path, t);
         }
         return t;
@@ -260,7 +276,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   const commit = useCallback(async () => {
     setCommitting(true);
     try {
-      const files = await q.commit(undefined, { head: opts.current.commit === "auto" });
+      const files = await q.commit(undefined, { head: opts.current.commit === "auto", attach: live.current.leftover.map((f) => f.path) });
       setError(undefined);
       return files;
     } catch (e) {
@@ -278,9 +294,10 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     for (const i of raw.items) if (i.status === "committed" && (listed.has(i.path) || !read.loading)) q.remove(i.id);
   }, [raw.items, listed, read.loading, q]);
 
-  // A draft commits the uploaded head of the queue as it finishes; a failed commit waits for commit().
+  // A draft commits the uploaded head of the queue as it finishes, and what
+  // an earlier visit left pending once a read states it; a failed commit waits for commit().
   const auto = o.commit === "auto";
-  const headReady = items.find((i) => i.status !== "committed")?.status === "uploaded";
+  const headReady = items.find((i) => i.status !== "committed")?.status === "uploaded" || (leftover.length > 0 && !read.loading);
   useEffect(() => {
     if (!auto || !headReady || committing || stalled) return;
     commit().catch((e: unknown) => setStall({ key, error: toContentKitError(e) }));
@@ -329,7 +346,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     updating > 0 ||
     (auto && headReady && !stalled) ||
     items.some((i) => i.status === "uploading" || (i.status === "queued" && !raw.blocked));
-  const fileCount = uploads.length + waiting.length + inbound(items, listed).length;
+  const fileCount = uploads.length + waiting.length + inbound(items, listed).length + leftover.length;
 
   // Reads the latest groups, so callbacks stay stable.
   const groupOf = (path: string) => live.current.groups.find((g) => ruleFor([{ path: g.path }], path));
@@ -340,6 +357,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     groups,
     uploads,
     queue,
+    pending: leftover,
     waiting,
     add,
     refused,

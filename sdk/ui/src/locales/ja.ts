@@ -61,6 +61,7 @@ export const ja: ContentKitUiMessageBundle = {
     adding: "追加中…",
     queued: "待機中",
     uploaded: "アップロード済み",
+    notAdded: "アップロード済み・未追加",
     processing: "処理中…",
     processingPercent: "処理中 {percent}%",
     edited: "編集済み",

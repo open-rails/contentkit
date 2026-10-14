@@ -7,7 +7,15 @@ import { es } from "../locales/es.js";
 import { ja } from "../locales/ja.js";
 import { ko } from "../locales/ko.js";
 import { zh } from "../locales/zh.js";
-import { keyAllowed } from "./video-player.js";
+import { keyAllowed, trackLabel } from "./video-player.js";
+
+it("subtitle codes become language names while custom track names stay intact", () => {
+  const names = new Intl.DisplayNames(["de"], { type: "language" });
+  const name = (code: string) => names.of(code) ?? code;
+  expect(trackLabel({ lang: "en", label: "EN" }, name)).toBe("Englisch");
+  expect(trackLabel({ lang: "ja", label: "" }, name)).toBe("Japanisch");
+  expect(trackLabel({ lang: "en", label: "Director commentary" }, name)).toBe("Director commentary");
+});
 
 it("shortcut keys skip text entry, menus and a slider's arrows; page-wide, other controls keep their keys", () => {
   document.body.innerHTML = `

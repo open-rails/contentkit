@@ -92,4 +92,10 @@ export const content: typeof en = {
     addSegment: "Añadir capítulo",
     saveSegments: "Guardar capítulos",
   },
+  myStats: {
+    completed: "{kind} terminados",
+    comments: "Comentarios",
+    likes: "Me gusta recibidos",
+    dislikes: "No me gusta recibidos",
+  },
 };

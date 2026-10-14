@@ -5,7 +5,7 @@ import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { parseAttributes, slugify } from "../../client/group-fields.js";
 import type { ContentModel, Group, GroupCard, GroupDetail, GroupKind, GroupsText as Text, MergeReport, Name } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup, useKinds, type UseGroup } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
@@ -22,7 +22,7 @@ import { OfferFields } from "../content/offer-fields.js";
 import { AttributeFields, formOf } from "./fields.js";
 import { useContentKitClient } from "../../react/context.js";
 import { GroupImageEditor } from "./banner.js";
-import { GroupPicker, labelOf, useGroupNames, useLanguageName, type GroupLike, type Labels } from "./parts.js";
+import { GroupPicker, labelOf, useGroupNames, type GroupLike, type Labels } from "./parts.js";
 
 export interface GroupEditorProps {
   /** The group edited; null creates one of `kind`. */

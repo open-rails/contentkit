@@ -278,6 +278,8 @@ export interface UseContentGroups {
 }
 
 /** Staff: one content's memberships, its versions' included, and their replacement. */
+const NO_MEMBERSHIPS: Membership[] = [];
+
 export function useContentGroups(contentId: string | null | undefined, o: { language?: string; client?: ContentKitClient } = {}): UseContentGroups {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
@@ -300,8 +302,10 @@ export function useContentGroups(contentId: string | null | undefined, o: { lang
     [client, contentId, language, guarded, store, key],
   );
   const groups = useMemo(() => new Map((r.data?.groups ?? []).map((g) => [g.id, g])), [r.data]);
+  // Stable while loading or failed: effects keyed on it must not see a new list every render.
+  const memberships = useMemo(() => r.data?.memberships ?? NO_MEMBERSHIPS, [r.data]);
   return {
-    memberships: r.data?.memberships ?? [],
+    memberships,
     groups,
     loading: !!key && (r.loading || !r.loaded),
     error: r.error,

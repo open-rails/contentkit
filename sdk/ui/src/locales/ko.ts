@@ -61,6 +61,7 @@ export const ko: ContentKitUiMessageBundle = {
     adding: "추가하는 중…",
     queued: "대기 중",
     uploaded: "업로드됨",
+    notAdded: "업로드됨, 아직 추가되지 않음",
     processing: "처리 중…",
     processingPercent: "처리 중 {percent}%",
     edited: "편집됨",
