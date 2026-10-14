@@ -2,12 +2,13 @@ import { CONTENTKIT_ERROR_CODES, type ErrorCode } from "./generated/error-codes.
 import type { BanNotice, ErrorDetails, ErrorReply, Failure } from "./generated/wire.js";
 
 /**
- * Codes raised in the browser: network (no response), storage (the bucket
+ * Codes raised in the browser: network (no server reached), server_unavailable
+ * (a gateway or timeout answered instead of ContentKit), storage (the bucket
  * refused a PUT), aborted (the caller's signal), resume_mismatch (saved state
  * is not for this file), decode (not readable as an image) and render_timeout
  * (still processing after the wait).
  */
-export const CLIENT_ERROR_CODES = ["network", "storage", "aborted", "resume_mismatch", "decode", "render_timeout"] as const;
+export const CLIENT_ERROR_CODES = ["network", "server_unavailable", "storage", "aborted", "resume_mismatch", "decode", "render_timeout"] as const;
 
 export type ContentKitErrorCode = ErrorCode | (typeof CLIENT_ERROR_CODES)[number];
 
@@ -23,6 +24,7 @@ export interface ContentKitErrorInit extends ErrorOptions {
   action?: string;
   reason?: string;
   availableAt?: string;
+  unknownCode?: string;
 }
 
 export class ContentKitError extends Error {
@@ -38,6 +40,8 @@ export class ContentKitError extends Error {
   readonly reason?: string;
   /** A download_unavailable's opening time (RFC 3339), when a matter of time. */
   readonly availableAt?: string;
+  /** A server code this client doesn't know (a newer server): `message` is the server's own and `code` its status's. */
+  readonly unknownCode?: string;
 
   constructor(
     readonly code: ContentKitErrorCode,
@@ -53,6 +57,7 @@ export class ContentKitError extends Error {
     this.action = init.action;
     this.reason = init.reason;
     this.availableAt = init.availableAt;
+    this.unknownCode = init.unknownCode;
   }
 
   /**
@@ -82,6 +87,7 @@ export class ContentKitError extends Error {
   get transient(): boolean {
     return (
       this.code === "network" ||
+      this.code === "server_unavailable" ||
       this.code === "internal_error" ||
       this.code === "unavailable" ||
       (this.code === "storage" && (this.status >= 500 || this.status === 403 || this.status === 408 || this.status === 429))
@@ -91,10 +97,46 @@ export class ContentKitError extends Error {
 
 export const isContentKitError = (e: unknown): e is ContentKitError => e instanceof ContentKitError;
 
-/** Anything a call can throw, as a ContentKitError (network when it is not one). */
+/** Anything a call can throw, as a ContentKitError: a transport failure's code, else internal_error. */
 export function toContentKitError(e: unknown): ContentKitError {
   if (e instanceof ContentKitError) return e;
-  return new ContentKitError("network", e instanceof Error ? e.message : String(e), { cause: e });
+  return new ContentKitError(transportFailure(e) ?? "internal_error", e instanceof Error ? e.message : String(e), { cause: e });
+}
+
+/** A fetch that got no response: the caller's abort, a timeout, else no server reached. */
+export function requestFailure(err: unknown, signal: AbortSignal | undefined, target: string): ContentKitError {
+  const code = transportFailure(err);
+  if (code !== "server_unavailable" && signal?.aborted) return aborted(signal);
+  return code === "server_unavailable"
+    ? new ContentKitError(code, `${target} did not respond`, { cause: err })
+    : new ContentKitError("network", `${target} unreachable`, { cause: err });
+}
+
+// A gateway answered for ContentKit: down, restarting or timed out (52x: Cloudflare).
+const GATEWAY_STATUS = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
+
+// fetch rejects with a TypeError when no server answers (offline, DNS,
+// connection refused, CORS); engines word it differently.
+const FETCH_FAILURE = /fetch|network|load failed|connection/i;
+
+/**
+ * The client code of a request no server answered (mirrors auth-ui's and
+ * billing-ui's): network when none was reached, server_unavailable when a
+ * gateway or timeout answered. Recognizes the sibling SDKs' codes too.
+ */
+export function transportFailure(error: unknown): "network" | "server_unavailable" | undefined {
+  if (error instanceof TypeError) {
+    const offline = globalThis.navigator?.onLine === false;
+    return offline || FETCH_FAILURE.test(error.message) ? "network" : undefined;
+  }
+  if (!error || typeof error !== "object") return undefined;
+  const { name, code, status } = error as { name?: unknown; code?: unknown; status?: unknown };
+  if (name === "TimeoutError") return "server_unavailable";
+  if (code === "network" || code === "network_error") return "network";
+  if (code === "server_unavailable") return code;
+  if (code === undefined || code === "unknown_error" || code === "server_error")
+    return typeof status === "number" && GATEWAY_STATUS.has(status) ? "server_unavailable" : undefined;
+  return undefined;
 }
 
 export function aborted(signal?: AbortSignal): ContentKitError {
@@ -130,7 +172,12 @@ export async function readContentKitError(res: Response): Promise<ContentKitErro
   }
   const header = Number(res.headers.get("Retry-After"));
   const retryAfter = body.retry_after ?? (Number.isFinite(header) && header > 0 ? header : undefined);
-  const code = body.code && known.has(body.code) ? (body.code as ContentKitErrorCode) : (byStatus[res.status] ?? (res.status >= 500 ? "internal_error" : "invalid_request"));
+  const code =
+    body.code && known.has(body.code)
+      ? (body.code as ContentKitErrorCode)
+      : !body.code && GATEWAY_STATUS.has(res.status)
+        ? "server_unavailable"
+        : (byStatus[res.status] ?? (res.status >= 500 ? "internal_error" : "invalid_request"));
   return new ContentKitError(code, body.error ?? `HTTP ${res.status}`, {
     status: res.status,
     retryAfter,
@@ -140,6 +187,7 @@ export async function readContentKitError(res: Response): Promise<ContentKitErro
     action: body.action,
     reason: body.reason,
     availableAt: body.available_at,
+    unknownCode: body.code && !known.has(body.code) ? body.code : undefined,
   });
 }
 

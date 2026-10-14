@@ -1,6 +1,7 @@
 import { en } from "../locales/en.js";
 import type { ErrorDetails } from "../client/generated/wire.js";
 import { ratioLabel } from "../client/media/rules.js";
+import { transportFailure } from "../client/errors.js";
 
 
 type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
@@ -91,9 +92,11 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
     },
     error(error) {
       if (typeof error === "string") return translate(`errors.${error}`, { seconds: 60 }) ?? messages.errors.generic;
-      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean };
-      const code = typeof e.code === "string" ? e.code : undefined;
+      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean; unknownCode?: string };
+      const code = transportFailure(error) ?? (typeof e.code === "string" ? e.code : undefined);
       const server = typeof e.message === "string" && e.message ? sentence(e.message) : undefined;
+      // A code from a newer server: its own wording beats our line for the status.
+      if (e.unknownCode && server) return server;
       const d = e.details ?? {};
       const vars: MessageVars = {
         seconds: e.retryAfter ?? 60,

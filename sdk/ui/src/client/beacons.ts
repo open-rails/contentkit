@@ -114,7 +114,7 @@ export class Beacons {
     for (let i = 0; i < signals.length; i += MAX) sends.push(discovery.signals(signals.slice(i, i + MAX), session, { keepalive }));
     for (let i = 0; i < exposures.length; i += MAX) sends.push(discovery.exposures(exposures.slice(i, i + MAX), session, { keepalive }));
     const done = await Promise.allSettled(sends);
-    if (done.some((r) => r.status === "rejected" && ["not_configured", "unavailable"].includes(toContentKitError(r.reason).code))) this.pause();
+    if (done.some((r) => r.status === "rejected" && ["not_configured", "unavailable", "server_unavailable"].includes(toContentKitError(r.reason).code))) this.pause();
   }
 
   private signal(s: SignalInput): void {
