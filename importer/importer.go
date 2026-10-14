@@ -155,11 +155,14 @@ type ContentRecord struct {
 
 // VersionRecord is one version of a content item, ordered as listed.
 type VersionRecord struct {
-	ExternalID string   `json:"external_id"`
-	ID         string   `json:"id,omitempty"`
-	Languages  []string `json:"languages"`
-	Traits     []string `json:"traits,omitempty"`
-	Label      string   `json:"label,omitempty"`
+	ExternalID string `json:"external_id"`
+	ID         string `json:"id,omitempty"`
+	// Code is the version code (?v=) to keep, as Code is the content's: empty
+	// keeps the stored one or assigns one.
+	Code      string   `json:"code,omitempty"`
+	Languages []string `json:"languages"`
+	Traits    []string `json:"traits,omitempty"`
+	Label     string   `json:"label,omitempty"`
 	// State is published (the default), draft or deleted; times as ContentRecord's.
 	State       string                         `json:"state,omitempty"`
 	PublishAt   *time.Time                     `json:"publish_at,omitempty"`

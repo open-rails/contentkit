@@ -162,10 +162,11 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 		return "", err
 	}
 	sum := h.Sum(nil)
-	blob, err := m.NewBlob(ctx, item.Ref(), sum)
+	blobs, err := m.NewBlobs(ctx, item.Ref(), [][]byte{sum})
 	if err != nil {
 		return "", err
 	}
+	blob := blobs[0]
 	dst, _ := item.Blob(blob)
 	if body != nil {
 		opts := PutOptions{ContentType: obj.ContentType, ChecksumSHA256: sum}

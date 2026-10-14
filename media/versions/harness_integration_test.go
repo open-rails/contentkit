@@ -217,6 +217,8 @@ type site struct {
 	reader  *media.Reader
 	svc     *versions.Service
 	srv     *httptest.Server
+	workers string // the worker's River schema
+	host    string // the host's River schema
 
 	staff, creator, fan, stranger access.Actor
 }
@@ -281,6 +283,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 	if err := riverhelpers.ApplyMigrations(ctx, s.pool, host); err != nil {
 		t.Fatal(err)
 	}
+	s.workers, s.host = workers, host
 	if s.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: s.reg, Locker: media.PGLocker(s.pool), Journal: journal,
 		Pool: s.pool, Processes: queue}); err != nil {
 		t.Fatal(err)
@@ -323,6 +326,11 @@ func newSite(t *testing.T, o siteOptions) *site {
 			t.Error(err)
 		}
 	})
+	t.Cleanup(func() {
+		if t.Failed() {
+			s.dumpJobs()
+		}
+	})
 	mux := http.NewServeMux()
 	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(s.uploads, media.UploadHandlerOptions{Auth: authn})))
 	mux.Handle("/media/", http.StripPrefix("/media", s.reader.Handler(media.HandlerOptions{Auth: authn, Limit: media.RateLimit{Disabled: true}})))
@@ -334,6 +342,98 @@ func newSite(t *testing.T, o siteOptions) *site {
 	s.srv = httptest.NewServer(mux)
 	t.Cleanup(s.srv.Close)
 	return s
+}
+
+// placements counts the worker's place jobs by item kind.
+func (s *site) placements() map[string]int {
+	s.t.Helper()
+	rows, err := s.pool.Query(s.ctx, `SELECT args->'ref'->>'content_kind', count(*) FROM `+pgx.Identifier{s.workers, "river_job"}.Sanitize()+`
+WHERE kind = 'contentkit_media_place' GROUP BY 1`)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	out := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			s.t.Fatal(err)
+		}
+		out[kind] = n
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatal(err)
+	}
+	return out
+}
+
+// placing counts ref's applied commits that asked the worker to place.
+func (s *site) placing(ref contentref.ContentRef) int {
+	s.t.Helper()
+	var n int
+	if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+s.table("content_media_commits")+`
+WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND content_version_id IS NOT DISTINCT FROM $4
+AND state = 'applied' AND (effects->'process'->>'place')::boolean`, ref.TenantID, ref.ContentKind, ref.ContentID, ref.ContentVersionID).Scan(&n); err != nil {
+		s.t.Fatal(err)
+	}
+	return n
+}
+
+// settles waits for the worker's queue to drain, then checks it gets no new
+// job for longer than a publish job's poll: nothing feeds back.
+func (s *site) settles() {
+	s.t.Helper()
+	sql := `SELECT count(*) FILTER (WHERE state IN ('available', 'pending', 'running', 'retryable', 'scheduled')), coalesce(max(id), 0)
+FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize()
+	var waiting, last int64
+	eventually(s.t, "the worker's queue to drain", time.Minute, func() bool {
+		if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &last); err != nil {
+			s.t.Fatal(err)
+		}
+		return waiting == 0
+	})
+	time.Sleep(8 * time.Second)
+	var now int64
+	if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &now); err != nil {
+		s.t.Fatal(err)
+	}
+	if waiting != 0 || now != last {
+		s.t.Fatalf("the settled version's worker got %d more jobs", now-last)
+	}
+}
+
+// dumpJobs logs the worker's and the host's River jobs: what a timed-out
+// wait was waiting on.
+func (s *site) dumpJobs() {
+	at := func(t *time.Time) string {
+		if t == nil {
+			return "-"
+		}
+		return t.Format("15:04:05.000")
+	}
+	for name, schema := range map[string]string{"worker": s.workers, "host": s.host} {
+		rows, err := s.pool.Query(context.Background(), `SELECT id, kind, state, attempt, args::text, coalesce(errors[array_length(errors, 1)]::text, ''),
+	created_at, attempted_at, finalized_at FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()+` ORDER BY id`)
+		if err != nil {
+			s.t.Logf("%s jobs: %v", name, err)
+			continue
+		}
+		for rows.Next() {
+			var (
+				id, attempt                int64
+				kind, state, args, lastErr string
+				created                    time.Time
+				attempted, finalized       *time.Time
+			)
+			if err := rows.Scan(&id, &kind, &state, &attempt, &args, &lastErr, &created, &attempted, &finalized); err != nil {
+				s.t.Logf("%s jobs: %v", name, err)
+				break
+			}
+			s.t.Logf("%s job %d %s %s attempt=%d created=%s attempted=%s finalized=%s %s %.200s", name, id, kind, state, attempt,
+				at(&created), at(attempted), at(finalized), args, lastErr)
+		}
+		rows.Close()
+	}
 }
 
 func (s *site) table(name string) string { return pgx.Identifier{s.schema, name}.Sanitize() }

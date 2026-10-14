@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -138,6 +139,43 @@ func TestPublication(t *testing.T) {
 	}
 	if resp, _ := s.call(s.fan, "GET", "/v1/contents/"+c+"/versions/"+s.version(c).Version+"/reader", nil); resp.StatusCode != 202 {
 		t.Fatalf("an unpublished version's plan: %d", resp.StatusCode)
+	}
+}
+
+// Publishers racing on one version agree: once one of them reports it
+// published, its pages publication is current.
+func TestRacingPublishers(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	_, v := gallery(t, s)
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
+	current := func() int {
+		var n int
+		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+s.table("content_version_publications")+`
+WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current'`, s.tenant, v.Version).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for round := range 6 {
+		// Other spans: a new build.
+		s.exec(`UPDATE `+s.table("content_segments")+` SET end_index = $3 WHERE tenant_id = $1 AND version_id = $2 AND position = 1`,
+			s.tenant, v.Version, 1+round%2)
+		errs := make([]error, 4)
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Go(func() { errs[i] = versions.Publish(s.svc, s.ctx, v) })
+		}
+		wg.Wait()
+		published := false
+		for _, err := range errs {
+			if err != nil && !errors.Is(err, versions.ErrNotReady) {
+				t.Fatalf("round %d: %v", round, err)
+			}
+			published = published || err == nil
+		}
+		if n := current(); published && n != 1 {
+			t.Fatalf("round %d: published, with %d current pages publications", round, n)
+		}
 	}
 }
 

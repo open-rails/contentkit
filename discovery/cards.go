@@ -27,7 +27,7 @@ import (
 type Card struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
-	// Code and Path are its page: [/{lang}]/{route}/{code}/{slug}.
+	// Code and Path are its page: /{lang}/{route}/{code}/{slug}.
 	Code string `json:"code"`
 	Path string `json:"path"`
 	// Title is in Language: the display language, else a fallback.
@@ -47,9 +47,11 @@ type Card struct {
 	Attributes  map[string]any       `json:"attributes"`
 }
 
-// CardVersion is the version a card shows.
+// CardVersion is the version a card shows; Code selects it on the card's
+// page (?v=).
 type CardVersion struct {
 	ID         string   `json:"id"`
+	Code       string   `json:"code"`
 	Languages  []string `json:"languages"`
 	Traits     []string `json:"traits"`
 	Label      string   `json:"label,omitempty"`
@@ -135,7 +137,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		vids[i] = p.version
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
+ f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
@@ -157,7 +159,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var code string
 		var baseline int64
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
-			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
+			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator)
 		if err != nil {
 			return c, err
@@ -171,7 +173,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		c.Counts.Views = p.Views + baseline
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
-			c.Path = contenturl.Path(contenturl.Prefix(s.o.Kinds.Languages, q.path), route, contenturl.Code(code), c.slug)
+			c.Path = contenturl.Path(s.o.Kinds.Languages, q.display, route, contenturl.Code(code), c.slug)
 		}
 		if c.Attributes == nil {
 			c.Attributes = map[string]any{}
@@ -300,7 +302,7 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.path})
+	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.display})
 	if err != nil {
 		return err
 	}
@@ -339,7 +341,7 @@ func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.path, Covers: true})
+	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.display, Covers: true})
 	if err != nil {
 		return err
 	}

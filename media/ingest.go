@@ -142,7 +142,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		if err := u.o.Manifests.checkAllocations(ctx, item, []string{reserve}); err != nil {
 			return IngestResult{}, err
 		}
-	} else if err := u.o.Manifests.allocate(ctx, item, reserve); err != nil {
+	} else if err := u.o.Manifests.allocate(ctx, item, []string{reserve}); err != nil {
 		return IngestResult{}, err
 	}
 	if limited {
@@ -282,7 +282,7 @@ func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, 
 			return StagedCopy{}, err
 		}
 	}
-	if err = u.o.Manifests.allocate(ctx, item, key); err == nil {
+	if err = u.o.Manifests.allocate(ctx, item, []string{key}); err == nil {
 		var obj Object
 		if obj, err = u.o.Store.Copy(ctx, r.From, key, CopyOptions{IfMatch: src.ETag, ContentType: r.Type}); err == nil {
 			return StagedCopy{Path: path, Blob: blob, Size: obj.Size}, nil

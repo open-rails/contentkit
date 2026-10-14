@@ -92,7 +92,10 @@ type Decision struct {
 
 // Version is what a viewer opens.
 type Version struct {
-	ID        string   `json:"id"`
+	ID string `json:"id"`
+	// Code selects it on its content's page (?v=): unique within the content,
+	// fixed for the version's life.
+	Code      string   `json:"code"`
 	Position  int      `json:"position"`
 	Languages []string `json:"languages"`
 	Traits    []string `json:"traits"`
@@ -156,7 +159,7 @@ type GroupSummary struct {
 type Content struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
-	// Code and Path are its page: [/{lang}]/{route}/{code}/{slug}.
+	// Code and Path are its page: /{lang}/{route}/{code}/{slug}.
 	Code string `json:"code"`
 	Path string `json:"path"`
 	// Language is the language of the text below.

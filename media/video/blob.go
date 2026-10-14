@@ -65,10 +65,11 @@ func (e *Encoder) putJSON(ctx context.Context, item media.Item, v any) (string, 
 }
 
 func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
-	name, err := e.ms.NewBlob(ctx, item.Ref(), sum)
+	names, err := e.ms.NewBlobs(ctx, item.Ref(), [][]byte{sum})
 	if err != nil {
 		return "", 0, err
 	}
+	name := names[0]
 	key, _ := item.Blob(name)
 	start := time.Now()
 	if size > multipartAbove {

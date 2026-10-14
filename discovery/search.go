@@ -214,7 +214,7 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	for _, h := range ghits {
 		gids = append(gids, groups.GroupID(h.ContentID))
 	}
-	cards, err := s.o.Groups.Cards(ctx, gids, groups.CardOptions{Language: q.path, Covers: true})
+	cards, err := s.o.Groups.Cards(ctx, gids, groups.CardOptions{Language: q.display, Covers: true})
 	if err != nil {
 		return out, err
 	}

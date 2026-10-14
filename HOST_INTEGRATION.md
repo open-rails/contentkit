@@ -166,11 +166,12 @@ in storage; legacy URLs resolve through content-code aliases
 
 ## Content URLs (`contenturl`)
 
-Every content page is `[/{lang}]/{route}/{CODE}[/{slug}]`, e.g.
-`/watch/G4VRQ3ZQ5/night-before-the-counteroffensive`. The server reads only the
-code; sub-pages are query parameters (`/g/{CODE}/{slug}?p=12`), so the slug can
-always be omitted. The host chooses each kind's route; ContentKit owns the
-code, resolution and canonicalization.
+Every content page is `/{lang}/{route}/{CODE}[/{slug}]`, e.g.
+`/en/watch/G4VRQ3ZQ5/night-before-the-counteroffensive`. Every page is under
+its language, the default included. The server reads only the code; sub-pages
+are query parameters (`/en/g/{CODE}/{slug}?p=12`), so the slug can always be
+omitted. The host chooses each kind's route; ContentKit owns the language
+prefix, the code, resolution and canonicalization.
 
 - **Codes** are 9 uppercase Crockford base32 characters (no `I L O U`), with at
   least one letter, random, unique per tenant across every kind, assigned once,
@@ -180,6 +181,15 @@ code, resolution and canonicalization.
 - **Registration.** Groups and content items register themselves (group
   slugs come from canonical names, one per language; content slugs from each
   language's slug or title). The bulk import keeps a record's code (`code`).
+- **Versions.** A gallery's editions share its page; the language prefix picks
+  the default edition (the first live version serving the language). A
+  specific version is `?v={version code}` (`contenturl.VersionParam`), never a
+  path segment, so a version's canonical URL is its language page. Version
+  codes are 4 Crockford characters with a letter (`ParseVersionCode`), unique
+  within their content, fixed for the version's life; every version wire type
+  carries `code`, and the import keeps a version's `code`. A `v` naming no live
+  version shows the default edition. Hosts drop their own parameters
+  (Doujins `?ver=`, Hentai0 `?v=<uuid>`).
 
 ```go
 urls, _ := contenturl.New(contenturl.Options{Pool: pool, Schema: "hentai0", Tenant: "hentai0"})
@@ -187,12 +197,14 @@ byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
 ```
 
 - **Canonical redirects.** The router maps kinds to routes. Mount its middleware
-  in front of the pages, or in front of the SPA shell. A missing or stale slug,
-  a wrong route, a merged code or a trailing slash gets a 301 to the canonical
-  path, with the query kept. A request's language prefix stays in its
-  canonical path, with that language's slug. Paths ContentKit answers (content,
-  cards, groups, the codes route) leave the site's default language (the
-  first of `Languages`) unprefixed and prefix the others. `Visibility` returns `Visible`, `Hidden` or `Gone`.
+  in front of the pages, or in front of the SPA shell. A missing language
+  prefix, a missing or stale slug, a wrong route, a merged code or a trailing
+  slash gets a 301 to the canonical path, with the query (`?v=` included)
+  kept. An unprefixed request (an old link) goes to the language
+  Accept-Language names, else the default (the first of `Languages`, which
+  the router requires). Every path ContentKit answers (content, cards, groups,
+  the codes and alias lookups, sitemap feeds) carries its language prefix and
+  that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
   content items' visibility itself (`catalog.Store.Visibility`). For groups, map the group state: a deleted group
@@ -208,7 +220,7 @@ router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
 	Visibility: func(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) { /* drafts, removals, per link */ },
 })
 mux.Handle("/", router.Middleware(spa))
-// the engine's codes route group serves GET /v1/codes/{code}[?lang=] and POST /v1/codes/aliases, routed by Config.Content's kinds
+// the engine's codes route group serves GET /v1/codes/{code}[?lang=&v=] (v: the live version's id) and POST /v1/codes/aliases, routed by Config.Content's kinds
 ```
 
 - **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
@@ -227,9 +239,14 @@ mux.Handle("/", router.Middleware(spa))
   segment as a slug. So `/watch/{CODE}/comments` redirects to the page. Put
   sub-pages in the query string, and keep other host pages off content routes.
 - **Browser.** `@openrails/contentkit-ui/urls` (no dependencies) parses codes and
-  builds paths from API links (`{content_kind, code, slug, slugs}`). Its
-  `canonical` result drives a client-side `history.replaceState`. It never
-  computes slugs; those come from the server.
+  builds paths from API links (`{content_kind, code, slug, slugs}`):
+  `path(link, {language, query, version})` and `url()` always prefix the
+  language (`languagePrefix`), `version` adds `?v=`; `hreflang()` lists every
+  language plus `x-default`, the default language's prefixed URL, never a
+  `?v=`. Its `canonical` result drives a client-side `history.replaceState`.
+  It never computes slugs; those come from the server. `useContentDetail`,
+  `VersionPicker` and `useVersionMenuItems` read and write `?v=` themselves
+  (through the provider's `navigate`, else the browser history).
 - **Tables.** `content_codes(tenant_id, code, content_kind, content_id, slug,
   slugs, merged_into)` and `content_code_aliases`. Host SQL may join
   `content_codes` on `(tenant_id, content_kind, content_id)`, for example for

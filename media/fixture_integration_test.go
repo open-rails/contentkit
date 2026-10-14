@@ -40,7 +40,7 @@ func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) 
 
 func blobOf(b []byte) string {
 	sum := sha256.Sum256(b)
-	return layout.BlobName(sum[:], cid(1)) // synthetic names only; real writes use NewBlob
+	return layout.BlobName(sum[:], cid(1)) // synthetic names only; real writes use NewBlobs
 }
 
 func matchesBlob(name string, body []byte) bool {
@@ -53,10 +53,11 @@ func matchesBlob(name string, body []byte) bool {
 func (f *fixture) blob(ref contentref.ContentRef, body []byte, typ string) string {
 	f.t.Helper()
 	sum := sha256.Sum256(body)
-	name, err := f.ms.NewBlob(f.t.Context(), ref, sum[:])
+	names, err := f.ms.NewBlobs(f.t.Context(), ref, [][]byte{sum[:]})
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	name := names[0]
 	item, _ := f.reg.Item(ref)
 	key, _ := item.Blob(name)
 	if _, err := f.env.Store.Put(f.t.Context(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: typ}); err != nil {

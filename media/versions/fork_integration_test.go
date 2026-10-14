@@ -83,6 +83,12 @@ func TestReaderMeta(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c, v := gallery(t, s)
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
+	// A commit places at most once; publishing copies finished files and
+	// places nothing, and nothing feeds back once settled.
+	s.settles()
+	if n, commits := s.placements(), s.placing(s.ref("gallery", v)); n["gallery"] > commits || n["gallery.published"] > 0 {
+		t.Fatalf("placements %v for %d commits: want at most one per commit and none for publication", n, commits)
+	}
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/reader"
 	page, anchor := "001", "a1"
 	meta := versions.ReaderMeta{SchemaVersion: 1,

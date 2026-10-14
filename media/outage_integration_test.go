@@ -86,10 +86,11 @@ func TestStoreOutage(t *testing.T) {
 	}
 
 	proxy.Up(t)
-	name, err = ms.NewBlob(ctx, ref, mustSum(blobOf([]byte("a"))))
+	names, err := ms.NewBlobs(ctx, ref, [][]byte{mustSum(blobOf([]byte("a")))})
 	if err != nil {
 		t.Fatal(err)
 	}
+	name = names[0]
 	if err := edit(); err != nil {
 		t.Fatalf("the first write once up probes and lands: %v", err)
 	}

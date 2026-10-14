@@ -1,13 +1,15 @@
 import { LockIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, useMemo, type ReactNode } from "react";
+import { useCallback, useContext, useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Decision, Sale, Terms, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
+import { findVersion } from "../../react/detail.js";
+import { useVersionParam } from "../../react/location.js";
 import { useKinds } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
@@ -131,9 +133,10 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
 export interface VersionPickerProps {
   /** The content's live versions (useContentDetail().versions). */
   versions: readonly Version[];
-  /** The version shown. */
-  value: string | null | undefined;
-  onChange: (version: string) => void;
+  /** The version shown, by code or id; default the page's ?v=, else the reader's language's default. */
+  value?: string | null;
+  /** Receives the chosen version; default writes its code to the page's ?v=. */
+  onChange?: (version: Version) => void;
   labels?: Labels;
   className?: string;
   appearance?: ContentKitUiAppearance;
@@ -146,19 +149,33 @@ function versionName(v: Version, languageName: (l: string) => string, labels?: L
 
 const primary = (v: Version) => v.languages[0] ?? "";
 
-/** The shown version, the versions' languages and the shown language's variants. */
-function choices(versions: readonly Version[], value: string | null | undefined) {
-  const current = versions.find((v) => v.id === value) ?? versions[0]!;
-  const language = primary(current);
-  return { current, language, languages: [...new Set(versions.map(primary))], variants: versions.filter((v) => primary(v) === language) };
+/**
+ * The shown version (value, else the page's ?v=, else the reader's
+ * language's default), the versions' languages, the shown language's
+ * variants, and the change handler (default: write ?v=).
+ */
+function useChoices(versions: readonly Version[], value: string | null | undefined, onChange: ((v: Version) => void) | undefined) {
+  const [param, setParam] = useVersionParam();
+  const reader = useContext(ContentKitContext)?.language;
+  const selected = value === undefined ? param : value;
+  const change = useCallback((v: Version) => (onChange ? onChange(v) : setParam(v.code)), [onChange, setParam]);
+  return useMemo(() => {
+    const current = findVersion(versions, selected) ?? (reader ? versions.find((v) => v.languages.includes(reader)) : undefined) ?? versions[0];
+    const language = current ? primary(current) : "";
+    return { current, language, languages: [...new Set(versions.map(primary))], variants: versions.filter((v) => primary(v) === language), change };
+  }, [versions, selected, reader, change]);
 }
 
-/** Chooses among a content's versions: a language first when they differ in language, then its variants (traits, labels). */
+/**
+ * Chooses among a content's versions: a language first when they differ in
+ * language, then its variants (traits, labels). The choice is the page's ?v=
+ * unless value and onChange say otherwise.
+ */
 export function VersionPicker({ versions, value, onChange, labels, className, appearance }: VersionPickerProps) {
   const { t } = useMessages();
   const languageName = useLanguageName();
-  if (versions.length < 2) return null;
-  const { current, language, languages, variants } = choices(versions, value);
+  const { current, language, languages, variants, change } = useChoices(versions, value, onChange);
+  if (versions.length < 2 || !current) return null;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("flex flex-wrap items-center gap-2 text-sm", className)} data-ckui="version-picker">
       {languages.length > 1 && (
@@ -166,7 +183,7 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
           value={language}
           onValueChange={(l) => {
             const v = versions.find((x) => primary(x) === l);
-            if (v) onChange(v.id);
+            if (v) change(v);
           }}
         >
           <SelectTrigger size="sm" aria-label={t("versions.language")}>
@@ -190,7 +207,7 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
               role="radio"
               aria-checked={v.id === current.id}
               variant={v.id === current.id ? "default" : "outline"}
-              onClick={() => onChange(v.id)}
+              onClick={() => change(v)}
               data-ckui="version-option"
               data-locked={v.decision.allowed ? undefined : ""}
             >
@@ -204,18 +221,22 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
   );
 }
 
+export interface VersionMenuOptions {
+  /** The version shown, by code or id; default the page's ?v=, else the reader's language's default. */
+  value?: string | null;
+  /** Receives the chosen version; default writes its code to the page's ?v=. */
+  onChange?: (version: Version) => void;
+  labels?: Labels;
+}
+
 /** VersionPicker as VideoPlayer settings entries (menuItems), for a watch page. */
-export function useVersionMenuItems(
-  versions: readonly Version[],
-  value: string | null | undefined,
-  onChange: (version: string) => void,
-  labels?: Labels,
-): PlayerMenuItem[] {
+export function useVersionMenuItems(versions: readonly Version[], o: VersionMenuOptions = {}): PlayerMenuItem[] {
   const { t } = useMessages();
   const languageName = useLanguageName();
+  const { current, language, languages, variants, change } = useChoices(versions, o.value, o.onChange);
+  const { labels } = o;
   return useMemo(() => {
-    if (versions.length < 2) return [];
-    const { current, language, languages, variants } = choices(versions, value);
+    if (versions.length < 2 || !current) return [];
     const out: PlayerMenuItem[] = [];
     if (languages.length > 1)
       out.push({
@@ -224,7 +245,7 @@ export function useVersionMenuItems(
         options: languages.map((l) => ({ value: l, label: languageName(l) })),
         onChange: (l) => {
           const v = versions.find((x) => primary(x) === l);
-          if (v) onChange(v.id);
+          if (v) change(v);
         },
       });
     if (variants.length > 1)
@@ -235,8 +256,11 @@ export function useVersionMenuItems(
           const name = versionName(v, languageName, labels);
           return { value: v.id, label: v.decision.allowed ? name : t("versions.lockedOption", { name }) };
         }),
-        onChange,
+        onChange: (id) => {
+          const v = versions.find((x) => x.id === id);
+          if (v) change(v);
+        },
       });
     return out;
-  }, [versions, value, onChange, labels, t, languageName]);
+  }, [versions, current, language, languages, variants, change, labels, t, languageName]);
 }

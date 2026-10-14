@@ -958,7 +958,7 @@ func (q GetContentVersionQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersion is GET /v1/contents/{id}/versions/{vid} (public). One version of a content item as the viewer sees it, with its segments and access decision.
+// GetContentVersion is GET /v1/contents/{id}/versions/{vid} (public). One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code.
 func (c *Client) GetContentVersion(ctx context.Context, id string, vid string, q GetContentVersionQuery) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), nil, &out)
@@ -1347,8 +1347,10 @@ func (c *Client) GetMediaVersionHls(ctx context.Context, kind string, id string,
 
 // GetCodeQuery is the query of GetCode.
 type GetCodeQuery struct {
-	// the language of the path's prefix and slug
+	// the language of the path's prefix and slug; the site's default by default
 	Lang string
+	// a version code (the page's ?v=)
+	V string
 }
 
 func (q GetCodeQuery) values() url.Values {
@@ -1356,10 +1358,13 @@ func (q GetCodeQuery) values() url.Values {
 	if q.Lang != "" {
 		v.Set("lang", q.Lang)
 	}
+	if q.V != "" {
+		v.Set("v", q.V)
+	}
 	return v
 }
 
-// GetCode is GET /v1/codes/{code} (open). A content code's link and canonical path; any spelling of the code resolves.
+// GetCode is GET /v1/codes/{code} (open). A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.
 func (c *Client) GetCode(ctx context.Context, code string, q GetCodeQuery) (contenturl.Resolved, error) {
 	var out contenturl.Resolved
 	err := c.call(ctx, http.MethodGet, expand("/v1/codes/{code}", "{code}", url.PathEscape(code)), q.values(), nil, &out)
@@ -1368,7 +1373,7 @@ func (c *Client) GetCode(ctx context.Context, code string, q GetCodeQuery) (cont
 
 // PostCodesAliasesQuery is the query of PostCodesAliases.
 type PostCodesAliasesQuery struct {
-	// the language of the paths' prefix and slug
+	// the language of the paths' prefix and slug; the site's default by default
 	Lang string
 }
 

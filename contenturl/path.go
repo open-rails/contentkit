@@ -65,21 +65,23 @@ func (r Routes) has(route string) bool {
 	return false
 }
 
-// Prefix is the path prefix of pages in language on a site of languages, its
-// default first: none for the default language, which pages serve
-// unprefixed, and the language for the others.
+// Prefix is the language of a page asked for in language on a site of
+// languages, its default first: language, else the default. Every content
+// page is under its language; contentkit-ui's languagePrefix mirrors this.
 func Prefix(languages []string, language string) string {
-	if len(languages) > 0 && language == languages[0] {
-		return ""
+	if language == "" && len(languages) > 0 {
+		return languages[0]
 	}
 	return language
 }
 
-// Path joins [/{language}]/{route}/{code}[/{slug}].
-func Path(language, route string, code Code, slug string) string {
+// Path is a content page's path, /{language}/{route}/{code}[/{slug}], under
+// Prefix(languages, language); slug is the caller's for that language. Every
+// path ContentKit answers is built here.
+func Path(languages []string, language, route string, code Code, slug string) string {
 	var b strings.Builder
-	if language != "" {
-		b.WriteString("/" + language)
+	if l := Prefix(languages, language); l != "" {
+		b.WriteString("/" + l)
 	}
 	b.WriteString("/" + route + "/" + string(code))
 	if slug != "" {
@@ -88,9 +90,24 @@ func Path(language, route string, code Code, slug string) string {
 	return b.String()
 }
 
+// AcceptLanguage is the first of languages an Accept-Language header names,
+// as a tag or a tag's primary subtag; "" when it names none.
+func AcceptLanguage(languages []string, header string) string {
+	for _, part := range strings.Split(header, ",") {
+		tag, _, _ := strings.Cut(strings.TrimSpace(part), ";")
+		tag = strings.ToLower(tag)
+		for _, l := range languages {
+			if tag == l || strings.HasPrefix(tag, l+"-") {
+				return l
+			}
+		}
+	}
+	return ""
+}
+
 // Parsed is a content path split into its parts.
 type Parsed struct {
-	Language string // "" when unprefixed
+	Language string // "" when unprefixed (an old link: it redirects)
 	Route    string
 	Code     Code   // canonical form
 	RawCode  string // as written
@@ -98,8 +115,9 @@ type Parsed struct {
 }
 
 // ParsePath splits [/{language}]/{route}/{code}[/{slug}][/] where route is one
-// of routes' values and language one of languages. ok is false for any other
-// path, including an invalid code.
+// of routes' values and language one of languages; a path without the
+// language is still read, for its redirect. ok is false for any other path,
+// including an invalid code.
 func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 	var p Parsed
 	rest, ok := strings.CutPrefix(path, "/")
@@ -135,12 +153,13 @@ func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 	return p, true
 }
 
-// Canonical returns link's canonical path under language ("" unprefixed),
-// and false when link's kind has no route.
-func Canonical(routes Routes, language string, link Link) (string, bool) {
+// Canonical returns link's canonical path in language (the default when
+// ""), with its slug there; false when link's kind has no route.
+func Canonical(routes Routes, languages []string, language string, link Link) (string, bool) {
 	route, ok := routes[link.ContentKind]
 	if !ok {
 		return "", false
 	}
-	return Path(language, route, link.Code, link.SlugFor(language)), true
+	language = Prefix(languages, language)
+	return Path(languages, language, route, link.Code, link.SlugFor(language)), true
 }

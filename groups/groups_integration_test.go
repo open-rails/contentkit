@@ -524,11 +524,11 @@ func TestList(t *testing.T) {
 	if c := page.Groups[0]; c.Count != 1 || c.Code == "" || c.Path != "/es/tags/"+c.Code+"/delta" || c.NameLanguage != "en" {
 		t.Fatalf("card %+v", c)
 	}
-	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0"}); page.Groups[0].Count != 2 || page.Groups[0].Path != "/tags/"+page.Groups[0].Code+"/delta" {
+	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0"}); page.Groups[0].Count != 2 || page.Groups[0].Path != "/en/tags/"+page.Groups[0].Code+"/delta" {
 		t.Fatalf("all languages %+v", page.Groups[0])
 	}
-	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0", Language: "en"}); page.Groups[0].Path != "/tags/"+page.Groups[0].Code+"/delta" {
-		t.Fatalf("the default language is unprefixed: %+v", page.Groups[0])
+	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0", Language: "en"}); page.Groups[0].Path != "/en/tags/"+page.Groups[0].Code+"/delta" {
+		t.Fatalf("the default language is prefixed too: %+v", page.Groups[0])
 	}
 	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"}} {
 		if _, err := f.s.List(f.ctx, opts); !errors.Is(err, ErrInvalid) {

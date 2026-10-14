@@ -36,6 +36,37 @@ BEGIN
 END;
 $$;
 
+-- A version's code: four Crockford characters, at least one a letter, unique
+-- within its content; a code an insert names (an import's) stays.
+CREATE FUNCTION contentkit_version_code() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    b bytea;
+    c text;
+    i int;
+    taken boolean;
+BEGIN
+    IF NEW.code IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    LOOP
+        b := uuid_send(gen_random_uuid());
+        c := '';
+        FOREACH i IN ARRAY ARRAY[0, 1, 2, 3] LOOP
+            c := c || substr('0123456789ABCDEFGHJKMNPQRSTVWXYZ', (get_byte(b, i) & 31) + 1, 1);
+        END LOOP;
+        CONTINUE WHEN c !~ '[A-Z]';
+        EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I WHERE tenant_id = $1 AND content_id = $2 AND code = $3)', TG_TABLE_SCHEMA, TG_TABLE_NAME)
+            INTO taken USING NEW.tenant_id, NEW.content_id, c;
+        IF NOT taken THEN
+            NEW.code := c;
+            RETURN NEW;
+        END IF;
+    END LOOP;
+END;
+$$;
+
 CREATE FUNCTION contentkit_first_published() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -156,6 +187,7 @@ CREATE TABLE content_versions (
     tenant_id text NOT NULL,
     id text NOT NULL,
     content_id text NOT NULL,
+    code text NOT NULL,
     "position" integer DEFAULT 0 NOT NULL,
     languages text[] NOT NULL,
     traits text[] DEFAULT '{}'::text[] NOT NULL,
@@ -176,6 +208,8 @@ CREATE TABLE content_versions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT content_versions_pkey PRIMARY KEY (tenant_id, id),
+    CONSTRAINT content_versions_code_key UNIQUE (tenant_id, content_id, code),
+    CONSTRAINT content_versions_code_check CHECK (((code ~ '^[0-9A-HJKMNP-TV-Z]{4}$'::text) AND (code ~ '[A-Z]'::text))),
     CONSTRAINT content_versions_access_check CHECK (((access IS NULL) OR (jsonb_typeof(access) = 'object'::text))),
     CONSTRAINT content_versions_languages_check CHECK ((cardinality(languages) > 0)),
     CONSTRAINT content_versions_state_check CHECK ((state = ANY (ARRAY['draft'::text, 'published'::text, 'deleted'::text]))),
@@ -184,6 +218,7 @@ CREATE TABLE content_versions (
 
 CREATE INDEX content_versions_content_idx ON content_versions USING btree (tenant_id, content_id, "position");
 CREATE INDEX content_versions_due_idx ON content_versions USING btree (publish_at) WHERE ((state = 'published'::text) AND (published_at IS NULL));
+CREATE TRIGGER content_versions_code BEFORE INSERT ON content_versions FOR EACH ROW EXECUTE FUNCTION contentkit_version_code();
 
 CREATE TABLE content_version_text (
     tenant_id text NOT NULL,

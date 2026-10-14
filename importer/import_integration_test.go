@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -141,7 +142,7 @@ func catalogBatch() importer.Batch {
 				Creators: []catalog.Creator{{UserID: "u-1"}},
 				Text:     map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
 				Versions: []importer.VersionRecord{
-					{ExternalID: "version:1", ID: id("version", 1), Languages: []string{"en"}, Ordinal: ptr(1), PublishedAt: ptr(t0.Add(24 * time.Hour)),
+					{ExternalID: "version:1", ID: id("version", 1), Code: "k3f9", Languages: []string{"en"}, Ordinal: ptr(1), PublishedAt: ptr(t0.Add(24 * time.Hour)),
 						Text:     map[string]catalog.VersionText{"en": {Title: "First, in English"}},
 						Segments: []catalog.Segment{{Start: 0, End: 10}, {Start: 10, End: 20, ReleaseAt: &future}}, CreatedAt: &t0},
 					{ExternalID: "version:2", ID: id("version", 2), Languages: []string{"ja"}, Traits: []string{"colored"}, State: "draft", CreatedAt: &t0},
@@ -266,6 +267,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`, id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0"},
 		{`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "2"},
 		{`SELECT code FROM $s.content_codes WHERE content_id = $1`, "GAZ000001"},
+		{`SELECT code FROM $s.content_versions WHERE content_id = $1 AND position = 0`, "K3F9"},
 		{`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id IS NULL`, "2/1/1/1"},
 		{`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "6"},
 	} {
@@ -446,6 +448,52 @@ func TestImportPartialFailureResumes(t *testing.T) {
 	res = f.importBatch(t, importer.Batch{Source: b.Source, Contents: b.Contents[:1]})
 	if len(res.Failed) != 1 || res.Failed[0].Code != "conflict" {
 		t.Fatalf("moved id %+v", res)
+	}
+}
+
+// Every imported version has a code, unique within its content: a given one
+// is kept, the others assigned; re-importing keeps them, and a code another
+// version holds, or a different one for a stored version, is a conflict.
+func TestImportVersionCodes(t *testing.T) {
+	f := newEngine(t)
+	gallery := func(n int64, codes ...string) importer.ContentRecord {
+		c := importer.ContentRecord{ExternalID: fmt.Sprint("gallery:", n), ID: id("gallery", n), Kind: "gallery", State: "published",
+			Text: map[string]catalog.Text{"en": {Title: "G"}}}
+		for i, code := range codes {
+			c.Versions = append(c.Versions, importer.VersionRecord{ExternalID: fmt.Sprint("version:", n, ":", i), Code: code, Languages: []string{"en"}})
+		}
+		return c
+	}
+	codes := func(n int64) []string {
+		return strings.Split(f.scalar(t, `SELECT string_agg(code, ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`, id("gallery", n)), ",")
+	}
+	b := importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "", "", "AB12"), gallery(2, "ab-12")}}
+	if res := f.importBatch(t, b); len(res.Failed) > 0 {
+		t.Fatalf("failures %+v", res.Failed)
+	}
+	one := codes(1)
+	if len(one) != 3 || one[2] != "AB12" || one[0] == one[1] || slices.Contains(one[:2], "AB12") || codes(2)[0] != "AB12" {
+		t.Fatalf("codes %v %v", one, codes(2))
+	}
+	for _, c := range one {
+		if code, err := contenturl.ParseVersionCode(c); err != nil || string(code) != c {
+			t.Fatalf("code %q: %v", c, err)
+		}
+	}
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Contents: []importer.ContentRecord{gallery(1, "", one[1], "")}}); len(res.Failed) > 0 ||
+		!slices.Equal(codes(1), one) {
+		t.Fatalf("re-import %+v: %v, want %v", res.Failed, codes(1), one)
+	}
+	for _, c := range []importer.ContentRecord{gallery(1, "ZZ99"), gallery(1, one[1], "", "")} {
+		if res := f.importBatch(t, importer.Batch{Source: b.Source, Contents: []importer.ContentRecord{c}}); len(res.Failed) != 1 || res.Failed[0].Code != "conflict" {
+			t.Fatalf("conflict %v: %+v", c.Versions, res)
+		}
+	}
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Contents: []importer.ContentRecord{gallery(3, "AB12", "ab12")}}); len(res.Failed) != 1 || res.Failed[0].Code != "invalid" {
+		t.Fatalf("a shared code within one item %+v", res)
+	}
+	if !slices.Equal(codes(1), one) {
+		t.Fatalf("refused imports changed codes: %v", codes(1))
 	}
 }
 

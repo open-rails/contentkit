@@ -63,7 +63,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	}
 	f.advance(time.Hour + time.Minute)
 	live := f.read(anon, "main.test", id)[0]
-	if live == nil || !live.Live || live.Editor || len(live.Versions) != 2 || live.Title != "Moonlit Garden" || live.Code == "" || live.Path != "/g/"+live.Code+"/moonlit-garden" {
+	if live == nil || !live.Live || live.Editor || len(live.Versions) != 2 || live.Title != "Moonlit Garden" || live.Code == "" || live.Path != "/en/g/"+live.Code+"/moonlit-garden" {
 		t.Fatalf("live at its time, before PublishDue: %+v", live)
 	}
 	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 1 {

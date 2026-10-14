@@ -90,8 +90,7 @@ type sel struct {
 	args    pgx.NamedArgs
 	reader  Reader
 	viewer  *catalog.Viewer
-	display string
-	path    string // language of card paths; "" unprefixed
+	display string // the language of cards' text and paths
 	loc     *time.Location
 }
 
@@ -130,7 +129,6 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	if q.display, err = s.displayLanguage(cmpOr(r.DisplayLanguage, r.Language)); err != nil {
 		return nil, err
 	}
-	q.path = cmpOr(r.DisplayLanguage, r.Language)
 	q.args["d_display"], q.args["d_langs"] = q.display, s.languages()
 	if f.TimeZone != "" {
 		if q.loc, err = time.LoadLocation(f.TimeZone); err != nil {

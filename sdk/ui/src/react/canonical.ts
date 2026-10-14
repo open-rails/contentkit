@@ -19,7 +19,7 @@ export interface CanonicalContentOptions {
 }
 
 export interface CanonicalContent {
-  /** The canonical path in the page's language; undefined until link arrives. */
+  /** The canonical path in the page's language, never a version's (?v=); undefined until link arrives. */
   path?: string;
   /** Its absolute URL. */
   url?: string;
@@ -54,15 +54,18 @@ const link = (rel: string, value: string, hreflang?: string): Tag => ({
 
 /**
  * A content page's canonical URL once its data (link) arrives: replaces the
- * address with the canonical path (code spelling, merged code, current slug)
- * through the provider's navigate (else history.replaceState), and keeps
+ * address with the canonical path (language prefix, the reader's when the
+ * address has none; code spelling, merged code, current slug; the query, ?v=
+ * included, kept) through the provider's navigate (else history.replaceState), and keeps
  * `<link rel=canonical>`, og:url, og:title, og:image and hreflang alternates
  * (each language's own slug) in the head while mounted; unmounting removes
  * the tags it set, server-rendered ones included. Needs the provider's `urls`.
  */
 export function useCanonicalContent(content: ContentLink | null | undefined, o: CanonicalContentOptions = {}): CanonicalContent {
   const urls = useContentURLs();
-  const navigate = useContext(ContentKitContext)?.navigate;
+  const ctx = useContext(ContentKitContext);
+  const navigate = ctx?.navigate;
+  const reader = ctx?.language;
   const at = o.location ?? (typeof location === "undefined" ? "" : location.pathname + location.search + location.hash);
   const kind = content?.content_kind;
   const code = content?.code;
@@ -78,11 +81,12 @@ export function useCanonicalContent(content: ContentLink | null | undefined, o: 
     if (!lnk) return { alternates: {} };
     const origin = urls.origin ?? (typeof location === "undefined" ? undefined : location.origin);
     const hash = at.includes("#") ? at.slice(at.indexOf("#")) : "";
-    const c = urls.canonical(at, lnk);
-    const path = c?.path ?? urls.path(lnk);
+    const language = reader && urls.languages.includes(reader) ? reader : undefined;
+    const c = urls.canonical(at, lnk, { language });
+    const path = c?.path ?? urls.path(lnk, { language });
     const alternates = origin ? urls.hreflang(lnk, { origin, languages: languages?.split(","), defaultLanguage: o.defaultLanguage }) : {};
     return { path, url: origin ? origin + path : undefined, alternates, redirect: c?.redirect ? c.location + hash : undefined };
-  }, [lnk, at, urls, languages, o.defaultLanguage]);
+  }, [lnk, at, urls, reader, languages, o.defaultLanguage]);
 
   const { redirect } = result;
   useEffect(() => {

@@ -153,10 +153,11 @@ func TestUpgradeAdoptsSharedLegacyBlobs(t *testing.T) {
 	// The worker replaces one output and drops its old blob, which others use.
 	body := []byte("high 001, rendered again")
 	sum := sha256.Sum256(body)
-	name, err := f.ms.NewBlob(ctx, l.ref, sum[:])
+	names, err := f.ms.NewBlobs(ctx, l.ref, [][]byte{sum[:]})
 	if err != nil {
 		t.Fatal(err)
 	}
+	name := names[0]
 	key, _ := l.item.Blob(name)
 	f.putObject(key, body, media.PutOptions{ContentType: "image/webp"})
 	if _, err := f.ms.EditExisting(ctx, l.ref, func(m *media.Manifest) error {

@@ -1,18 +1,14 @@
-// ContentKit content URLs: [/{lang}]/{route}/{CODE}[/{slug}]. The code is the
-// only part the server reads; the slug is decoration. Mirrors Go's contenturl
-// (the two share contenturl/testdata/vectors.json).
+// ContentKit content URLs: /{lang}/{route}/{CODE}[/{slug}][?v={version}]. Every
+// page is under its language, the default included; the code is the only part
+// of the path the server reads, the slug is decoration, and ?v= selects a
+// version. Mirrors Go's contenturl (the two share contenturl/testdata/vectors.json).
 
 export const CODE_LENGTH = 9;
 
 /** Crockford base32: digits and uppercase letters without I, L, O, U. */
 export const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/**
- * Reads a code with Crockford's decoding rules (any case, O as 0, I and L as 1,
- * hyphens ignored) and returns its canonical form, or null when the input is
- * not a code. An all-digit result is never a code (it reads as a legacy id).
- */
-export function parseCode(input: string): string | null {
+function parseCrockford(input: string, length: number): string | null {
   let out = "";
   for (const ch of input) {
     if (ch === "-") continue;
@@ -20,11 +16,55 @@ export function parseCode(input: string): string | null {
     let c = ch.toUpperCase();
     if (c === "O") c = "0";
     else if (c === "I" || c === "L") c = "1";
-    if (!CODE_ALPHABET.includes(c) || out.length === CODE_LENGTH) return null;
+    if (!CODE_ALPHABET.includes(c) || out.length === length) return null;
     out += c;
   }
-  if (out.length !== CODE_LENGTH || !/[A-Z]/.test(out)) return null;
+  if (out.length !== length || !/[A-Z]/.test(out)) return null;
   return out;
+}
+
+/**
+ * Reads a code with Crockford's decoding rules (any case, O as 0, I and L as 1,
+ * hyphens ignored) and returns its canonical form, or null when the input is
+ * not a code. An all-digit result is never a code (it reads as a legacy id).
+ */
+export function parseCode(input: string): string | null {
+  return parseCrockford(input, CODE_LENGTH);
+}
+
+/** The query parameter that selects a version on its content's page. */
+export const VERSION_PARAM = "v";
+
+export const VERSION_CODE_LENGTH = 4;
+
+/** Reads a version code (four characters, parseCode's rules); null when the input is not one. */
+export function parseVersionCode(input: string): string | null {
+  return parseCrockford(input, VERSION_CODE_LENGTH);
+}
+
+/** The version code a location's (or search string's) ?v= names; null when it names none. */
+export function versionParam(location: string | URLSearchParams): string | null {
+  const v = (typeof location === "string" ? searchOf(location) : location).get(VERSION_PARAM);
+  return v === null ? null : parseVersionCode(v);
+}
+
+function searchOf(location: string): URLSearchParams {
+  const noHash = location.split("#", 1)[0]!;
+  const q = noHash.indexOf("?");
+  return new URLSearchParams(q < 0 ? "" : noHash.slice(q + 1));
+}
+
+/** location with ?v= set to code, or removed for null; its other parameters and hash stay. */
+export function withVersion(location: string, code: string | null): string {
+  const hashAt = location.indexOf("#");
+  const hash = hashAt < 0 ? "" : location.slice(hashAt);
+  const rest = hashAt < 0 ? location : location.slice(0, hashAt);
+  const q = rest.indexOf("?");
+  const params = new URLSearchParams(q < 0 ? "" : rest.slice(q + 1));
+  if (code === null) params.delete(VERSION_PARAM);
+  else params.set(VERSION_PARAM, code);
+  const search = params.toString();
+  return (q < 0 ? rest : rest.slice(0, q)) + (search ? `?${search}` : "") + hash;
 }
 
 /** Reports whether input is a code in canonical form. */
@@ -49,16 +89,19 @@ export function slugFor(link: Pick<ContentLink, "slug" | "slugs">, language = ""
 export type QueryInit = string | URLSearchParams | Record<string, string | number | boolean | null | undefined>;
 
 export interface PathOptions {
-  /** The page's language: contentPath prefixes any; ContentURLs leave the site's default unprefixed. */
+  /** The page's language; ContentURLs use the site's default when unset. */
   language?: string;
   /** Query string for sub-pages, e.g. { p: 12 }. Null and undefined values are dropped. */
   query?: QueryInit;
+  /** A version code (Version.code): ?v= selects that version on the page. */
+  version?: string | null;
 }
 
-function queryString(query: QueryInit | undefined): string {
-  if (query === undefined) return "";
+function queryString(query: QueryInit | undefined, version?: string | null): string {
   let params: URLSearchParams;
-  if (typeof query === "string" || query instanceof URLSearchParams) {
+  if (query === undefined) {
+    params = new URLSearchParams();
+  } else if (typeof query === "string" || query instanceof URLSearchParams) {
     params = new URLSearchParams(query);
   } else {
     params = new URLSearchParams();
@@ -66,34 +109,34 @@ function queryString(query: QueryInit | undefined): string {
       if (v !== null && v !== undefined) params.append(k, String(v));
     }
   }
+  if (version) params.set(VERSION_PARAM, version);
   const s = params.toString();
   return s ? `?${s}` : "";
 }
 
 /**
- * The path prefix of pages in language on a site of languages, its default
- * first: none for the default language, which pages serve unprefixed, and
- * the language for the others. Mirrors Go's contenturl.Prefix.
+ * The language of a page asked for in language on a site of languages, its
+ * default first: language, else the default. Every content page is under its
+ * language. Mirrors Go's contenturl.Prefix.
  */
 export function languagePrefix(languages: readonly string[], language = ""): string {
-  return language === languages[0] ? "" : language;
+  return language || languages[0] || "";
 }
 
-/** Joins [/{language}]/{route}/{code}[/{slug}][?query]. */
+/** Joins /{language}/{route}/{code}[/{slug}][?query]; ContentURLs.path() picks the language. */
 export function contentPath(route: string, code: string, slug = "", options: PathOptions = {}): string {
   const prefix = options.language ? `/${options.language}` : "";
-  return `${prefix}/${route}/${code}${slug ? `/${slug}` : ""}${queryString(options.query)}`;
+  return `${prefix}/${route}/${code}${slug ? `/${slug}` : ""}${queryString(options.query, options.version)}`;
 }
 
 export interface ContentURLConfig {
   /** Content kind -> the host's route segment ({ video: "watch", gallery: "g" }). */
   routes: Record<string, string>;
   /**
-   * The site's languages, its default first (the content model's): the
-   * segments a path may start with. path(), url() and hreflang() leave the
-   * default unprefixed; canonical() keeps a location's own prefix.
+   * The site's languages, its default first (the content model's). Required:
+   * every content path starts with one; an unprefixed location is not canonical.
    */
-  languages?: string[];
+  languages: string[];
   /** The site's origin ("https://example.com") for absolute URLs (canonical links, og:url). */
   origin?: string;
 }
@@ -118,10 +161,15 @@ export interface CanonicalResult {
   redirect: boolean;
 }
 
+export interface CanonicalOptions {
+  /** The language an unprefixed location redirects to (the reader's); default the site's default. */
+  language?: string;
+}
+
 export interface HreflangOptions {
   /** Languages the content exists in; default every configured language. */
   languages?: readonly string[];
-  /** The language x-default points at; default the site's default language. */
+  /** The language x-default points at, listed or not; default the site's default language. */
   defaultLanguage?: string;
   /** The origin for absolute URLs; default the configured one (throws without either). */
   origin?: string;
@@ -132,7 +180,7 @@ export interface ContentURLs {
   readonly languages: readonly string[];
   /** The configured origin, without a trailing slash. */
   readonly origin?: string;
-  /** The canonical path of link in a language (none for the default); throws when its kind has no route. */
+  /** link's page in a language (the default when unset), with ?v= for a version; throws when its kind has no route. */
   path(link: ContentLink, options?: PathOptions): string;
   /** path() on the configured origin; throws without one. */
   url(link: ContentLink, options?: PathOptions): string;
@@ -141,13 +189,14 @@ export interface ContentURLs {
   /**
    * Compares a location (pathname plus optional ?query and #hash) with link's
    * canonical path, for a client-side history.replaceState after the page's
-   * data arrives. null when the location is not a content path or link's kind
-   * has no route.
+   * data arrives; the query (?v= included) stays. null when the location is
+   * not a content path or link's kind has no route.
    */
-  canonical(location: string, link: ContentLink): CanonicalResult | null;
+  canonical(location: string, link: ContentLink, options?: CanonicalOptions): CanonicalResult | null;
   /**
    * hreflang alternates: each language's absolute URL of link (its own
-   * slug), plus x-default; empty when no language is configured.
+   * slug), plus x-default, the default language's. Never a version's: a
+   * version's canonical URL is its language page.
    */
   hreflang(link: ContentLink, options?: HreflangOptions): Record<string, string>;
 }
@@ -179,6 +228,7 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
   const languages = [...(config.languages ?? [])];
   const routeSet = new Set(Object.values(routes));
   if (routeSet.size === 0) throw new Error("contentkit-ui/urls: routes is empty");
+  if (languages.length === 0) throw new Error("contentkit-ui/urls: languages is empty");
   for (const r of [...routeSet, ...languages]) {
     if (!SEGMENT.test(r)) throw new Error(`contentkit-ui/urls: ${JSON.stringify(r)} is not one lowercase path segment`);
   }
@@ -188,7 +238,8 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
 
   const canonicalPath = (link: ContentLink, language: string): string | null => {
     const route = routes[link.content_kind];
-    return route === undefined ? null : contentPath(route, link.code, slugFor(link, language), { language });
+    const lang = languagePrefix(languages, language);
+    return route === undefined ? null : contentPath(route, link.code, slugFor(link, lang), { language: lang });
   };
 
   const parse = (pathname: string): ParsedContentPath | null => {
@@ -211,7 +262,8 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
   const path = (link: ContentLink, options: PathOptions = {}): string => {
     const route = routes[link.content_kind];
     if (route === undefined) throw new Error(`contentkit-ui/urls: no route for kind ${JSON.stringify(link.content_kind)}`);
-    return contentPath(route, link.code, slugFor(link, options.language), { ...options, language: languagePrefix(languages, options.language) });
+    const language = languagePrefix(languages, options.language);
+    return contentPath(route, link.code, slugFor(link, language), { ...options, language });
   };
 
   return {
@@ -223,14 +275,15 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       return origin + path(link, options);
     },
     parse,
-    canonical(location, link) {
+    canonical(location, link, options = {}) {
       const noHash = location.split("#", 1)[0]!;
       const q = noHash.indexOf("?");
       const pathname = q < 0 ? noHash : noHash.slice(0, q);
       const search = q < 0 ? "" : noHash.slice(q + 1);
       const parsed = parse(pathname);
       if (parsed === null) return null;
-      const path = canonicalPath(link, parsed.language);
+      const language = parsed.language || (options.language && languages.includes(options.language) ? options.language : "");
+      const path = canonicalPath(link, language);
       if (path === null) return null;
       return { path, location: search ? `${path}?${search}` : path, redirect: pathname !== path };
     },
@@ -241,7 +294,7 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       const langs = (options.languages ?? languages).filter((l) => languages.includes(l));
       for (const language of langs) out[language] = base + path(link, { language });
       const def = options.defaultLanguage ?? languages[0];
-      if (def && out[def]) out["x-default"] = out[def];
+      if (langs.length) out["x-default"] = base + path(link, { language: def });
       return out;
     },
   };

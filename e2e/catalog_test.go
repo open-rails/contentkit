@@ -102,11 +102,11 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/text/ja", catalog.Text{Title: "アルバム"}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+book.ID+"/text/ja", nil, nil)
 
-	// Codes resolve the item's code, the default language unprefixed; its URL
-	// is gone once it is deleted.
+	// Codes resolve the item's code under its language, the default one
+	// included; its URL is gone once it is deleted.
 	var resolved contenturl.Resolved
 	f.want(http.StatusOK, anon, "GET", "/codes/"+strings.ToLower(post.Code)+"?lang=en", nil, &resolved)
-	if resolved.ContentID != post.ID || resolved.Path != "/blog/"+post.Code+"/hello" {
+	if resolved.ContentID != post.ID || resolved.Path != "/en/blog/"+post.Code+"/hello" {
 		t.Fatalf("resolved %+v", resolved)
 	}
 	f.want(http.StatusOK, anon, "GET", "/codes/"+post.Code+"?lang=ja", nil, &resolved)
@@ -376,8 +376,13 @@ func mediaScenario(t *testing.T, f *server, album, user, anon string) {
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 8 || presets[0].Kind != "album" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
-		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" ||
+	if len(presets) != 8 ||
+		!slices.ContainsFunc(presets, func(p media.PresetRule) bool {
+			return p.Kind == "album" && p.Name == "cover" && p.MinWidth == 8 && p.Base == "https://media.test" && p.To == "cover-{w}.webp" && slices.Equal(p.Widths, []int{200})
+		}) ||
+		!slices.ContainsFunc(presets, func(p media.PresetRule) bool {
+			return p.Kind == "user" && p.Name == "avatar" && p.Namespace == "accounts" && p.Stable
+		}) ||
 		!slices.ContainsFunc(presets, func(p media.PresetRule) bool { return p.Kind == "blog.body" && p.Name == "inline" }) {
 		t.Fatalf("presets %+v", presets)
 	}

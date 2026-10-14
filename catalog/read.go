@@ -103,7 +103,8 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		if l, ok := links[id]; ok {
 			c.Code = string(l.Code)
 			if route := s.cfg.Kinds[it.kind].Route; route != "" {
-				c.Path = contenturl.Path(contenturl.Prefix(s.cfg.Languages, v.language), route, l.Code, l.SlugFor(lang))
+				page := contenturl.Prefix(s.cfg.Languages, v.language)
+				c.Path = contenturl.Path(s.cfg.Languages, page, route, l.Code, l.SlugFor(page))
 			}
 		}
 		for _, r := range iv.versions {
@@ -437,7 +438,7 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 
 // readVersions reads every version of the items with its text and segments.
 func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Version, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
+	rows, err := s.pool.Query(ctx, `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
  pages, duration_ms, width, height, has_audio, ordinal FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
@@ -447,7 +448,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Ver
 	for rows.Next() {
 		v := &Version{Segments: []Segment{}}
 		var access, attrs []byte
-		if err := rows.Scan(&v.ID, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
+		if err := rows.Scan(&v.ID, &v.Code, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
 			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal); err != nil {
 			rows.Close()
 			return nil, err

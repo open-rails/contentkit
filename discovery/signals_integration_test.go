@@ -94,7 +94,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		if status != http.StatusOK || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s on %s: %d %s %v, want %v", c.path, c.host, status, code, got, c.want)
 		}
-		if len(top.Contents) > 0 && (top.Contents[0].Title != "Alpha" || top.Contents[0].Path != "/g/"+f.codes[1]+"/alpha") {
+		if len(top.Contents) > 0 && (top.Contents[0].Title != "Alpha" || top.Contents[0].Path != "/en/g/"+f.codes[1]+"/alpha") {
 			t.Errorf("ranked names %+v", top.Contents[0])
 		}
 	}

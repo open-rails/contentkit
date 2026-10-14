@@ -1,14 +1,14 @@
 import { ContentKitProvider, useContentDetail } from "@openrails/contentkit-ui/react";
 import { ContentKitUiProvider, ContentListing, ContentRail, Paywall, SearchBox, SearchResults, VersionPicker, useVersionMenuItems } from "@openrails/contentkit-ui";
 import type { Card, ContentQuery, ListSort } from "@openrails/contentkit-ui/client";
-import { StrictMode, useMemo, useState, useSyncExternalStore } from "react";
+import { StrictMode, useMemo, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { client, dark, q, theme, viewer } from "./session";
 
 // Content pages: ?view=listing&kind=&groups= a listing (its sort and filters in
 // the URL), ?view=rails&featured=&groups= a featured rail, a list rail and
 // continue watching, ?view=search a search page, ?view=detail&id= a content
-// page (version picker, paywall, the player's version menu). Checkouts land in window.events.
+// page (version picker, paywall, the player's version menu; ?v= picks the version). Checkouts land in window.events.
 const lang = q.get("lang") ?? "en";
 const groups = (q.get("groups") ?? "").split(",").filter(Boolean);
 const panel: React.CSSProperties = { display: "grid", gap: 12, padding: 16, borderRadius: 14, background: dark ? "#18181b" : "#fff", border: `1px solid ${dark ? "#27272a" : "#e4e4e7"}` };
@@ -87,16 +87,16 @@ function Search() {
 }
 
 function Detail({ id }: { id: string }) {
-  const [version, setVersion] = useState<string | null>(null);
-  const d = useContentDetail(id, { version });
-  const menu = useVersionMenuItems(d.versions, d.version?.id, setVersion);
+  // The version shown, the picker and the player menu all follow the page's ?v=.
+  const d = useContentDetail(id);
+  const menu = useVersionMenuItems(d.versions);
   if (!d.content) return <p>{d.error ? d.error.message : "Loading…"}</p>;
   return (
     <>
       <h1 style={{ margin: 0, fontSize: 22 }} data-demo="title">
         {d.content.title}
       </h1>
-      <VersionPicker versions={d.versions} value={d.version?.id} onChange={setVersion} />
+      <VersionPicker versions={d.versions} />
       <p data-demo="version">{d.version?.id}</p>
       {d.decision && <Paywall decision={d.decision} onCheckout={(o) => events.push({ name: "checkout", ...o })} />}
       <ul data-demo="player-menu">
