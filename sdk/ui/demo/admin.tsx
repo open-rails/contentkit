@@ -34,7 +34,9 @@ const subtitleLanguages = [{ value: "en", label: "English" }, { value: "ja", lab
 const createItem = async (): Promise<RefBody> => {
   const res = await fetch("/__test/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: q.get("kind") ?? "file", owner: viewer }) });
   const it = (await res.json()) as RefBody;
+  // Every file of a content lives in its version.
   localStorage.setItem("demo.last", it.id);
+  localStorage.setItem("demo.version", it.version ?? "");
   // ?hold=1: the item's third browser PUT waits until the test clears it.
   if (q.get("hold")) {
     await fetch("/__test/faults", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([{ item: it.id, fault: "hold", from: "browser", skip: 2 }]) });
@@ -42,7 +44,7 @@ const createItem = async (): Promise<RefBody> => {
   const n = Number(localStorage.getItem("demo.created") ?? 0) + 1;
   localStorage.setItem("demo.created", String(n));
   document.querySelector("[data-demo=created]")!.textContent = String(n);
-  return { kind: it.kind, id: it.id };
+  return { kind: it.kind, id: it.id, version: it.version };
 };
 function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;

@@ -34,7 +34,7 @@ test.describe("browser uploads", () => {
   test("resumes after a dropped part and commits the file once", async ({ page }) => {
     const owner = await h.user();
     const it = await h.item({ kind: "file", owner: owner.id });
-    const ref = { kind: it.kind, id: it.id };
+    const ref = mediaRef(it);
     await page.goto(at("upload.html", owner, {}));
     await expect(page.locator("body[data-ready]")).toBeAttached();
     // The first part PUT lands; every later one drops (Chromium can replay a reset PUT before surfacing an error).

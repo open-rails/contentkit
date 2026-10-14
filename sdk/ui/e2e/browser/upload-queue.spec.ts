@@ -52,6 +52,7 @@ test.describe("resume", () => {
     await entry.getByRole("button", { name: "Pause" }).click();
     await expect(entry).toHaveAttribute("data-status", "paused");
     const id = await page.evaluate(() => localStorage.getItem("demo.last")!);
+    const version = await page.evaluate(() => localStorage.getItem("demo.version")!);
     await h.clearFaults(id);
 
     // Leaving with an unfinished upload: after the reload it is listed, and the same file continues it.
@@ -63,7 +64,7 @@ test.describe("resume", () => {
     await expect(page.locator("[data-demo=created]")).toHaveText("1");
     expect(await page.evaluate(() => localStorage.getItem("ckui.uploads"))).toBeNull();
     await expect
-      .poll(() => h.object({ kind: "file", id }, "file"), { timeout: 60_000 })
+      .poll(() => h.object({ kind: "file", id, version }, "file"), { timeout: 60_000 })
       .toEqual({ size, sha256: createHash("sha256").update(Buffer.alloc(size, 7)).digest("hex") });
   });
 });
