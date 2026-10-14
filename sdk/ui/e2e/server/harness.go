@@ -134,6 +134,10 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	mc.BaseURL = mediaOrigin
+	mc, avatars, err := splitMedia(mc)
+	if err != nil {
+		return nil, err
+	}
 
 	// One ContentKit per mount, over one schema, AuthKit passed straight in.
 	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
@@ -144,6 +148,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			// Generous for a shared suite; a test reaches the comment limit with its own account.
 			Limits: contentkit.LimitsConfig{Comment: []contentkit.Rate{{Count: 20, Per: time.Minute}}},
 		},
+		Avatars: avatars,
 		Media: &contentkit.MediaConfig{Config: mc, WorkerSchema: workerSchema,
 			// One-second token windows: a refreshed read signs a new token.
 			Delivery:    contentkit.DeliveryConfig{SigningKey: c.tokenKey, Window: time.Second},
@@ -167,7 +172,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 
-	fixture, err := media.ForContent(mc, site())
+	fixture, err := cfg.MediaKinds()
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +225,20 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	}
 	h.faults = newFaults(h)
 	return h, nil
+}
+
+// The worker registry includes avatars; the engine config declares them separately.
+func splitMedia(mc media.Config) (media.Config, *contentkit.AvatarsConfig, error) {
+	for i, k := range mc.Kinds {
+		if k.Name != mc.Avatars.Kind {
+			continue
+		}
+		a := &contentkit.AvatarsConfig{Kind: &k, Preset: mc.Avatars.Preset}
+		mc.Kinds = append(append([]media.Kind(nil), mc.Kinds[:i]...), mc.Kinds[i+1:]...)
+		mc.Avatars = media.Avatars{}
+		return mc, a, nil
+	}
+	return media.Config{}, nil, errors.New("worker registry has no avatar kind")
 }
 
 func (h *harness) close() {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -21,18 +22,29 @@ func TestRegistryFitsTheContentModel(t *testing.T) {
 	if err := site().Validate(); err != nil {
 		t.Fatal(err)
 	}
-	engine, err := media.ForContent(mc, site())
+	input, avatars, err := splitMedia(mc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []media.Config{mc, engine} {
-		if _, err := media.NewRegistry(c); err != nil {
-			t.Fatal(err)
+	engine, err := (contentkit.Config{Tenant: tenant, Content: site(), Avatars: avatars, Media: &contentkit.MediaConfig{Config: input}}).MediaKinds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := media.NewRegistry(mc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := media.NewRegistry(engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range mc.Kinds {
+		other, err := registry.Kind(k.Name)
+		if err != nil || k.Versions != other.Versions {
+			t.Errorf("kind %s: worker and engine disagree", k.Name)
 		}
 	}
-	for i, k := range mc.Kinds {
-		if k.Versions != engine.Kinds[i].Versions {
-			t.Errorf("kind %s: kinds.json says versions %v, the content model %v", k.Name, k.Versions, engine.Kinds[i].Versions)
-		}
+	if worker.Config().Avatars != registry.Config().Avatars {
+		t.Fatal("worker and engine disagree on avatars")
 	}
 }
