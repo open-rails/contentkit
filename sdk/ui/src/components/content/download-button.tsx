@@ -37,13 +37,20 @@ export function VersionDownloadButton({ content, version, onDownload, onLocked, 
   const { t } = useMessages();
   const d = useVersionDownload(content, version, { client });
   const report = useErrorReporter(onError);
+  // The clock the quota's countdown reads, kept while one holds.
   const [now, setNow] = useState(() => Date.now());
-  const limited = d.retryAt !== undefined && d.retryAt > now;
   useEffect(() => {
-    if (!limited) return;
-    const id = setTimeout(() => setNow(Date.now()), Math.min(d.retryAt! - Date.now(), 60_000));
-    return () => clearTimeout(id);
-  }, [limited, d.retryAt, now]);
+    if (d.retryAt === undefined) return;
+    const tick = () => setNow(Date.now());
+    const first = setTimeout(tick, 0);
+    const every = setInterval(tick, 15_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [d.retryAt]);
+  const left = d.retryAt === undefined ? 0 : d.retryAt - now;
+  const limited = left > 0;
   const run = () => {
     d.download().then(onDownload, (err) => {
       if (err.code === "forbidden" && onLocked) return onLocked();
@@ -52,7 +59,7 @@ export function VersionDownloadButton({ content, version, onDownload, onLocked, 
   };
   // A quota's notice counts down; a locked version goes to the host's onLocked.
   const notice = limited
-    ? t("versionDownload.limited", { minutes: Math.max(1, Math.ceil((d.retryAt! - now) / 60_000)) })
+    ? t("versionDownload.limited", { minutes: Math.max(1, Math.ceil(left / 60_000)) })
     : d.error?.code === "rate_limited" || (d.error?.code === "forbidden" && onLocked)
       ? undefined
       : d.message;

@@ -9,7 +9,7 @@ import { VersionDownloadButton } from "../../index.js";
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 function setup(answers: Response[]) {
-  const fetch = vi.fn(async () => answers.shift() ?? json(500, { error: "x", code: "internal_error" }));
+  const fetch = vi.fn(async (_input: RequestInfo | URL) => answers.shift() ?? json(500, { error: "x", code: "internal_error" }));
   const client = createContentKitClient({ baseUrl: "https://api.test/ck", fetch: fetch as typeof globalThis.fetch });
   const clicked: string[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
