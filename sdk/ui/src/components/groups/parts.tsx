@@ -19,25 +19,6 @@ export type Labels = Readonly<Record<string, string>>;
 
 export const labelOf = (labels: Labels | undefined, id: string) => labels?.[id] ?? humanize(id);
 
-/** A language's name in the UI's language ("ja" → "Japanese"). */
-export function useLanguageName(): (code: string) => string {
-  const { language } = useMessages();
-  return useMemo(() => {
-    let names: Intl.DisplayNames | undefined;
-    try {
-      names = new Intl.DisplayNames(language ? [language] : undefined, { type: "language" });
-    } catch {
-      names = undefined;
-    }
-    return (code: string) => {
-      try {
-        return names?.of(code) ?? code;
-      } catch {
-        return code;
-      }
-    };
-  }, [language]);
-}
 
 export interface GroupCoverProps {
   group: GroupLike;

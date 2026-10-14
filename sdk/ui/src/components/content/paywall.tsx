@@ -5,7 +5,7 @@ import { useCallback, useContext, useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Decision, Sale, Terms, Version } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { findVersion } from "../../react/detail.js";
@@ -15,7 +15,7 @@ import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { contentError, ErrorLine, formatDate, useAction } from "../social/parts.js";
-import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../groups/parts.js";
 import type { PlayerMenuItem } from "../video-player.js";
 
 /** An offer's price and period in words: "$2.99", "$4.99 / 30 days", "$1.99 for 48 hours". */

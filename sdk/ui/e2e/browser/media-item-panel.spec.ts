@@ -57,8 +57,11 @@ test.describe("re-encode", () => {
       await page.goto(admin(`/admin/media/video/${video.id}/${video.version}`, owner, { mode }));
       const panel = page.locator("[data-ckui=media-item-panel]");
       await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
+      const replacement = page.waitForResponse((r) => r.url().includes("/media/upload/commit") && r.request().postData()?.includes('"put"') === true);
       await panel.getByLabel("Video file").setInputFiles(path.join(fixtures, "portrait.mp4"));
-      await expect(state(page)).toHaveAttribute("data-state", "processing", { timeout: 30_000 });
+      expect((await replacement).status()).toBe(200);
+      // Processing may finish between polls; the source dimensions identify the replacement.
+      await expect(panel.locator("[data-ckui=media-source]")).toContainText("360×640", { timeout: 180_000 });
       await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
 
       await panel.getByRole("button", { name: "Choose poster" }).click();

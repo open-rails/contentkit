@@ -40,8 +40,8 @@ type ContentInput struct {
 	OwnerGroupID string `json:"owner_group_id,omitempty"`
 	// Creators nil credits the creating person as its author.
 	Creators *[]Creator `json:"creators,omitempty"`
-	// Versions: at least one, except for a kind with hidden versions, which
-	// gets its one version automatically.
+	// Versions: none gives the item one serving its text's languages (a
+	// kind with hidden versions takes none).
 	Versions []VersionInput `json:"versions,omitempty"`
 }
 
@@ -64,8 +64,9 @@ type VersionInput struct {
 	Languages []string  `json:"languages,omitempty"`
 	Traits    *[]string `json:"traits,omitempty"`
 	Label     *string   `json:"label,omitempty"`
-	// State is draft or published (the default for a new version): a
-	// published version is live once its content is and PublishAt passed.
+	// State is draft or published: a published version is live once its
+	// content is and PublishAt passed. A version created with its item
+	// defaults to published, one added later to draft.
 	State     string     `json:"state,omitempty"`
 	PublishAt *time.Time `json:"publish_at,omitempty"`
 	// Access overrides the content's rule; ClearAccess inherits it again.
@@ -253,13 +254,13 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		if err != nil {
 			return nil, err
 		}
-		if p.kind.Versions.Hidden {
-			if len(c.Versions) > 0 {
-				return nil, invalid("kind %s has one hidden version; give it no versions", c.Kind)
-			}
-			p.versions = []VersionInput{{Languages: s.hiddenLanguages(p.kind, texts)}}
-		} else if p.versions = c.Versions; len(p.versions) == 0 {
-			return nil, invalid("a content item needs at least one version")
+		switch {
+		case p.kind.Versions.Hidden && len(c.Versions) > 0:
+			return nil, invalid("kind %s has one hidden version; give it no versions", c.Kind)
+		case len(c.Versions) == 0:
+			p.versions = []VersionInput{{Languages: s.textLanguages(p.kind, texts)}}
+		default:
+			p.versions = c.Versions
 		}
 		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
 			return nil, invalid("a new item's versions have no sibling to fork")
@@ -319,10 +320,10 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 	return ids, tx.Commit(ctx)
 }
 
-// hiddenLanguages are the languages a hidden version serves: its content's
-// text languages (the first in site order for a one-language kind), else the
-// site's first language.
-func (s *Store) hiddenLanguages(k kinds.Kind, texts map[string]Text) []string {
+// textLanguages are the languages a default or hidden version serves: its
+// content's text languages (the first in site order for a one-language kind),
+// else the site's first language.
+func (s *Store) textLanguages(k kinds.Kind, texts map[string]Text) []string {
 	var out []string
 	for _, l := range s.cfg.Languages {
 		if _, ok := texts[l]; ok {
@@ -683,7 +684,7 @@ func (s *Store) syncHiddenVersion(ctx context.Context, tx pgx.Tx, id, kind strin
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $3, updated_at = clock_timestamp(), revision = revision + 1
- WHERE tenant_id = $1 AND content_id = $2 AND languages <> $3`, s.tenant, id, s.hiddenLanguages(k, texts))
+ WHERE tenant_id = $1 AND content_id = $2 AND languages <> $3`, s.tenant, id, s.textLanguages(k, texts))
 	return err
 }
 
@@ -919,7 +920,12 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				}
 			}
 			if p.VersionID == "" {
-				vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionInput)
+				// An added version stays a draft until its editors publish it.
+				in := p.VersionInput
+				if in.State == "" {
+					in.State = StateDraft
+				}
+				vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, in)
 				if err != nil {
 					return fx, err
 				}

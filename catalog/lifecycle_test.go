@@ -14,6 +14,35 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
+// An item created without versions gets one serving its text's language,
+// live with the item; a version added later stays a draft (out of every
+// reader's choice) until its editors publish it.
+func TestVersionDefaultsIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.create("staff", ContentInput{Kind: "gallery", Text: map[string]Text{"ja": {Title: "月"}}})
+	draft := f.read("staff", "main.test", id)[0]
+	if len(draft.Versions) != 1 || !slices.Equal(draft.Versions[0].Languages, []string{"ja"}) || draft.Versions[0].State != StatePublished {
+		t.Fatalf("the default version: %+v", draft.Versions)
+	}
+	f.publish("staff", id, nil)
+	vids, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionInput: VersionInput{Languages: []string{"en"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(anon, "main.test", id)[0]; got == nil || len(got.Versions) != 1 || got.Versions[0].ID == vids[0] {
+		t.Fatalf("an added version shows before it is published: %+v", got)
+	}
+	if got := f.read("staff", "main.test", id)[0]; len(got.Versions) != 2 || got.Versions[1].State != StateDraft || got.Versions[1].Live {
+		t.Fatalf("the editors' added version: %+v", got.Versions)
+	}
+	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: vids[0], VersionInput: VersionInput{State: StatePublished}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(anon, "main.test", id)[0]; len(got.Versions) != 2 {
+		t.Fatalf("the published version: %+v", got.Versions)
+	}
+}
+
 // A content item goes draft -> scheduled -> live -> deleted -> restored, and
 // only its editors see it before and while it is not live; a deleted item
 // stays readable to holders of its key, and one never sold is erased after
@@ -76,7 +105,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	// A version scheduled later goes live at its own time.
 	later := f.now().Add(24 * time.Hour)
 	vids, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionInput: VersionInput{Languages: []string{"en"},
-		Traits: &[]string{"colored"}, PublishAt: &later}}})
+		Traits: &[]string{"colored"}, State: StatePublished, PublishAt: &later}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +245,6 @@ func TestValidationIntegration(t *testing.T) {
 	}
 	for name, in := range map[string]ContentInput{
 		"unknown kind":        {Kind: "video", Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"no version":          {Kind: "gallery", Text: map[string]Text{"en": {Title: "x"}}},
 		"language":            gallery("x", "de"),
 		"two languages":       {Kind: "gallery", Versions: []VersionInput{{Languages: []string{"en", "ja"}}}},
 		"trait":               {Kind: "gallery", Versions: []VersionInput{{Languages: []string{"en"}, Traits: &[]string{"dubbed"}}}},

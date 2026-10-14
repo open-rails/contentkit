@@ -175,10 +175,11 @@ export class ItemUploadQueue {
    * Commits every uploaded item, in queue order, after the item's uploads:
    * unattached ones are attached (no reprocessing), the rest put. With head,
    * only the uploaded items before the first one still uploading or failed
-   * (a draft committing files as they finish). Returns the item's attached
-   * uploads in order.
+   * (a draft committing files as they finish). attach adds unattached
+   * uploads the queue does not hold (an earlier visit's) after them. Returns
+   * the item's attached uploads in order.
    */
-  async commit(signal?: AbortSignal, o: { head?: boolean } = {}): Promise<FileInfo[]> {
+  async commit(signal?: AbortSignal, o: { head?: boolean; attach?: readonly string[] } = {}): Promise<FileInfo[]> {
     await Promise.all(this.staging.values());
     let items = this.items;
     if (o.head) {
@@ -187,7 +188,8 @@ export class ItemUploadQueue {
       if (end >= 0) items = items.slice(0, end);
     }
     const ready = items.filter((i) => i.status === "uploaded");
-    if (ready.length === 0) return [];
+    const strays = o.attach ?? [];
+    if (ready.length === 0 && strays.length === 0) return [];
     const ops = ready.flatMap((i): Op[] => {
       const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
       if (i.unattached) return [attach];
@@ -195,6 +197,7 @@ export class ItemUploadQueue {
       // A lost staging response may hide a successful unattached create.
       return i.result!.processOnUpload ? [put, attach] : [put];
     });
+    for (const path of strays) ops.push({ op: "attach", path, index: END });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
     const input = JSON.stringify(ops);
     if (this.batch?.input !== input) this.batch = { input, operationID: crypto.randomUUID() };

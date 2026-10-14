@@ -152,7 +152,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
   const auto = options.commit === "auto";
   const rules = groups.flatMap((g) => (g.rule ? [g.rule] : []));
   const accept = acceptOf(rules);
-  const count = folder.uploads.length + queue.items.length + folder.waiting.length;
+  const count = folder.uploads.length + queue.items.length + folder.waiting.length + folder.pending.length;
   const empty = count === 0;
   const off = !!disabled;
 
@@ -193,7 +193,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
     await folder.remove(paths).then(() => setSelected(new Set()), () => {});
   };
 
-  const uploaded = queue.items.filter((i) => i.status === "uploaded").length;
+  const uploaded = queue.items.filter((i) => i.status === "uploaded").length + folder.pending.length;
   const picker = (big: boolean) => (
     <label
       className={cn(
@@ -326,6 +326,14 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
         </ul>
       )}
 
+      {folder.pending.length > 0 && (
+        <ul className="grid" aria-label={t("folder.label")} data-ckui="folder-pending">
+          {folder.pending.map((f) => (
+            <PendingRow key={f.path} file={f} folder={folder} auto={auto} disabled={off} />
+          ))}
+        </ul>
+      )}
+
       {queue.items.length > 0 && (
         <SortableList
           items={queue.items}
@@ -341,9 +349,9 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
       )}
 
       {((!auto && uploaded > 0) || (auto && folder.error && uploaded > 0)) && (
-        <Button className="w-fit" disabled={off || !queue.ready || folder.committing} onClick={() => void folder.commit().catch(() => {})} data-ckui="folder-commit">
+        <Button className="w-fit" disabled={off || (queue.items.length > 0 && !queue.ready) || folder.committing} onClick={() => void folder.commit().catch(() => {})} data-ckui="folder-commit">
           {folder.committing && <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="motion-safe:animate-spin" />}
-          {auto ? t("folder.commitAgain") : t("folder.commit", { count: queue.items.filter((i) => i.status !== "committed").length })}
+          {auto ? t("folder.commitAgain") : t("folder.commit", { count: queue.items.filter((i) => i.status !== "committed").length + folder.pending.length })}
         </Button>
       )}
       {footer}
@@ -574,6 +582,39 @@ function RenameInput({ name, label, onDone }: { name: string; label: string; onD
       onBlur={() => finish(value)}
       data-ckui="rename"
     />
+  );
+}
+
+/** An upload on the server not yet added: an earlier visit's, kept across reloads. */
+function PendingRow({ file: f, folder, auto, disabled }: { file: FileInfo; folder: UseMediaFolder; auto: boolean; disabled: boolean }) {
+  const { t, error: errorText } = useMessages();
+  const kind = kindOf(f.type);
+  const busy = isProcessing(f);
+  const thumb = useMemo(() => thumbnailOf(folder.read.read, f), [folder.read.read, f]);
+  const label = f.failed
+    ? errorText(failureError(f.failed))
+    : busy
+      ? f.progress && f.progress.phase !== "queued"
+        ? t("folder.processingPercent", { percent: Math.round(f.progress.percent) })
+        : t("folder.processing")
+      : auto
+        ? t("folder.adding")
+        : t("folder.notAdded");
+  return (
+    <li className="flex min-h-11 items-center gap-2 px-1" data-ckui="pending-row" data-path={f.path}>
+      <Thumb kind={kind} url={thumb?.url} busy={busy} />
+      <div className="grid min-w-0 flex-1 gap-1">
+        <span className="truncate text-sm" title={f.path}>
+          {f.path.slice(f.path.lastIndexOf("/") + 1)}
+        </span>
+        <span className={cn("text-xs", f.failed ? "text-destructive" : "text-muted-foreground")} data-ckui="queue-status">
+          {label}
+        </span>
+      </div>
+      <Button variant="ghost" size="icon-sm" aria-label={t("common.remove")} title={t("common.remove")} disabled={disabled || folder.updating} onClick={() => void folder.remove([f.path]).catch(() => {})}>
+        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+      </Button>
+    </li>
   );
 }
 

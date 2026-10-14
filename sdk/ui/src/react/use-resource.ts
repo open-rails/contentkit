@@ -64,11 +64,14 @@ export interface UseList<T> {
 
 export type PageFetcher<T> = (cursor: string | number | undefined, signal: AbortSignal) => Promise<Page<T>>;
 
+// The items of a list not loaded: one array, so effects keyed on items don't run every render.
+const NO_ITEMS: never[] = [];
+
 export function useList<T extends { id: string }>(store: ResourceStore, key: string | null, tag: Tag, page: PageFetcher<T>): UseList<T> {
   const r = useResource<Page<T>>(store, key, tag, (s) => page(undefined, s), { more: (c, s) => page(c, s) });
   const loadMore = useCallback(() => (key ? store.loadMore(key) : Promise.resolve()), [store, key]);
   return {
-    items: r.data?.items ?? [],
+    items: r.data?.items ?? NO_ITEMS,
     loading: r.loading || (!!key && !r.loaded),
     loadingMore: !!r.loadingMore,
     error: r.error,
@@ -119,5 +122,5 @@ export function usePaged<T extends { id: string }>(
     const items = await list({ limit: limit + 1, offset }, signal);
     return { items: items.slice(0, limit), next: items.length > limit ? offset + limit : null };
   });
-  return { items: r.data?.items ?? [], loading: r.loading || (!!key && !r.loaded), error: r.error, hasNext: r.data ? r.data.next !== null : false, reload: r.reload };
+  return { items: r.data?.items ?? NO_ITEMS, loading: r.loading || (!!key && !r.loaded), error: r.error, hasNext: r.data ? r.data.next !== null : false, reload: r.reload };
 }

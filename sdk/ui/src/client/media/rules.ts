@@ -4,8 +4,10 @@ import { fill, publicURL, type PublicPreset } from "../public.js";
 import { ratio } from "../aspect.js";
 import { stem } from "./client.js";
 
-/** An editor read's upload rules (a viewer read has none). */
-export const uploadRules = (read: ReadResult | null | undefined): UploadRule[] => read?.uploads ?? [];
+const NO_RULES: UploadRule[] = [];
+
+/** An editor read's upload rules (a viewer read has none): one empty list, so memos keyed on them hold. */
+export const uploadRules = (read: ReadResult | null | undefined): UploadRule[] => read?.uploads ?? NO_RULES;
 
 const NAME = "{name}";
 

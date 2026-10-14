@@ -6,3 +6,4 @@ export { ContentListing, sortLabel, type ContentListingProps } from "./listing.j
 export { Paywall, VersionPicker, priceLabel, useVersionMenuItems, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
 export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, VersionsEditor, versionLabel } from "./editors.js";
 export { OfferFields } from "./offer-fields.js";
+export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";

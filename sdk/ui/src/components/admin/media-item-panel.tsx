@@ -1,13 +1,15 @@
 import { useId, useRef, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import type { FileInfo, RefBody } from "../../client/generated/wire.js";
+import type { FileInfo, RefBody, UploadRule } from "../../client/generated/wire.js";
+import { isSubtitleType, isVideoType } from "../../client/gallery.js";
+import { acceptOf, isPattern } from "../../client/media/rules.js";
 import type { Progress } from "../../client/media/client.js";
 import { samePath } from "../../client/media/client.js";
 import { isProcessing } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
-import { useErrorReporter, useGuarded } from "../../react/context.js";
+import { useContentKitClient, useErrorReporter, useGuarded, type ContentKitErrorHandler } from "../../react/context.js";
 import { usePublicImage } from "../../react/public.js";
 import { useMediaRead } from "../../react/read.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
@@ -25,19 +27,33 @@ import { AdminRoot, LoadFailed, NoAccess, Rows, useConfirm, type AdminFlowProps 
 
 type Choice = string | { value: string; label: string };
 
-export interface MediaItemPanelProps extends AdminFlowProps {
-  /** The video item. */
-  item: RefBody;
-  /** The video's upload path. Default "source". */
+interface VideoPaths {
+  /** The video's upload path. Default the kind's literal video upload. */
   source?: string;
-  /** The subtitle uploads' path pattern; null hides them. Default "subs/{name}". */
+  /** The subtitle uploads' path pattern; null hides them. Default the kind's subtitle pattern. */
   subtitles?: string | null;
-  /** The poster's upload path (its frames come from the video); null hides it. Default "poster". */
+  /** The poster's upload path (its frames come from the video); null hides it. Default the kind's upload framed from the video. */
   poster?: string | null;
   /** The poster's public preset. Default "poster". */
   posterPreset?: string;
   /** Subtitle languages offered: codes, or codes with labels. Without them the language is typed. */
   languages?: readonly Choice[];
+}
+
+export interface MediaItemPanelProps extends AdminFlowProps, VideoPaths {
+  /** The video item. */
+  item: RefBody;
+}
+
+/** A video item's upload paths from its kind's rules: the literal video upload, the image upload framed from it, a subtitle pattern. */
+export function videoPaths(rules: readonly UploadRule[]): { source?: string; poster?: string; subtitles?: string } {
+  const only = (r: UploadRule, is: (t: string) => boolean) => r.types.length > 0 && r.types.every(is);
+  const source = rules.find((r) => !isPattern(r.path) && only(r, isVideoType))?.path;
+  return {
+    source,
+    poster: source ? rules.find((r) => !isPattern(r.path) && r.frames === source)?.path : undefined,
+    subtitles: rules.find((r) => isPattern(r.path) && only(r, isSubtitleType))?.path,
+  };
 }
 
 type ItemState = "ready" | "processing" | "failed" | "empty";
@@ -53,16 +69,22 @@ export function MediaItemPanel({ client: own, baseUrl, auth, guard, appearance, 
   const client = useFlowClient({ client: own, baseUrl, auth });
   return (
     <AdminRoot flow="media-item-panel" appearance={appearance} className={className} language={language} messages={messages} guard={guard}>
-      <Panel {...p} client={client} />
+      <VideoMediaEditor {...p} client={client} />
     </AdminRoot>
   );
 }
 
-type Inner = Omit<MediaItemPanelProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
+export interface VideoMediaEditorProps extends VideoPaths {
+  item: RefBody;
+  client?: ContentKitClient;
+  onError?: ContentKitErrorHandler;
+}
 
-function Panel({ item, client, source = "source", subtitles = "subs/{name}", poster = "poster", posterPreset = "poster", languages, onError }: Inner) {
+/** MediaItemPanel's body, for a host's own editor (the content manager's version media). */
+export function VideoMediaEditor({ item, client: own, source: givenSource, subtitles: givenSubtitles, poster: givenPoster, posterPreset = "poster", languages, onError }: VideoMediaEditorProps) {
   const m = useMessages();
   const { t } = m;
+  const client = useContentKitClient(own);
   const r = useMediaRead(item, { editor: true, client });
   const regen = useAction("media.save", onError);
   if (!r.read) {
@@ -70,11 +92,17 @@ function Panel({ item, client, source = "source", subtitles = "subs/{name}", pos
     return r.error ? <LoadFailed error={r.error} message={t("mediaPanel.loadFailed")} retry={r.reload} /> : <Rows count={2} />;
   }
   if (!r.read.uploads) return <NoAccess>{t("mediaPanel.noAccess")}</NoAccess>;
+  const rules = r.read.uploads;
+  const derived = videoPaths(rules);
+  const source = givenSource ?? derived.source;
+  const poster = givenPoster === undefined ? derived.poster : givenPoster;
+  const subtitles = givenSubtitles === undefined ? derived.subtitles : givenSubtitles;
+  const accept = (path: string) => acceptOf(rules.filter((x) => x.path === path));
   const uploads = r.read.files.filter((f) => f.upload && !f.unattached);
-  const video = uploads.find((f) => samePath(f.path, source));
+  const video = source ? uploads.find((f) => samePath(f.path, source)) : undefined;
   const failed = uploads.filter((f) => f.failed);
   const state: ItemState = !video ? "empty" : failed.length ? "failed" : uploads.some(isProcessing) ? "processing" : "ready";
-  const subs = subtitles === null ? [] : uploads.filter((f) => f.path.startsWith(under(subtitles)));
+  const subs = subtitles ? uploads.filter((f) => f.path.startsWith(under(subtitles))) : [];
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
@@ -94,12 +122,14 @@ function Panel({ item, client, source = "source", subtitles = "subs/{name}", pos
           </AlertDescription>
         </Alert>
       ))}
-      <SourceSection item={item} path={source} video={video} client={client} onError={onError} />
-      {poster !== null && video && <PosterSection item={item} path={poster} video={source} preset={posterPreset} client={client} onError={onError} />}
-      {subtitles !== null && <Subtitles item={item} pattern={subtitles} files={subs} languages={languages} client={client} onError={onError} />}
+      {source && <SourceSection item={item} path={source} accept={accept(source) ?? "video/*"} video={video} client={client} onError={onError} />}
+      {source && poster && video && <PosterSection item={item} path={poster} video={source} preset={posterPreset} client={client} onError={onError} />}
+      {subtitles && <Subtitles item={item} pattern={subtitles} accept={accept(subtitles)} files={subs} languages={languages} client={client} onError={onError} />}
     </>
   );
 }
+
+type Inner = { client: ContentKitClient; onError?: ContentKitErrorHandler };
 
 function bytes(n?: number): string {
   if (!n) return "";
@@ -114,7 +144,7 @@ function duration(s?: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function SourceSection({ item, path, video, client, onError }: { item: RefBody; path: string; video?: FileInfo; client: ContentKitClient; onError?: Inner["onError"] }) {
+function SourceSection({ item, path, accept, video, client, onError }: { item: RefBody; path: string; accept: string; video?: FileInfo } & Inner) {
   const { t } = useMessages();
   const file = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -145,7 +175,7 @@ function SourceSection({ item, path, video, client, onError }: { item: RefBody; 
         <input
           ref={file}
           type="file"
-          accept="video/*"
+          accept={accept}
           hidden
           aria-label={t("mediaPanel.source")}
           onChange={(e) => {
@@ -169,7 +199,7 @@ function SourceSection({ item, path, video, client, onError }: { item: RefBody; 
   );
 }
 
-function PosterSection({ item, path, video, preset, client, onError }: { item: RefBody; path: string; video: string; preset: string; client: ContentKitClient; onError?: Inner["onError"] }) {
+function PosterSection({ item, path, video, preset, client, onError }: { item: RefBody; path: string; video: string; preset: string } & Inner) {
   const { t } = useMessages();
   const [open, setOpen] = useState(false);
   const { image, reload } = usePublicImage(item, preset, { client });
@@ -189,7 +219,7 @@ function PosterSection({ item, path, video, preset, client, onError }: { item: R
   );
 }
 
-function Subtitles({ item, pattern, files, languages: offered, client, onError }: { item: RefBody; pattern: string; files: FileInfo[]; languages?: readonly Choice[]; client: ContentKitClient; onError?: Inner["onError"] }) {
+function Subtitles({ item, pattern, accept, files, languages: offered, client, onError }: { item: RefBody; pattern: string; accept?: string; files: FileInfo[]; languages?: readonly Choice[] } & Inner) {
   const { t } = useMessages();
   const ids = useId();
   const languages = choices(offered);
@@ -254,7 +284,7 @@ function Subtitles({ item, pattern, files, languages: offered, client, onError }
       >
         <div className="grid gap-1.5">
           <Label htmlFor={`${ids}-file`}>{t("mediaPanel.subtitleFile")}</Label>
-          <Input id={`${ids}-file`} ref={input} type="file" accept=".vtt,.srt,text/vtt,application/x-subrip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <Input id={`${ids}-file`} ref={input} type="file" accept={accept ?? ".vtt,.srt,text/vtt,application/x-subrip"} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`${ids}-lang`}>{t("mediaPanel.language")}</Label>

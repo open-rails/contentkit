@@ -11,6 +11,7 @@ import type { Batch, Config, ContentModel, RefBody, Result } from "./generated/w
 import { DiscoveryClient } from "./discovery.js";
 import { GroupsClient } from "./groups.js";
 import { OffersClient } from "./offers.js";
+import { StatsClient } from "./stats.js";
 import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
@@ -57,6 +58,8 @@ export interface ContentKitClient {
   readonly offers: OffersClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
+  /** Staff activity and rankings; the signed-in reader's own statistics. */
+  readonly stats: StatsClient;
   /** The signed-in person's native and imported notifications. */
   readonly notifications: NotificationsClient;
 
@@ -93,6 +96,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     versions: new VersionsClient(h),
     offers: new OffersClient(h),
     codes: new CodesClient(h),
+    stats: new StatsClient(h),
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) => call(h, "GET", "/kinds", { signal }),
