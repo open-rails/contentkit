@@ -74,10 +74,11 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 320}}}}
 	}
-	// The blog's body images make its body kind (blog.body); its hidden
-	// version takes its covers and attachments.
+	// The blog's hidden version takes its body images (private), covers and
+	// attachments.
 	blog := folder("blog")
 	blog.Uploads[0].Body = true
+	blog.Public, blog.Private = nil, []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 320}}}
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "covers/{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 5},
 		media.Upload{Path: "files/{name}", Types: pngs, MaxBytes: 10 << 20})
 	blog.Public = append(blog.Public, media.Public{Name: "cover", From: "covers/{name}", To: "cover-{name}-{w}.webp", Widths: []int{320}})
@@ -151,7 +152,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err := svc.Bind(versions.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cat.BindMedia(catalog.Media{Images: jobs.Manifests(), Reader: reader, Versions: svc}); err != nil {
+	if err := cat.BindMedia(catalog.Media{Reader: reader, Versions: svc}); err != nil {
 		t.Fatal(err)
 	}
 	rt, err := content.New(ctx, content.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: auth,
@@ -250,10 +251,9 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	var created catalog.Content
 	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Pictures", Body: "soon"}}}, &created)
 	id, vid := created.ID, created.Versions[0].ID
-	// Body images live in the post's version's body item; its cover in the
-	// version's own folder.
-	bodyRef, versionRef := media.RefBody{Kind: "blog" + media.BodySuffix, ID: id, Version: vid}, media.RefBody{Kind: "blog", ID: id, Version: vid}
-	a, b := put(bodyRef, "photo.png", 3), put(bodyRef, "photo.png", 9)
+	// Body images and the cover live in the post's version's folder.
+	versionRef := media.RefBody{Kind: "blog", ID: id, Version: vid}
+	a, b := put(versionRef, "photo.png", 3), put(versionRef, "photo.png", 9)
 	cover := strings.TrimPrefix(put(versionRef, "covers/photo.png", 7), "covers/")
 	var inline catalog.InlineImage
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", catalog.BodyImageInput{Image: &a, Version: vid}, &inline)
@@ -285,9 +285,9 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return inline.URL != nil && strings.Contains(*inline.URL, "?t=") && !strings.Contains(*inline.URL, "/public/") && exists(*inline.URL)
 	})
 
-	// Published, every reference resolves to a public file that exists
-	// (until it renders, a body image is the signed open rendition); each new
-	// generation resolves to its own.
+	// Published, every body reference resolves to the version's rendered
+	// private image, signed for its reader, and the cover to its current
+	// public file; each new cover generation resolves to its own.
 	resolved := func(what string, before catalog.Content) catalog.Content {
 		t.Helper()
 		var c catalog.Content
@@ -297,16 +297,13 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 				c.Cover == nil || c.Cover.URL == nil {
 				return false
 			}
-			urls := map[string]string{cover: *c.Cover.URL}
-			for name, u := range c.Images {
-				urls[name] = u
-			}
-			for name, u := range urls {
-				if u == before.Images[name] || before.Cover != nil && u == *before.Cover.URL || !strings.Contains(u, "/public/") || !exists(u) {
+			for _, u := range c.Images {
+				if !strings.Contains(u, "/blog/"+id+"/"+vid+"/private/") || !strings.Contains(u, "t=") || !exists(u) {
 					return false
 				}
 			}
-			return true
+			u := *c.Cover.URL
+			return (before.Cover == nil || u != *before.Cover.URL) && strings.Contains(u, "/public/") && exists(u)
 		})
 		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want ||
 			!strings.Contains(*c.Cover.URL, "/blog/"+id+"/"+vid+"/public/cover-"+cover) || c.Versions[0].Cover == nil || *c.Versions[0].Cover.URL != *c.Cover.URL {
@@ -321,19 +318,16 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	published := resolved("the published images", catalog.Content{})
 
-	for kind, preset := range map[string]string{"blog": "cover", "blog" + media.BodySuffix: "inline"} {
-		ref, err := reg.VersionRef(kind, id, vid)
-		if err != nil {
-			t.Fatal(err)
-		}
+	ref, err := reg.VersionRef("blog", id, vid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range []string{"cover", "inline"} {
 		if err := queue.Enqueue(ctx, media.ProcessJob{Ref: ref, Preset: preset, Force: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	regenerated := resolved("the regenerated images", published)
-	eventually(t, "the body images' first generation's retirement", 2*time.Minute, func() bool {
-		return !exists(published.Images[a]) && !exists(published.Images[b])
-	})
 	eventually(t, "the cover's first generation's retirement", 2*time.Minute, func() bool { return !exists(*published.Cover.URL) })
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)

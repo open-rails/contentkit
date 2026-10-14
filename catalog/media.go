@@ -19,19 +19,12 @@ import (
 // Media connects content items to ContentKit media, built over the
 // catalog's Resolver and RefreshTx (media/versions): bind it with BindMedia
 // before serving. A content's media lives in its versions: each version's
-// item (kind, content, version) holds its cover, and its body item ({kind}.body,
-// content, version) its copy of the body's images, shown only to viewers who
-// open the version.
+// item (kind, content, version) holds its cover and, in private/, its copy of
+// the body's images, which only the version's openers read.
 type Media struct {
-	Images Images // *media.Manifests
-	// Reader gives editors an unpublished item's image previews.
+	// Reader signs opened versions' body images and gives editors previews.
 	Reader   Reader
 	Versions VersionMedia // *versions.Service
-}
-
-// Images answers image queries from current publications in one read.
-type Images interface {
-	Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error)
 }
 
 // Reader reads an item as the media read API does.
@@ -63,8 +56,8 @@ var errMediaNotConfigured = errors.New("catalog: media is not bound")
 
 // BindMedia attaches media; call it once, before serving.
 func (s *Store) BindMedia(m Media) error {
-	if m.Images == nil || m.Versions == nil {
-		return errors.New("catalog: Media needs Images and Versions")
+	if m.Versions == nil {
+		return errors.New("catalog: Media needs Versions")
 	}
 	s.media = &m
 	return nil
@@ -100,57 +93,15 @@ func (s *Store) exposeTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return s.media.Versions.ExposeTx(ctx, tx, contentTargets(ids))
 }
 
-// imageSet resolves the images one response shows with one lookup.
-type imageSet struct {
-	s    *Store
-	keys []imageKey
-	urls map[imageKey]string
-}
-
-type imageKey struct{ kind, id, version, name string }
-
-func (s *Store) imageSet() *imageSet { return &imageSet{s: s, urls: map[imageKey]string{}} }
-
-func (set *imageSet) add(k imageKey) {
-	if k.name != "" {
-		set.keys = append(set.keys, k)
-	}
-}
-
-func (set *imageSet) resolve(ctx context.Context) error {
-	if set.s.media == nil || len(set.keys) == 0 {
-		return nil
-	}
-	qs := make([]media.ImageQuery, len(set.keys))
-	for i, k := range set.keys {
-		qs[i] = media.ImageQuery{Ref: set.s.Ref(k.kind, k.id).WithVersion(k.version), Name: k.name}
-	}
-	found, err := set.s.media.Images.Images(ctx, qs...)
-	if err != nil {
-		return err
-	}
-	for i, k := range set.keys {
-		if len(found[i]) > 0 && len(found[i][0].Renditions) > 0 {
-			set.urls[k] = found[i][0].URL(math.MaxInt)
-		}
-	}
-	return nil
-}
-
-func (set *imageSet) url(k imageKey) (string, bool) {
-	u, ok := set.urls[k]
-	return u, ok
-}
-
 // BodyImageInput names a body image uploaded to one version's body item.
 type BodyImageInput struct {
 	Image   *string `json:"image"`
 	Version string  `json:"version"`
 }
 
-// BodyImage takes a body image an editor uploaded to a version's body item
-// ({kind}.body): it queues the image's copy into every other version's and
-// returns its reference and a URL that shows it to the editor now.
+// BodyImage takes a body image an editor uploaded to a version (Upload.Body):
+// it queues the image's copy into every other version and returns its
+// reference and a URL that shows it to the editor now.
 func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID string, in BodyImageInput) (InlineImage, error) {
 	if in.Image == nil || !media.ValidNamed(*in.Image) {
 		return InlineImage{}, invalid("image must be an inline image name (i-{uuid})")
@@ -187,7 +138,7 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 	if err := tx.Commit(ctx); err != nil {
 		return InlineImage{}, err
 	}
-	url, err := s.previewURL(ctx, actor, imageKey{got[contentID].kind + media.BodySuffix, contentID, in.Version, *in.Image})
+	url, err := s.previewURL(ctx, actor, s.Ref(got[contentID].kind, contentID).WithVersion(in.Version), *in.Image)
 	if err != nil {
 		return InlineImage{}, err
 	}
@@ -198,26 +149,18 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 	return out, nil
 }
 
-// previewURL shows an editor an image of a version's body item now: its
-// public file, else its editor view once rendered; "" while neither exists.
-func (s *Store) previewURL(ctx context.Context, editor access.Actor, k imageKey) (string, error) {
-	set := s.imageSet()
-	set.add(k)
-	if err := set.resolve(ctx); err != nil {
-		return "", err
-	}
-	if u, ok := set.url(k); ok {
-		return u, nil
-	}
+// previewURL shows an editor an upload of an item now, its editor view once
+// rendered; "" until then.
+func (s *Store) previewURL(ctx context.Context, editor access.Actor, ref contentref.ContentRef, name string) (string, error) {
 	if s.media.Reader == nil {
 		return "", nil
 	}
-	read, err := s.media.Reader.Read(ctx, s.Ref(k.kind, k.id).WithVersion(k.version), editor, media.ReadOptions{Editor: true, Limit: math.MaxInt})
+	read, err := s.media.Reader.Read(ctx, ref, editor, media.ReadOptions{Editor: true, Limit: math.MaxInt})
 	if err != nil {
 		return "", err
 	}
 	for _, f := range read.Files {
-		if f.Upload && strings.TrimSuffix(path.Base(f.Path), path.Ext(f.Path)) == k.name {
+		if f.Upload && strings.TrimSuffix(path.Base(f.Path), path.Ext(f.Path)) == name {
 			return f.EditorURL, nil
 		}
 	}

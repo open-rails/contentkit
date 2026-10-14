@@ -2,7 +2,6 @@ package media_test
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +17,6 @@ func bookKind() media.Kind {
 			Import: "import/{name}", Download: "zip"},
 		Uploads: []media.Upload{
 			{Path: "cover", Types: pngs, MaxBytes: 1 << 20},
-			{Path: "inline/{name}", Body: true, Named: true, Max: 10, Types: pngs, MaxBytes: 1 << 20},
 			{Path: "pages/{name}", Types: pngs, MaxBytes: 1 << 20},
 			{Path: "audio/{name}", Types: []string{"audio/wav"}, MaxBytes: 1 << 20},
 			{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20},
@@ -33,7 +31,6 @@ func bookKind() media.Kind {
 		},
 		Public: []media.Public{
 			{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{100}},
-			{Name: "inline", From: "inline/{name}", To: "{name}-{w}.webp", Widths: []int{400, 800}},
 			{Name: "preview", From: "previews/{name}", To: "preview-{n}.webp", First: 2},
 		}}
 }
@@ -76,28 +73,38 @@ func TestVersionsKind(t *testing.T) {
 	if vi.Prefix() != "site/book/"+content+"/"+version+"/" {
 		t.Fatalf("folder %s", vi.Prefix())
 	}
-	// Body images get the body kind, an item per version: their public
-	// preset, and a private rendition at its largest width for opened
-	// locked versions.
-	body, err := reg.Kind("book" + media.BodySuffix)
-	if err != nil || body.Versions || len(body.Uploads) != 1 || body.Uploads[0].Path != "inline/{name}" || body.Uploads[0].Body ||
-		len(body.Public) != 1 || body.Public[0].Name != "inline" || len(body.Private) != 1 || body.Private[0].Name != "inline-open" ||
-		body.Private[0].Image.Width != 800 {
-		t.Fatalf("body kind %+v %v", body, err)
+	// Body images live in a version's private/: a Named upload with a private
+	// image preset and no public one, of a kind that publishes nothing.
+	pngs := []string{"image/png"}
+	post := func() media.Kind {
+		return media.Kind{Name: "post", Versions: true, Uploads: []media.Upload{{Path: "inline/{name}", Body: true, Named: true, Max: 10, Types: pngs, MaxBytes: 1 << 20}},
+			Private: []media.Private{{Name: "inline", From: "inline/{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}}
 	}
-	if _, err := reg.Ref(body.Name, content); err == nil {
-		t.Fatal("a content-level body item")
+	posts, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{post()}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	bv, err := reg.VersionRef(body.Name, content, version)
-	if bi, _ := reg.Item(bv); err != nil || bi.Prefix() != "site/book.body/"+content+"/"+version+"/" {
-		t.Fatalf("body folder %v", err)
+	if k, _ := posts.Kind("post"); !k.IsBody("inline/i-01920000-0000-7000-8000-000000000001.png") || k.IsBody("cover.png") || len(posts.Kinds()) != 1 {
+		t.Fatalf("body kind %+v", k)
 	}
-	if base, ok := media.BodyOf(body.Name); !ok || base != "book" {
-		t.Fatalf("BodyOf %q", base)
-	}
-	if _, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{{Name: "book.body",
-		Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1}}}}}); err == nil {
-		t.Fatal("a declared body kind is accepted")
+	for name, mutate := range map[string]func(*media.Kind){
+		"not named":        func(k *media.Kind) { k.Uploads[0].Named = false },
+		"no private image": func(k *media.Kind) { k.Private = nil },
+		"a public preset": func(k *media.Kind) {
+			k.Public = []media.Public{{Name: "inline", From: "inline/{name}", To: "{name}.webp"}}
+		},
+		"a publishing kind": func(k *media.Kind) {
+			b := bookKind()
+			b.Uploads, b.Private = append(b.Uploads, k.Uploads...), append(b.Private, k.Private...)
+			*k = b
+			k.Versions = true
+		},
+	} {
+		k := post()
+		mutate(&k)
+		if _, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{k}}); err == nil {
+			t.Errorf("body image with %s: accepted", name)
+		}
 	}
 	if len(vi.Kind().Uploads) != 5 || vi.Kind().Uploads[0].Path != "cover" || len(vi.Kind().Public) != 2 || vi.Kind().Public[1].Name != "preview" {
 		t.Fatalf("version uploads %+v", vi.Kind().Uploads)
@@ -127,7 +134,7 @@ func TestVersionsKind(t *testing.T) {
 	}
 	// The worker's registry derives them again.
 	b, err := json.Marshal(reg)
-	if err != nil || strings.Contains(string(b), media.PublishedSuffix) || strings.Contains(string(b), media.BodySuffix) {
+	if err != nil || strings.Contains(string(b), media.PublishedSuffix) {
 		t.Fatalf("registry JSON carries derived kinds: %v", err)
 	}
 	parsed, err := media.ParseConfig(b)
@@ -147,9 +154,7 @@ func TestVersionsKind(t *testing.T) {
 		"playback not audio":          func(k *media.Kind) { k.Publish.Playback = "read" },
 		"import not a zip":            func(k *media.Kind) { k.Publish.Import = "pages/{name}" },
 		"download not host only zip":  func(k *media.Kind) { k.Private[3].HostOnly = false },
-		"pages as body images":        func(k *media.Kind) { k.Uploads[2].Body = true },
-		"body image not named":        func(k *media.Kind) { k.Uploads[1].Named = false },
-		"body image without preset":   func(k *media.Kind) { k.Public = slices.Delete(k.Public, 1, 2) },
+		"pages as body images":        func(k *media.Kind) { k.Uploads[1].Body = true },
 	} {
 		k := bookKind()
 		mutate(&k)

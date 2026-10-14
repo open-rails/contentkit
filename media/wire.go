@@ -218,8 +218,10 @@ type UploadRule struct {
 	Types    []string `json:"types"`
 	MaxBytes int64    `json:"max_bytes"`
 	// Max caps the files at Path; 0 is unlimited.
-	Max    int    `json:"max,omitempty"`
-	Named  bool   `json:"named,omitempty"`
+	Max   int  `json:"max,omitempty"`
+	Named bool `json:"named,omitempty"`
+	// Body: the upload holds the body's images (Upload.Body).
+	Body   bool   `json:"body,omitempty"`
 	Frames string `json:"frames,omitempty"`
 	// Aspect and MinWidth bound an image's edit: its first public preset's.
 	Aspect   Aspect `json:"aspect,omitzero"`

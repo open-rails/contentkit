@@ -14,7 +14,8 @@ import (
 )
 
 // Versions share no files: each holds its own copy of its content's body
-// images in its body item, named as the body names them (i-{uuid}).
+// images (Upload.Body) in its private/, named as the body names them
+// (i-{uuid}).
 
 // BodyCopy copies version From's body images into each version of To: those
 // Names, or all when Names is empty. A name a version holds already stays.
@@ -54,8 +55,8 @@ func (s *Service) copyBodies(ctx context.Context, c BodyCopy) error {
 	if err != nil {
 		return err
 	}
-	k, err := s.reg.Kind(v.Kind + media.BodySuffix)
-	if err != nil {
+	k, err := s.reg.Kind(v.Kind)
+	if err != nil || !slices.ContainsFunc(k.Uploads, func(u media.Upload) bool { return u.Body }) {
 		return nil // no body images
 	}
 	src, err := s.ref(k.Name, Target{Content: c.Content, Version: c.From})
@@ -70,7 +71,7 @@ func (s *Service) copyBodies(ctx context.Context, c BodyCopy) error {
 	}
 	var files []media.File
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || len(c.Names) > 0 && !slices.Contains(c.Names, k.NameOf(f.Path)) {
+		if !f.IsUpload() || f.Unattached || !k.IsBody(f.Path) || len(c.Names) > 0 && !slices.Contains(c.Names, k.NameOf(f.Path)) {
 			continue
 		}
 		if f.Blob == "" && f.Fail() == nil {

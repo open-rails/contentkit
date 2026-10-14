@@ -17,24 +17,20 @@ import (
 type kindState struct {
 	ns       string
 	patterns []pattern // parallel to Uploads
-	version  *Kind     // a Versions kind's versions: without its Body uploads
-	base     string    // a body kind's content kind
 	of       *Kind     // a published kind's Publish kind
 }
 
 // Of is a published kind's Publish kind, nil for any other.
 func (k *Kind) Of() *Kind { return k.of }
 
-// VersionKind is a Versions kind as its version items see it: without its
-// Body uploads, which live in the body item.
-func (k *Kind) VersionKind() *Kind { return k.version }
+// IsBody reports path an upload of a Body upload: one of the body's images.
+func (k *Kind) IsBody(path string) bool {
+	i, _, _, _, ok := k.upload(path)
+	return ok && k.Uploads[i].Body
+}
 
-// Versioned reports a kind whose items are versions: a Versions kind and its
-// body kind.
-func (k *Kind) Versioned() bool { return k.Versions || k.base != "" }
-
-// levels derives a Versions kind's version view, without its Body uploads
-// and what they feed, and its published kind (nil without Publish).
+// levels validates a Versions kind's downloads and body images and derives
+// its published kind (nil without Publish).
 func (k *Kind) levels() (*Kind, error) {
 	if !k.Versions {
 		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Body }) || k.Publish != nil {
@@ -45,49 +41,25 @@ func (k *Kind) levels() (*Kind, error) {
 	if err := k.validateDownloads(); err != nil {
 		return nil, err
 	}
-	body := map[string]bool{}
-	for _, u := range k.Uploads {
-		body[u.Path] = u.Body
-	}
-	v := &Kind{Name: k.Name, Namespace: k.Namespace, Versions: true, Publish: k.Publish, Download: k.Download, KeepOriginals: k.KeepOriginals,
-		ServeOriginals: k.ServeOriginals, Defaults: k.Defaults}
-	v.ns = k.ns
 	for _, u := range k.Uploads {
 		if !u.Body {
-			v.Uploads = append(v.Uploads, u)
+			continue
+		}
+		// A publishing kind's private files reach viewers through published items alone.
+		image := slices.ContainsFunc(k.Private, func(p Private) bool { return p.From == u.Path && p.Image != nil && !p.HostOnly })
+		switch {
+		case !u.Named || !image:
+			return nil, fmt.Errorf("body upload %q needs Named and a private image preset", u.Path)
+		case k.Publish != nil:
+			return nil, fmt.Errorf("body upload %q: a publishing kind's private files open only through published items", u.Path)
+		case slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == u.Path }):
+			return nil, fmt.Errorf("body upload %q: body images have no public files", u.Path)
 		}
 	}
-	for _, p := range k.Private {
-		if !body[p.From] {
-			v.Private = append(v.Private, p)
-		}
-	}
-	for _, d := range k.Downloads {
-		from := d
-		if p := k.private(d); p != nil {
-			from = p.From
-		}
-		if body[from] {
-			return nil, fmt.Errorf("downloads: %q is a body image's", d)
-		}
-		v.Downloads = append(v.Downloads, d)
-	}
-	for _, p := range k.Public {
-		if !body[p.From] {
-			v.Public = append(v.Public, p)
-		}
-	}
-	if len(v.Uploads) == 0 {
-		return nil, errors.New("a Versions kind needs uploads of its versions")
-	}
-	if err := v.validate(); err != nil {
-		return nil, fmt.Errorf("versions: %w", err)
-	}
-	k.version = v
 	if k.Publish == nil {
 		return nil, nil
 	}
-	pub, err := v.published()
+	pub, err := k.published()
 	if err != nil {
 		return nil, fmt.Errorf("Publish: %w", err)
 	}
@@ -95,7 +67,7 @@ func (k *Kind) levels() (*Kind, error) {
 	return pub, nil
 }
 
-// published validates Publish on a version view and derives its kind.
+// published validates Publish and derives its kind.
 func (k *Kind) published() (*Kind, error) {
 	p := k.Publish
 	pages := k.uploadIndex(p.Pages)
@@ -447,7 +419,7 @@ func (k *Kind) syncPreviews(before, m *Manifest) {
 func (k *Kind) UploadRules() []UploadRule {
 	out := make([]UploadRule, 0, len(k.Uploads))
 	for _, u := range k.Uploads {
-		r := UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Frames: u.Frames}
+		r := UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Body: u.Body, Frames: u.Frames}
 		if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.From == u.Path }); i >= 0 {
 			r.Aspect, r.MinWidth = k.Public[i].Image.Aspect, k.Public[i].Image.MinWidth
 		}

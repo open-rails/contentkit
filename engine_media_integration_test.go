@@ -44,6 +44,7 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	blog := folder("blog")
 	blog.Uploads[0].Body = true
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: images, MaxBytes: 1 << 20})
+	blog.Public, blog.Private = nil, []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
 	cfg.Media = &MediaConfig{
@@ -74,8 +75,8 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	var post catalog.Content
 	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Draft", Body: "text"}}}, &post)
 	vid := post.Versions[0].ID
-	ref := media.RefBody{Kind: "blog" + media.BodySuffix, ID: post.ID, Version: vid}
-	item := "/api/ck/v1/media/blog.body/" + post.ID + "/versions/" + vid
+	ref := media.RefBody{Kind: "blog", ID: post.ID, Version: vid}
+	item := "/api/ck/v1/media/blog/" + post.ID + "/versions/" + vid
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
 	var plan media.PresignReply
@@ -119,10 +120,9 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	s.call(http.StatusNotFound, user, "GET", item+"?editor", nil, nil)
 }
 
-// A content item's body images are its version's body item's ({kind}.body,
-// content, version): nobody who has not opened a locked version reads or is
-// signed them, its buyer is signed the opened images through the item token,
-// and an open version's show anyone.
+// A content item's body images are its version's private files: nobody who
+// has not opened a locked version reads or is signed them, while its buyer,
+// and anyone once it is free, is signed them through the item token.
 func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
@@ -131,7 +131,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	images := []string{"image/png"}
 	blog := media.Kind{Name: "blog", Uploads: []media.Upload{{Path: "{name}", Body: true, Types: images, MaxBytes: 1 << 20, Named: true, Max: 10},
 		{Path: "files/{name}", Types: images, MaxBytes: 1 << 20}},
-		Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}
+		Private: []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}}
 	key := "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
@@ -174,7 +174,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 		s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/contents", catalog.ContentInput{Kind: "blog", Access: &rule,
 			Text: map[string]catalog.Text{"en": {Title: "Post", Body: "text"}}}, &c)
 		vid := c.Versions[0].ID
-		ref := media.RefBody{Kind: "blog" + media.BodySuffix, ID: c.ID, Version: vid}
+		ref := media.RefBody{Kind: "blog", ID: c.ID, Version: vid}
 		s.call(http.StatusNotFound, user, "GET", "/api/ck/v1/media/"+ref.Kind+"/"+c.ID+"/versions/"+vid+"?editor", nil, nil)
 		body := pngBytes(t, 16)
 		sum := sha256.Sum256(body)
@@ -207,8 +207,8 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 				return fmt.Errorf("image not placed: %+v", m.Files)
 			}
 			m.Files[i].Pending = nil
-			m.Files = append(m.Files, media.File{Path: "inline-open/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1,
-				From: plan.Path, Preset: "inline-open"})
+			m.Files = append(m.Files, media.File{Path: "inline/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1,
+				From: plan.Path, Preset: "inline"})
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -229,7 +229,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		k := strings.TrimPrefix(parsed.Path, "/v1/")
-		if !strings.HasPrefix(k, env.Tenant+"/blog.body/"+c.ID+"/"+c.Versions[0].ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
+		if !strings.HasPrefix(k, env.Tenant+"/blog/"+c.ID+"/"+c.Versions[0].ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
 			t.Fatalf("body image URL %s is not the item's signed private file", u)
 		}
 	}
@@ -241,20 +241,19 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 		if c.Body != "" || len(c.Images) != 0 {
 			t.Fatalf("a locked viewer is shown the body: %+v", c)
 		}
-		s.call(http.StatusNotFound, who, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, nil)
+		var read media.ReadResult
+		s.call(http.StatusOK, who, "GET", "/api/ck/v1/media/blog/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, &read)
+		if read.Access == media.AccessFull || len(read.Files) != 0 || read.Cookie != nil {
+			t.Fatalf("a locked viewer reads the body's files: %+v", read)
+		}
 	}
 	var opened catalog.Content
 	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/contents/"+locked.ID, nil, &opened)
 	signed(opened, name)
 	var read media.ReadResult
-	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, &read)
+	s.call(http.StatusOK, buyer, "GET", "/api/ck/v1/media/blog/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, &read)
 	if read.Access != media.AccessFull || len(read.Public) != 0 {
 		t.Fatalf("the buyer's read %+v", read)
-	}
-	// The locked item has no public files: anonymous exposure hides it.
-	m, _, err := e.media.jobs.Manifests().Get(ctx, contentref.New(env.Tenant, "blog.body", locked.ID).WithVersion(locked.Versions[0].ID))
-	if err != nil || !m.Hidden {
-		t.Fatalf("locked body item exposed: hidden=%v %v", m != nil && m.Hidden, err)
 	}
 
 	// Made public, anyone opens it.
@@ -262,13 +261,17 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	var public catalog.Content
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents/"+locked.ID, nil, &public)
 	signed(public, name)
-	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog.body/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, nil)
+	var free media.ReadResult
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/media/blog/"+locked.ID+"/versions/"+locked.Versions[0].ID, nil, &free)
+	if free.Access != media.AccessFull {
+		t.Fatalf("anyone's read of the free version %+v", free)
+	}
 }
 
 // Engine jobs erase what nobody keeps: a blog draft that never went live is
 // expired after its kind's draft_ttl, media folder included; a deleted
 // channel's media is hidden, kept for a restore through the retention, then
-// purged once. A post whose free_after passed has its body images exposed.
+// purged once. A post whose free_after passed has its media exposed.
 func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
@@ -284,7 +287,7 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
 			Uploads: []media.Upload{{Path: "{name}", Body: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
 				{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
-			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}}},
+			Private: []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}}}},
 		Delivery: DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 	}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Store: env.Store})
@@ -327,19 +330,18 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	if err := e.catalog.Publish(ctx, staff, []catalog.Publish{{ContentID: freed[0]}}); err != nil {
 		t.Fatal(err)
 	}
-	body := "blog" + media.BodySuffix
 	exposed := func() int {
 		t.Helper()
 		var n int
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+
-			` WHERE kind = 'contentkit_media_expose' AND args->'ref'->>'content_kind' = $1 AND args->'ref'->>'content_id' = $2`, body, freed[0]).Scan(&n); err != nil {
+			` WHERE kind = 'contentkit_media_expose' AND args->'ref'->>'content_kind' = $1 AND args->'ref'->>'content_id' = $2`, "blog", freed[0]).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
 	}
 	before := exposed()
 	if n, err := e.catalog.ReleaseFree(ctx); err != nil || n != 1 || exposed() != before+1 {
-		t.Fatalf("released %d (%v); body exposes %d after %d", n, err, exposed(), before)
+		t.Fatalf("released %d (%v); exposes %d after %d", n, err, exposed(), before)
 	}
 
 	made, err := e.groups.CreateGroups(ctx, []groups.GroupInput{{Kind: "channel", Slug: "studio", OwnerUserID: "u1"}})

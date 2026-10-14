@@ -1,6 +1,6 @@
 // Package versions binds media to content versions. A content kind's media
-// items are its versions, {kind, content, version}, and their body items
-// ({kind}.body); a content has none of its own. This package answers media's
+// items are its versions, {kind, content, version}; a content has none of
+// its own. This package answers media's
 // hooks from the content model (who uploads, who reads, the facts a
 // version's media yields), publishes versions to viewers (segment items,
 // previews, playback), forks and imports versions' media, copies body
@@ -237,13 +237,13 @@ func (s *Service) one(ctx context.Context, t Target) (version, error) {
 	return v, nil
 }
 
-// published is a version's kind as its versions see it, which must publish.
+// published is a version's kind, which must publish.
 func (s *Service) published(v version) (*media.Kind, error) {
 	k, err := s.reg.Kind(v.Kind)
-	if err != nil || k.VersionKind() == nil || k.VersionKind().Publish == nil {
+	if err != nil || !k.Versions || k.Publish == nil {
 		return nil, fmt.Errorf("%w: kind %q publishes no versions", ErrNotFound, v.Kind)
 	}
-	return k.VersionKind(), nil
+	return k, nil
 }
 
 type querier interface {

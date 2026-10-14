@@ -10,7 +10,7 @@ import (
 )
 
 // The catalog calls these in its writing transaction: a target is a content
-// (every version's items) or one version (its item and body item).
+// (every version's item) or one version.
 
 // ExposeTx brings targets' media to their visibility once it changed:
 // published, unpublished, deleted, or due.
@@ -48,7 +48,7 @@ func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []Target) err
 	}
 	for kind, versions := range kinds {
 		k, err := s.reg.Kind(kind)
-		if err != nil || k.VersionKind() == nil {
+		if err != nil || !k.Versions {
 			continue
 		}
 		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.o.Tenant, versions)
@@ -59,15 +59,14 @@ func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []Target) err
 		if err != nil {
 			return err
 		}
-		if err := s.retireTx(ctx, tx, k.VersionKind(), ids); err != nil {
+		if err := s.retireTx(ctx, tx, k, ids); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// itemRefs are targets' versions' media items, their body items included,
-// and their versions by kind.
+// itemRefs are targets' versions' media items, and their versions by kind.
 func (s *Service) itemRefs(ctx context.Context, q querier, targets []Target) ([]contentref.ContentRef, map[string][]string, error) {
 	contents, versions := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
@@ -96,9 +95,6 @@ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.content_id = c.id AND (t.versi
 			return nil, nil, err
 		}
 		add(kind, id, version)
-		if _, err := s.reg.Kind(kind + media.BodySuffix); err == nil {
-			add(kind+media.BodySuffix, id, version)
-		}
 		byKind[kind] = append(byKind[kind], version)
 	}
 	return refs, byKind, rows.Err()

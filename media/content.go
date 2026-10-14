@@ -16,17 +16,6 @@ const CoverPreset = "cover"
 // AvatarPreset is the public preset a user-owned group's avatar shows.
 const AvatarPreset = "avatar"
 
-// BodySuffix names a content kind's body kind: {Name}.body holds each
-// version's body images (its Body uploads), one item per version ({kind}.body,
-// content, version), which shows only to viewers who open the version. A
-// locked version's body images never reach a viewer who has not opened it; an
-// open version's keep public files. Versions share no files: each holds its
-// own copy of its content's body images.
-const BodySuffix = ".body"
-
-// BodyOf is the content kind of a body kind.
-func BodyOf(kind string) (string, bool) { return strings.CutSuffix(kind, BodySuffix) }
-
 // ForContent derives c from the site's one kinds list: a media kind named
 // after a content kind is that kind's, of Versions, in the app's namespace;
 // every group kind without one declared gets GroupKind's. No other kind has
@@ -130,33 +119,4 @@ func GroupKind(name string, gk kinds.GroupKind) Kind {
 			Widths: []int{64, 128, 256}, Image: Image{Aspect: Square, Quality: 85}})
 	}
 	return k
-}
-
-// bodyKind is a content kind's body kind: its Body uploads, their public
-// presets, and for each a private image the item token serves to a viewer
-// who opened the version while it has no public files.
-func bodyKind(k Kind) (Kind, bool, error) {
-	body := Kind{Name: k.Name + BodySuffix, KeepOriginals: k.KeepOriginals}
-	for _, u := range k.Uploads {
-		if !u.Body {
-			continue
-		}
-		if !u.Named || !slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == u.Path && p.First == 0 }) {
-			return Kind{}, false, fmt.Errorf("body upload %q needs Named and a public preset", u.Path)
-		}
-		u.Body = false
-		body.Uploads = append(body.Uploads, u)
-		for _, p := range k.Public {
-			if p.From != u.Path || p.First > 0 {
-				continue
-			}
-			body.Public = append(body.Public, p)
-			img := p.Image
-			if len(p.Widths) > 0 {
-				img.Width = slices.Max(p.Widths)
-			}
-			body.Private = append(body.Private, Private{Name: p.Name + "-open", From: p.From, To: p.Name + "-open/{name}.webp", Image: &img})
-		}
-	}
-	return body, len(body.Uploads) > 0, nil
 }

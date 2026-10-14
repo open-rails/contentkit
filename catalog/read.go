@@ -10,7 +10,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 )
@@ -68,7 +67,6 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	}
 	built := map[string]*Content{}
 	bodies := map[string]string{} // content -> the version whose body images it shows
-	images := s.imageSet()
 	for _, id := range visible {
 		iv, it := views[id], items[id]
 		if it == nil {
@@ -133,14 +131,8 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		}
 		if b := bodyVersion(c, iv.editor, v.language); b != nil {
 			bodies[id] = b.ID
-			for _, name := range imageNames(c.Body) {
-				images.add(imageKey{it.kind + media.BodySuffix, id, b.ID, name})
-			}
 		}
 		built[id] = c
-	}
-	if err := images.resolve(ctx); err != nil {
-		return nil, err
 	}
 	if err := s.fillCovers(ctx, built, v.language); err != nil {
 		return nil, err
@@ -150,17 +142,9 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		return nil, err
 	}
 	for id, c := range built {
-		var locked []string
-		for _, name := range imageNames(c.Body) {
-			if u, ok := images.url(imageKey{c.Kind + media.BodySuffix, id, bodies[id], name}); ok {
-				c.images()[name] = u
-			} else {
-				locked = append(locked, name)
-			}
-		}
-		// Body images without public files are the opened version's alone.
-		if len(locked) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
-			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind+media.BodySuffix, id).WithVersion(bodies[id]), v.actor, locked)
+		// Body images are the opened version's private files, signed for its openers.
+		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
+			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind, id).WithVersion(bodies[id]), v.actor, names)
 			if err != nil {
 				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
 			}

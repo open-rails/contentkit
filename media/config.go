@@ -60,7 +60,7 @@ type Kind struct {
 	Namespace string `json:"namespace,omitempty"`
 	// Versions marks a content kind (ForContent): its items are its
 	// contents' versions, {kind, content, version}; a content has no item of
-	// its own. Its Body uploads live in each version's body item (BodySuffix).
+	// its own.
 	Versions bool `json:"versions,omitempty"`
 	// Publish publishes a Versions kind's versions to viewers through
 	// immutable items of the kind {Name}.published (Publish).
@@ -99,9 +99,9 @@ type Kind struct {
 // same stem replaces it.
 type Upload struct {
 	Path string `json:"path"`
-	// Body marks a Versions kind's body images (Named, with an image public
-	// preset): they live in each version's body item, which only the
-	// version's openers see.
+	// Body marks a content kind's body images (Named, with a private image
+	// preset and no public one): each version keeps its copy in private/,
+	// which only the version's openers read.
 	Body     bool     `json:"body,omitempty"`
 	Types    []string `json:"types"`            // accepted content types
 	MaxBytes int64    `json:"max_bytes"`        // per file

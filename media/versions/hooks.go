@@ -17,22 +17,19 @@ import (
 type resolver struct{ s *Service }
 
 // Resolve decides media reads. A version's item shows like the version; its
-// private files open only for a kind that publishes nothing, since a
-// publishing kind's originals reach viewers through published items alone.
-// A version's body item ({kind}.body) shows only to the version's openers
-// and editors, every file.
+// private files (a body's images among them) open only for a kind that
+// publishes nothing, since a publishing kind's originals reach viewers
+// through published items alone.
 // A published item shows while its publication is current and its pages
 // are released, and opens like its version, or within the free segments.
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	s := r.s
 	out := map[contentref.ContentKey]resolve.Resolution{}
-	var owned, published, grouped, bodies, others []contentref.ContentRef
+	var owned, published, grouped, others []contentref.ContentRef
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
 		switch {
-		case err != nil || ref.TenantID != k.NS() || k.Versioned() && ref.Version() == "":
-		case s.bodyOf(k.Name) != "":
-			bodies = append(bodies, ref)
+		case err != nil || ref.TenantID != k.NS() || k.Versions && ref.Version() == "":
 		case k.Versions:
 			owned = append(owned, ref)
 		case k.Of() != nil:
@@ -56,9 +53,6 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		return nil, err
 	}
 	if err := s.resolvePublished(ctx, published, actor, out); err != nil {
-		return nil, err
-	}
-	if err := s.resolveBodies(ctx, bodies, actor, out); err != nil {
 		return nil, err
 	}
 	if err := s.resolveGroups(ctx, grouped, actor, out); err != nil {
@@ -130,51 +124,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		}
 		k, _ := s.reg.Kind(ref.ContentKind)
 		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
-			Accessible: r.Accessible && k.VersionKind().Publish == nil}
-	}
-	return nil
-}
-
-// bodyOf is the content kind of a body kind, "" for any other kind.
-func (s *Service) bodyOf(kind string) string {
-	base, ok := media.BodyOf(kind)
-	if k, err := s.reg.Kind(base); !ok || err != nil || !k.Versions {
-		return ""
-	}
-	return base
-}
-
-// resolveBodies decides body items: one shows, and opens, only to a viewer
-// who opens its version or edits it, so a locked version's body images reach
-// nobody else and have public files only while anyone opens it.
-func (s *Service) resolveBodies(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
-	if len(refs) == 0 {
-		return nil
-	}
-	versions := make([]contentref.ContentRef, len(refs))
-	for i, ref := range refs {
-		versions[i] = contentref.New(ref.TenantID, s.bodyOf(ref.ContentKind), ref.ContentID).WithVersion(ref.Version())
-	}
-	found, err := s.existing(ctx, versions)
-	if err != nil || len(found) == 0 {
-		return err
-	}
-	var asked []contentref.ContentRef
-	for _, v := range versions {
-		if _, ok := found[v.Key()]; ok && v.Version() != "" {
-			asked = append(asked, v)
-		}
-	}
-	res, err := s.o.Resolver.Resolve(ctx, asked, actor)
-	if err != nil {
-		return err
-	}
-	for i, ref := range refs {
-		r, ok := res[versions[i].Key()]
-		if ref.Version() == "" || !ok || !r.Visible || !r.Accessible && !r.Editor {
-			continue
-		}
-		out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: r.Editor, Owner: r.Owner}
+			Accessible: r.Accessible && k.Publish == nil}
 	}
 	return nil
 }
@@ -277,18 +227,10 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	switch {
 	case err != nil || t.Ref.TenantID != k.NS():
 		return media.UploadGrant{}, nil
-	case isSystem(actor) && (k.Versions || k.Of() != nil || s.bodyOf(k.Name) != ""):
+	case isSystem(actor) && (k.Versions || k.Of() != nil):
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
 	case k.Of() != nil:
 		return media.UploadGrant{}, nil
-	case s.bodyOf(k.Name) != "":
-		// A body item is written by its version's editors.
-		if t.Ref.Version() == "" {
-			return media.UploadGrant{}, nil
-		}
-		base, _ := s.reg.Kind(s.bodyOf(k.Name))
-		t.Ref, t.Path = contentref.New(t.Ref.TenantID, base.Name, t.Ref.ContentID).WithVersion(t.Ref.Version()), ""
-		return s.canEdit(ctx, actor, base, t)
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)
 	case s.isGroupKind(k.Name):
@@ -321,8 +263,8 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 	if err != nil || !res[target].Editor {
 		return media.UploadGrant{}, err
 	}
-	if v := k.VersionKind(); target.Version != "" && v.Publish != nil {
-		if p := v.Publish.Previews; p != "" && t.Path != "" && strings.HasPrefix(t.Path, previewDir(v)) {
+	if target.Version != "" && k.Publish != nil {
+		if p := k.Publish.Previews; p != "" && t.Path != "" && strings.HasPrefix(t.Path, previewDir(k)) {
 			return media.UploadGrant{}, nil
 		}
 		m, _, err := s.m.Manifests.Get(ctx, t.Ref)
@@ -354,14 +296,14 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	} else if err != nil {
 		return err
 	}
-	if err := s.recordFacts(ctx, tx, k.VersionKind(), v, m); err != nil {
+	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	p := k.VersionKind().Publish
+	p := k.Publish
 	switch {
 	case p == nil:
 		return nil
-	case p.Import != "" && len(imports(k.VersionKind(), m)) > 0:
+	case p.Import != "" && len(imports(k, m)) > 0:
 		return s.enqueueTx(ctx, tx, importArgs{Content: v.Content, Version: v.Version})
 	}
 	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
@@ -376,7 +318,7 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 		return nil
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
-	vk := k.VersionKind()
+	vk := k
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
