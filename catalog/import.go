@@ -457,12 +457,12 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
   updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
-  access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = EXCLUDED.cover, created_at = EXCLUDED.created_at,
+  access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = coalesce(EXCLUDED.cover, v.cover), created_at = EXCLUDED.created_at,
   updated_at = EXCLUDED.updated_at, revision = v.revision + 1
  WHERE (v.position, v.languages, v.traits, v.label, v.state, v.publish_at, v.published_at, v.deleted_at, v.access, v.attributes, v.ordinal, v.cover,
   v.created_at)
   IS DISTINCT FROM (EXCLUDED.position, coalesce(EXCLUDED.languages, v.languages), EXCLUDED.traits, EXCLUDED.label, EXCLUDED.state, EXCLUDED.publish_at,
-  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, EXCLUDED.cover, EXCLUDED.created_at)
+  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, coalesce(EXCLUDED.cover, v.cover), EXCLUDED.created_at)
  RETURNING v.content_id`, s.tenant, data(b.versions)); err != nil {
 		return nil, nil, err
 	}
@@ -846,7 +846,7 @@ func (s *Store) republishImported(ctx context.Context, tx pgx.Tx, stored map[str
    FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = r.id) IS DISTINCT FROM
    (SELECT coalesce(jsonb_agg(jsonb_build_array(n.position, n.start_index, n.end_index, n.release_at) ORDER BY n.position), '[]')
    FROM jsonb_to_recordset($5::jsonb) AS n(version_id text, position int, start_index int, end_index int, release_at timestamptz) WHERE n.version_id = r.id))
- ORDER BY r.id`, s.tenant, data(had), data(b.items), b.segIDs, data(b.segments))
+ ORDER BY r.id`, s.tenant, data(had), data(b.items), append([]string{}, b.segIDs...), data(append([]importSegmentRow{}, b.segments...)))
 	if err != nil {
 		return nil, err
 	}
