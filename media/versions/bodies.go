@@ -73,10 +73,12 @@ func (s *Service) copyBodies(ctx context.Context, c BodyCopy) error {
 		if !f.IsUpload() || f.Unattached || len(c.Names) > 0 && !slices.Contains(c.Names, k.NameOf(f.Path)) {
 			continue
 		}
-		if f.Blob == "" {
+		if f.Blob == "" && f.Fail() == nil {
 			return ErrNotReady
 		}
-		files = append(files, f)
+		if f.Blob != "" {
+			files = append(files, f)
+		}
 	}
 	for _, to := range c.To {
 		dst, err := s.ref(k.Name, Target{Content: c.Content, Version: to})
