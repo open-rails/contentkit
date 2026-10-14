@@ -357,6 +357,18 @@ WHERE kind = 'contentkit_media_place' GROUP BY 1`)
 	return out
 }
 
+// placing counts ref's applied commits that asked the worker to place.
+func (s *site) placing(ref contentref.ContentRef) int {
+	s.t.Helper()
+	var n int
+	if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+s.table("content_media_commits")+`
+WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND content_version_id IS NOT DISTINCT FROM $4
+AND state = 'applied' AND (effects->'process'->>'place')::boolean`, ref.TenantID, ref.ContentKind, ref.ContentID, ref.ContentVersionID).Scan(&n); err != nil {
+		s.t.Fatal(err)
+	}
+	return n
+}
+
 // settles waits for the worker's queue to drain, then checks it gets no new
 // job for longer than a publish job's poll: nothing feeds back.
 func (s *site) settles() {
