@@ -23,7 +23,7 @@ const (
 	OpRename     = "rename"     // rename an upload and its outputs
 	OpRemove     = "remove"     // remove an upload and its outputs
 	OpAttach     = "attach"     // make an unattached upload part of the item
-	OpCopy       = "copy"       // copy an upload within the kind, optionally with a new edit
+	OpCopy       = "copy"       // copy an upload within the kind (CopyFrom), optionally with a new edit
 	OpFrame      = "frame"      // fill an upload from a frame of its Upload.Frames video
 	OpMeta       = "meta"       // set the template values (download names)
 	OpRegenerate = "regenerate" // redo stale outputs and retry failed uploads (of Preset), or every output with Force
@@ -56,7 +56,9 @@ type Op struct {
 }
 
 // CopyFrom names an upload of an item of the same kind, including this item:
-// of a Versions kind, one version's, or ("") its content-level item's.
+// of a Versions kind, one version's, or ("") its content-level item's. Into
+// a published kind's item, it names a file of a version of the kind it
+// publishes: an upload, or a finished output, which comes alone, as an upload.
 type CopyFrom struct {
 	ID      string `json:"id"`
 	Version string `json:"version,omitempty"`
@@ -435,6 +437,30 @@ func (o *opRun) frame(op Op) error {
 	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
 	return o.place(g, i, f, nil)
+}
+
+// copyKind is the kind k's copies read from: the kind a published kind
+// publishes, else k.
+func copyKind(k *Kind) *Kind {
+	if k.of != nil {
+		return k.of
+	}
+	return k
+}
+
+// copySource is what a copy into an item of k brings from m's path: an
+// upload with its outputs; into a published item, a finished output alone,
+// as an upload.
+func copySource(k *Kind, m *Manifest, path string) []File {
+	files := copyFiles(m, path)
+	if len(files) > 0 || k.of == nil {
+		return files
+	}
+	f, ok := m.Get(path)
+	if !ok || f.IsUpload() || f.Blob == "" || f.Gone || f.Track != nil {
+		return nil
+	}
+	return []File{{Path: f.Path, Blob: f.Blob, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur}}
 }
 
 // copyFiles snapshots an upload and its derived files before an edit moves them.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -20,6 +21,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
 func paths(m *media.Manifest) []string {
@@ -403,6 +405,80 @@ func TestUnattachedAttach(t *testing.T) {
 	}
 	if u, _ := m.Get(p); u.Unattached || u.Meta["alt"] != "first" {
 		t.Fatalf("attached %+v", u)
+	}
+}
+
+// A published item copies a version's finished outputs as its own uploads,
+// server-side, in one commit: nothing is staged, so nothing waits on the
+// worker. Any other kind copies uploads only.
+func TestCopyIntoPublished(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		book := bookKind()
+		book.Versions = true
+		c.Kinds = append(c.Kinds, book)
+	})
+	ctx := t.Context()
+	ver, err := f.reg.VersionRef("book", cid(1), cid(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := f.ref("book"+media.PublishedSuffix, 3)
+	var bodies [][]byte
+	for i := range 2 {
+		f.put(ver, fmt.Sprintf("pages/%d.png", i), "image/png", png(i))
+		bodies = append(bodies, []byte(fmt.Sprintf("read %d", i)))
+	}
+	outs := []media.File{}
+	for i, body := range bodies {
+		outs = append(outs, media.File{Path: fmt.Sprintf("read/%d.webp", i), Blob: f.blob(ver, body, "image/webp"), Type: "image/webp",
+			Size: int64(len(body)), FP: "test"})
+	}
+	if _, err := f.ms.EditExisting(ctx, ver, func(m *media.Manifest) error {
+		for i, o := range outs {
+			if err := m.SetOutputs(fmt.Sprintf("pages/%d.png", i), "read", []media.File{o}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.q.take()
+	var ops []media.Op
+	for _, o := range outs {
+		ops = append(ops, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Version: cid(2), Path: o.Path}, To: o.Path})
+	}
+	m, err := f.up.Commit(ctx, f.editor, pub, uuid.NewString(), ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, _ := f.reg.Item(pub)
+	for i, o := range outs {
+		got, ok := m.Get(o.Path)
+		if !ok || !got.IsUpload() || got.Staged != "" || len(got.Pending) != 0 || got.Blob == o.Blob || !matchesBlob(got.Blob, bodies[i]) {
+			t.Fatalf("copied %s: %+v", o.Path, got)
+		}
+		key, _ := item.Blob(got.Blob)
+		rc, _, err := f.env.Store.Get(ctx, key, media.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		if !bytes.Equal(b, bodies[i]) {
+			t.Fatalf("copied %s holds %q", o.Path, b)
+		}
+	}
+	if jobs := f.q.take(); len(jobs) != 0 {
+		t.Fatalf("a published copy queued worker jobs: %+v", jobs)
+	}
+	other, err := f.reg.VersionRef("book", cid(1), cid(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, other, uuid.NewString(), []media.Op{{Op: media.OpCopy,
+		From: &media.CopyFrom{ID: cid(1), Version: cid(2), Path: "read/0.webp"}, To: "pages/0"}}); code(err) != media.CodeNotFound {
+		t.Fatalf("a version copied an output: %v", err)
 	}
 }
 
