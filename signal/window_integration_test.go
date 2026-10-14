@@ -13,6 +13,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
+	firstID, middleID, lastID, beforeID, afterID := cid(1), cid(2), cid(3), cid(4), cid(5)
 	now := time.Date(2026, 5, 20, 15, 0, 0, 0, time.UTC)
 	window := LastDays(7, now) // [2026-05-14, 2026-05-21)
 	sec := func(day, h, m, s int) time.Time { return time.Date(2026, 5, day, h, m, s, 0, time.UTC) }
@@ -28,11 +29,11 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 		}
 	}
 	for _, subject := range []string{"u1", "u2"} {
-		record("first-instant", subject, sec(14, 0, 0, 0))
-		record("middle", subject, sec(17, 12, 30, 0))
-		record("last-instant", subject, sec(20, 23, 59, 59))
-		record("before", subject, sec(13, 23, 59, 59))
-		record("after", subject, sec(21, 0, 0, 0))
+		record(firstID, subject, sec(14, 0, 0, 0))
+		record(middleID, subject, sec(17, 12, 30, 0))
+		record(lastID, subject, sec(20, 23, 59, 59))
+		record(beforeID, subject, sec(13, 23, 59, 59))
+		record(afterID, subject, sec(21, 0, 0, 0))
 	}
 
 	hits, err := st.Popular(ctx, tenant, "gallery", PopularOptions{Window: window, Limit: 10})
@@ -47,25 +48,25 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 			t.Fatalf("contribution depends on position in window: %+v", hits)
 		}
 	}
-	ids := []string{"first-instant", "middle", "last-instant", "before", "after"}
+	ids := []string{firstID, middleID, lastID, beforeID, afterID}
 	metrics := metricsByID(t, st, tenant, ids, window)
 	counts := map[string]uint64{}
 	for id, m := range metrics {
 		counts[id] = m.Viewers
 	}
-	if want := map[string]uint64{"first-instant": 2, "middle": 2, "last-instant": 2}; !reflect.DeepEqual(counts, want) {
+	if want := map[string]uint64{firstID: 2, middleID: 2, lastID: 2}; !reflect.DeepEqual(counts, want) {
 		t.Fatalf("subject counts %v want %v", counts, want)
 	}
 	scores, err := st.PopularityFor(ctx, tenant, "gallery", ids, window)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scores) != 3 || scores["first-instant"] != scores["last-instant"] || scores["middle"] != scores["first-instant"] {
+	if len(scores) != 3 || scores[firstID] != scores[lastID] || scores[middleID] != scores[firstID] {
 		t.Fatalf("popularity-for must treat window days equally and exclude neighbours: %v", scores)
 	}
 
 	// Co-engagement uses the same half-open days.
-	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "middle"), CoEngagedOptions{Window: window, SkipRollup: true, Limit: 10})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, middleID), CoEngagedOptions{Window: window, SkipRollup: true, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,13 +74,13 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	for _, h := range co {
 		got[h.ContentID] = h.Strength
 	}
-	if want := map[string]int64{"first-instant": 2, "last-instant": 2}; !reflect.DeepEqual(got, want) {
+	if want := map[string]int64{firstID: 2, lastID: 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("windowed co-engagement %v want %v", got, want)
 	}
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{Window: window}); err != nil {
 		t.Fatal(err)
 	}
-	co, err = st.CoEngaged(ctx, tenant, gallery(tenant, "middle"), CoEngagedOptions{Limit: 10})
+	co, err = st.CoEngaged(ctx, tenant, gallery(tenant, middleID), CoEngagedOptions{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	for _, h := range co {
 		got[h.ContentID] = h.Strength
 	}
-	if want := map[string]int64{"first-instant": 2, "last-instant": 2}; !reflect.DeepEqual(got, want) {
+	if want := map[string]int64{firstID: 2, lastID: 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("windowed pair rollup %v want %v", got, want)
 	}
 

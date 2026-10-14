@@ -2,40 +2,54 @@ package content
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/open-rails/authkit/userinfo"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-// commentsEnricher is a fake UserEnricher for the enrichment assertion.
-type commentsEnricher struct{}
+// commentsDirectory is a host directory holding every id but "gone".
+type commentsDirectory struct{}
 
-func (commentsEnricher) UsersByIDs(_ context.Context, ids []string) (map[string]PublicUser, error) {
-	out := make(map[string]PublicUser, len(ids))
+func (commentsDirectory) Get(_ context.Context, ids []string) (map[string]userinfo.User, error) {
+	out := make(map[string]userinfo.User, len(ids))
 	for _, id := range ids {
-		out[id] = PublicUser{ID: id, Username: "name-" + id}
+		if id != "gone" {
+			out[id] = userinfo.User{ID: id, Name: "Name " + id, Username: "name-" + id, Email: id + "@example.test"}
+		}
 	}
 	return out, nil
 }
 
+func (commentsDirectory) Search(context.Context, string, int) ([]userinfo.User, error) {
+	return nil, nil
+}
+
 func commentsRuntime(t *testing.T, opts Options) *Runtime {
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
+	res.set("gallery", cid(1), true, true)
 	if opts.Resolver == nil {
 		opts.Resolver = res
-	}
-	if opts.ContentKinds == nil {
-		opts.ContentKinds = []string{"gallery"}
 	}
 	rt, _ := newTestRuntime(t, opts)
 	return rt
 }
 
-func mustComment(t *testing.T, rt *Runtime, actor Actor, kind, id string, in createInput) Comment {
+func mustComment(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, in CommentInput) Comment {
 	t.Helper()
-	cm, err := rt.comments.create(context.Background(), actor, kind, id, in)
+	cm, err := rt.comments.create(context.Background(), actor, rt.Ref(kind, id), in)
 	if err != nil {
 		t.Fatalf("create comment: %v", err)
 	}
@@ -43,17 +57,17 @@ func mustComment(t *testing.T, rt *Runtime, actor Actor, kind, id string, in cre
 }
 
 func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
-	rt := commentsRuntime(t, Options{Users: commentsEnricher{}})
+	rt := commentsRuntime(t, Options{UserInfo: commentsDirectory{}})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
-	a := mustComment(t, rt, author, "gallery", "1", createInput{Body: "root A"})
-	r := mustComment(t, rt, author, "gallery", "1", createInput{Body: "reply to A", ReplyToID: a.ID})
-	_ = mustComment(t, rt, author, "gallery", "1", createInput{Body: "root B"})
+	a := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "root A"})
+	r := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "reply to A", ReplyToID: a.ID})
+	_ = mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "root B"})
 	if r.ReplyToID != a.ID {
 		t.Fatalf("reply_to_id = %q, want %q", r.ReplyToID, a.ID)
 	}
-	top, err := rt.comments.list(ctx, author, "gallery", "1", "", 10, 0)
+	top, err := rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -67,7 +81,10 @@ func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 	if ai < 0 || top[ai].ReplyCount != 1 {
 		t.Fatalf("root A = %+v, want reply_count 1", top)
 	}
-	if top[ai].Author == nil || top[ai].Author.Username != "name-author" {
+	wantAuthor := PublicUser{
+		ID: "author", Name: "Name author", Username: "name-author",
+	}
+	if top[ai].Author == nil || *top[ai].Author != wantAuthor {
 		t.Fatalf("author not enriched: %+v", top[ai].Author)
 	}
 	reps, err := rt.comments.replies(ctx, author, a.ID, 10, 0)
@@ -77,43 +94,249 @@ func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 	if len(reps) != 1 || reps[0].ID != r.ID || reps[0].ReplyToID != a.ID {
 		t.Fatalf("replies = %+v, want [reply %s]", commentIDs(reps), r.ID)
 	}
+	if reps[0].Author == nil || *reps[0].Author != wantAuthor {
+		t.Fatalf("reply author = %+v, want %+v", reps[0].Author, wantAuthor)
+	}
 }
 
 func TestComments_ReplyConstraints(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
-	res.set("gallery", "2", true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	res.set("gallery", cid(1), true, true)
+	res.set("gallery", cid(2), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
-	on1 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "on content 1"})
-	if _, err := rt.comments.create(ctx, author, "gallery", "2", createInput{Body: "cross", ReplyToID: on1.ID}); err == nil {
+	on1 := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "on content 1"})
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(2)), CommentInput{Body: "cross", ReplyToID: on1.ID}); err == nil {
 		t.Fatal("expected rejection: replied-to comment belongs to different content")
 	}
-	reply := mustComment(t, rt, author, "gallery", "1", createInput{Body: "reply", ReplyToID: on1.ID})
-	if _, err := rt.comments.create(ctx, author, "gallery", "1", createInput{Body: "nested", ReplyToID: reply.ID}); err == nil {
+	reply := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "reply", ReplyToID: on1.ID})
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: "nested", ReplyToID: reply.ID}); err == nil {
 		t.Fatal("expected rejection: cannot reply to a reply")
 	}
 }
 
 func TestComments_AccessGating(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "locked", true, false)
-	res.set("gallery", "hidden", false, false)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	res.set("gallery", cid(901), true, false)
+	res.set("gallery", cid(902), false, false)
+	res.put("gallery", cid(904), resolve.Resolution{Visible: true, Editor: true})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
-	if _, err := rt.comments.create(ctx, author, "gallery", "locked", createInput{Body: "x"}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("premium-locked: want ErrForbidden, got %v", err)
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(901)), CommentInput{Body: "x"}); !errors.Is(err, ErrCommentsLocked) {
+		t.Fatalf("premium-locked: want ErrCommentsLocked, got %v", err)
 	}
-	if _, err := rt.comments.create(ctx, author, "gallery", "hidden", createInput{Body: "x"}); !errors.Is(err, ErrNotVisible) {
+	// Its editors open locked content, and its comments.
+	mustComment(t, rt, author, "gallery", cid(904), CommentInput{Body: "editor"})
+	if list, err := rt.comments.list(ctx, author, rt.Ref("gallery", cid(904)), "", "", 10, 0); err != nil || len(list) != 1 {
+		t.Fatalf("an editor's read of locked content's comments: %v %v", list, err)
+	}
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(902)), CommentInput{Body: "x"}); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("hidden: want ErrNotVisible, got %v", err)
 	}
-	if _, err := rt.comments.create(ctx, author, "gallery", "ghost", createInput{Body: "x"}); !errors.Is(err, ErrNotFound) {
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(903)), CommentInput{Body: "x"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing: want ErrNotFound, got %v", err)
 	}
+}
+
+type commentThreadResolver struct {
+	defaultVersion string
+	versions       map[string]resolve.Resolution
+	err            error
+}
+
+func (r *commentThreadResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make(map[contentref.ContentKey]resolve.Resolution)
+	for _, requested := range refs {
+		id, version, _ := strings.Cut(requested.ContentID, ":")
+		if requested.ContentVersionID != nil {
+			version = *requested.ContentVersionID
+		}
+		if version == "" {
+			version = r.defaultVersion
+		}
+		if res, ok := r.versions[version]; ok {
+			res.Ref = contentref.NewVersion(requested.TenantID, requested.ContentKind, id, version)
+			out[requested.Key()] = res
+		}
+	}
+	return out, nil
+}
+
+func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery_thread")})
+	actor := access.Actor{ID: "author"}
+	root := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese root"})
+	reply := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese reply", ReplyToID: root.ID})
+	h := rt.Handler()
+	path := "/comments/" + root.ID + "/replies"
+
+	res.versions["ja"] = resolve.Resolution{}
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("hidden stored version: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	res.versions["en"] = resolve.Resolution{Visible: true, Accessible: true}
+	res.versions["ja"] = resolve.Resolution{Visible: true} // the stored version's access, not the item's
+	rec := doJSON(t, h, actor, "GET", path, nil)
+	var replies []Comment
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 0 {
+		t.Fatalf("locked stored version: %d %s, want the replies withheld", rec.Code, rec.Body.String())
+	}
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
+	rec = doJSON(t, h, actor, "GET", path, nil)
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 1 || replies[0].ID != reply.ID {
+		t.Fatalf("open stored version: %d %s, want the Japanese reply", rec.Code, rec.Body.String())
+	}
+	delete(res.versions, "ja")
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing stored version: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	res.err = errors.New("resolver unavailable")
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("resolver failure: %d %s, want 500", rec.Code, rec.Body.String())
+	}
+	res.err = nil
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
+	unregistered, _ := newTestRuntime(t, Options{Schema: rt.schema, Resolver: res, Kinds: testKinds("gallery")})
+	if rec := doJSON(t, unregistered.Handler(), actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unregistered stored kind: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery_thread")})
+	actor := access.Actor{ID: "author"}
+	en := mustComment(t, rt, actor, "gallery_thread", cid(1)+":en", CommentInput{Body: "English comment"})
+	ja := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese comment"})
+	for _, version := range []string{"en", "ja"} {
+		res.versions["en"] = resolve.Resolution{}
+		res.versions["ja"] = resolve.Resolution{}
+		res.versions[version] = resolve.Resolution{Visible: true, Accessible: true}
+		rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
+		var feed []FeedItem
+		wantID := en.ID
+		if version == "ja" {
+			wantID = ja.ID
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &feed) != nil || len(feed) != 1 || feed[0].ID != wantID || feed[0].ContentRef.Version() != version {
+			t.Fatalf("visible version %s: %d %s, want only %s", version, rec.Code, rec.Body.String(), wantID)
+		}
+	}
+	// A version the actor can't open withholds its comments from the feed.
+	res.versions["en"], res.versions["ja"] = resolve.Resolution{Visible: true}, resolve.Resolution{Visible: true, Editor: true}
+	rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
+	var feed []FeedItem
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &feed) != nil || len(feed) != 1 || feed[0].ID != ja.ID {
+		t.Fatalf("locked version: %d %s, want only the edited version's comment", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]resolve.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, pool := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery_thread"), Anonymous: Anonymous{Reactions: true}})
+	ctx := context.Background()
+	cm := mustComment(t, rt, access.Actor{ID: "author"}, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese comment"})
+	actor := access.Actor{ID: "reactor"}
+	h := rt.Handler()
+	path := "/comments/" + cm.ID
+	assertStored := func(t *testing.T, likes, dislikes, reactions int) {
+		t.Helper()
+		var gotLikes, gotDislikes, gotReactions int
+		if err := pool.QueryRow(ctx, `SELECT likes, dislikes FROM `+rt.store.t.comments+` WHERE id = $1`, cm.ID).Scan(&gotLikes, &gotDislikes); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions+` WHERE content_kind = $1 AND content_id = $2`, KindComment, cm.ID).Scan(&gotReactions); err != nil {
+			t.Fatal(err)
+		}
+		if gotLikes != likes || gotDislikes != dislikes || gotReactions != reactions {
+			t.Fatalf("stored likes/dislikes/reactions = %d/%d/%d, want %d/%d/%d", gotLikes, gotDislikes, gotReactions, likes, dislikes, reactions)
+		}
+	}
+	for _, target := range []string{"hidden", "missing", "resolver error"} {
+		t.Run(target, func(t *testing.T) {
+			res.err = nil
+			res.versions["ja"] = resolve.Resolution{}
+			status := http.StatusNotFound
+			switch target {
+			case "missing":
+				delete(res.versions, "ja")
+			case "resolver error":
+				res.err = errors.New("resolver unavailable")
+				status = http.StatusInternalServerError
+			}
+			for _, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+				method, suffix, _ := strings.Cut(action, " ")
+				if rec := doJSON(t, h, actor, method, path+suffix, nil); rec.Code != status {
+					t.Fatalf("%s: %d %s, want %d", action, rec.Code, rec.Body.String(), status)
+				}
+			}
+			assertStored(t, 0, 0, 0)
+		})
+	}
+	res.err = nil
+	res.versions["en"] = resolve.Resolution{}
+	res.versions["ja"] = resolve.Resolution{Visible: true} // the comment's version is locked to the actor
+	for _, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+		method, suffix, _ := strings.Cut(action, " ")
+		if rec := doJSON(t, h, actor, method, path+suffix, nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"comments_locked"`) {
+			t.Fatalf("locked target %s: %d %s, want 403 comments_locked", action, rec.Code, rec.Body.String())
+		}
+	}
+	assertStored(t, 0, 0, 0)
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
+	for i, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+		method, suffix, _ := strings.Cut(action, " ")
+		rec := doJSON(t, h, actor, method, path+suffix, nil)
+		var counts ReactionCounts
+		want := []ReactionCounts{{Likes: ptr(1), Dislikes: ptr(0), Mine: 1}, {Likes: ptr(0), Dislikes: ptr(1), Mine: -1}, {Likes: ptr(0), Dislikes: ptr(0)}}[i]
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || !reflect.DeepEqual(counts, want) {
+			t.Fatalf("open target %s: %d %s, want %+v", action, rec.Code, rec.Body.String(), want)
+		}
+	}
+	assertStored(t, 0, 0, 1)
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "POST", path+"/like", nil); rec.Code != http.StatusOK {
+		t.Fatalf("anonymous visible target: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
+	res.versions["ja"] = resolve.Resolution{}
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "DELETE", path+"/reaction", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("hidden target after reacting: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
+	res.versions["ja"] = resolve.Resolution{Visible: true, Accessible: true}
+	for _, state := range []string{ModerationHeld, ModerationRejected} {
+		if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET moderation = $2 WHERE id = $1`, cm.ID, state); err != nil {
+			t.Fatal(err)
+		}
+		if rec := doJSON(t, h, actor, "POST", path+"/like", nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s comment: %d %s, want 404", state, rec.Code, rec.Body.String())
+		}
+		assertStored(t, 1, 0, 2)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET moderation = $2, deleted_at = now() WHERE id = $1`, cm.ID, ModerationApproved); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doJSON(t, h, actor, "POST", path+"/like", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted comment: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
 }
 
 // Edits run the same sanitizer as create, and a policy rejection (the C4
@@ -121,8 +344,8 @@ func TestComments_AccessGating(t *testing.T) {
 func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "<b>fine</b>"})
+	author := access.Actor{ID: "author"}
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "<b>fine</b>"})
 	if cm.Body != "fine" {
 		t.Fatalf("create body = %q, want tags stripped", cm.Body)
 	}
@@ -135,19 +358,19 @@ func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	writeErr(rec, RejectedError{Reason: "links are not allowed"})
-	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != "{\"error\":\"links are not allowed\"}\n" {
-		t.Fatalf("rejection = %d %s, want 422 with the reason", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != "{\"error\":\"links are not allowed\",\"code\":\"moderation_rejected\"}\n" {
+		t.Fatalf("rejection = %d %s, want 422 with the reason and the moderation code", rec.Code, rec.Body.String())
 	}
 }
 
 func TestComments_AnonRequiresName(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	anon := Actor{IP: "1.2.3.4", Anonymous: true}
-	if _, err := rt.comments.create(ctx, anon, "gallery", "1", createInput{Body: "hi"}); err == nil {
+	anon := access.Actor{IP: "1.2.3.4", Anonymous: true}
+	if _, err := rt.comments.create(ctx, anon, rt.Ref("gallery", cid(1)), CommentInput{Body: "hi"}); err == nil {
 		t.Fatal("anon without a name should be rejected")
 	}
-	if _, err := rt.comments.create(ctx, anon, "gallery", "1", createInput{Body: "hi", AnonName: "Guest"}); err != nil {
+	if _, err := rt.comments.create(ctx, anon, rt.Ref("gallery", cid(1)), CommentInput{Body: "hi", AnonName: "Guest"}); err != nil {
 		t.Fatalf("named anon should be allowed: %v", err)
 	}
 }
@@ -155,14 +378,14 @@ func TestComments_AnonRequiresName(t *testing.T) {
 func TestComments_SoftDeleteKeepsThread(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
-	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "top"})
-	reply := mustComment(t, rt, author, "gallery", "1", createInput{Body: "reply", ReplyToID: top.ID})
+	author := access.Actor{ID: "author"}
+	top := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "top"})
+	reply := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "reply", ReplyToID: top.ID})
 
 	if err := rt.comments.softDelete(ctx, author, top.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
-	list, err := rt.comments.list(ctx, author, "gallery", "1", "", 10, 0)
+	list, err := rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -180,24 +403,24 @@ func TestComments_SoftDeleteKeepsThread(t *testing.T) {
 
 func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 	denyRt, _ := newTestRuntime(t, Options{
-		Resolver: resolverWith("gallery", "1"), ContentKinds: []string{"gallery"},
-		Authz: denyAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
+		Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery"),
+		Auth: testauth.Auth{Authz: denyAll{}},
 	})
 	ctx := context.Background()
-	c1 := mustComment(t, denyRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine"})
-	if err := denyRt.comments.softDelete(ctx, Actor{ID: "author"}, c1.ID); err != nil {
+	c1 := mustComment(t, denyRt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "mine"})
+	if err := denyRt.comments.softDelete(ctx, access.Actor{ID: "author"}, c1.ID); err != nil {
 		t.Fatalf("owner delete should succeed: %v", err)
 	}
-	c2 := mustComment(t, denyRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine2"})
-	if err := denyRt.comments.softDelete(ctx, Actor{ID: "intruder"}, c2.ID); !errors.Is(err, errForbidden) {
+	c2 := mustComment(t, denyRt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "mine2"})
+	if err := denyRt.comments.softDelete(ctx, access.Actor{ID: "intruder"}, c2.ID); !errors.Is(err, errForbidden) {
 		t.Fatalf("non-owner without perm: want forbidden, got %v", err)
 	}
 	modRt, _ := newTestRuntime(t, Options{
-		Resolver: resolverWith("gallery", "1"), ContentKinds: []string{"gallery"},
-		Authz: allowAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
+		Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery"),
+		Auth: testauth.Auth{Authz: allowAll{}},
 	})
-	c3 := mustComment(t, modRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "theirs"})
-	if err := modRt.comments.softDelete(ctx, Actor{ID: "mod"}, c3.ID); err != nil {
+	c3 := mustComment(t, modRt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "theirs"})
+	if err := modRt.comments.softDelete(ctx, modRt.as(access.Actor{ID: "mod"}), c3.ID); err != nil {
 		t.Fatalf("moderator delete should succeed: %v", err)
 	}
 }
@@ -205,9 +428,9 @@ func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 func TestComments_ReactionCountersExact(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "react to me"})
-	reactor := Actor{ID: "reactor"}
+	author := access.Actor{ID: "author"}
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "react to me"})
+	reactor := access.Actor{ID: "reactor"}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 15; i++ {
@@ -218,7 +441,7 @@ func TestComments_ReactionCountersExact(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	top, err := rt.comments.list(ctx, reactor, "gallery", "1", "", 10, 0)
+	top, err := rt.comments.list(ctx, reactor, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -229,29 +452,53 @@ func TestComments_ReactionCountersExact(t *testing.T) {
 	if _, err := rt.comments.reactTx(ctx, reactor, cm.ID, -1); err != nil {
 		t.Fatalf("switch reaction: %v", err)
 	}
-	top, _ = rt.comments.list(ctx, reactor, "gallery", "1", "", 10, 0)
+	top, _ = rt.comments.list(ctx, reactor, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	i = indexOfComment(top, cm.ID)
 	if top[i].Likes != 0 || top[i].Dislikes != 1 {
 		t.Fatalf("after switch: likes %d dislikes %d, want 0/1", top[i].Likes, top[i].Dislikes)
+	}
+
+	// Same counters, totalled per author: only live published comments
+	// contribute and an anonymous comment has no author to credit.
+	second := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "and me"})
+	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "other"}, second.ID, 1); err != nil {
+		t.Fatalf("react to second comment: %v", err)
+	}
+	anon := mustComment(t, rt, access.Actor{Anonymous: true, IP: "9.9.9.9"}, "gallery", cid(1), CommentInput{Body: "anon", AnonName: "guest"})
+	if _, err := rt.comments.reactTx(ctx, reactor, anon.ID, 1); err != nil {
+		t.Fatalf("react to anonymous comment: %v", err)
+	}
+	totals, err := rt.CommentReactionsByAuthor(ctx, []string{author.ID, author.ID, "nobody"})
+	if err != nil {
+		t.Fatalf("CommentReactionsByAuthor: %v", err)
+	}
+	if len(totals) != 1 || totals[author.ID] != (AuthorReactions{Likes: 1, Dislikes: 1}) {
+		t.Fatalf("author totals = %+v, want only author with 1 like and 1 dislike", totals)
+	}
+	if err := rt.comments.softDelete(ctx, author, second.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	if totals, _ = rt.CommentReactionsByAuthor(ctx, []string{author.ID}); totals[author.ID] != (AuthorReactions{Dislikes: 1}) {
+		t.Fatalf("totals after tombstone = %+v, want the deleted comment's like gone", totals)
 	}
 }
 
 func TestComments_ReplyCountDecrementsOnDelete(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
-	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "p"})
-	r1 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "r1", ReplyToID: top.ID})
-	_ = mustComment(t, rt, author, "gallery", "1", createInput{Body: "r2", ReplyToID: top.ID})
+	author := access.Actor{ID: "author"}
+	top := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "p"})
+	r1 := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "r1", ReplyToID: top.ID})
+	_ = mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "r2", ReplyToID: top.ID})
 
-	list, _ := rt.comments.list(ctx, author, "gallery", "1", "", 10, 0)
+	list, _ := rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if got := list[indexOfComment(list, top.ID)].ReplyCount; got != 2 {
 		t.Fatalf("reply_count = %d, want 2", got)
 	}
 	if err := rt.comments.softDelete(ctx, author, r1.ID); err != nil {
 		t.Fatalf("delete reply: %v", err)
 	}
-	list, _ = rt.comments.list(ctx, author, "gallery", "1", "", 10, 0)
+	list, _ = rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if got := list[indexOfComment(list, top.ID)].ReplyCount; got != 1 {
 		t.Fatalf("reply_count after reply delete = %d, want 1", got)
 	}
@@ -284,38 +531,116 @@ func commentIDs(list []Comment) []string {
 
 func TestComments_LatestFeed(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
-	res.set("gallery", "2", true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Users: commentsEnricher{}})
+	res.set("gallery", cid(1), true, true)
+	res.set("gallery", cid(2), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), UserInfo: commentsDirectory{}})
 	ctx := context.Background()
-	a := Actor{ID: "author"}
+	a := access.Actor{ID: "author"}
 
-	c1 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "on g1"})
-	c2 := mustComment(t, rt, a, "gallery", "2", createInput{Body: "on g2"})
-	gone := mustComment(t, rt, a, "gallery", "1", createInput{Body: "deleted later"})
+	c1 := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "on g1"})
+	c2 := mustComment(t, rt, a, "gallery", cid(2), CommentInput{Body: "on g2"})
+	gone := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "deleted later"})
 	if err := rt.comments.softDelete(ctx, a, gone.ID); err != nil {
 		t.Fatal(err)
 	}
-	feed, err := rt.comments.latest(ctx, a, 10, 0)
+	feed, err := rt.comments.latest(ctx, a, "", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(feed) != 2 || feed[0].ID != c2.ID || feed[1].ID != c1.ID {
 		t.Fatalf("feed = %+v, want [c2, c1]", feed)
 	}
-	if !feed[0].ContentRef.Equal(ref("gallery", "2")) {
-		t.Fatalf("feed[0] reference = %s, want %s", feed[0].ContentRef, ref("gallery", "2"))
+	if !feed[0].ContentRef.Equal(ref("gallery", cid(2))) {
+		t.Fatalf("feed[0] reference = %s, want %s", feed[0].ContentRef, ref("gallery", cid(2)))
 	}
 	if feed[0].Author == nil || feed[0].Author.Username != "name-author" {
 		t.Fatalf("feed author not enriched: %+v", feed[0].Author)
 	}
-	res.set("gallery", "2", false, false)
-	feed, err = rt.comments.latest(ctx, a, 10, 0)
+	res.set("gallery", cid(2), false, false)
+	feed, err = rt.comments.latest(ctx, a, "", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(feed) != 1 || feed[0].ID != c1.ID {
 		t.Fatalf("feed after hide = %v, want [c1]", commentFeedIDs(feed))
+	}
+}
+
+// A full /comments/latest page resolves all its distinct references in one
+// resolver call and keeps only the visible ones.
+func TestComments_LatestResolvesPageOnce(t *testing.T) {
+	res := &fakeResolver{}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
+	a := access.Actor{ID: "author"}
+	for i := range 40 {
+		id := cid(i)
+		res.set("gallery", id, true, true)
+		mustComment(t, rt, a, "gallery", id, CommentInput{Body: "one on " + id})
+		mustComment(t, rt, a, "gallery", id, CommentInput{Body: "two on " + id})
+		if i%4 == 0 {
+			res.set("gallery", id, false, false)
+		} else if i%4 == 1 {
+			delete(res.entries, "gallery:"+id)
+		}
+	}
+	res.calls = 0
+	rec := doJSON(t, rt.Handler(), a, "GET", "/comments/latest?limit=100", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("latest: %d %s", rec.Code, rec.Body)
+	}
+	var feed []FeedItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+		t.Fatal(err)
+	}
+	if res.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", res.calls)
+	}
+	if len(feed) != 40 {
+		t.Fatalf("feed has %d items, want 40 (two on each of 20 visible galleries)", len(feed))
+	}
+	for _, it := range feed {
+		if n, _ := strconv.Atoi(it.ContentID[24:]); n%4 < 2 {
+			t.Fatalf("hidden gallery %s in feed", it.ContentID)
+		}
+	}
+}
+
+// The feed total counts exactly the rows the feed draws from: live and
+// approved, across content, never a held, rejected or tombstoned one.
+func TestComments_LatestFeedTotal(t *testing.T) {
+	mod := &fakeModerator{}
+	rt := moderatedRuntime(t, mod)
+	ctx := context.Background()
+	a := access.Actor{ID: "author"}
+
+	if n, err := rt.LatestCommentsTotal(ctx); err != nil || n != 0 {
+		t.Fatalf("empty total = %d, %v; want 0", n, err)
+	}
+
+	_ = mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "approved one"})
+	_ = mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "approved two"})
+	if held := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "iffy remark"}); held.Moderation != ModerationHeld {
+		t.Fatalf("fixture not held: %+v", held)
+	}
+	rejected := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "iffy offer"})
+	if err := rt.Resolve(ctx, KindComment, rejected.ID, ReviewDecision{Revision: 1, Decision: DecisionReject, Reviewer: "reviewer"}); err != nil {
+		t.Fatalf("reject fixture: %v", err)
+	}
+	gone := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "deleted later"})
+	if err := rt.comments.softDelete(ctx, a, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	total, err := rt.LatestCommentsTotal(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed, err := rt.LatestComments(ctx, a, "", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(feed) != 2 {
+		t.Fatalf("total = %d, feed = %v; want 2 and two items", total, commentFeedIDs(feed))
 	}
 }
 
@@ -329,18 +654,18 @@ func commentFeedIDs(items []FeedItem) []string {
 
 func TestComments_AdminListAndRestore(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{
-		Resolver: resolverWith("gallery", "1"), ContentKinds: []string{"gallery"},
-		Authz: pollAdminOnly{}, Perms: Perms{CommentModerate: "root:comments:delete"},
+		Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery"),
+		Auth: testauth.Auth{Authz: pollAdminOnly{}},
 	})
 	ctx := context.Background()
-	admin, user := Actor{ID: "admin"}, Actor{ID: "user1"}
+	admin, user := rt.as(access.Actor{ID: "admin"}), access.Actor{ID: "user1"}
 
-	top := mustComment(t, rt, user, "gallery", "1", createInput{Body: "visible"})
-	hidden := mustComment(t, rt, user, "gallery", "1", createInput{Body: "hide me"})
+	top := mustComment(t, rt, user, "gallery", cid(1), CommentInput{Body: "visible"})
+	hidden := mustComment(t, rt, user, "gallery", cid(1), CommentInput{Body: "hide me"})
 	if err := rt.comments.softDelete(ctx, admin, hidden.ID); err != nil {
 		t.Fatal(err)
 	}
-	items, err := rt.comments.adminList(ctx, "", 10, 0)
+	items, err := rt.comments.adminList(ctx, "", "", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,27 +678,27 @@ func TestComments_AdminListAndRestore(t *testing.T) {
 			del = &items[i]
 		}
 	}
-	if del == nil || !del.Deleted || del.Body != "hide me" || del.DeletedAt == nil || !del.ContentRef.Equal(ref("gallery", "1")) {
+	if del == nil || !del.Deleted || del.Body != "hide me" || del.DeletedAt == nil || !del.ContentRef.Equal(ref("gallery", cid(1))) {
 		t.Fatalf("deleted row wrong in admin view: %+v", del)
 	}
-	if only, _ := rt.comments.adminList(ctx, "video", 10, 0); len(only) != 0 {
+	if only, _ := rt.comments.adminList(ctx, "video", "", 10, 0); len(only) != 0 {
 		t.Fatalf("kind filter returned %d rows, want 0", len(only))
 	}
 	if err := rt.comments.restore(ctx, hidden.ID); err != nil {
 		t.Fatal(err)
 	}
-	pub, _ := rt.comments.list(ctx, user, "gallery", "1", "", 10, 0)
+	pub, _ := rt.comments.list(ctx, user, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if len(pub) != 2 {
 		t.Fatalf("public list after restore = %d, want 2", len(pub))
 	}
-	if c := countsOf(t, rt, ref("gallery", "1")); c.CommentCount != 2 {
+	if c := countsOf(t, rt, ref("gallery", cid(1))); c.CommentCount != 2 {
 		t.Fatalf("comment_count after restore = %d, want 2", c.CommentCount)
 	}
 	if err := rt.comments.restore(ctx, top.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("restore live: want ErrNotFound, got %v", err)
 	}
 	req := httptest.NewRequest("GET", "/comments/admin", nil)
-	req = req.WithContext(withActor(req.Context(), user))
+	req = testauth.As(req, user)
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

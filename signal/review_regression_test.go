@@ -43,7 +43,7 @@ func TestReviewErasureMustFenceInFlightWriter(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	subject := Subject{UserID: "review-erased"}
-	ref := contentref.New("review", "gallery", "review-1")
+	ref := contentref.New("review", "gallery", cid(1))
 	go func() {
 		done <- writer.RecordSignals(ctx, "review", []Signal{{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "pending", OccurredAt: time.Now(), Progress: 1}})
 	}()

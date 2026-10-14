@@ -1,6 +1,6 @@
 // Package search is ContentKit's keyword retrieval over content_search_documents:
 // exact names and aliases, native-script prefixes and bounded typos for every
-// language, with the host's eligibility join applied inside every route.
+// language, with the visibility join (Eligibility) applied inside every route.
 package search
 
 import (
@@ -15,8 +15,9 @@ import (
 // MaxCandidateLimit bounds one route's document window.
 const MaxCandidateLimit = 10_000
 
-// Eligibility is trusted host SQL joined laterally to every candidate document
-// (alias sd: tenant_id, content_kind, content_id, content_version_id, language).
+// Eligibility is ContentKit's own SQL (the discovery routes' rendering of the
+// visibility rule) joined laterally to every candidate document (alias sd:
+// tenant_id, content_kind, content_id, content_version_id, language).
 // It returns no row when the document is not eligible for this request, or one
 // row with the column priority (integer: preferred document among a content
 // item's equal matches, lower first). Ownership, access, publication and every
@@ -36,12 +37,8 @@ type Options struct {
 	ContentKinds []string
 	Limit        int
 
-	// FilterSQL is trusted host SQL appended as `AND (<FilterSQL>)` on sd;
-	// FilterArgs binds its pgx '@name' placeholders. Reserved names: tenant,
-	// language, q, prefix, limit, kinds, candidates.
-	FilterSQL  string
-	FilterArgs map[string]any
-
+	// Eligibility binds pgx '@name' placeholders other than the reserved
+	// tenant, language, q, prefix, limit, kinds and candidates.
 	Eligibility *Eligibility
 }
 
@@ -91,18 +88,18 @@ func mergeNamedArgs(dst pgx.NamedArgs, extra map[string]any) error {
 	for k, v := range extra {
 		k = strings.TrimSpace(k)
 		if k == "" {
-			return fmt.Errorf("empty FilterArgs key")
+			return fmt.Errorf("empty eligibility argument name")
 		}
 		if _, exists := dst[k]; exists {
-			return fmt.Errorf("FilterArgs key %q conflicts with reserved arg", k)
+			return fmt.Errorf("eligibility argument %q conflicts with a reserved one", k)
 		}
 		dst[k] = v
 	}
 	return nil
 }
 
-// hostClauses renders the tenant/language/kind filters, host filter and the
-// eligibility join shared by every route.
+// hostClauses renders the tenant/language/kind filters and the eligibility
+// join shared by every route.
 func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string, err error) {
 	qs, err := quoteIdent(opts.Schema)
 	if err != nil {
@@ -117,12 +114,6 @@ func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string
 		where += ` AND sd.content_kind=ANY(@kinds::text[])`
 		args["kinds"] = opts.ContentKinds
 	}
-	if strings.TrimSpace(opts.FilterSQL) != "" {
-		where += ` AND (` + opts.FilterSQL + `)`
-		if err := mergeNamedArgs(args, opts.FilterArgs); err != nil {
-			return "", "", "", err
-		}
-	}
 	join, priority, err := EligibilityJoin(opts.Eligibility, args)
 	if err != nil {
 		return "", "", "", err
@@ -130,7 +121,7 @@ func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string
 	return qs + `.content_search_documents sd` + join, where, priority, nil
 }
 
-// EligibilityJoin renders the host eligibility query as the lateral join every
+// EligibilityJoin renders the eligibility query as the lateral join every
 // route applies to a candidate row aliased sd, binding its named args. It
 // returns the join clause (empty without eligibility) and the priority
 // expression to select.
@@ -141,6 +132,6 @@ func EligibilityJoin(e *Eligibility, args pgx.NamedArgs) (join, priority string,
 	if err := mergeNamedArgs(args, e.Args); err != nil {
 		return "", "", err
 	}
-	// LATERAL binds sd inside the host query; a missing column fails loudly.
+	// LATERAL binds sd inside the eligibility query; a missing column fails loudly.
 	return ` JOIN LATERAL (SELECT h.priority::int AS priority FROM (` + e.SQL + `) AS h LIMIT 1) e ON true`, `e.priority`, nil
 }

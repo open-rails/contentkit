@@ -4,19 +4,23 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // polls is the standalone site-wide poll module: admin-authored questions,
 // either multiple_choice (options, anon-capable one-vote-per-(poll,user)/
 // (poll,ip) tallying) or free_text (one editable answer per signed-in actor,
 // grouped by the host's AnswerClassifier). It is not tied to host content, so
-// it never gates on the ContentResolver: writes gate on the PollWrite perm;
+// it never gates on the resolve.Resolver: writes gate on the root:polls:write perm;
 // reads/votes/answers are public until the poll closes. Questions carry the
 // tenant; options, votes and answers hang off their question.
 type polls struct {
@@ -28,13 +32,14 @@ func newPolls(rt *Runtime) *polls {
 	return &polls{rt: rt, s: rt.store}
 }
 
-// pollOption is one choice with its denormalized vote_count.
-type pollOption struct {
+// PollOption is one choice with its denormalized vote_count.
+type PollOption struct {
 	ID        string `json:"id"`
 	Label     string `json:"label"`
 	ImageURL  string `json:"image_url,omitempty"`
 	Position  int    `json:"position"`
 	VoteCount int    `json:"vote_count"`
+	image     string // its image name, resolved to ImageURL
 }
 
 // Poll kinds.
@@ -43,177 +48,203 @@ const (
 	PollFreeText       = "free_text"
 )
 
-// pollAnswer is the caller's own free-text answer.
-type pollAnswer struct {
+// PollAnswer is the caller's own free-text answer.
+type PollAnswer struct {
 	ID         string    `json:"id"`
 	Text       string    `json:"text"`
 	Classified bool      `json:"classified"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// pollView is a question plus its options and the caller's own vote (if
+// Poll is a question plus its options and the caller's own vote (if
 // any); a free_text poll carries its answer groups and the caller's answer.
-type pollView struct {
+type Poll struct {
 	ID         string       `json:"id"`
 	Kind       string       `json:"kind"`
 	Question   string       `json:"question"`
 	Language   string       `json:"language"`
 	IsActive   bool         `json:"is_active"`
 	ImageURL   string       `json:"image_url,omitempty"`
+	image      string       // its image name, resolved to ImageURL
 	LiveAt     time.Time    `json:"live_at"`
 	ClosesAt   *time.Time   `json:"closes_at,omitempty"`
 	Closed     bool         `json:"closed"` // inactive or past closes_at: no more votes/answers
 	TotalVotes int          `json:"total_votes"`
-	Options    []pollOption `json:"options"`
+	Options    []PollOption `json:"options"`
 	Voted      bool         `json:"voted"`
 	MyOption   string       `json:"my_option,omitempty"`
 	// free_text only
-	AnswerCount int         `json:"answer_count,omitempty"`
-	Groups      []Group     `json:"groups,omitempty"`
-	MyAnswer    *pollAnswer `json:"my_answer,omitempty"`
+	AnswerCount int           `json:"answer_count,omitempty"`
+	Groups      []AnswerGroup `json:"groups,omitempty"`
+	MyAnswer    *PollAnswer   `json:"my_answer,omitempty"`
 }
 
-type createPollInput struct {
-	Kind     string              `json:"kind,omitempty"` // default multiple_choice
-	Question string              `json:"question"`
-	Language string              `json:"language"`
-	ImageURL string              `json:"image_url,omitempty"`
-	LiveAt   *time.Time          `json:"live_at,omitempty"`   // nil = live now
-	ClosesAt *time.Time          `json:"closes_at,omitempty"` // nil = open until deactivated
-	Options  []createOptionInput `json:"options,omitempty"`
+// PollInput is a new poll.
+type PollInput struct {
+	Kind     string            `json:"kind,omitempty"` // default multiple_choice
+	Question string            `json:"question"`
+	Language string            `json:"language"`
+	LiveAt   *time.Time        `json:"live_at,omitempty"`   // nil = live now
+	ClosesAt *time.Time        `json:"closes_at,omitempty"` // nil = open until deactivated
+	Options  []PollOptionInput `json:"options,omitempty"`
 }
 
-// createOptionInput takes image_url directly (the MediaStore upload path is the
-// host's job before calling — the kit stores the resolved url).
-type createOptionInput struct {
+// PollOptionInput is one option of a new poll. Images are set once the poll
+// exists (PUT /polls/{id}/options/{oid}/image), since they live in its folder.
+type PollOptionInput struct {
 	Label    string `json:"label"`
-	ImageURL string `json:"image_url"`
 	Position int    `json:"position"`
 }
 
-// updatePollInput uses pointers so absent fields are left untouched (COALESCE).
-type updatePollInput struct {
-	Question *string    `json:"question"`
-	IsActive *bool      `json:"is_active"`
-	LiveAt   *time.Time `json:"live_at"`
-	ClosesAt *time.Time `json:"closes_at"`
-	ImageURL *string    `json:"image_url"`
+// PollUpdate leaves absent fields untouched; closes_at null clears it (open
+// until deactivated).
+type PollUpdate struct {
+	Question *string             `json:"question"`
+	IsActive *bool               `json:"is_active"`
+	LiveAt   *time.Time          `json:"live_at"`
+	ClosesAt Nullable[time.Time] `json:"closes_at,omitzero"`
 }
 
-// --- admin (PollWrite-gated) ---
+// --- admin (root:polls:write-gated) ---
 
 // create inserts a question and its options atomically. Fail-closed on perm.
 // A free_text poll is refused without a registered AnswerClassifier.
-func (p *polls) create(ctx context.Context, actor Actor, in createPollInput) (pollView, error) {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
-		return pollView{}, err
+func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (Poll, error) {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
+		return Poll{}, err
 	}
 	in.Question = strings.TrimSpace(in.Question)
 	if in.Question == "" {
-		return pollView{}, badRequest("question is required")
+		return Poll{}, badRequest("question is required")
 	}
 	switch in.Kind {
 	case "", PollMultipleChoice:
 		in.Kind = PollMultipleChoice
 		if len(in.Options) < 2 {
-			return pollView{}, badRequest("a poll needs at least 2 options")
+			return Poll{}, badRequest("a poll needs at least 2 options")
 		}
 	case PollFreeText:
 		if p.rt.classifier == nil {
-			return pollView{}, ErrNoClassifier
+			return Poll{}, ErrNoClassifier
 		}
 		if len(in.Options) != 0 {
-			return pollView{}, badRequest("a free-text poll takes no options")
+			return Poll{}, badRequest("a free-text poll takes no options")
 		}
 	default:
-		return pollView{}, badRequest("kind must be %s or %s", PollMultipleChoice, PollFreeText)
+		return Poll{}, badRequest("kind must be %s or %s", PollMultipleChoice, PollFreeText)
 	}
 	if in.ClosesAt != nil && in.LiveAt != nil && !in.ClosesAt.After(*in.LiveAt) {
-		return pollView{}, badRequest("closes_at must be after live_at")
+		return Poll{}, badRequest("closes_at must be after live_at")
 	}
 	for i := range in.Options {
 		in.Options[i].Label = strings.TrimSpace(in.Options[i].Label)
 		if in.Options[i].Label == "" {
-			return pollView{}, badRequest("option %d label is required", i)
+			return Poll{}, badRequest("option %d label is required", i)
 		}
 	}
 
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	defer tx.Rollback(ctx)
 
 	var id string
 	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(tenant_id, kind, question, language, image_url, live_at, closes_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()), $7)
-		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, nullIf(in.ImageURL), in.LiveAt, in.ClosesAt).Scan(&id); err != nil {
-		return pollView{}, err
+		(id, tenant_id, kind, question, language, live_at, closes_at) VALUES ($7, $1, $2, $3, $4, COALESCE($5, now()), $6)
+		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id); err != nil {
+		return Poll{}, err
 	}
 	for _, o := range in.Options {
 		if _, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollOptions+`
-			(question_id, label, image_url, position) VALUES ($1, $2, $3, $4)`,
-			id, o.Label, nullIf(o.ImageURL), o.Position); err != nil {
-			return pollView{}, err
+			(tenant_id, question_id, label, position) VALUES ($1, $2, $3, $4)`,
+			p.s.tenant, id, o.Label, o.Position); err != nil {
+			return Poll{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	return p.get(ctx, actor, id)
 }
 
-// update mutates question/is_active; nil fields are left as-is via COALESCE.
-func (p *polls) update(ctx context.Context, actor Actor, id string, in updatePollInput) (pollView, error) {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
-		return pollView{}, err
+// update mutates the given fields; nil ones are left as-is via COALESCE, and
+// a null closes_at clears it.
+func (p *polls) update(ctx context.Context, actor access.Actor, id string, in PollUpdate) (Poll, error) {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
+		return Poll{}, err
+	}
+	if !uuidRe.MatchString(id) {
+		return Poll{}, ErrNotFound
 	}
 	if in.Question != nil {
 		q := strings.TrimSpace(*in.Question)
 		if q == "" {
-			return pollView{}, badRequest("question cannot be blank")
+			return Poll{}, badRequest("question cannot be blank")
 		}
 		in.Question = &q
 	}
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
-		    live_at = COALESCE($4, live_at), image_url = COALESCE($5, image_url),
-		    closes_at = COALESCE($7, closes_at), updated_at = now()
-		WHERE id = $1 AND tenant_id = $6 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, in.ImageURL, p.s.tenant, in.ClosesAt)
+		    live_at = COALESCE($4, live_at), closes_at = CASE WHEN $7 THEN $6 ELSE closes_at END, updated_at = now()
+		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt.Value, in.ClosesAt.Set)
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return pollView{}, ErrNotFound
+		return Poll{}, ErrNotFound
 	}
 	return p.get(ctx, actor, id)
 }
 
-// softDelete flags deleted_at; the row (and its votes) stay for history.
-func (p *polls) softDelete(ctx context.Context, actor Actor, id string) error {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
+// softDelete flags deleted_at; the row (and its votes) stay for history, and
+// its media folder is deleted.
+func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return err
 	}
-	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
-		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant)
+	if !uuidRe.MatchString(id) {
+		return ErrNotFound
+	}
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.pollQuestions+`
+		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		RETURNING id::text`, id, p.s.tenant).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := p.rt.deleteMediaTx(ctx, tx, pollFolder, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // --- public read ---
 
 // listFilter narrows list: language, a month ("2006-01") or day ("2006-01-02")
-// live_at window, and admin (include future/inactive polls; PollWrite-gated by
+// live_at window, and admin (include future/inactive polls; root:polls:write-gated by
 // the caller).
 type listFilter struct {
 	language, month, date string
-	admin                 bool
-	limit, offset         int
+	// state and query narrow the staff list.
+	state, query  string
+	admin         bool
+	limit, offset int
+}
+
+// pollStates are the staff list's state filters.
+var pollStates = map[string]string{
+	"live":      `is_active AND live_at <= now() AND (closes_at IS NULL OR closes_at > now())`,
+	"scheduled": `is_active AND live_at > now()`,
+	"closed":    `is_active AND live_at <= now() AND closes_at <= now()`,
+	"inactive":  `NOT is_active`,
 }
 
 // list returns non-deleted polls newest-live-first with options + caller vote.
@@ -222,7 +253,7 @@ type listFilter struct {
 // month/date archive returns all live polls in that window regardless of
 // is_active, so historical polls stay readable once a newer poll becomes active.
 // Voting remains gated on is_active elsewhere (see vote()).
-func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView, error) {
+func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]Poll, error) {
 	from, to, hasWindow := parseWindow(f.month, f.date)
 	sql := `SELECT ` + pollCols + ` FROM ` + p.s.t.pollQuestions + ` WHERE tenant_id = $1 AND deleted_at IS NULL`
 	if !f.admin {
@@ -244,16 +275,26 @@ func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView
 	if hasWindow {
 		sql += ` AND live_at >= ` + arg(from) + ` AND live_at < ` + arg(to)
 	}
-	sql += ` ORDER BY live_at DESC LIMIT ` + arg(f.limit) + ` OFFSET ` + arg(f.offset)
+	if f.state != "" {
+		cond, ok := pollStates[f.state]
+		if !ok {
+			return nil, badRequest("state must be live, scheduled, closed or inactive")
+		}
+		sql += ` AND ` + cond
+	}
+	if q := strings.TrimSpace(f.query); q != "" {
+		sql += ` AND strpos(lower(question), lower(` + arg(q) + `)) > 0`
+	}
+	sql += ` ORDER BY live_at DESC, id DESC LIMIT ` + arg(f.limit) + ` OFFSET ` + arg(f.offset)
 
 	rows, err := p.s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var views []pollView
+	var views []Poll
 	for rows.Next() {
-		v, err := scanPoll(rows)
+		v, err := p.scan(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -266,7 +307,7 @@ func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView
 		return nil, err
 	}
 	if views == nil {
-		views = []pollView{}
+		views = []Poll{}
 	}
 	return views, nil
 }
@@ -287,13 +328,13 @@ func parseWindow(month, date string) (from, to time.Time, ok bool) {
 	return time.Time{}, time.Time{}, false
 }
 
-const pollCols = `id::text, kind, question, language, is_active, coalesce(image_url,''), live_at, closes_at`
+const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at`
 
-// scanPoll reads one pollCols row and derives Closed.
-func scanPoll(row pgx.Row) (pollView, error) {
-	v := pollView{Options: []pollOption{}}
-	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt, &v.ClosesAt); err != nil {
-		return pollView{}, err
+// scan reads pollCols and derives Closed; attach resolves the images.
+func (p *polls) scan(row pgx.Row) (Poll, error) {
+	v := Poll{Options: []PollOption{}}
+	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.image, &v.LiveAt, &v.ClosesAt); err != nil {
+		return Poll{}, err
 	}
 	v.Closed = !v.IsActive || (v.ClosesAt != nil && !v.ClosesAt.After(time.Now()))
 	return v, nil
@@ -301,29 +342,28 @@ func scanPoll(row pgx.Row) (pollView, error) {
 
 // get returns one non-deleted poll (any state) with options + caller vote; the
 // HTTP layer live-gates public access.
-func (p *polls) get(ctx context.Context, actor Actor, id string) (pollView, error) {
+func (p *polls) get(ctx context.Context, actor access.Actor, id string) (Poll, error) {
 	if !uuidRe.MatchString(id) {
-		return pollView{}, ErrNotFound
+		return Poll{}, ErrNotFound
 	}
-	v, err := scanPoll(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant))
+	v, err := p.scan(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return pollView{}, ErrNotFound
+		return Poll{}, ErrNotFound
 	}
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
-	views := []pollView{v}
+	views := []Poll{v}
 	if err := p.attach(ctx, actor, views); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	return views[0], nil
 }
 
 // attach batch-loads options + the caller's votes into views, sums total_votes,
-// absolutizes stored-relative image paths (backfilled legacy rows) and, for
-// free_text polls, loads the answer count, the caller's answer and the
-// classifier's groups.
-func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error {
+// resolves every image with one lookup and, for free_text polls, loads the
+// answer count, the caller's answer and the classifier's groups.
+func (p *polls) attach(ctx context.Context, actor access.Actor, views []Poll) error {
 	if len(views) == 0 {
 		return nil
 	}
@@ -343,14 +383,26 @@ func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error
 	if err != nil {
 		return err
 	}
+	set := p.rt.images()
 	for i := range views {
-		views[i].ImageURL = p.rt.absMediaURL(views[i].ImageURL)
 		if o := opts[views[i].ID]; o != nil {
 			views[i].Options = o
 		}
+		set.add(pollFolder, views[i].ID, views[i].image)
+		for _, o := range views[i].Options {
+			set.add(pollFolder, views[i].ID, o.image)
+		}
+	}
+	if err := set.resolve(ctx); err != nil {
+		return err
+	}
+	for i := range views {
+		views[i].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].image)
+		for j := range views[i].Options {
+			views[i].Options[j].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].Options[j].image)
+		}
 		total := 0
 		for j := range views[i].Options {
-			views[i].Options[j].ImageURL = p.rt.absMediaURL(views[i].Options[j].ImageURL)
 			total += views[i].Options[j].VoteCount
 		}
 		views[i].TotalVotes = total
@@ -376,7 +428,7 @@ func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error
 
 // currentGroups reads the durable assignments accepted for the current answer revisions.
 // Provider-side aggregation is never an authority for membership or counts.
-func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, error) {
+func (p *polls) currentGroups(ctx context.Context, questionID string) ([]AnswerGroup, error) {
 	rows, err := p.s.pool.Query(ctx, `SELECT group_id, coalesce((array_agg(group_label ORDER BY classified_at DESC, id))[1], group_id), count(*)
  FROM `+p.s.t.pollAnswers+` WHERE tenant_id=$1 AND question_id=$2 AND classified_at IS NOT NULL
  GROUP BY group_id ORDER BY count(*) DESC, 2, group_id`, p.s.tenant, questionID)
@@ -384,9 +436,9 @@ func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, 
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Group{}
+	out := []AnswerGroup{}
 	for rows.Next() {
-		var g Group
+		var g AnswerGroup
 		if err := rows.Scan(&g.ID, &g.Label, &g.Count); err != nil {
 			return nil, err
 		}
@@ -397,8 +449,8 @@ func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, 
 
 // answersFor batch-loads the answer count per question and the caller's own
 // answers (signed-in actors only).
-func (p *polls) answersFor(ctx context.Context, actor Actor, ids []string) (map[string]int, map[string]pollAnswer, error) {
-	counts, mine := map[string]int{}, map[string]pollAnswer{}
+func (p *polls) answersFor(ctx context.Context, actor access.Actor, ids []string) (map[string]int, map[string]PollAnswer, error) {
+	counts, mine := map[string]int{}, map[string]PollAnswer{}
 	rows, err := p.s.pool.Query(ctx, `SELECT question_id::text, count(*) FROM `+p.s.t.pollAnswers+`
 		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) GROUP BY question_id`, p.s.tenant, ids)
 	if err != nil {
@@ -427,7 +479,7 @@ func (p *polls) answersFor(ctx context.Context, actor Actor, ids []string) (map[
 	defer own.Close()
 	for own.Next() {
 		var qid string
-		var a pollAnswer
+		var a PollAnswer
 		if err := own.Scan(&qid, &a.ID, &a.Text, &a.Classified, &a.UpdatedAt); err != nil {
 			return nil, nil, err
 		}
@@ -437,18 +489,18 @@ func (p *polls) answersFor(ctx context.Context, actor Actor, ids []string) (map[
 }
 
 // optionsFor batch-loads options keyed by question id (one array-param query).
-func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[string][]pollOption, error) {
-	rows, err := q.Query(ctx, `SELECT question_id::text, id::text, label, coalesce(image_url, ''), position, vote_count
-		FROM `+p.s.t.pollOptions+` WHERE question_id = ANY($1::uuid[]) ORDER BY question_id, position`, ids)
+func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[string][]PollOption, error) {
+	rows, err := q.Query(ctx, `SELECT question_id::text, id::text, label, coalesce(image_name, ''), position, vote_count
+		FROM `+p.s.t.pollOptions+` WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) ORDER BY question_id, position`, p.s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]pollOption{}
+	out := map[string][]PollOption{}
 	for rows.Next() {
 		var qid string
-		var o pollOption
-		if err := rows.Scan(&qid, &o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount); err != nil {
+		var o PollOption
+		if err := rows.Scan(&qid, &o.ID, &o.Label, &o.image, &o.Position, &o.VoteCount); err != nil {
 			return nil, err
 		}
 		out[qid] = append(out[qid], o)
@@ -457,13 +509,13 @@ func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[st
 }
 
 // votesFor batch-loads the caller's chosen option per question (qid -> optionID).
-func (p *polls) votesFor(ctx context.Context, q querier, actor Actor, ids []string) (map[string]string, error) {
+func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids []string) (map[string]string, error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return map[string]string{}, nil
 	}
 	rows, err := q.Query(ctx, `SELECT question_id::text, option_id::text FROM `+p.s.t.pollVotes+`
-		WHERE question_id = ANY($1::uuid[]) AND `+actorPred(userID, 2), ids, actorArg(userID, ip))
+		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND `+actorPred(userID, 3), p.s.tenant, ids, actorArg(userID, ip))
 	if err != nil {
 		return nil, err
 	}
@@ -481,54 +533,57 @@ func (p *polls) votesFor(ctx context.Context, q querier, actor Actor, ids []stri
 
 // vote records one vote and bumps the option's counter — but only the winning
 // insert (RowsAffected==1) counts, so concurrent duplicates never double-count.
-func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) (pollView, error) {
+func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID string) (Poll, error) {
 	if optionID == "" {
-		return pollView{}, badRequest("option_id is required")
+		return Poll{}, badRequest("option_id is required")
+	}
+	if !uuidRe.MatchString(optionID) {
+		return Poll{}, badRequest("invalid option_id")
 	}
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
-		return pollView{}, badRequest("cannot identify voter (no user id or ip)")
+		return Poll{}, badRequest("cannot identify voter (no user id or ip)")
 	}
 
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
-		return pollView{}, err
+	if err := p.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
+		return Poll{}, err
 	}
 
 	if err := p.open(ctx, tx, pollID, PollMultipleChoice); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	// Option must belong to this poll.
 	var exists bool
 	err = tx.QueryRow(ctx, `SELECT true FROM `+p.s.t.pollOptions+`
-		WHERE id = $1 AND question_id = $2`, optionID, pollID).Scan(&exists)
+		WHERE tenant_id = $3 AND id = $1 AND question_id = $2`, optionID, pollID, p.s.tenant).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return pollView{}, badRequest("option does not belong to poll")
+		return Poll{}, badRequest("option does not belong to poll")
 	}
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 
 	// ON CONFLICT DO NOTHING makes a duplicate voter BLOCK then no-op (0 rows) —
 	// a bare INSERT would raise 23505, aborting the whole tx (25P02).
 	tag, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollVotes+`
-		(question_id, option_id, user_id, ip) VALUES ($1, $2, $3, $4)`+pollVoteConflict(userID),
-		pollID, optionID, nullIf(userID), nullIf(ip))
+		(tenant_id, question_id, option_id, user_id, ip) VALUES ($5, $1, $2, $3, $4)`+pollVoteConflict(userID),
+		pollID, optionID, nullIf(userID), nullIf(ip), p.s.tenant)
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	if tag.RowsAffected() == 1 {
 		if _, err := tx.Exec(ctx, `UPDATE `+p.s.t.pollOptions+`
-			SET vote_count = vote_count + 1 WHERE id = $1`, optionID); err != nil {
-			return pollView{}, err
+			SET vote_count = vote_count + 1 WHERE tenant_id = $2 AND id = $1`, optionID, p.s.tenant); err != nil {
+			return Poll{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	return p.get(ctx, actor, pollID)
 }
@@ -568,27 +623,34 @@ const maxAnswerLen = 2000
 // answer stores or replaces the signed-in caller's free-text answer while the
 // poll is open, then classifies it. A classifier failure keeps the answer
 // unclassified for ReclassifyPending.
-func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (pollView, error) {
+func (p *polls) answer(ctx context.Context, actor access.Actor, pollID, text string) (Poll, error) {
 	if actor.Anonymous || actor.ID == "" {
-		return pollView{}, errUnauthorized
+		return Poll{}, errUnauthorized
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return pollView{}, badRequest("text is required")
+		return Poll{}, badRequest("text is required")
 	}
 	if utf8.RuneCountInString(text) > maxAnswerLen {
-		return pollView{}, badRequest("text exceeds %d characters", maxAnswerLen)
+		return Poll{}, badRequest("text exceeds %d characters", maxAnswerLen)
+	}
+	if err := p.rt.checkIPBan(ctx, actor); err != nil {
+		return Poll{}, err
+	}
+	text, err := p.rt.rules.apply(ctx, text)
+	if err != nil {
+		return Poll{}, err
 	}
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, actor.ID); err != nil {
-		return pollView{}, err
+	if err := p.rt.guardErasedSubject(ctx, tx, actor.ID); err != nil {
+		return Poll{}, err
 	}
 	if err := p.open(ctx, tx, pollID, PollFreeText); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	a := Answer{Tenant: p.s.tenant, QuestionID: pollID, SubjectID: actor.ID, Text: text}
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollAnswers+` AS current (tenant_id, question_id, actor_id, text)
@@ -603,10 +665,10 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 			WHERE tenant_id=$1 AND question_id=$2 AND actor_id=$3`, p.s.tenant, pollID, actor.ID).Scan(&a.AnswerID, &a.Revision, &pending)
 	}
 	if err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return pollView{}, err
+		return Poll{}, err
 	}
 	if pending {
 		if _, err := p.classify(ctx, a); err != nil {
@@ -622,7 +684,7 @@ func (p *polls) classify(ctx context.Context, a Answer) (bool, error) {
 	if p.rt.classifier == nil {
 		return false, ErrNoClassifier
 	}
-	if err := p.rt.privateSubjectAllowed(ctx, p.s.pool, a.SubjectID); err != nil {
+	if err := p.rt.checkSubjectNotErased(ctx, p.s.pool, a.SubjectID); err != nil {
 		return false, err
 	}
 	g, err := p.rt.classifier.Classify(ctx, a)
@@ -701,52 +763,117 @@ func (rt *Runtime) ReclassifyPending(ctx context.Context, after string, limit in
 	return out, first
 }
 
-// ownsQuestion renders the predicate tying an option/vote row to a question of
-// this tenant; col is the question id column, n the tenant placeholder.
-func (p *polls) ownsQuestion(col string, n int) string {
-	return `EXISTS (SELECT 1 FROM ` + p.s.t.pollQuestions + ` tq WHERE tq.id = ` + col + ` AND tq.tenant_id = $` + strconv.Itoa(n) + `)`
-}
-
 // pollVoteConflict targets the partial unique index for the voter's dedup key.
 func pollVoteConflict(userID string) string {
 	if userID != "" {
-		return ` ON CONFLICT (question_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
+		return ` ON CONFLICT (tenant_id, question_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
 	}
-	return ` ON CONFLICT (question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
+	return ` ON CONFLICT (tenant_id, question_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
 }
 
 // --- HTTP ---
 
-func (p *polls) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /polls", p.handleList)
-	mux.HandleFunc("GET /polls/admin", p.handleAdminList) // literal beats {id}
-	mux.HandleFunc("GET /polls/{id}", p.handleGet)
-	mux.HandleFunc("POST /polls", p.handleCreate)
-	mux.HandleFunc("PATCH /polls/{id}", p.handleUpdate)
-	mux.HandleFunc("DELETE /polls/{id}", p.handleDelete)
-	mux.HandleFunc("POST /polls/{id}/vote", p.handleVote)
-	mux.HandleFunc("POST /polls/{id}/answer", p.handleAnswer)
-	mux.HandleFunc("POST /polls/{id}/image", p.handleQuestionImage)
-	mux.HandleFunc("POST /polls/{id}/options", p.handleAddOption)
+var pollRoutes = []httpapi.Route[*polls]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls", Resource: "polls", Auth: httpapi.Public,
+		Doc:       "Live polls, newest first.",
+		Query:     append(pollFilter, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
+		Serve: httpapi.H((*polls).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/admin", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc: "Every poll, scheduled and inactive ones included.",
+		Query: append(append(slices.Clone(pollFilter), httpapi.Text("state", "only live, scheduled, closed or inactive polls"),
+			httpapi.Text("q", "only polls whose question contains this, ignoring case")), httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
+		Serve: httpapi.H((*polls).handleAdminList)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Public,
+		Doc:       "A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.",
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*polls).handleGet)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Creates a poll with its options; a free-text poll needs an AnswerClassifier.",
+		Request:   PollInput{},
+		Responses: []httpapi.Reply{httpapi.Created(Poll{})}, Errors: []string{CodeNotConfigured}},
+		Serve: httpapi.H((*polls).handleCreate)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Updates a poll's given fields; closes_at null reopens it until deactivated.",
+		Request:   PollUpdate{},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*polls).handleUpdate)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Deletes a poll and its media folder.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*polls).handleDelete)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/vote", Resource: "polls", Auth: httpapi.Public,
+		Doc:       "Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing.",
+		Request:   PollVote{},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+		Serve: httpapi.H((*polls).handleVote)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/answer", Resource: "polls", Auth: httpapi.User,
+		Doc:       "Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.",
+		Request:   PollAnswerInput{},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeCommentBanned, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
+		Serve: httpapi.H((*polls).handleAnswer)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Sets the question image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+		Request:   ImageInput{},
+		Responses: []httpapi.Reply{httpapi.OK(PollImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Serve: httpapi.H((*polls).handleQuestionImage)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/options", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Adds an option to a multiple-choice poll, at the end unless position is given.",
+		Request:   PollOptionPatch{},
+		Responses: []httpapi.Reply{httpapi.Created(PollOption{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*polls).handleAddOption)},
 	// Nested under the poll: a bare /polls/options/{oid} DELETE would ambiguously
-	// overlap reactions' generic DELETE /{type}/{id}/reaction in ServeMux.
-	mux.HandleFunc("PATCH /polls/{id}/options/{oid}", p.handleUpdateOption)
-	mux.HandleFunc("DELETE /polls/{id}/options/{oid}", p.handleDeleteOption)
-	mux.HandleFunc("POST /polls/options/{oid}/image", p.handleOptionImage)
+	// overlap reactions' generic DELETE /{kind}/{id}/reaction in ServeMux.
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Updates an option's label or position.",
+		Request:   PollOptionPatch{},
+		Responses: []httpapi.Reply{httpapi.OK(PollOption{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Serve: httpapi.H((*polls).handleUpdateOption)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Removes an option and its votes; a poll keeps at least two.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeInvalidRequest, CodeNotFound}},
+		Serve: httpapi.H((*polls).handleDeleteOption)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/options/{oid}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
+		Doc:       "Sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+		Request:   ImageInput{},
+		Responses: []httpapi.Reply{httpapi.OK(PollImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Serve: httpapi.H((*polls).handleOptionImage)},
 }
 
-// optionPatch is the add/update body; pointers so an absent field is untouched.
-type optionPatch struct {
-	Label    *string `json:"label"`
+var pollFilter = []httpapi.Param{
+	httpapi.Text("language", "only polls in this language"),
+	httpapi.Text("month", "only polls live in this month, YYYY-MM"),
+	httpapi.Text("date", "only polls live on this day, YYYY-MM-DD"),
+}
+
+// PollVote is a vote for one option.
+type PollVote struct {
+	OptionID string `json:"option_id"`
+}
+
+// PollAnswerInput is a free-text answer.
+type PollAnswerInput struct {
+	Text string `json:"text"`
+}
+
+// PollImage is the image's public URL after an image change; null when
+// cleared or while it has no public file.
+type PollImage struct {
 	ImageURL *string `json:"image_url"`
+}
+
+// PollOptionPatch is the option add and update body; pointers so an absent field is untouched.
+type PollOptionPatch struct {
+	Label    *string `json:"label"`
 	Position *int    `json:"position"`
 }
 
 // handleAddOption appends an option to an existing multiple_choice poll.
-// Position defaults to end-of-list. PollWrite-gated.
+// Position defaults to end-of-list. root:polls:write-gated.
 func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -755,7 +882,7 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	var in optionPatch
+	var in PollOptionPatch
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -764,14 +891,14 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, badRequest("label is required"))
 		return
 	}
-	var o pollOption
+	var o PollOption
 	err := p.s.pool.QueryRow(req.Context(), `INSERT INTO `+p.s.t.pollOptions+`
-		(question_id, label, image_url, position)
-		SELECT q.id, $2, $3, COALESCE($4, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
-		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $5 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
-		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		id, strings.TrimSpace(*in.Label), in.ImageURL, in.Position, p.s.tenant).
-		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
+		(tenant_id, question_id, label, position)
+		SELECT q.tenant_id, q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE tenant_id = q.tenant_id AND question_id = q.id))
+		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
+		RETURNING id::text, label, position, vote_count`,
+		id, strings.TrimSpace(*in.Label), in.Position, p.s.tenant).
+		Scan(&o.ID, &o.Label, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) { // poll missing/deleted, or free_text
 		var kind string
 		if p.s.pool.QueryRow(req.Context(), `SELECT kind FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&kind) == nil && kind == PollFreeText {
@@ -785,14 +912,13 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	o.ImageURL = p.rt.absMediaURL(o.ImageURL)
 	writeJSON(w, http.StatusCreated, o)
 }
 
-// handleUpdateOption edits an option's label/image/position. PollWrite-gated.
+// handleUpdateOption edits an option's label/position. root:polls:write-gated.
 func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -801,7 +927,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	var in optionPatch
+	var in PollOptionPatch
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -814,13 +940,13 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		}
 		in.Label = &l
 	}
-	var o pollOption
+	var o PollOption
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
-		SET label = COALESCE($2, label), image_url = COALESCE($3, image_url), position = COALESCE($4, position)
-		WHERE id = $1 AND question_id = $5 AND `+p.ownsQuestion("question_id", 6)+`
-		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		oid, in.Label, in.ImageURL, in.Position, pollID, p.s.tenant).
-		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
+		SET label = COALESCE($2, label), position = COALESCE($3, position)
+		WHERE id = $1 AND question_id = $4 AND tenant_id = $5
+		RETURNING id::text, question_id::text, label, coalesce(image_name,''), position, vote_count`,
+		oid, in.Label, in.Position, pollID, p.s.tenant).
+		Scan(&o.ID, &pollID, &o.Label, &o.image, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return
@@ -829,15 +955,21 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	o.ImageURL = p.rt.absMediaURL(o.ImageURL)
+	set := p.rt.images()
+	set.add(pollFolder, pollID, o.image)
+	if err := set.resolve(req.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	o.ImageURL, _ = set.url(pollFolder, pollID, o.image)
 	writeJSON(w, http.StatusOK, o)
 }
 
 // handleDeleteOption removes an option (its votes cascade). Refuses to shrink a
-// poll below 2 options — that would break voting. PollWrite-gated.
+// poll below 2 options — that would break voting. root:polls:write-gated.
 func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -849,8 +981,8 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	// Single statement: delete only when >= 3 siblings exist, so a poll never
 	// shrinks below 2 votable options.
 	tag, err := p.s.pool.Exec(req.Context(), `DELETE FROM `+p.s.t.pollOptions+` o
-		WHERE o.id = $1 AND o.question_id = $2 AND `+p.ownsQuestion("o.question_id", 3)+` AND (
-			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
+		WHERE o.id = $1 AND o.question_id = $2 AND o.tenant_id = $3 AND (
+			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.tenant_id = $3 AND s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -859,7 +991,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 		// Missing option and too-few-options both land here; disambiguate.
 		var exists bool
 		if err := p.s.pool.QueryRow(req.Context(), `SELECT true FROM `+p.s.t.pollOptions+`
-			WHERE id = $1 AND question_id = $2 AND `+p.ownsQuestion("question_id", 3), oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
+			WHERE id = $1 AND question_id = $2 AND tenant_id = $3`, oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
 			writeErr(w, badRequest("a poll needs at least 2 options"))
 			return
 		}
@@ -869,12 +1001,33 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// handleQuestionImage uploads a question-level image and stores its public URL.
-// PollWrite-gated.
+// handleQuestionImage sets (or with "" clears) the question image to an
+// inline image of the poll's media folder. root:polls:write-gated.
 func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_name = NULLIF($3, ''), updated_at = now()
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`)
+}
+
+// handleOptionImage sets (or with "" clears) an option image to an inline
+// image of the poll's media folder. root:polls:write-gated.
+func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
+	if !uuidRe.MatchString(req.PathValue("oid")) {
+		writeErr(w, ErrNotFound)
+		return
+	}
+	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_name = NULLIF($3, '') WHERE id = $4 AND question_id = $1 AND tenant_id = $2`, req.PathValue("oid"))
+}
+
+// setImage runs update with $1 the poll id, $2 the tenant, $3 the image name
+// (NULL clears) and then extra.
+func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string, extra ...any) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), access.PollsWrite); err != nil {
 		writeErr(w, err)
+		return
+	}
+	if p.rt.media == nil {
+		writeErr(w, errMediaNotConfigured)
 		return
 	}
 	id := req.PathValue("id")
@@ -882,30 +1035,20 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	data, ct, ext, err := readUpload(req)
+	name, err := decodeImage(req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// Check tenant ownership before touching the shared media object.
-	var prev *string
-	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev); err != nil {
+	if err := p.s.pool.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+		id, p.s.tenant).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.media.Put(req.Context(), "polls/"+id+"."+ext, data, ct)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Remember the previous image so a replace under a different key (extension
-	// changed) can drop the old object instead of orphaning it. Best-effort.
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollQuestions+`
-		SET image_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
+	tag, err := p.s.pool.Exec(ctx, update, append([]any{id, p.s.tenant, name}, extra...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -914,58 +1057,17 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	if prev != nil && *prev != url {
-		p.rt.deleteMediaByURL(req.Context(), *prev)
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"image_url": url})
-}
-
-// handleOptionImage uploads an option image to the media store and
-// stores the resulting public URL on the option. PollWrite-gated.
-func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	set := p.rt.images()
+	set.add(pollFolder, id, name)
+	if err := set.resolve(ctx); err != nil {
 		writeErr(w, err)
 		return
 	}
-	oid := req.PathValue("oid")
-	if !uuidRe.MatchString(oid) {
-		writeErr(w, ErrNotFound)
-		return
+	var out PollImage
+	if url, ok := set.url(pollFolder, id, name); ok {
+		out.ImageURL = &url
 	}
-	data, ct, ext, err := readUpload(req)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Check tenant ownership before touching the shared media object.
-	var prev *string
-	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1 AND `+p.ownsQuestion("question_id", 2), oid, p.s.tenant).Scan(&prev); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrNotFound
-		}
-		writeErr(w, err)
-		return
-	}
-	url, err := p.rt.media.Put(req.Context(), "polls/options/"+oid+"."+ext, data, ct)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Best-effort old-object cleanup on a key-changing replace (see question image).
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollOptions+` SET image_url = $2 WHERE id = $1 AND `+p.ownsQuestion("question_id", 3), oid, url, p.s.tenant)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		writeErr(w, ErrNotFound)
-		return
-	}
-	if prev != nil && *prev != url {
-		p.rt.deleteMediaByURL(req.Context(), *prev)
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"image_url": url})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (p *polls) handleList(w http.ResponseWriter, req *http.Request) {
@@ -983,10 +1085,10 @@ func (p *polls) handleList(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleAdminList returns ALL non-deleted polls (future/inactive included) for
-// the poll-management UI. PollWrite-gated.
+// the poll-management UI. root:polls:write-gated.
 func (p *polls) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -994,7 +1096,7 @@ func (p *polls) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	limit, offset := parsePage(req)
 	views, err := p.list(req.Context(), actor, listFilter{
 		language: q.Get("language"), month: q.Get("month"), date: q.Get("date"),
-		admin: true, limit: limit, offset: offset,
+		state: q.Get("state"), query: q.Get("q"), admin: true, limit: limit, offset: offset,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -1012,7 +1114,7 @@ func (p *polls) handleGet(w http.ResponseWriter, req *http.Request) {
 	}
 	// Future/inactive polls are admin-only; hide as 404 (don't leak schedules).
 	if !v.IsActive || v.LiveAt.After(time.Now()) {
-		if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+		if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return
 		}
@@ -1021,7 +1123,7 @@ func (p *polls) handleGet(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleCreate(w http.ResponseWriter, req *http.Request) {
-	var in createPollInput
+	var in PollInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -1035,7 +1137,7 @@ func (p *polls) handleCreate(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleUpdate(w http.ResponseWriter, req *http.Request) {
-	var in updatePollInput
+	var in PollUpdate
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -1057,9 +1159,11 @@ func (p *polls) handleDelete(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleAnswer(w http.ResponseWriter, req *http.Request) {
-	var in struct {
-		Text string `json:"text"`
+	if err := p.rt.limit(req.Context(), ActionPollVote, p.rt.actor(req.Context())); err != nil {
+		writeErr(w, err)
+		return
 	}
+	var in PollAnswerInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -1073,14 +1177,21 @@ func (p *polls) handleAnswer(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleVote(w http.ResponseWriter, req *http.Request) {
-	var in struct {
-		OptionID string `json:"option_id"`
+	actor := p.rt.actor(req.Context())
+	err := participant(actor, p.rt.anonymous.Votes)
+	if err == nil {
+		err = p.rt.limit(req.Context(), ActionPollVote, actor)
 	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	var in PollVote
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
 	}
-	v, err := p.vote(req.Context(), p.rt.actor(req.Context()), req.PathValue("id"), in.OptionID)
+	v, err := p.vote(req.Context(), actor, req.PathValue("id"), in.OptionID)
 	if err != nil {
 		writeErr(w, err)
 		return

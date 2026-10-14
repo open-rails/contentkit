@@ -49,8 +49,9 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 		if s%3 == 0 {
 			subject = Subject{AnonKey: fmt.Sprintf("a%d", rng.Intn(w.Subjects))}
 		}
-		work := strconv.Itoa(rng.Intn(w.Works))
-		version := work + "-v" + strconv.Itoa(rng.Intn(2))
+		n := rng.Intn(w.Works)
+		work, workN := cid(n), strconv.Itoa(n)
+		version := workN + "-v" + strconv.Itoa(rng.Intn(2))
 		at := start.Add(time.Duration(rng.Intn(w.Days*24*60)) * time.Minute)
 		id := fmt.Sprintf("session-%d", s)
 		for c := 1; c <= w.Checkpoints; c++ {
@@ -63,7 +64,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 			sigs := []Signal{view, edition}
 			for p := 0; p < w.Parents; p++ {
 				parent := view
-				parent.ContentRef = contentref.New(tenant, "tag", fmt.Sprintf("t%d", (len(work)*7+int(work[0])+p)%50))
+				parent.ContentRef = contentref.New(tenant, "tag", cid((len(workN)*7+int(workN[0])+p)%50))
 				parent.EventID = id + ":tag:" + parent.ContentID
 				parent.Payload = nil
 				sigs = append(sigs, parent)
@@ -144,7 +145,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 	now := start.AddDate(0, 0, w.Days)
 	ids := make([]string, 50)
 	for i := range ids {
-		ids[i] = strconv.Itoa(i)
+		ids[i] = cid(i)
 	}
 	timed := func(name string, fn func() error) {
 		began := time.Now()
@@ -303,7 +304,7 @@ func TestIntegrationUnavailableClickHouseFailsFast(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	began := time.Now()
-	err = st.RecordSignals(ctx, "t", []Signal{{ContentRef: gallery("t", "1"), Subject: Subject{UserID: "u"},
+	err = st.RecordSignals(ctx, "t", []Signal{{ContentRef: gallery("t", cid(1)), Subject: Subject{UserID: "u"},
 		Type: TypeView, EventID: "e", OccurredAt: time.Now()}})
 	if err == nil || time.Since(began) > 3*time.Second {
 		t.Fatalf("unavailable analytics must fail within the deadline: err=%v after %s", err, time.Since(began))

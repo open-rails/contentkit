@@ -1,0 +1,153 @@
+name: sdk-ui
+'on':
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - 'sdk/ui/**'
+    - 'contenturl/testdata/**'
+    - '*.go'
+    - 'media/**'
+    - 'content/**'
+    - 'contenturl/**'
+    - 'groups/**'
+    - 'kinds/**'
+    - 'migrations/**'
+    - 'internal/**'
+    - 'access/**'
+    - 'cmd/media-gateway/**'
+    - 'cmd/media-worker/**'
+    - '.dockerignore'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - '.github/workflows/sdk-ui.yaml'
+  # master and integration branches: PRs merge without waiting, so each push runs
+  # the suite once (master's health) and a newer push to the same ref cancels it.
+  push:
+    branches: [master, 'next/**']
+    paths:
+    - 'sdk/ui/**'
+    - 'contenturl/testdata/**'
+    - '*.go'
+    - 'media/**'
+    - 'content/**'
+    - 'contenturl/**'
+    - 'groups/**'
+    - 'kinds/**'
+    - 'migrations/**'
+    - 'internal/**'
+    - 'access/**'
+    - 'cmd/media-gateway/**'
+    - 'cmd/media-worker/**'
+    - '.dockerignore'
+    - '!**.md'
+    - 'go.mod'
+    - 'go.sum'
+    - '.github/workflows/sdk-ui.yaml'
+  workflow_call: {}
+permissions:
+  contents: read
+concurrency:
+  group: sdk-ui-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  sdk-ui:
+    name: UI package
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdk/ui
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/ui/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: sdk/ui/pnpm-lock.yaml
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - name: generated contract is fresh
+      run: pnpm contract:check
+    - run: pnpm check
+
+  # Vitest's integration project and the Playwright specs against a real
+  # ContentKit: e2e/server over PGroonga, MinIO and the media worker and
+  # gateway built from this checkout (sdk/ui/e2e/compose.yaml).
+  e2e:
+    name: UI package e2e (real ContentKit)
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sdk/ui
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: docker/setup-buildx-action@v3
+    - name: build media-gateway
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/media-gateway/Dockerfile
+        tags: ckui-e2e/media-gateway:local
+        load: true
+        cache-from: type=gha,scope=ckui-e2e-media-gateway
+        cache-to: type=gha,mode=max,scope=ckui-e2e-media-gateway
+    - name: build media-worker
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/media-worker/Dockerfile
+        tags: ckui-e2e/media-worker:local
+        load: true
+        cache-from: type=gha,scope=ckui-e2e-media-worker
+        cache-to: type=gha,mode=max,scope=ckui-e2e-media-worker
+    - name: ffmpeg (the harness's frame grabs, the ABR source)
+      run: |
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/ui/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: sdk/ui/pnpm-lock.yaml
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache-dependency-path: |
+          go.sum
+          sdk/ui/e2e/server/go.sum
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - run: pnpm exec playwright install --with-deps chromium
+    - run: pnpm build
+    - name: integration and browser suites
+      run: pnpm test:e2e
+      env:
+        CKUI_E2E_KEEP_LOGS: '1'
+    - if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdk-ui-e2e-results
+        path: sdk/ui/test-results
+        retention-days: 7
+    - name: tear down leftover stacks
+      if: always()
+      run: |
+        for p in $(docker compose ls -a --format json | jq -r '.[].Name' | grep '^ckui-e2e-' || true); do
+          docker compose -p "$p" -f e2e/compose.yaml --profile worker down -v --remove-orphans -t 2
+        done

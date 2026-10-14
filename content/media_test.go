@@ -3,197 +3,221 @@ package content
 import (
 	"bytes"
 	"context"
-	"mime/multipart"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/testauth"
+	"github.com/open-rails/contentkit/media"
 )
 
-func multipartUpload(t *testing.T, method, path string, content []byte) *http.Request {
+// mediaAdmin holds every permission when it calls the module directly; over
+// HTTP the runtime's Authorizer decides.
+var mediaAdmin = testauth.Actor(access.Actor{ID: "admin", Kind: "user"}, testauth.All{})
+
+func newMediaTest(t *testing.T, opts Options) (*Runtime, *testMedia) {
 	t.Helper()
-	return multipartUploadNamed(t, method, path, "img.png", content)
+	m := &testMedia{}
+	if opts.Media == nil {
+		opts.Media = m.options()
+	}
+	rt, _ := newTestRuntime(t, opts)
+	return rt, m
 }
 
-func multipartUploadNamed(t *testing.T, method, path, filename string, content []byte) *http.Request {
+// send serves one JSON request as actor and decodes a 2xx body into out.
+func send(t *testing.T, rt *Runtime, actor access.Actor, method, path string, body, out any) int {
 	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	fw, err := w.CreateFormFile("file", filename)
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(method, path, bytes.NewReader(b))
+	req = testauth.As(req, actor)
+	rec := httptest.NewRecorder()
+	rt.Handler().ServeHTTP(rec, req)
+	if rec.Code < 300 && out != nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+	}
+	return rec.Code
+}
+
+func image(name string) map[string]string { return map[string]string{"image": name} }
+
+func TestMedia_PollImages(t *testing.T) {
+	rt, m := newMediaTest(t, Options{})
+	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = fw.Write(content)
-	_ = w.Close()
-	req := httptest.NewRequest(method, path, &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	return req
-}
-
-func insertPost(t *testing.T, rt *Runtime) string {
-	t.Helper()
-	var id string
-	if err := rt.store.pool.QueryRow(context.Background(),
-		`INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body) VALUES ($1,'admin','t','b') RETURNING id::text`, testTenant).Scan(&id); err != nil {
-		t.Fatalf("insert post: %v", err)
-	}
-	return id
-}
-
-func TestMedia_PollOptionImageUpload(t *testing.T) {
-	media := &fakeMedia{}
-	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PollWrite: "root:polls:update"}, Media: media})
-	admin := Actor{ID: "admin"}
-	pv, err := rt.polls.create(context.Background(), admin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	other, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "R?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
-		t.Fatalf("create poll: %v", err)
+		t.Fatal(err)
 	}
-	oid := pv.Options[0].ID
-
-	req := multipartUpload(t, "POST", "/polls/options/"+oid+"/image", []byte("PNGDATA"))
-	req = req.WithContext(withActor(req.Context(), admin))
-	rec := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	q, o := "i-"+uuid.NewString(), "i-"+uuid.NewString()
+	ref := rt.Ref("poll", poll.ID)
+	oid := poll.Options[0].ID
+	var got map[string]*string
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/image", image(q), &got); code != 200 || got["image_url"] != nil {
+		t.Fatalf("question image without a public file %d %v", code, got)
 	}
-	if _, ok := media.stored("polls/options/" + oid + ".png"); !ok {
-		t.Fatal("image not written to the media store")
+	m.publish(q)
+	m.publish(o)
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(o), &got); code != 200 || *got["image_url"] != m.url(ref, o) {
+		t.Fatalf("option image %d %v", code, got)
 	}
-	got, _ := rt.polls.get(context.Background(), admin, pv.ID)
-	var found string
-	for _, o := range got.Options {
-		if o.ID == oid {
-			found = o.ImageURL
+	v, _ := rt.polls.get(context.Background(), mediaAdmin, poll.ID)
+	if v.ImageURL != m.url(ref, q) || v.Options[0].ImageURL != m.url(ref, o) {
+		t.Fatalf("stored %+v", v)
+	}
+	var questionName, optionName string
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT q.image_name, o.image_name FROM `+rt.store.t.pollQuestions+` q JOIN `+rt.store.t.pollOptions+` o ON o.question_id=q.id WHERE o.id=$1`, oid).Scan(&questionName, &optionName); err != nil || questionName != q || optionName != o {
+		t.Fatalf("stored image names %q/%q, err=%v", questionName, optionName, err)
+	}
+	m.origin = "https://moved-media.test"
+	m.publish(q)
+	if v, err := rt.polls.get(t.Context(), mediaAdmin, poll.ID); err != nil || v.ImageURL != m.url(ref, q) {
+		t.Fatalf("poll after a new generation and origin: %+v, err=%v", v, err)
+	}
+	before := m.lookupCount()
+	if listed, err := rt.polls.list(t.Context(), mediaAdmin, listFilter{limit: 10}); err != nil || len(listed) != 2 || listed[1].ImageURL != m.url(ref, q) || m.lookupCount() != before+1 {
+		t.Fatalf("poll list: %+v, err=%v, lookups %d", listed, err, m.lookupCount()-before)
+	}
+	var edited PollOption
+	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+strings.ToUpper(poll.ID)+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != m.url(ref, o) {
+		t.Fatalf("edited option: status=%d, option=%+v", code, edited)
+	}
+	m.unpublish(o)
+	if v, _ := rt.polls.get(t.Context(), mediaAdmin, poll.ID); v.Options[0].ImageURL != "" {
+		t.Fatalf("option without a public file: %+v", v.Options[0])
+	}
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+other.ID+"/options/"+oid+"/image", image(o), nil); code != 404 {
+		t.Fatalf("option of another poll: %d", code)
+	}
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/image", image("../x"), nil); code != 400 {
+		t.Fatalf("bad name: %d", code)
+	}
+	m.publish(o)
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(""), &got); code != 200 || got["image_url"] != nil {
+		t.Fatalf("clear option: %d %v", code, got)
+	}
+	v, _ = rt.polls.get(context.Background(), mediaAdmin, poll.ID)
+	for _, opt := range v.Options {
+		if opt.ImageURL != "" {
+			t.Fatalf("option image not cleared: %+v", opt)
 		}
 	}
-	if found == "" {
-		t.Fatal("option image_url not persisted")
-	}
 }
 
-func TestMedia_PostCoverUpload(t *testing.T) {
-	media := &fakeMedia{}
-	rt, pool := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
-	id := insertPost(t, rt)
-
-	req := multipartUpload(t, "POST", "/posts/"+id+"/cover", []byte("IMGBYTES"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
-	rec := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+func TestMedia_CanUpload(t *testing.T) {
+	ctx := context.Background()
+	rt, _ := newMediaTest(t, Options{Media: (&testMedia{}).options()})
+	poll, err := rt.polls.create(ctx, mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := media.stored("posts/" + id + "/cover.png"); !ok {
-		t.Fatal("cover not written to the media store")
-	}
-	var cover *string
-	if err := pool.QueryRow(context.Background(), `SELECT cover_url FROM `+rt.store.t.posts+` WHERE id = $1`, id).Scan(&cover); err != nil {
-		t.Fatalf("read cover: %v", err)
-	}
-	if cover == nil || *cover == "" {
-		t.Fatal("cover_url not persisted")
-	}
-}
-
-func TestMedia_PostInlineUpload(t *testing.T) {
-	media := &fakeMedia{}
-	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
-	req := multipartUpload(t, "POST", "/posts/media", []byte("INLINE-IMG"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
-	rec := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-	}
-	if media.count() != 1 {
-		t.Fatalf("expected 1 stored inline image, got %d", media.count())
-	}
-}
-
-// Replacing an image under a different key (extension changed) deletes the old
-// object instead of orphaning it; same-key replaces overwrite in place.
-func TestMedia_ReplaceDeletesOldObject(t *testing.T) {
-	media := &fakeMedia{}
-	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
-	id := insertPost(t, rt)
-	admin := Actor{ID: "admin"}
-
-	for _, name := range []string{"one.png", "two.jpg"} {
-		req := multipartUploadNamed(t, "POST", "/posts/"+id+"/cover", name, []byte("IMG-"+name))
-		req = req.WithContext(withActor(req.Context(), admin))
-		rec := httptest.NewRecorder()
-		rt.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("upload %s: status %d: %s", name, rec.Code, rec.Body.String())
+	for _, tc := range []struct {
+		ref  contentref.ContentRef
+		want bool
+	}{
+		{rt.Ref("poll", poll.ID), true},
+		{rt.Ref("poll", contentref.NewID()), false},
+		{rt.Ref("gallery", poll.ID), false},
+		{contentref.New("other", "poll", poll.ID), false},
+		{rt.Ref("poll", poll.ID).WithVersion("v1"), false},
+	} {
+		g, err := rt.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: tc.ref})
+		if err != nil || g.Allowed != tc.want {
+			t.Errorf("%s: %+v %v, want %v", tc.ref, g, err, tc.want)
 		}
 	}
-	if _, ok := media.stored("posts/" + id + "/cover.png"); ok {
-		t.Fatal("old .png cover not deleted after .jpg replace")
-	}
-	if _, ok := media.stored("posts/" + id + "/cover.jpg"); !ok {
-		t.Fatal("new .jpg cover missing")
-	}
-}
-
-// Pure: DeleteByURL leaves URLs outside the store's public origin alone (a nil
-// client would panic if it were wrongly called for a foreign or legacy URL).
-func TestStorage_DeleteByURLForeignOrigin(t *testing.T) {
-	s := &s3Store{publicBaseURL: "https://cdn.test"}
-	if err := s.DeleteByURL(context.Background(), "https://elsewhere.example/img.png"); err != nil {
-		t.Fatalf("foreign URL should no-op, got %v", err)
-	}
-	if err := s.DeleteByURL(context.Background(), "polls/legacy-relative.png"); err != nil {
-		t.Fatalf("legacy relative path should no-op, got %v", err)
-	}
-}
-
-// An upload larger than maxUploadBytes is rejected with 400 instead of being
-// silently truncated to the first 10 MiB (a corrupt image) and stored.
-func TestMedia_OversizeUploadRejected(t *testing.T) {
-	media := &fakeMedia{}
-	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
-	big := bytes.Repeat([]byte("x"), maxUploadBytes+1)
-	req := multipartUpload(t, "POST", "/posts/media", big)
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
-	rec := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 for oversize upload, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if media.count() != 0 {
-		t.Fatalf("oversize upload must not reach the media store (stored %d)", media.count())
-	}
-}
-
-func TestMedia_UploadRequiresPerm(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Authz: denyAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: &fakeMedia{}})
-	id := insertPost(t, rt)
-	req := multipartUpload(t, "POST", "/posts/"+id+"/cover", []byte("IMG"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "nonadmin"}))
-	rec := httptest.NewRecorder()
-	rt.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("want 403 for non-permitted uploader, got %d", rec.Code)
-	}
-}
-
-// Pure (no container): the S3 store rejects an incomplete config; resolveMedia
-// falls back to unsupported when neither Media nor Storage is set.
-func TestStorage_ConfigValidation(t *testing.T) {
-	if _, err := newS3Store(StorageConfig{Region: "us-east-1"}); err == nil {
-		t.Fatal("expected error for missing Bucket")
-	}
-	if _, err := newS3Store(StorageConfig{Bucket: "b"}); err == nil {
-		t.Fatal("expected error for missing PublicBaseURL")
-	}
-	if _, err := newS3Store(StorageConfig{Bucket: "b", PublicBaseURL: "https://cdn.test"}); err != nil {
-		t.Fatalf("valid config rejected: %v", err)
-	}
-	m, err := resolveMedia(Options{})
+	denied, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: denyAll{}},
+		Resolver: &fakeResolver{}, Media: (&testMedia{}).options()})
 	if err != nil {
-		t.Fatalf("resolveMedia default: %v", err)
+		t.Fatal(err)
 	}
-	if _, err := m.Put(context.Background(), "k", nil, ""); err == nil {
-		t.Fatal("unsupported media store should error on Put")
+	if g, err := denied.CanUpload(ctx, denied.as(mediaAdmin), media.UploadTarget{Ref: denied.Ref("poll", poll.ID)}); err != nil || g.Allowed {
+		t.Fatalf("without PollsWrite: %+v %v", g, err)
 	}
+}
+
+// A foreign tenant's admin cannot point another tenant's poll at an image.
+func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := &testMedia{}
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Media: m.options()})
+	b, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
+		Media: m.options()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poll, err := a.polls.create(ctx, mediaAdmin, PollInput{Question: "Q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := image("i-" + uuid.NewString())
+	for _, path := range []string{"/polls/" + poll.ID + "/image", "/polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
+		if code := send(t, b, mediaAdmin, "PUT", path, name, nil); code != http.StatusNotFound {
+			t.Errorf("PUT %s from another tenant: %d", path, code)
+		}
+	}
+	if code := send(t, b, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code != http.StatusNotFound || len(m.deletions()) != 0 {
+		t.Fatalf("foreign delete: %d %v", code, m.deletions())
+	}
+}
+
+func TestMedia_DeletingAPollDeletesItsFolder(t *testing.T) {
+	rt, m := newMediaTest(t, Options{})
+	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := send(t, rt, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code >= 300 {
+		t.Fatalf("delete poll %d", code)
+	}
+	want := []string{testTenant + "/poll/" + poll.ID}
+	if got := m.deletions(); !slices.Equal(got, want) {
+		t.Fatalf("deleted %v, want %v", got, want)
+	}
+}
+
+// A poll's folder shows while the poll exists, edited by PollsWrite holders.
+func TestMediaResolverShowsPollFolders(t *testing.T) {
+	ctx := context.Background()
+	rt, _ := newMediaTest(t, Options{Auth: testauth.Auth{Authz: roleAuthz{writers: map[string]bool{"admin": true}}}})
+	var poll Poll
+	if code := send(t, rt, mediaAdmin, "POST", "/polls", PollInput{Question: "Q", Language: "en",
+		Options: []PollOptionInput{{Label: "A"}, {Label: "B", Position: 1}}}, &poll); code != http.StatusCreated {
+		t.Fatalf("create poll: %d", code)
+	}
+	refs := []contentref.ContentRef{rt.Ref("poll", poll.ID), rt.Ref("poll", contentref.NewID()), rt.Ref("gallery", poll.ID), contentref.New("other", "poll", poll.ID)}
+	full := func(editor bool) resolve.Resolution {
+		return resolve.Resolution{Visible: true, Accessible: true, Editor: editor}
+	}
+	for _, c := range []struct {
+		actor access.Actor
+		want  resolve.Resolution
+	}{{access.Actor{Anonymous: true}, full(false)}, {access.Actor{ID: "reader"}, full(false)}, {mediaAdmin, full(true)}} {
+		got, err := rt.MediaResolver().Resolve(ctx, refs, c.actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[refs[0].Key()] != c.want {
+			t.Errorf("%s: %v, want only the poll as %+v", c.actor.ID, got, c.want)
+		}
+	}
+}
+
+// roleAuthz grants every permission to the actors in writers only.
+type roleAuthz struct{ writers map[string]bool }
+
+func (a roleAuthz) Can(_ context.Context, actor access.Actor, _ string) (bool, error) {
+	return a.writers[actor.ID], nil
 }

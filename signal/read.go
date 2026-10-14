@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/open-rails/contentkit/contentref"
 )
 
-const stateColumns = refColumns + `, first_seen_at, last_signal_at, total_events, views, completions,
+const stateColumns = refColumns + `, first_seen_at, last_signal_at, last_view_at, total_events, views, completions,
  active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback`
 
 // workLevel selects the rows of the work itself, never of a version.
@@ -23,7 +26,7 @@ func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
 		version string
 	)
 	if err := rows.Scan(
-		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.TotalEvents, &r.Views, &r.Completions,
+		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.LastViewAt, &r.TotalEvents, &r.Views, &r.Completions,
 		&r.ActiveS, &r.MaxProgress, &r.ProgressMax, &r.Completed, &r.Resume, &r.LastScore, &r.NetValue, &r.Feedback,
 	); err != nil {
 		return StateRow{}, err
@@ -34,16 +37,23 @@ func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
 	return r, nil
 }
 
-// refTuples renders "(content_kind, content_id, content_version_id) IN (...)"
-// for references already validated against the tenant.
-func refTuples(refs []ContentRef) (string, []any) {
-	tuples := make([]string, len(refs))
-	args := make([]any, 0, 3*len(refs))
-	for i, r := range refs {
-		tuples[i] = "(?, ?, ?)"
-		args = append(args, r.ContentKind, r.ContentID, r.Version())
+const referenceFilter = "(" + refColumns + ") IN (SELECT " + refColumns + " FROM contentkit_read_refs)"
+
+func referenceContext(ctx context.Context, refs []ContentRef) (context.Context, error) {
+	table, err := ext.NewTable("contentkit_read_refs",
+		ext.Column("content_kind", "String"),
+		ext.Column("content_id", "String"),
+		ext.Column("content_version_id", "String"),
+	)
+	if err != nil {
+		return nil, err
 	}
-	return "(" + refColumns + ") IN (" + strings.Join(tuples, ", ") + ")", args
+	for _, r := range refs {
+		if err := table.Append(r.ContentKind, r.ContentID, r.Version()); err != nil {
+			return nil, err
+		}
+	}
+	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
 // States is the bulk "annotate this list with view context" read: for each
@@ -63,12 +73,15 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 			return nil, err
 		}
 	}
-	filter, refArgs := refTuples(refs)
-	args := append([]any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, refArgs...)
+	ctx, err := referenceContext(ctx, refs)
+	if err != nil {
+		return nil, fmt.Errorf("signal: states references: %w", err)
+	}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	q := fmt.Sprintf(`SELECT %s
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
-		stateColumns, st.db, st.subjectNotErased(), filter)
+		stateColumns, st.db, st.subjectNotErased(), referenceFilter)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -84,13 +97,15 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
 	return out, rows.Err()
 }
 
-func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any, error) {
+func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any, string, error) {
 	if k := strings.TrimSpace(opts.ContentKind); k != "" {
 		sb.WriteString(" AND content_kind = ?")
 		args = append(args, k)
 	}
+	timeColumn := "last_view_at"
 	switch opts.Status {
 	case HistoryAny:
+		timeColumn = "last_signal_at"
 	case HistorySeen:
 		sb.WriteString(" AND max_progress > 0")
 	case HistoryInProgress:
@@ -98,16 +113,17 @@ func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any,
 	case HistoryCompleted:
 		sb.WriteString(" AND completed")
 	default:
-		return nil, fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
+		return nil, "", fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
 	}
 	if !opts.Since.IsZero() {
-		sb.WriteString(" AND last_signal_at >= ?")
+		sb.WriteString(" AND " + timeColumn + " >= ?")
 		args = append(args, opts.Since.UTC())
 	}
-	return args, nil
+	return args, timeColumn, nil
 }
 
-// History returns the subject's work-level state rows, most recent signal first.
+// History returns the subject's work-level state rows, most recent relevant
+// activity first. Seen statuses use view recency; HistoryAny uses signal recency.
 func (st *Store) History(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) ([]StateRow, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
@@ -120,11 +136,11 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+	args, timeColumn, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return nil, err
 	}
-	sb.WriteString(" ORDER BY last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ? OFFSET ?")
+	sb.WriteString(" ORDER BY " + timeColumn + " DESC, content_kind ASC, content_id ASC LIMIT ? OFFSET ?")
 	args = append(args, limit, opts.Offset)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -151,7 +167,7 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.db, st.subjectNotErased(), workLevel)
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+	args, _, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -333,8 +349,11 @@ func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, 
 			return nil, err
 		}
 	}
-	filter, filterArgs := refTuples(refs)
-	q, args := st.windowMetrics(tenant, filter, filterArgs, window)
+	ctx, err := referenceContext(ctx, refs)
+	if err != nil {
+		return nil, fmt.Errorf("signal: metrics references: %w", err)
+	}
+	q, args := st.windowMetrics(tenant, referenceFilter, nil, window)
 	rows, err := st.conn.Query(ctx, q+finalSettings, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: metrics: %w", err)
@@ -406,8 +425,17 @@ func (st *Store) popular(ctx context.Context, tenant string, contentKind string,
 	}
 	filter, filterArgs := "content_kind = ?"+workLevel, []any{contentKind}
 	if len(ids) > 0 {
-		filter += " AND content_id IN ?"
-		filterArgs = append(filterArgs, ids)
+		table, err := ext.NewTable("contentkit_popularity_ids", ext.Column("content_id", "String"))
+		if err != nil {
+			return nil, fmt.Errorf("signal: popularity candidates: %w", err)
+		}
+		for _, id := range ids {
+			if err := table.Append(id); err != nil {
+				return nil, fmt.Errorf("signal: popularity candidates: %w", err)
+			}
+		}
+		ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
+		filter += " AND content_id IN (SELECT content_id FROM contentkit_popularity_ids)"
 	}
 	metrics, args := st.windowMetrics(tenant, filter, filterArgs, opts.Window)
 	q := fmt.Sprintf(`SELECT %s, %s, (%s) AS rank_score
@@ -585,6 +613,8 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	if maxPer <= 0 {
 		maxPer = 100
 	}
+	// Deletion makes this a new insert even if a prior build had identical rows.
+	insertToken := contentref.NewID()
 	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
 		return fmt.Errorf("signal: clear content_pairs: %w", err)
 	}
@@ -620,9 +650,57 @@ FROM (
 )
 WHERE a != bs.1
 GROUP BY content_kind_a, content_id_a, content_kind_b, content_id_b
-HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
-	if err := st.conn.Exec(ctx, q, append([]any{tenant}, winArgs...)...); err != nil {
+HAVING strength > 0%[5]s, insert_deduplication_token = ?`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
+	args := append([]any{tenant}, winArgs...)
+	args = append(args, insertToken)
+	if err := st.conn.Exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}
 	return nil
+}
+
+// DayActivity is one UTC day of a kind's views: view sessions and the
+// distinct subjects, and signed-in subjects, who viewed.
+type DayActivity struct {
+	Day     time.Time
+	Views   uint64
+	Viewers uint64
+	Users   uint64
+}
+
+// Activity returns a content kind's work-level view activity per UTC day of
+// the window, newest first; days without views are absent.
+func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window Window) ([]DayActivity, error) {
+	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(contentKind) == "" {
+		return nil, fmt.Errorf("signal: tenant and contentKind are required")
+	}
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
+	pred, predArgs := window.dayPredicate("day")
+	q := fmt.Sprintf(`SELECT day, toUInt64(sum(s_views)), toUInt64(countIf(s_views > 0)), toUInt64(countIf(s_views > 0 AND subject_kind = '%[1]s'))
+FROM (
+    SELECT day, subject_kind, subject, sum(views) AS s_views
+    FROM %[2]s.subject_content_daily FINAL
+    WHERE tenant = ? AND content_kind = ?%[3]s AND events > 0%[4]s AND %[5]s
+    GROUP BY day, subject_kind, subject
+)
+GROUP BY day
+HAVING sum(s_views) > 0
+ORDER BY day DESC%[6]s`, SubjectKindUser, st.db, workLevel, pred, st.notErased(), finalSettings)
+	rows, err := st.conn.Query(ctx, q, append([]any{tenant, contentKind}, predArgs...)...)
+	if err != nil {
+		return nil, fmt.Errorf("signal: activity: %w", err)
+	}
+	defer rows.Close()
+	var out []DayActivity
+	for rows.Next() {
+		var d DayActivity
+		if err := rows.Scan(&d.Day, &d.Views, &d.Viewers, &d.Users); err != nil {
+			return nil, fmt.Errorf("signal: activity scan: %w", err)
+		}
+		d.Day = utcDay(d.Day)
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

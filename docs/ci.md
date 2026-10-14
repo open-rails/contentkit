@@ -1,6 +1,15 @@
 # CI execution
 
-- Branch pushes: build and vet only. Superseded runs are cancelled.
-- Pull requests: one Go test suite (`go test ./... -race`) against real PGroonga Postgres and ClickHouse+Keeper; pgvector is installed only so the legacy-lineage convergence test can apply the pre-ContentKit baseline. The injected-code scan remains a separate merge check.
-- Expensive full-stack qualification is explicit `workflow_dispatch` or a local command, not an automatic per-merge run.
-- These are execution-policy choices, not measured timing claims. Do not treat a manual suite as already passed.
+GitHub Actions minutes are paid for; CI is a final check, not the test runner. Test locally first and push once.
+
+- Pull requests to `master` only; no branch-push runs. Superseded runs are cancelled. Draft PRs run only the injection scan.
+- Each workflow runs only when its paths change (docs and Markdown run nothing heavy):
+  - `scan`: injected-code scan, every PR ([open-rails/helpers](https://github.com/open-rails/helpers/blob/master/docs/injection-scan.md), pinned by SHA).
+  - `go`: vet + `go test -race` for everything except `media/image`, `media/video`, `media/worker` and `cmd/media-worker`, against real PGroonga Postgres, ClickHouse+Keeper and MinIO. The `e2e` module (every route over a real AuthKit) runs there too; the `adapters/openrails` module in its own job against Postgres 18 and a real embedded OpenRails.
+  - `media-video`: `media/**` (not `media/image`), `go.mod`; ffmpeg.
+  - `media-image`: `media/**`, `cmd/media-worker`, `go.mod`; libvips + ffmpeg (`media/image`, `media/worker`, `cmd/media-worker`).
+  - `sdk-ui`: `sdk/ui`, the shared `contenturl/testdata` vectors, the upload-handler media packages, `go.mod`.
+  - `images`: PRs touching a Dockerfile or `.dockerignore` build linux/amd64 only; `v*` tags publish multi-arch.
+- `release` (a published `v*` release) publishes `@openrails/contentkit-ui` at that version to npm (trusted publishing, with provenance).
+- `full` (manual `workflow_dispatch`) runs every suite regardless of paths. Run it on `master` for full-tree qualification; it also warms the caches PRs restore.
+- Nothing runs on pushes to `master`.

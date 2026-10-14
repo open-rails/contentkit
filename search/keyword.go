@@ -24,24 +24,36 @@ type documentKey struct {
 // KeywordSearch preserves names and aliases, including native scripts. Exact
 // names precede aliases, token/prefix matches, then conservative one-edit typos.
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
-// Host filters and the eligibility join run inside every route before its limit.
+// The eligibility join runs inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
-	var result Result
 	if pool == nil {
-		return result, fmt.Errorf("pool is required")
+		return Result{}, fmt.Errorf("pool is required")
 	}
 	if opts.Limit <= 0 {
-		result.Hits = []Hit{}
-		return result, nil
+		return Result{Hits: []Hit{}}, nil
 	}
 	if opts.Limit > MaxCandidateLimit {
-		return result, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
-	}
-	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("keyword query exceeds 256 characters")
+		return Result{}, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Result{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := keywordSearch(ctx, tx, query, opts)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
+	var result Result
+	if utf8.RuneCountInString(query) > 256 {
+		return result, fmt.Errorf("keyword query exceeds 256 characters")
+	}
 	args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0}
 	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
@@ -51,7 +63,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 	// Normalize in the same database function as the expression indexes. This
 	// avoids Go/Postgres Unicode casing and locale differences.
 	var q, trgmSchema, nativeSchema string
-	err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
 	if err != nil {
@@ -78,7 +90,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		prefixes[i] = t + "*"
 	}
 	args["prefix"] = strings.Join(prefixes, " ")
-	const order = `sd.content_kind,sd.content_id,sd.content_version_id`
+	const order = `sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST`
 	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, priority, terms, from, where)
 	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,%s LIMIT @limit`, terms, "("+terms+")", terms, order)
 	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
@@ -86,11 +98,6 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 	// Acceptance below requires at most one Unicode edit, not a low similarity
 	// threshold. Queries of one/two characters never enter the fuzzy route.
 	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,%s LIMIT @limit`, corpus, qt, corpus, qt, order)
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback(ctx)
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
 	// including candidate scoring. SET LOCAL applies before retrieval and cannot leak into
 	// another pooled request. A SELECT CTE setting the GUC has ambiguous timing.
@@ -102,8 +109,8 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		queries = append(queries, fuzzy)
 	}
 	found := map[documentKey]Hit{}
-	for _, sql := range queries {
-		rows, err := tx.Query(ctx, sql, args)
+	for _, query := range queries {
+		rows, err := tx.Query(ctx, query, args)
 		if err != nil {
 			return result, err
 		}
@@ -115,14 +122,12 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 			}
 			seen++
 			h := Hit{ContentRef: contentref.ContentRef{TenantID: opts.Tenant}}
-			var version string
 			var fields []string
 			var aliases int
-			if err := rows.Scan(&h.ContentKind, &h.ContentID, &version, &h.Language, &h.Priority, &fields, &aliases); err != nil {
+			if err := rows.Scan(&h.ContentKind, &h.ContentID, &h.ContentVersionID, &h.Language, &h.Priority, &fields, &aliases); err != nil {
 				rows.Close()
 				return result, err
 			}
-			h.ContentRef = h.ContentRef.WithVersion(version)
 			h.Score = keywordScore(ctx, q, tokens, fields, aliases)
 			if err := ctx.Err(); err != nil {
 				rows.Close()
@@ -142,9 +147,6 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		if seen >= sqlLimit {
 			result.Truncated = true
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return result, err
 	}
 	out := make([]Hit, 0, len(found))
 	for _, h := range found {
@@ -176,7 +178,7 @@ func hitLess(a, b Hit) bool {
 }
 
 // Eligible returns the candidates that exist as documents of the request tenant
-// and language and pass the host filter and eligibility join, in their input
+// and language and pass the eligibility join, in their input
 // order with Priority filled. Candidates another source proposes are never
 // trusted with eligibility: this is the same join every keyword route runs.
 func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates []Candidate) ([]Hit, error) {
@@ -192,9 +194,9 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 		return nil, err
 	}
 	type row struct {
-		Kind    string `json:"content_kind"`
-		ID      string `json:"content_id"`
-		Version string `json:"content_version_id"`
+		Kind    string  `json:"content_kind"`
+		ID      string  `json:"content_id"`
+		Version *string `json:"content_version_id"`
 	}
 	rows := make([]row, 0, len(candidates))
 	byKey := map[documentKey]int{}
@@ -206,7 +208,7 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 			return nil, err
 		}
 		byKey[documentKey{c.Key(), c.Language}] = i
-		rows = append(rows, row{c.ContentKind, c.ContentID, c.Version()})
+		rows = append(rows, row{c.ContentKind, c.ContentID, c.ContentVersionID})
 	}
 	data, err := json.Marshal(rows)
 	if err != nil {
@@ -215,7 +217,7 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 	args["candidates"] = data
 	sql := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s FROM %s
  JOIN jsonb_to_recordset(@candidates::jsonb) AS c(content_kind text,content_id text,content_version_id text)
- ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id=sd.content_version_id
+ ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id IS NOT DISTINCT FROM sd.content_version_id
  WHERE %s`, priority, from, where)
 	res, err := pool.Query(ctx, sql, args)
 	if err != nil {
@@ -225,12 +227,12 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 	out := make([]Hit, len(candidates))
 	present := make([]bool, len(candidates))
 	for res.Next() {
-		var kind, id, version string
+		ref := contentref.ContentRef{TenantID: opts.Tenant}
 		var pr int32
-		if err := res.Scan(&kind, &id, &version, &pr); err != nil {
+		if err := res.Scan(&ref.ContentKind, &ref.ContentID, &ref.ContentVersionID, &pr); err != nil {
 			return nil, err
 		}
-		i, ok := byKey[documentKey{contentref.ContentKey{TenantID: opts.Tenant, ContentKind: kind, ContentID: id, ContentVersionID: version}, opts.Language}]
+		i, ok := byKey[documentKey{ref.Key(), opts.Language}]
 		if !ok {
 			continue
 		}

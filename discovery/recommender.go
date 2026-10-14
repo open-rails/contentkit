@@ -1,0 +1,435 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/signal"
+)
+
+// Hit is one ranked work of a discovery list.
+type Hit struct {
+	contentref.ContentRef
+	Score float32
+}
+
+// SimilarOptions controls Similar ("more like this").
+type SimilarOptions struct {
+	Limit int
+	// ContentKinds limits result kinds (default: any).
+	ContentKinds []string
+	// Window bounds the candidate evidence (default all time).
+	Window signal.Window
+
+	// ExcludeSeenFor drops works this subject has already seen (and always
+	// drops works they negatively reacted to).
+	ExcludeSeenFor *signal.Subject
+
+	// Admit keeps the works the reader may be shown; nil admits all.
+	Admit Admit
+}
+
+// Admit decides which candidate works a list may show, in one batch: the
+// reader's visibility. Recommender oversamples its sources so admission
+// still fills the list.
+type Admit func(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error)
+
+// RecommendOptions controls Recommend ("for you": subject → works).
+type RecommendOptions struct {
+	// ContentKinds are the candidate kinds to recommend. Required.
+	ContentKinds []string
+
+	// Limit caps results (default: Recommender.DefaultLimit).
+	Limit int
+
+	// SeedLimit is how many of the subject's highest-signal works inform
+	// candidates (source default; Engagement: 5).
+	SeedLimit int
+
+	// SeedContentKinds limits which kinds may seed (default: any).
+	SeedContentKinds []string
+
+	// IncludeSeen keeps already-seen works in results (default: excluded).
+	IncludeSeen bool
+
+	// PopularWindow is the popularity window used to fill out results on
+	// cold start or thin candidate sets (zero = all time, like every Window);
+	// all-time popularity fills what it leaves short.
+	PopularWindow signal.Window
+
+	// Backfill fills what popularity leaves short, from works no signal
+	// names; nil leaves the list short.
+	Backfill Backfill
+
+	// Admit keeps the works the reader may be shown; nil admits all.
+	Admit Admit
+}
+
+// Backfill lists up to limit works of kind, best first (e.g. newest), none of
+// exclude (content ids): the last fill of a "for you" list.
+type Backfill func(ctx context.Context, kind string, exclude []string, limit int) ([]contentref.ContentRef, error)
+
+// Recommender turns a Candidates source into tenant-scoped discovery lists.
+type Recommender struct {
+	Candidates Candidates
+	Store      *signal.Store
+	Tenant     string
+	// DefaultLimit applies when options leave Limit zero (default 20).
+	DefaultLimit int
+	// RRFK scales popularity-fill tail scores (default 60).
+	RRFK int
+}
+
+func (r Recommender) limit(n int) int {
+	switch {
+	case n > 0:
+		return n
+	case r.DefaultLimit > 0:
+		return r.DefaultLimit
+	}
+	return 20
+}
+
+func (r Recommender) rrfK() int {
+	if r.RRFK > 0 {
+		return r.RRFK
+	}
+	return 60
+}
+
+func fallbackSource(source Candidates) (Fallback, bool) {
+	switch source := source.(type) {
+	case Fallback:
+		return source, true
+	case *Fallback:
+		return *source, true
+	default:
+		return Fallback{}, false
+	}
+}
+
+// Similar returns works like the anchor, never the anchor itself.
+func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, opts SimilarOptions) ([]Hit, error) {
+	if err := anchor.Validate(); err != nil {
+		return nil, err
+	}
+	if anchor.TenantID != r.Tenant {
+		return nil, fmt.Errorf("discovery: %s belongs to tenant %q, not %q", anchor, anchor.TenantID, r.Tenant)
+	}
+	limit := r.limit(opts.Limit)
+	kinds := trimAll(opts.ContentKinds)
+	q := Query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit), Window: opts.Window}
+	fallback, hasFallback := fallbackSource(r.Candidates)
+	source := r.Candidates
+	if hasFallback {
+		source = fallback.Primary
+	}
+	cands, err := source.Similar(ctx, anchor, q)
+	if err != nil && hasFallback {
+		fallback.report(err)
+		cands, err = fallback.Secondary.Similar(ctx, anchor, q)
+		hasFallback = false
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := r.newFilter(limit, kinds, opts.Admit)
+	f.exclude[anchor.Content().Key()] = struct{}{}
+	apply := func(cands []Candidate, first bool) error {
+		if opts.ExcludeSeenFor != nil {
+			present := make([]string, 0, len(cands))
+			for _, c := range cands {
+				present = append(present, c.Ref.ContentKind)
+			}
+			if first {
+				if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
+					return err
+				}
+			} else if err := f.loadSeen(ctx, r, *opts.ExcludeSeenFor, present); err != nil {
+				return err
+			}
+		}
+		return f.pushAll(ctx, cands)
+	}
+	if err := apply(cands, true); err != nil {
+		return nil, err
+	}
+	if hasFallback && !f.full() {
+		secondary, err := fallback.Secondary.Similar(ctx, anchor, q)
+		if err != nil {
+			if len(cands) == 0 {
+				return nil, err
+			}
+			fallback.report(err)
+			return f.out, nil
+		}
+		if err := apply(secondary, false); err != nil {
+			return nil, err
+		}
+	}
+	return f.out, nil
+}
+
+// Recommend returns "for you" works for a subject: excluding already-seen
+// (unless IncludeSeen) and always disliked works, filled on cold start or
+// thin candidates from popularity in PopularWindow, then of all time, then
+// Backfill.
+func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]Hit, error) {
+	if err := subject.Validate(); err != nil {
+		return nil, err
+	}
+	kinds := trimAll(opts.ContentKinds)
+	if len(kinds) == 0 {
+		return nil, fmt.Errorf("discovery: RecommendOptions.ContentKinds is required")
+	}
+	limit := r.limit(opts.Limit)
+	q := Query{
+		ContentKinds:     kinds,
+		Limit:            oversample(limit, opts.Admit),
+		SeedLimit:        opts.SeedLimit,
+		SeedContentKinds: trimAll(opts.SeedContentKinds),
+	}
+	fallback, hasFallback := fallbackSource(r.Candidates)
+	source := r.Candidates
+	if hasFallback {
+		source = fallback.Primary
+	}
+	cands, err := source.ForSubject(ctx, subject, q)
+	if err != nil && hasFallback {
+		fallback.report(err)
+		cands, err = fallback.Secondary.ForSubject(ctx, subject, q)
+		hasFallback = false
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := r.newFilter(limit, kinds, opts.Admit)
+	if err := f.loadSubject(ctx, r, subject, kinds, kinds, opts.IncludeSeen); err != nil {
+		return nil, err
+	}
+	if err := f.pushAll(ctx, cands); err != nil {
+		return nil, err
+	}
+	// Fallback fullness is based on eligible hits, not raw candidates.
+	if hasFallback && !f.full() {
+		secondary, err := fallback.Secondary.ForSubject(ctx, subject, q)
+		if err != nil {
+			if len(cands) == 0 {
+				return nil, err
+			}
+			fallback.report(err)
+		} else if err := f.pushAll(ctx, secondary); err != nil {
+			return nil, err
+		}
+	}
+
+	windows := []signal.Window{opts.PopularWindow}
+	if opts.PopularWindow != signal.AllTime() {
+		windows = append(windows, signal.AllTime())
+	}
+	for _, kind := range kinds {
+		for _, w := range windows {
+			if err := r.fillPopular(ctx, f, kind, w, limit); err != nil {
+				return nil, err
+			}
+		}
+		if f.full() || opts.Backfill == nil {
+			continue
+		}
+		refs, err := opts.Backfill(ctx, kind, f.excluded(kind), limit-len(f.out))
+		if err != nil {
+			return nil, err
+		}
+		fill := make([]Candidate, len(refs))
+		for i, ref := range refs {
+			fill[i] = Candidate{Ref: ref, Score: float64(r.fillScore(f, i))}
+		}
+		if err := f.pushAll(ctx, fill); err != nil {
+			return nil, err
+		}
+	}
+	return f.out, nil
+}
+
+// fillPopular fills f from kind's popularity in w.
+func (r Recommender) fillPopular(ctx context.Context, f *filter, kind string, w signal.Window, limit int) error {
+	// Oversample so exclusions still leave enough to fill, deeper while a
+	// full read leaves the list short.
+	for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
+		pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: w, Limit: depth})
+		if err != nil {
+			return err
+		}
+		fill := make([]Candidate, len(pop))
+		for i, p := range pop {
+			fill[i] = Candidate{Ref: p.ContentRef, Score: float64(r.fillScore(f, i))}
+		}
+		if err := f.pushAll(ctx, fill); err != nil {
+			return err
+		}
+		if len(pop) < depth || depth >= maxFillDepth {
+			return nil
+		}
+	}
+	return nil
+}
+
+// fillScore is the i-th fill's score: fills live on another scale than
+// candidates, so they follow the list's tail with decaying scores.
+func (r Recommender) fillScore(f *filter, i int) float32 {
+	if n := len(f.out); n > 0 {
+		return f.out[n-1].Score / 2
+	}
+	return 1 / float32(r.rrfK()+i+1)
+}
+
+// maxFillDepth bounds the popularity read a filtered fill goes to.
+const maxFillDepth = 2000
+
+// oversample is the candidate count asked of a source: admission drops some.
+func oversample(limit int, admit Admit) int {
+	if admit == nil {
+		return limit
+	}
+	return clampInt(limit*3, limit, 300)
+}
+
+// filter applies the shared policy: tenant, kinds, exclusions, admission,
+// dedupe, limit.
+type filter struct {
+	tenant  string
+	limit   int
+	kinds   map[string]struct{} // nil = any
+	exclude map[contentref.ContentKey]struct{}
+	seen    map[string]map[string]struct{}
+	admit   Admit
+	out     []Hit
+}
+
+func (r Recommender) newFilter(limit int, kinds []string, admit Admit) *filter {
+	f := &filter{tenant: r.Tenant, limit: limit, exclude: map[contentref.ContentKey]struct{}{}, seen: map[string]map[string]struct{}{},
+		admit: admit, out: make([]Hit, 0, limit)}
+	if len(kinds) > 0 {
+		f.kinds = make(map[string]struct{}, len(kinds))
+		for _, k := range kinds {
+			f.kinds[k] = struct{}{}
+		}
+	}
+	return f
+}
+
+// loadSubject excludes the subject's disliked works of negativeKinds and,
+// unless includeSeen, their seen works of seenKinds.
+func (f *filter) loadSubject(ctx context.Context, r Recommender, subject signal.Subject, seenKinds, negativeKinds []string, includeSeen bool) error {
+	if !includeSeen {
+		if err := f.loadSeen(ctx, r, subject, seenKinds); err != nil {
+			return err
+		}
+	}
+	negative, err := r.Store.NegativeIDs(ctx, r.Tenant, subject, negativeKinds)
+	if err != nil {
+		return err
+	}
+	for key := range negative {
+		f.exclude[key] = struct{}{}
+	}
+	return nil
+}
+
+func (f *filter) loadSeen(ctx context.Context, r Recommender, subject signal.Subject, kinds []string) error {
+	for _, kind := range kinds {
+		if _, ok := f.seen[kind]; ok {
+			continue
+		}
+		seen, err := r.Store.SeenIDs(ctx, r.Tenant, subject, kind)
+		if err != nil {
+			return err
+		}
+		f.seen[kind] = seen
+	}
+	return nil
+}
+
+func (f *filter) full() bool { return len(f.out) >= f.limit }
+
+// excluded are kind's content ids the list may no longer show: seen,
+// disliked or already in it.
+func (f *filter) excluded(kind string) []string {
+	out := make([]string, 0, len(f.seen[kind])+len(f.exclude))
+	for id := range f.seen[kind] {
+		out = append(out, id)
+	}
+	for key := range f.exclude {
+		if key.ContentKind == kind {
+			out = append(out, key.ContentID)
+		}
+	}
+	return out
+}
+
+// pushAll appends candidates in order until full: those the policy keeps,
+// then admitted in one batch.
+func (f *filter) pushAll(ctx context.Context, cands []Candidate) error {
+	if f.full() {
+		return nil
+	}
+	kept := make([]Hit, 0, len(cands))
+	batch := map[contentref.ContentKey]bool{}
+	for _, c := range cands {
+		if ref, ok := f.keeps(c.Ref); ok && !batch[ref.Key()] {
+			batch[ref.Key()] = true
+			kept = append(kept, Hit{ContentRef: ref, Score: float32(c.Score)})
+		}
+	}
+	if f.admit != nil && len(kept) > 0 {
+		refs := make([]contentref.ContentRef, len(kept))
+		for i, h := range kept {
+			refs[i] = h.ContentRef
+		}
+		admitted, err := f.admit(ctx, refs)
+		if err != nil {
+			return err
+		}
+		kept = slices.DeleteFunc(kept, func(h Hit) bool { return !admitted[h.Key()] })
+	}
+	for _, h := range kept {
+		if f.full() {
+			break
+		}
+		f.exclude[h.Key()] = struct{}{}
+		f.out = append(f.out, h)
+	}
+	return nil
+}
+
+// keeps is the policy on one candidate, as its work.
+func (f *filter) keeps(ref contentref.ContentRef) (contentref.ContentRef, bool) {
+	if ref.TenantID != f.tenant || ref.Validate() != nil {
+		return ref, false
+	}
+	ref = ref.Content()
+	if f.kinds != nil {
+		if _, ok := f.kinds[ref.ContentKind]; !ok {
+			return ref, false
+		}
+	}
+	if _, ok := f.exclude[ref.Key()]; ok {
+		return ref, false
+	}
+	_, seen := f.seen[ref.ContentKind][ref.ContentID]
+	return ref, !seen
+}
+
+// trimAll trims, drops empties and deduplicates.
+func trimAll(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}

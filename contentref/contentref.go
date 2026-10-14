@@ -1,6 +1,6 @@
 // Package contentref defines the reference vocabulary every ContentKit package
-// and port shares: a tenant-scoped reference to host-owned content and the
-// identity of a generic taxonomy record.
+// and port shares: a tenant-scoped reference to content and the identity of a
+// group.
 package contentref
 
 import (
@@ -11,7 +11,8 @@ import (
 // ContentRef identifies host-owned content: the work (a gallery, a video, a
 // listing) or, when ContentVersionID is set, one selectable version of it. The
 // host owns the meaning of ContentKind and the ids; ContentKit stores them
-// opaquely. A language is never part of the reference.
+// opaquely, except that ContentID must be a canonical UUIDv7 (ValidateID). A
+// language is never part of the reference.
 type ContentRef struct {
 	TenantID         string  `json:"tenant_id"`
 	ContentKind      string  `json:"content_kind"`
@@ -19,9 +20,16 @@ type ContentRef struct {
 	ContentVersionID *string `json:"content_version_id,omitempty"`
 }
 
-// New returns a reference to the work itself.
+// New returns a reference to the work itself. Every ContentKit entry point
+// validates it; Parse validates it at construction.
 func New(tenantID, contentKind, contentID string) ContentRef {
 	return ContentRef{TenantID: tenantID, ContentKind: contentKind, ContentID: contentID}
+}
+
+// Parse returns a validated reference to the work.
+func Parse(tenantID, contentKind, contentID string) (ContentRef, error) {
+	r := New(tenantID, contentKind, contentID)
+	return r, r.Validate()
 }
 
 // NewVersion returns a reference to one version of the work.
@@ -61,10 +69,14 @@ func (r ContentRef) Key() ContentKey {
 // Equal reports whether both references name the same content and version.
 func (r ContentRef) Equal(o ContentRef) bool { return r.Key() == o.Key() }
 
-// Validate requires a tenant, kind and id; a set version must be non-empty.
+// Validate requires a tenant, kind and a UUIDv7 id (ErrInvalidID); a set
+// version must be non-empty.
 func (r ContentRef) Validate() error {
-	if strings.TrimSpace(r.TenantID) == "" || strings.TrimSpace(r.ContentKind) == "" || strings.TrimSpace(r.ContentID) == "" {
-		return fmt.Errorf("contentref: TenantID, ContentKind and ContentID are required")
+	if strings.TrimSpace(r.TenantID) == "" || strings.TrimSpace(r.ContentKind) == "" {
+		return fmt.Errorf("contentref: TenantID and ContentKind are required")
+	}
+	if err := ValidateID(r.ContentID); err != nil {
+		return err
 	}
 	if r.ContentVersionID != nil && strings.TrimSpace(*r.ContentVersionID) == "" {
 		return fmt.Errorf("contentref: ContentVersionID must be nil or non-empty")
@@ -81,7 +93,7 @@ func (r ContentRef) String() string {
 }
 
 // ContentKey is the comparable form of a ContentRef; ContentVersionID is ""
-// for the work. Storage keys use the same encoding.
+// for the work, which storage keys hold as NULL (internal/versionid).
 type ContentKey struct {
 	TenantID         string
 	ContentKind      string
@@ -94,8 +106,7 @@ func (k ContentKey) Ref() ContentRef {
 	return New(k.TenantID, k.ContentKind, k.ContentID).WithVersion(k.ContentVersionID)
 }
 
-// TaxonomyID identifies a generic ContentKit catalog record (tag, artist,
-// series, creator, character, voice actor). Until the taxonomy module lands,
-// taxonomy records are indexed and referenced through ContentRef with the
-// taxonomy kind as ContentKind and the TaxonomyID as ContentID.
-type TaxonomyID string
+// GroupID identifies a group (tag, artist, series, character, channel, rail).
+// A group's search document and code use the group kind as ContentKind and
+// the GroupID as ContentID.
+type GroupID string

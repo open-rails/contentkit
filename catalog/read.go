@@ -1,0 +1,620 @@
+package catalog
+
+import (
+	"context"
+	"encoding/json"
+	"slices"
+	"time"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/offers"
+)
+
+// Contents reads content items as v sees them (spec §4): an item the viewer
+// may not see, or that does not exist, is nil. Text is in the viewer's
+// language, else the site's first language, else the first it has; an item
+// whose edit awaits review shows its last approved text to everyone but its
+// editors. Editors also get every language's text, every version and the
+// moderation state.
+func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Content, error) {
+	out := make([]*Content, len(ids))
+	views, err := v.decide(ctx, ids, true)
+	if err != nil {
+		return nil, err
+	}
+	var visible []string
+	for _, id := range ids {
+		if iv := views[id]; iv != nil && iv.visible && !slices.Contains(visible, id) {
+			visible = append(visible, id)
+		}
+	}
+	if len(visible) == 0 {
+		return out, nil
+	}
+	items, err := s.readItems(ctx, visible)
+	if err != nil {
+		return nil, err
+	}
+	texts, err := s.readTexts(ctx, s.pool, visible)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := s.readVersions(ctx, visible)
+	if err != nil {
+		return nil, err
+	}
+	creators, err := s.readCreators(ctx, visible)
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.links(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	var groupIDs []string
+	for _, id := range visible {
+		for _, r := range views[id].versions {
+			for _, g := range r.groupIDs {
+				if !slices.Contains(groupIDs, g) {
+					groupIDs = append(groupIDs, g)
+				}
+			}
+		}
+	}
+	built := map[string]*Content{}
+	bodies := map[string]string{} // content -> the version whose body images it shows
+	for _, id := range visible {
+		iv, it := views[id], items[id]
+		if it == nil {
+			continue
+		}
+		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
+			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
+			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
+			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
+		c.Live = slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
+		shown := texts[id]
+		if !iv.editor && it.moderation != "approved" && it.snapshot != nil {
+			shown = it.snapshot
+		}
+		lang := s.pickLanguage(v.language, shown)
+		t := shown[lang]
+		c.Language, c.Title, c.Slug = lang, t.Title, t.Slug
+		if c.Decision = bundle(iv); c.Decision.Allowed {
+			c.Body = t.Body
+		}
+		show := func(p string) bool { return s.shows(it.kind, c.Decision, p) }
+		if show(kinds.ShowDescription) {
+			c.Description = t.Description
+		}
+		if show(kinds.ShowAttributes) {
+			c.Attributes = it.attributes
+		}
+		if show(kinds.ShowViews) {
+			c.Views = &it.views
+		}
+		if iv.editor {
+			c.Text = texts[id]
+			if it.moderation != "approved" {
+				c.Moderation, c.ModerationReason = it.moderation, it.moderationReason
+			}
+			c.EverSold = it.everSold
+		}
+		if l, ok := links[id]; ok {
+			c.Code = string(l.Code)
+			if route := s.cfg.Kinds[it.kind].Route; route != "" {
+				page := contenturl.Prefix(s.cfg.Languages, v.language)
+				c.Path = contenturl.Path(s.cfg.Languages, page, route, l.Code, l.SlugFor(page))
+			}
+		}
+		for _, r := range iv.versions {
+			ver, ok := versions[r.versionID]
+			if !ok {
+				continue
+			}
+			out := *ver
+			out.Live = v.live(r) && !r.deleted && !r.contentDeleted
+			out.Decision = iv.decisions[r.versionID]
+			if vt, ok := ver.Text[lang]; ok {
+				out.Title, out.Description = vt.Title, vt.Description
+			}
+			if !iv.editor {
+				out.Text, out.State, out.Access = nil, "", nil
+			}
+			out.Segments = released(out.Segments, v.now)
+			s.lockVersion(it.kind, &out)
+			c.Versions = append(c.Versions, out)
+		}
+		if b := bodyVersion(c, iv.editor, v.language); b != nil {
+			bodies[id] = b.ID
+		}
+		built[id] = c
+	}
+	if err := s.fillCovers(ctx, built, v.language); err != nil {
+		return nil, err
+	}
+	names, err := s.groupSummaries(ctx, groupIDs, v.language)
+	if err != nil {
+		return nil, err
+	}
+	for id, c := range built {
+		// Body images are the opened version's private files, signed for its openers.
+		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
+			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind, id).WithVersion(bodies[id]), v.actor, names)
+			if err != nil {
+				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
+			}
+			for name, u := range urls {
+				c.images()[name] = u
+			}
+		}
+		c.Body = resolveBody(c.Body, c.Images)
+		var gs []string
+		for _, r := range views[id].versions {
+			for _, g := range r.groupIDs {
+				if !slices.Contains(gs, g) {
+					gs = append(gs, g)
+				}
+			}
+		}
+		for _, g := range gs {
+			if n, ok := names[g]; ok && s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
+				c.Groups = append(c.Groups, n)
+			}
+		}
+		slices.SortFunc(c.Groups, func(a, b GroupSummary) int {
+			if a.Kind != b.Kind {
+				return compare(a.Kind, b.Kind)
+			}
+			return compare(a.Slug, b.Slug)
+		})
+	}
+	if err := s.fillOffers(ctx, v, built); err != nil {
+		return nil, err
+	}
+	if err := s.fillOwners(ctx, v.language, built); err != nil {
+		return nil, err
+	}
+	for i, id := range ids {
+		out[i] = built[id]
+	}
+	return out, nil
+}
+
+// fillOwners attaches the items' owner groups' cards, avatars and covers
+// resolved, in one call.
+func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content) error {
+	if s.groups == nil {
+		return nil
+	}
+	var ids []groups.GroupID
+	for _, c := range built {
+		if c.OwnerGroupID != "" && !slices.Contains(ids, groups.GroupID(c.OwnerGroupID)) {
+			ids = append(ids, groups.GroupID(c.OwnerGroupID))
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	cards, err := s.groups.Cards(ctx, ids, groups.CardOptions{Language: language, Covers: true})
+	if err != nil {
+		return err
+	}
+	for _, c := range built {
+		for i := range cards {
+			if string(cards[i].ID) == c.OwnerGroupID {
+				c.Owner = &cards[i]
+			}
+		}
+	}
+	return nil
+}
+
+// fillOffers attaches every paywall's purchasable offers in one read and, on
+// the items the viewer edits, their and their versions' current offers for
+// offer editors in one more. A failed editor check leaves those out.
+func (s *Store) fillOffers(ctx context.Context, v *Viewer, built map[string]*Content) error {
+	if s.offers == nil {
+		return nil
+	}
+	var walls []*Decision
+	var keys []string
+	var targets []offers.Target
+	var put []**offers.Offer
+	for _, c := range built {
+		walls = append(walls, &c.Decision)
+		if c.Editor {
+			targets, put = append(targets, offers.Target{Kind: offers.ContentTarget, ID: c.ID}), append(put, &c.Offer)
+		}
+		for i := range c.Versions {
+			ver := &c.Versions[i]
+			walls = append(walls, &ver.Decision)
+			if c.Editor {
+				targets, put = append(targets, offers.Target{Kind: offers.VersionTarget, ID: ver.ID, Content: c.ID}), append(put, &ver.Offer)
+			}
+		}
+	}
+	for _, d := range walls {
+		keys = append(keys, d.Sell...)
+	}
+	if len(keys) > 0 {
+		sales, err := s.offers.Sales(ctx, keys)
+		if err != nil {
+			return err
+		}
+		for _, d := range walls {
+			for _, k := range d.Sell {
+				if sale, ok := sales[k]; ok {
+					d.Offers = append(d.Offers, sale)
+				}
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	current, err := s.offers.Current(ctx, s.guard.Auth, v.actor, targets)
+	if err != nil {
+		s.log.WarnContext(ctx, "catalog: offer editor check failed; reading without offers", "err", err)
+		return nil
+	}
+	for i, o := range current {
+		*put[i] = o
+	}
+	return nil
+}
+
+// shows reports whether a viewer decided d sees property p of content of
+// kind: all of what they open, of the rest what the kind's locked view shows.
+func (s *Store) shows(kind string, d Decision, p string) bool {
+	return d.Allowed || s.cfg.Kinds[kind].LockedView().Shows(p)
+}
+
+// lockVersion withholds from a version its viewer does not open what its
+// kind's locked view hides.
+func (s *Store) lockVersion(kind string, v *Version) {
+	if !s.shows(kind, v.Decision, kinds.ShowCover) {
+		v.Cover = nil
+	}
+	if !s.shows(kind, v.Decision, kinds.ShowDescription) {
+		v.Description = ""
+	}
+	if !s.shows(kind, v.Decision, kinds.ShowAttributes) {
+		v.Attributes = map[string]any{}
+	}
+	if !s.shows(kind, v.Decision, kinds.ShowLength) {
+		v.Pages, v.DurationMS, v.Segments = nil, nil, []Segment{}
+	}
+}
+
+// bodyVersion is the version whose body images c's body shows: of the
+// versions its viewer opens (all for an editor), the one language opens by
+// default; nil without a body or such a version.
+func bodyVersion(c *Content, editor bool, language string) *Version {
+	if c.Body == "" {
+		return nil
+	}
+	var open []Version
+	for _, v := range c.Versions {
+		if editor || v.Decision.Allowed {
+			open = append(open, v)
+		}
+	}
+	return DefaultVersion(open, language)
+}
+
+// fillCovers resolves every version's cover in one call; a content's is its
+// default edition's in language.
+func (s *Store) fillCovers(ctx context.Context, built map[string]*Content, language string) error {
+	var asked []versions.CoverOf
+	var at []*Version
+	for id, c := range built {
+		for i := range c.Versions {
+			if v := &c.Versions[i]; v.Cover != nil {
+				asked, at = append(asked, versions.CoverOf{Kind: c.Kind, ID: id, Version: v.ID}), append(at, v)
+			}
+		}
+	}
+	if len(asked) > 0 && s.media != nil {
+		got, err := s.media.Versions.Covers(ctx, asked)
+		if err != nil {
+			return err
+		}
+		for i, v := range at {
+			v.Cover.Renditions, v.Cover.URL = got[i], coverURL(got[i])
+			if len(got[i]) == 0 && v.Cover.Image == "" {
+				v.Cover = nil
+			}
+		}
+	}
+	for _, c := range built {
+		if d := DefaultVersion(c.Versions, language); d != nil && d.Cover != nil {
+			cover := *d.Cover
+			c.Cover = &cover
+		}
+	}
+	return nil
+}
+
+// bundle is the viewer's access to an item's body: allowed when they edit it
+// or open any of its versions, else its first version's paywall.
+func bundle(iv *itemView) Decision {
+	if iv.editor {
+		return Decision{Allowed: true}
+	}
+	for _, r := range iv.versions {
+		if iv.decisions[r.versionID].Allowed {
+			return Decision{Allowed: true}
+		}
+	}
+	if len(iv.versions) == 0 {
+		return Decision{}
+	}
+	return iv.decisions[iv.versions[0].versionID]
+}
+
+func compare(a, b string) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+func (c *Content) images() map[string]string {
+	if c.Images == nil {
+		c.Images = map[string]string{}
+	}
+	return c.Images
+}
+
+// released marks each segment released while it and every earlier one are
+// past their release time.
+func released(ss []Segment, now time.Time) []Segment {
+	out := make([]Segment, len(ss))
+	open := true
+	for i, sg := range ss {
+		open = open && (sg.ReleaseAt == nil || !sg.ReleaseAt.After(now))
+		sg.Released = open
+		out[i] = sg
+	}
+	return out
+}
+
+func (s *Store) pickLanguage(want string, texts map[string]Text) string {
+	if _, ok := texts[want]; ok && want != "" {
+		return want
+	}
+	for _, l := range s.cfg.Languages {
+		if _, ok := texts[l]; ok {
+			return l
+		}
+	}
+	if want != "" {
+		return want
+	}
+	return s.defaultLanguage()
+}
+
+type itemRow struct {
+	kind, state, listing, ownerGroup  string
+	comments                          string
+	moderation, moderationReason      string
+	access                            access.Rule
+	restrictions                      []string
+	attributes                        map[string]any
+	snapshot                          map[string]Text
+	everSold                          bool
+	publishAt, publishedAt, deletedAt *time.Time
+	createdAt, updatedAt              time.Time
+	revision, views                   int64
+}
+
+func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, c.listing, coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
+ c.access, c.restrictions, c.attributes, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
+ c.revision, c.comments, c.view_baseline + coalesce((SELECT max((f.popularity->>'views')::bigint) FROM `+s.t.facets+` f
+  WHERE f.tenant_id = c.tenant_id AND f.content_id = c.id), 0)
+ FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]*itemRow{}
+	for rows.Next() {
+		var id string
+		var r itemRow
+		var access, attrs, snapshot []byte
+		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
+			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments,
+			&r.views); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(access, &r.access); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(attrs, &r.attributes); err != nil {
+			return nil, err
+		}
+		if snapshot != nil {
+			if err := json.Unmarshal(snapshot, &r.snapshot); err != nil {
+				return nil, err
+			}
+		}
+		out[id] = &r
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) readTexts(ctx context.Context, q Querier, ids []string) (map[string]map[string]Text, error) {
+	rows, err := q.Query(ctx, `SELECT content_id, language, title, slug, description, body, sort_key, aliases FROM `+s.t.text+`
+ WHERE tenant_id = $1 AND content_id = ANY($2)`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]Text{}
+	for rows.Next() {
+		var id, l string
+		var t Text
+		if err := rows.Scan(&id, &l, &t.Title, &t.Slug, &t.Description, &t.Body, &t.SortKey, &t.Aliases); err != nil {
+			return nil, err
+		}
+		if len(t.Aliases) == 0 {
+			t.Aliases = nil
+		}
+		if out[id] == nil {
+			out[id] = map[string]Text{}
+		}
+		out[id][l] = t
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Creator, error) {
+	rows, err := s.pool.Query(ctx, `SELECT content_id, user_id, role, position FROM `+s.t.creators+`
+ WHERE tenant_id = $1 AND content_id = ANY($2) ORDER BY content_id, position, user_id`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]Creator{}
+	for rows.Next() {
+		var id string
+		var c Creator
+		if err := rows.Scan(&id, &c.UserID, &c.Role, &c.Position); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], c)
+	}
+	return out, rows.Err()
+}
+
+// readVersions reads every version of the items with its text and segments.
+func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Version, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
+ pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', '') FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2)`,
+		s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]*Version{}
+	var vids []string
+	for rows.Next() {
+		v := &Version{Segments: []Segment{}, Cover: &Cover{}}
+		var access, attrs []byte
+		if err := rows.Scan(&v.ID, &v.Code, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
+			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if access != nil {
+			if err := json.Unmarshal(access, &v.Access); err != nil {
+				rows.Close()
+				return nil, err
+			}
+		}
+		if err := json.Unmarshal(attrs, &v.Attributes); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[v.ID] = v
+		vids = append(vids, v.ID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = s.pool.Query(ctx, `SELECT version_id, language, title, description FROM `+s.t.versionText+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.tenant, vids)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var vid, l string
+		var t VersionText
+		if err := rows.Scan(&vid, &l, &t.Title, &t.Description); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		v := out[vid]
+		if v.Text == nil {
+			v.Text = map[string]VersionText{}
+		}
+		v.Text[l] = t
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, start_index, end_index, release_at FROM `+s.t.segments+`
+ WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, position`, s.tenant, vids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var vid string
+		var sg Segment
+		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt); err != nil {
+			return nil, err
+		}
+		out[vid].Segments = append(out[vid].Segments, sg)
+	}
+	return out, rows.Err()
+}
+
+// links are the items' content codes and slugs.
+func (s *Store) links(ctx context.Context, items map[string]*itemRow) (map[string]contenturl.Link, error) {
+	var kinds, ids []string
+	for id, it := range items {
+		kinds, ids = append(kinds, it.kind), append(ids, id)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT c.content_id, c.code, c.slug, c.slugs FROM `+s.qs+`.content_codes c
+ JOIN unnest($2::text[], $3::text[]) AS r(kind, id) ON c.content_kind = r.kind AND c.content_id = r.id WHERE c.tenant_id = $1`, s.tenant, kinds, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]contenturl.Link{}
+	for rows.Next() {
+		var id, code string
+		var l contenturl.Link
+		var slugs []byte
+		if err := rows.Scan(&id, &code, &l.Slug, &slugs); err != nil {
+			return nil, err
+		}
+		l.Code = contenturl.Code(code)
+		if err := json.Unmarshal(slugs, &l.Slugs); err != nil {
+			return nil, err
+		}
+		out[id] = l
+	}
+	return out, rows.Err()
+}
+
+// groupSummaries names the active groups among ids in language, with their
+// pages' paths, as group cards do.
+func (s *Store) groupSummaries(ctx context.Context, ids []string, language string) (map[string]GroupSummary, error) {
+	out := map[string]GroupSummary{}
+	if len(ids) == 0 || s.groups == nil {
+		return out, nil
+	}
+	gids := make([]groups.GroupID, len(ids))
+	for i, id := range ids {
+		gids[i] = groups.GroupID(id)
+	}
+	cards, err := s.groups.Cards(ctx, gids, groups.CardOptions{Language: language})
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range cards {
+		out[string(g.ID)] = GroupSummary{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, Name: g.Name, Code: g.Code, Path: g.Path}
+	}
+	return out, nil
+}

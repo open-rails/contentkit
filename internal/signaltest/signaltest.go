@@ -75,14 +75,14 @@ func (e Env) Drop(t testing.TB, conn driver.Conn, database string) {
 // a time).
 func (e Env) Migrations(t testing.TB) [][]string {
 	t.Helper()
-	names, err := fs.Glob(migrations.SignalClickHouse, "*.up.sql")
+	names, err := fs.Glob(migrations.ClickHouse, "*.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(names)
 	out := make([][]string, 0, len(names))
 	for _, name := range names {
-		b, err := fs.ReadFile(migrations.SignalClickHouse, name)
+		b, err := fs.ReadFile(migrations.ClickHouse, name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,13 +95,7 @@ func (e Env) Migrations(t testing.TB) [][]string {
 // Apply runs every migration statement against conn (default database set).
 func (e Env) Apply(t testing.TB, conn driver.Conn) {
 	t.Helper()
-	e.ApplyRange(t, conn, 0, len(e.Migrations(t)))
-}
-
-// ApplyRange runs migrations [from, to) (zero-based, lineage order).
-func (e Env) ApplyRange(t testing.TB, conn driver.Conn, from, to int) {
-	t.Helper()
-	for _, stmts := range e.Migrations(t)[from:to] {
+	for _, stmts := range e.Migrations(t) {
 		for _, stmt := range stmts {
 			if err := conn.Exec(context.Background(), stmt); err != nil {
 				t.Fatalf("apply migration statement: %v\n%s", err, stmt)

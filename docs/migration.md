@@ -1,171 +1,70 @@
-# Migrations
+# Database initialization
 
-ContentKit owns five migratekit lineages. Every file is immutable once
-applied; `migratekit relink --check` verifies the parent links.
+Each store has one baseline of the final schema (#117, pre-launch hard cut):
 
-| Lineage | Embedded FS | Store | Ledger app id |
+| Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| Social (interactions) | `migrations.Social` | host Postgres schema | `socialkit` (`content.MigratekitApp`; the label existing installations carry) |
-| Keyword profile | `migrations.Postgres` | keyword Postgres schema | new installations: `contentkit`; existing keyword installations keep theirs |
-| Legacy combined | `migrations.LegacyPostgres` | keyword Postgres schema | existing installations only, under the ledger they already have (`searchkit`) |
-| Taxonomy | `migrations.Taxonomy` | keyword Postgres schema, after the keyword profile | `contentkit_taxonomy` (see [taxonomy-migration.md](taxonomy-migration.md)) |
-| Signal plane | `migrations.SignalClickHouse` | dedicated ClickHouse database | existing: `searchkit_signal`; new: `contentkit_signal` |
+| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, groups, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
+| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
-`contentkit.Migrate` applies the social, keyword, optional taxonomy and signal lineages from one call (social into `Schema`,
-keyword into `SearchSchema`, signal into `ClickHouse` when configured); the
-per-lineage entry points remain `content.Migrate` and migratekit directly.
-Set `Taxonomy: true` to apply `migrations.Taxonomy` in the resolved
-`SearchSchema` after the keyword profile and before ClickHouse. Omit it when
-the host does not use the catalog. See [taxonomy-migration.md](taxonomy-migration.md).
-Never switch a populated ledger between lineages and never use the legacy
-lineage for a new installation. Both search lineages end on the same schema
-(the `keyword`/`legacy` profile test proves the fingerprints equal).
+There is no upgrade path from installs of an older chain: start from empty
+stores and import their data (`POST /v1/import`). A version id is NULL for the
+work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
 
-## Social 0003: content references
+## ContentKit's own schema
 
-`social_reactions`, `social_comments`, `social_favorites` and
-`social_entity_counts` are keyed by `(tenant_id, content_kind, content_id,
-content_version_id)` (`'' version` = the work); `social_poll_questions` and
-`social_posts` gain `tenant_id`; comment threading is `reply_to_id`. Table
-names stay `social_*` and no row moves: `entity_type`/`entity_id` are renamed
-in place, ids keep their stored values (a Doujins gallery reaction stays
-`42:en` until the preference cutover collapses it).
+`contentkit.New` applies the PostgreSQL baseline to `Config.Database.Schema`
+(default `contentkit`), River's migrations to `Database.RiverSchema` and the
+media worker's queue, and, with `Config.ClickHouse.Addr`, the ClickHouse
+baseline to `ClickHouse.Database`. The schema is ContentKit's alone: it may
+share the host's database, never the host's schema. Create the ClickHouse
+database with `signal.CreateDatabase` first.
 
-Rows that existed before the migration carry `tenant_id = ''` and are served
-to nobody. A host schema is single-tenant, so adoption is one statement per
-table, run once right after the migrate step:
+New is idempotent through MigrateKit's ledger, and replicas booting together take turns on its lock. PostgreSQL uses
+app identity `contentkit`; ClickHouse defaults to `contentkit_signal`. The
+ClickHouse ledger also binds the explicit `Database`, so two databases may
+share the same app identity and PostgreSQL tracker. Each PostgreSQL tracker
+represents one logical ClickHouse deployment.
+MigrateKit owns tracking and locks in PostgreSQL `public.migrations`; this is
+migration metadata, separate from ContentKit's application tables.
 
-```go
-n, err := content.AssignTenant(ctx, pool, "doujins", "doujins") // rows stamped
-```
+PostgreSQL commits its migrations before ClickHouse begins. There
+is no cross-store transaction, and ClickHouse DDL can partially succeed.
+MigrateKit records the exact filename and source digest before starting the
+ClickHouse migration; rerunning the identical baseline retries its idempotent
+DDL. A changed source or an old unbound ClickHouse ledger is rejected. A
+failed ClickHouse step does not roll back PostgreSQL migrations.
 
-(`UPDATE <schema>.social_* SET tenant_id = 'doujins' WHERE tenant_id = ''`,
-idempotent.) `content.New` refuses a schema the lineage was not applied to.
+## Extensions and runtime privileges
 
-## Keyword profile 0003 / legacy 0004: content references
+The PostgreSQL baseline requires `pg_trgm` and PGroonga, installed explicitly
+in `public` so several host schemas can share them. Provision extensions with
+an administrative role if the migration role cannot install them. No vector
+extension is required. Migrations use the selected schema followed by `public`
+in the transaction's search path; function and index dependencies resolve to
+the shared extensions.
 
-Tables become `content_search_documents`, `content_search_dirty` and
-`content_search_backfill`, keyed by `(tenant_id, content_kind, content_id,
-content_version_id, language)` (`content_version_id = ''` is the work). The
-FTS/trigram projections (`document`, `tsv`) and the raw CJK index are dropped;
-the keyword functions are renamed `contentkit_*`.
+Hosts own database roles and grants. Give the runtime role `USAGE` on its
+schema, required table privileges and sequence usage; keep DDL privileges on
+the migration role. ContentKit does not create application roles or grant
+access to another application's schema. Migration SQL contains the complete
+indexes, checks, internal foreign keys and triggers. The runtime role also needs
+EXECUTE on `contentkit_content_code()` (PUBLIC by default).
 
-Rows that existed before the migration keep `tenant_id = ''`. They are
-unreachable by any tenant and never served. Adoption steps per host:
+## Host relationships
 
-1. Apply the migration in the host's migrate step (DDL credentials).
-2. Run the worker backfill for the host's tenant and kinds; every document is
-   rebuilt from host content through `BuildKeywordDocuments`.
-3. After the backfill reports `done`, remove the converted rows:
+ContentKit enforces its internal foreign keys. Host-owned content and actor
+IDs are opaque because host table names, identifier types and deletion
+lifecycles vary. A host can add its own PostgreSQL foreign keys, including
+cross-schema foreign keys, when those lifecycles align. Include tenant keys
+where the host and ContentKit keys are tenant-scoped. ClickHouse references
+are not PostgreSQL foreign keys and have no cross-store FK enforcement.
 
-```sql
-DELETE FROM content_search_documents WHERE tenant_id = '';
-DELETE FROM content_search_dirty     WHERE tenant_id = '';
-DELETE FROM content_search_backfill  WHERE tenant_id = '';
-```
+## Retained state
 
-Hosts write the queue through `search.MarkDirty` (or the same SQL) with the
-tenant, kind, id, optional version and language of every changed document.
-
-## Social 0004: preference snapshots
-
-`content_preference_snapshots` (tenant, actor, canonical reference, axis,
-value, revision, occurred_at, delivered_revision), one sequence
-`content_preference_revision_seq` and the cutover archive
-`content_preference_key_archive`. Nothing is written until the host sets
-`content.Options.Canonicalizer`. Export state and the sequence are user state
-in backup/recovery: a content-only restore must not rewind them, and a full
-recovery re-runs `SeedPreferenceRevisionFloor` against the retained sink
-before writers resume ([HOST_INTEGRATION.md](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane)).
-
-## Social 0005: moderation state and free-text polls
-
-`social_comments` and `social_posts` gain `moderation` (`approved` default,
-`held`, `rejected`), `moderation_reason`, `moderation_verdict` (jsonb:
-model, prompt_version, confidence, or the moderator error that forced a
-hold), `moderated_by` and `moderated_at`, plus a partial index on held rows
-for the review queue. Existing rows are `approved`. `social_poll_questions`
-gains `kind` (`multiple_choice` default, `free_text`) and `closes_at`;
-`social_poll_answers(tenant_id, question_id, actor_id, text, group_id,
-classified_at, created_at, updated_at)` holds one free-text answer per actor.
-Nothing behaves differently until a host sets `content.Options.Moderator` or
-`Classifier`.
-
-## Legacy 0005 drops the embedding tables — export first
-
-`embedding_models`, `embedding_tasks`, `embedding_vectors`,
-`embedding_vectors_backfill_state` and `embedding_dead_letters` leave the host
-schema. They are rebuildable and User Intelligence owns its own index, but
-the design requires an export, a checksum and a restore qualification before
-any rebuildable table is dropped. Before applying legacy 0005:
-
-```sh
-# 1. Export (schema name as installed, e.g. doujins).
-pg_dump "$DSN" --data-only --format=custom \
-  -t doujins.embedding_models -t doujins.embedding_tasks -t doujins.embedding_vectors \
-  -t doujins.embedding_vectors_backfill_state -t doujins.embedding_dead_letters \
-  > embeddings-$(date -u +%Y%m%dT%H%M%SZ).dump
-sha256sum embeddings-*.dump > embeddings.sha256
-
-# 2. Checksum the live rows (record the output with the export).
-psql "$DSN" -Atc "
-  SELECT 'models', count(*), md5(string_agg(model||':'||dims, ',' ORDER BY model)) FROM doujins.embedding_models
-  UNION ALL SELECT 'vectors', count(*), md5(string_agg(entity_type||'/'||entity_id||'/'||model||'/'||language||':'||md5(embedding::text), ',' ORDER BY entity_type, entity_id, model, language)) FROM doujins.embedding_vectors
-  UNION ALL SELECT 'tasks', count(*), md5(string_agg(entity_type||'/'||entity_id||'/'||model||'/'||language, ',' ORDER BY 1)) FROM doujins.embedding_tasks"
-
-# 3. Qualify the restore: load the dump into a scratch database with the same
-#    schema and rerun the checksum query; the counts and digests must match.
-createdb embeddings_qualify && pg_restore -d embeddings_qualify embeddings-*.dump
-```
-
-Only after step 3 matches, apply 0005 (legacy 0004 alone lets ContentKit run on the converted keyword tables; migratekit applies both when both are pending, so export before the migrate step that carries 0005). The `vector` extension itself is
-left installed (dropping it needs superuser and is not ContentKit's to decide).
-
-## Signal plane 0005: content references
-
-ClickHouse cannot rename sorting-key columns, so 0005 creates `signals`,
-`subject_content_state`, `subject_content_daily` and `content_pairs` and
-copies `events`, `subject_state`, `subject_daily` and `item_pairs` into them
-(`content_version_id = ''`); `exposures` converts in place. Every statement is
-idempotent. No repair is required afterwards; `RepairProjections{Rebuild:
-true}` and `RefreshCoEngagement` are still recommended once per tenant.
-Gate startup on `signal.CheckSchema` as before.
-
-The pre-ContentKit tables stay (they are neither read nor written; erasure
-still clears them). Before a later migration drops them, checksum old against
-new:
-
-```sql
-SELECT count(), sum(cityHash64(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at))
-FROM events FINAL;
-SELECT count(), sum(cityHash64(tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, revision, occurred_at))
-FROM signals FINAL WHERE content_version_id = '';
-```
-
-The two rows must agree (version rows only exist for signals recorded after
-the cut). Record the result; the follow-up drop migration is
-`DROP TABLE IF EXISTS events|subject_state|subject_daily|item_pairs {{ON_CLUSTER}} SYNC`
-plus the legacy `signal_events` and `search_impressions` tables, which
-predate the canonical schema and are covered by the same checksum discipline.
-
-## Restore
-
-See [restore.md](restore.md) for snapshots taken before these migrations.
-
-## C4 private-content state (social 0005)
-
-C4 is an unreleased prelaunch hard cut. One complete 0005 adds moderation state,
-reason/provenance/reviewer fields, source moderation revisions, retained last
-approved comment body/post payload, poll kind/close time, `social_poll_answers`
-(with answer revision and accepted group id/label), and
-`content_private_subject_erasures(tenant_id, actor_id, erased_at)`. For a held/rejected replacement, NULL retained payload means there was no
-approved predecessor. Approved items store their content once in the existing
-body; only approval-to-hold captures a backup, and approval clears it. There is
-no duplicate publication flag and no full-copy backfill of existing content. Existing social
-migrations 0001–0004 are unchanged. Scratch databases from experimental C4 drafts
-must be rebuilt; those drafts were never a supported released lineage.
-
-The host deletion ledger owns retries and completion across source/provider
-cleanup. AuthKit ACK means durable local acceptance, not completed downstream
-erasure. Back up permanent source fences and retained publication state; replay
-post-backup deletions before reopening private writes after recovery.
+Back up authored content, moderation and retained-publication state,
+reactions, favorites and their revision sequence, source erasure fences,
+and the ClickHouse signal plane. Search documents and group counts are
+rebuildable. The baseline contains only current signal tables, including
+`subject_content_state.last_view_at`; it does not install retired signal
+formats or convert historical rows. See [restore.md](restore.md).

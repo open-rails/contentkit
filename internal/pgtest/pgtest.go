@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/helpers/notify/postgres"
 )
 
 // Pool connects to CONTENTKIT_TEST_URL or skips; mutate may adjust the config.
@@ -42,7 +45,7 @@ func Pool(t testing.TB, mutate func(*pgxpool.Config)) *pgxpool.Pool {
 // ledger rows included) for a test that applies a lineage itself.
 func EmptySchema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
-	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
+	schema := "ck_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	quoted := pgx.Identifier{schema}.Sanitize()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -81,14 +84,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public; CREATE EXTENSION IF NOT EX
 // concurrency-safe, so the first install is serialized.
 func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
-	return SchemaWith(t, ctx, pool)
-}
-
-// SchemaWith is Schema followed by the given lineages, applied in order after
-// the keyword profile (for example migrations.Taxonomy).
-func SchemaWith(t testing.TB, ctx context.Context, pool *pgxpool.Pool, lineages ...fs.FS) string {
-	t.Helper()
-	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
+	schema := "ck_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	quoted := pgx.Identifier{schema}.Sanitize()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -104,23 +100,63 @@ func SchemaWith(t testing.TB, ctx context.Context, pool *pgxpool.Pool, lineages 
 	if _, err := tx.Exec(ctx, "CREATE SCHEMA "+quoted+"; SET LOCAL search_path TO "+quoted+",public"); err != nil {
 		t.Fatal(err)
 	}
-	for _, lineage := range append([]fs.FS{migrations.Postgres}, lineages...) {
-		files, err := fs.ReadDir(lineage, ".")
+	files, err := fs.ReadDir(migrations.Postgres, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		sql, err := fs.ReadFile(migrations.Postgres, f.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, f := range files {
-			sql, err := fs.ReadFile(lineage, f.Name())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tx.Exec(ctx, string(sql)); err != nil {
-				t.Fatalf("%s: %v", f.Name(), err)
-			}
+		if _, err := tx.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("%s: %v", f.Name(), err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := postgres.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
 	return schema
+}
+
+// MediaWorkerRole creates a login with exactly the grants production gives
+// a host's media worker (doujins-gitops bind-roles: database CONNECT and
+// CREATE, USAGE and CREATE on its schema, DML on its tables and sequences,
+// USAGE on public and the host schemas) and returns its DSN. The role is
+// dropped on cleanup.
+func MediaWorkerRole(t testing.TB, ctx context.Context, admin *pgxpool.Pool, schema string, hostSchemas ...string) string {
+	t.Helper()
+	role := "ck_mw_" + fmt.Sprint(time.Now().UnixNano())
+	var db string
+	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&db); err != nil {
+		t.Fatal(err)
+	}
+	id := func(s string) string { return pgx.Identifier{s}.Sanitize() }
+	stmts := []string{
+		"CREATE ROLE " + id(role) + " LOGIN PASSWORD 'worker'",
+		"GRANT CONNECT, CREATE ON DATABASE " + id(db) + " TO " + id(role),
+		"GRANT USAGE, CREATE ON SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT USAGE ON SCHEMA public TO " + id(role),
+	}
+	for _, h := range hostSchemas {
+		stmts = append(stmts, "GRANT USAGE ON SCHEMA "+id(h)+" TO "+id(role))
+	}
+	for _, q := range stmts {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = admin.Exec(ctx, "DROP OWNED BY "+id(role))
+		_, _ = admin.Exec(ctx, "DROP ROLE "+id(role))
+	})
+	cfg := admin.Config().ConnConfig
+	return fmt.Sprintf("postgres://%s:worker@%s:%d/%s?sslmode=disable", role, cfg.Host, cfg.Port, db)
 }

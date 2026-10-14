@@ -17,7 +17,7 @@ type Exec interface {
 
 // CreateDatabase creates the dedicated signal database (ON CLUSTER when cluster
 // is set). The schema itself is owned by the versioned migrations in
-// migrations.SignalClickHouse, applied with migratekit chmigrate; migratekit
+// migrations.ClickHouse, applied with migratekit chmigrate; migratekit
 // connects to the database, so it must exist first.
 func CreateDatabase(ctx context.Context, conn Exec, database, cluster string) error {
 	if !identRe.MatchString(database) {
@@ -49,8 +49,7 @@ type tableSpec struct {
 var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"content_id", "String"}, {"content_version_id", "String"}}
 
 // expectedSchema is the schema this library version reads and writes. It must
-// match the latest migration in migrations/clickhouse/signal. Tables the
-// lineage keeps only for a later drop are not listed and never read.
+// match the applied lineage in migrations/clickhouse.
 var expectedSchema = map[string]tableSpec{
 	"signals": {
 		engine: "ReplacingMergeTree", version: "version",
@@ -69,10 +68,11 @@ var expectedSchema = map[string]tableSpec{
 		sortingKey: "tenant, subject_kind, subject, content_kind, content_id, content_version_id",
 		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}}, refColumnSpecs...),
 			columnSpec{"first_seen_at", "DateTime('UTC')"},
-			columnSpec{"last_signal_at", "DateTime('UTC')"}, columnSpec{"total_events", "UInt32"}, columnSpec{"views", "UInt32"},
+			columnSpec{"last_signal_at", "DateTime('UTC')"}, columnSpec{"last_view_at", "DateTime('UTC')"},
+			columnSpec{"total_events", "UInt32"}, columnSpec{"views", "UInt32"},
 			columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"max_progress", "UInt32"}, columnSpec{"progress_max", "UInt32"},
 			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"last_score", "Int16"}, columnSpec{"net_value", "Float64"},
-			columnSpec{"feedback", "UInt32"}, columnSpec{"version", "DateTime64(6, 'UTC')"},
+			columnSpec{"feedback", "UInt32"}, columnSpec{"version", "UInt256"},
 		),
 	},
 	"subject_content_daily": {
@@ -83,7 +83,7 @@ var expectedSchema = map[string]tableSpec{
 			columnSpec{"subject_kind", "LowCardinality(String)"}, columnSpec{"subject", "String"}, columnSpec{"day", "Date"}, columnSpec{"events", "UInt32"},
 			columnSpec{"views", "UInt32"}, columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"score_sum", "Int64"},
 			columnSpec{"value_sum", "Float64"}, columnSpec{"type_counts", "Map(LowCardinality(String), UInt32)"},
-			columnSpec{"version", "DateTime64(6, 'UTC')"},
+			columnSpec{"version", "UInt256"},
 		),
 	},
 	"erasures": {
@@ -126,7 +126,7 @@ type SchemaMismatchError struct {
 }
 
 func (e *SchemaMismatchError) Error() string {
-	return fmt.Sprintf("signal: database %q is incompatible with this contentkit version (apply migrations.SignalClickHouse): %s",
+	return fmt.Sprintf("signal: database %q is incompatible with this contentkit version (apply migrations.ClickHouse): %s",
 		e.Database, strings.Join(e.Problems, "; "))
 }
 

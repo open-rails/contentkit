@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // fakeModerator decides by keyword: "spam" rejects, "iffy" asks for review,
@@ -54,24 +56,24 @@ func (m *fakeModerator) last() ModerationInput {
 // reviewerOnly grants every perm to "reviewer" only.
 type reviewerOnly struct{}
 
-func (reviewerOnly) Can(_ context.Context, a Actor, _ string) (bool, error) {
+func (reviewerOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 	return a.ID == "reviewer", nil
 }
 
-const reviewPerm = "moderation:review"
+const reviewPerm = string(access.ModerationReview)
 
 func moderatedRuntime(t *testing.T, mod ContentModerator) *Runtime {
 	t.Helper()
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
-		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), Moderator: mod,
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
 	return rt
 }
 
-func listIDs(t *testing.T, rt *Runtime, actor Actor) []string {
+func listIDs(t *testing.T, rt *Runtime, actor access.Actor) []string {
 	t.Helper()
-	list, err := rt.comments.list(context.Background(), actor, "gallery", "1", "", 50, 0)
+	list, err := rt.comments.list(context.Background(), actor, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -103,22 +105,20 @@ func contains(ids []string, id string) bool {
 func TestModeration_WithoutModeratorPublishes(t *testing.T) {
 	rt := moderatedRuntime(t, nil)
 	ctx := context.Background()
-	author := Actor{ID: "author"}
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy spam or not, it publishes"})
-	if cm.Moderation != "" || countsOf(t, rt, ref("gallery", "1")).CommentCount != 1 {
+	author := access.Actor{ID: "author"}
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy spam or not, it publishes"})
+	if cm.Moderation != "" || countsOf(t, rt, ref("gallery", cid(1))).CommentCount != 1 {
 		t.Fatalf("without a moderator the comment must publish: %+v", cm)
 	}
-	if ids := listIDs(t, rt, Actor{ID: "other"}); !contains(ids, cm.ID) {
+	if ids := listIDs(t, rt, access.Actor{ID: "other"}); !contains(ids, cm.ID) {
 		t.Fatal("published comment missing from a reader's list")
 	}
 	if ids := heldIDs(t, rt, KindComment); len(ids) != 0 {
 		t.Fatalf("held queue = %v, want empty", ids)
 	}
-	rec := doJSON(t, rt.Handler(), Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("iffy"), Body: ptr("spam"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("post without a moderator: %d %s", rec.Code, rec.Body.String())
+	if sc, err := rt.Screen(ctx, ModerationInput{Actor: access.Actor{ID: "reviewer"}, Kind: "content", Title: "iffy", Text: "spam"}); err != nil || sc.State != ModerationApproved {
+		t.Fatalf("Screen without a moderator = %+v %v, want approved", sc, err)
 	}
-	_ = ctx
 }
 
 func TestModeration_CommentVerdicts(t *testing.T) {
@@ -126,11 +126,11 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
 	h := rt.Handler()
-	author, other, anon := Actor{ID: "author"}, Actor{ID: "other"}, Actor{Anonymous: true, IP: "9.9.9.9"}
-	g1 := ref("gallery", "1")
+	author, other, anon := access.Actor{ID: "author"}, access.Actor{ID: "other"}, access.Actor{Anonymous: true, IP: "9.9.9.9"}
+	g1 := ref("gallery", cid(1))
 
 	// approve
-	ok := mustComment(t, rt, author, "gallery", "1", createInput{Body: "<b>fine</b> text"})
+	ok := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "<b>fine</b> text"})
 	if ok.Moderation != "" || countsOf(t, rt, g1).CommentCount != 1 {
 		t.Fatalf("approved comment = %+v", ok)
 	}
@@ -140,12 +140,12 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	}
 
 	// reject: 422 with the reason, nothing stored
-	rec := doJSON(t, h, author, "POST", "/gallery/1/comments", createInput{Body: "buy spam here"})
+	rec := doJSON(t, h, author, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "buy spam here"})
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "spam is not allowed") {
 		t.Fatalf("reject = %d %s, want 422 with the reason", rec.Code, rec.Body.String())
 	}
 	var rej RejectedError
-	if _, err := rt.comments.create(ctx, author, "gallery", "1", createInput{Body: "spam"}); !errors.As(err, &rej) || rej.Reason != "spam is not allowed" {
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: "spam"}); !errors.As(err, &rej) || rej.Reason != "spam is not allowed" {
 		t.Fatalf("reject error = %v, want RejectedError", err)
 	}
 	if n := len(listIDs(t, rt, author)); n != 1 {
@@ -153,7 +153,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	}
 
 	// review: stored held, 202, author-only
-	rec = doJSON(t, h, author, "POST", "/gallery/1/comments", createInput{Body: "iffy remark"})
+	rec = doJSON(t, h, author, "POST", "/contents/"+cid(1)+"/comments", CommentInput{Body: "iffy remark"})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("review = %d %s, want 202", rec.Code, rec.Body.String())
 	}
@@ -167,17 +167,27 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	if contains(listIDs(t, rt, other), held.ID) || contains(listIDs(t, rt, anon), held.ID) {
 		t.Fatal("held comment visible to another reader")
 	}
-	mine, _ := rt.comments.list(ctx, author, "gallery", "1", "", 50, 0)
+	mine, _ := rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	i := indexOfComment(mine, held.ID)
 	if i < 0 || mine[i].Moderation != ModerationHeld || mine[i].ModerationReason != "needs a look" || mine[i].Body != "iffy remark" {
 		t.Fatalf("author's view of the held comment = %+v", mine)
 	}
-	if feed, _ := rt.comments.latest(ctx, author, 50, 0); len(feed) != 1 || feed[0].ID != held.ID {
+	// A held comment cannot be reacted to, and never credits its author.
+	if _, err := rt.comments.reactTx(ctx, other, ok.ID, 1); err != nil {
+		t.Fatalf("react to the published comment: %v", err)
+	}
+	if _, err := rt.comments.reactTx(ctx, other, held.ID, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reacted to a held comment: %v", err)
+	}
+	if m, _ := rt.CommentReactionsByAuthor(ctx, []string{"author"}); m["author"] != (AuthorReactions{Likes: 1}) {
+		t.Fatalf("author totals = %+v, want only the published comment's like", m)
+	}
+	if feed, _ := rt.comments.latest(ctx, author, "", 50, 0); len(feed) != 1 || feed[0].ID != held.ID {
 		if len(feed) != 1 {
 			t.Fatalf("feed = %v, want only the approved comment", commentFeedIDs(feed))
 		}
 	}
-	if _, err := rt.comments.create(ctx, other, "gallery", "1", createInput{Body: "reply", ReplyToID: held.ID}); err == nil {
+	if _, err := rt.comments.create(ctx, other, rt.Ref("gallery", cid(1)), CommentInput{Body: "reply", ReplyToID: held.ID}); err == nil {
 		t.Fatal("a reply to a held comment was accepted")
 	}
 	if _, err := rt.comments.reactTx(ctx, other, held.ID, 1); !errors.Is(err, ErrNotFound) {
@@ -205,7 +215,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	if !contains(listIDs(t, rt, other), held.ID) || countsOf(t, rt, g1).CommentCount != 2 {
 		t.Fatal("approved comment not published/counted")
 	}
-	mine, _ = rt.comments.list(ctx, author, "gallery", "1", "", 50, 0)
+	mine, _ = rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if i = indexOfComment(mine, held.ID); mine[i].Moderation != "" || mine[i].ModerationReason != "" {
 		t.Fatalf("approved comment still carries moderation state: %+v", mine[i])
 	}
@@ -217,14 +227,14 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	}
 
 	// resolve reject: final, author-visible with the reviewer's reason
-	rej2 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "another iffy one"})
+	rej2 := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "another iffy one"})
 	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Revision: 1, Decision: DecisionReject, Reviewer: "reviewer", Reason: "off topic"}); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
 	if contains(listIDs(t, rt, other), rej2.ID) || countsOf(t, rt, g1).CommentCount != 2 {
 		t.Fatal("rejected comment leaked or was counted")
 	}
-	mine, _ = rt.comments.list(ctx, author, "gallery", "1", "", 50, 0)
+	mine, _ = rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if i = indexOfComment(mine, rej2.ID); i < 0 || mine[i].Moderation != ModerationRejected || mine[i].ModerationReason != "off topic" {
 		t.Fatalf("author's view of the rejected comment = %+v", mine)
 	}
@@ -232,7 +242,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 		t.Fatalf("queue after reject = %v", ids)
 	}
 	// admin list shows everything with its state
-	adm, _ := rt.comments.adminList(ctx, "", 50, 0)
+	adm, _ := rt.comments.adminList(ctx, "", "", 50, 0)
 	states := map[string]string{}
 	for _, a := range adm {
 		states[a.ID] = a.Moderation
@@ -261,7 +271,7 @@ func TestModeration_ListHeldPages(t *testing.T) {
 	ctx := context.Background()
 	var want []string
 	for i := 0; i < 5; i++ {
-		want = append(want, mustComment(t, rt, Actor{ID: "a"}, "gallery", "1", createInput{Body: fmt.Sprintf("iffy %d", i)}).ID)
+		want = append(want, mustComment(t, rt, access.Actor{ID: "a"}, "gallery", cid(1), CommentInput{Body: fmt.Sprintf("iffy %d", i)}).ID)
 	}
 	var got []string
 	cursor := ""
@@ -293,13 +303,13 @@ func TestModeration_FailClosed(t *testing.T) {
 	mod := &fakeModerator{fail: true}
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
-	author, other := Actor{ID: "author"}, Actor{ID: "other"}
+	author, other := access.Actor{ID: "author"}, access.Actor{ID: "other"}
 
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "perfectly fine"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "perfectly fine"})
 	if cm.Moderation != ModerationHeld || cm.ModerationReason != heldReason {
 		t.Fatalf("moderator error must hold: %+v", cm)
 	}
-	if contains(listIDs(t, rt, other), cm.ID) || countsOf(t, rt, ref("gallery", "1")).CommentCount != 0 {
+	if contains(listIDs(t, rt, other), cm.ID) || countsOf(t, rt, ref("gallery", cid(1))).CommentCount != 0 {
 		t.Fatal("unscreened comment was published")
 	}
 	page, _ := rt.ListHeld(ctx, KindComment, "", 10)
@@ -315,26 +325,25 @@ func TestModeration_FailClosed(t *testing.T) {
 
 	// An unknown decision is not a publish either.
 	mod.fail, mod.odd = false, true
-	odd := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine too"})
+	odd := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "fine too"})
 	if odd.Moderation != ModerationHeld || odd.ModerationReason != heldReason {
 		t.Fatalf("unknown decision must hold: %+v", odd)
 	}
-	// Posts fail closed the same way.
+	// Another module's text fails closed the same way.
 	mod.odd, mod.fail = false, true
-	rec := doJSON(t, rt.Handler(), Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"moderation":"held"`) {
-		t.Fatalf("post under a failing moderator = %d %s, want 202 held", rec.Code, rec.Body.String())
+	if sc, err := rt.Screen(context.Background(), ModerationInput{Actor: access.Actor{ID: "reviewer"}, Kind: "content", Title: "t", Text: "b"}); err != nil || sc.State != ModerationHeld || len(sc.Verdict) == 0 {
+		t.Fatalf("Screen under a failing moderator = %+v %v, want held", sc, err)
 	}
 }
 
 func TestModeration_EditRescreens(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	ctx := context.Background()
-	author, other := Actor{ID: "author"}, Actor{ID: "other"}
-	g1 := ref("gallery", "1")
+	author, other := access.Actor{ID: "author"}, access.Actor{ID: "other"}
+	g1 := ref("gallery", cid(1))
 
-	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine"})
-	reply := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine reply", ReplyToID: top.ID})
+	top := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "fine"})
+	reply := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "fine reply", ReplyToID: top.ID})
 	if c := countsOf(t, rt, g1).CommentCount; c != 1 {
 		t.Fatalf("comment_count = %d", c)
 	}
@@ -357,7 +366,7 @@ func TestModeration_EditRescreens(t *testing.T) {
 	if _, err := rt.comments.edit(ctx, author, top.ID, "spam"); err == nil {
 		t.Fatal("edit to spam accepted")
 	}
-	list, _ := rt.comments.list(ctx, other, "gallery", "1", "", 50, 0)
+	list, _ := rt.comments.list(ctx, other, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if list[indexOfComment(list, top.ID)].Body != "fine again" {
 		t.Fatal("rejected edit changed the body")
 	}
@@ -365,7 +374,7 @@ func TestModeration_EditRescreens(t *testing.T) {
 	if _, err := rt.comments.edit(ctx, author, reply.ID, "iffy reply"); err != nil {
 		t.Fatal(err)
 	}
-	list, _ = rt.comments.list(ctx, other, "gallery", "1", "", 50, 0)
+	list, _ = rt.comments.list(ctx, other, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if rc := list[indexOfComment(list, top.ID)].ReplyCount; rc != 0 {
 		t.Fatalf("reply_count after withdrawing the reply = %d", rc)
 	}
@@ -378,12 +387,12 @@ func TestModeration_EditRescreens(t *testing.T) {
 	if err := rt.Resolve(ctx, KindComment, reply.ID, ReviewDecision{Revision: 2, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
 		t.Fatal(err)
 	}
-	list, _ = rt.comments.list(ctx, other, "gallery", "1", "", 50, 0)
+	list, _ = rt.comments.list(ctx, other, rt.Ref("gallery", cid(1)), "", "", 50, 0)
 	if rc := list[indexOfComment(list, top.ID)].ReplyCount; rc != 1 {
 		t.Fatalf("reply_count after approving the reply = %d", rc)
 	}
 	// deleting/restoring a held comment never touches counts
-	held := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy"})
+	held := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy"})
 	if err := rt.comments.softDelete(ctx, author, held.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -398,123 +407,40 @@ func TestModeration_EditRescreens(t *testing.T) {
 	}
 }
 
-func TestModeration_Posts(t *testing.T) {
-	mod := &fakeModerator{}
-	rt := moderatedRuntime(t, mod)
-	ctx := context.Background()
-	h := rt.Handler()
-	editor, reader := Actor{ID: "reviewer"}, Actor{ID: "reader"}
-
-	rec := doJSON(t, h, editor, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("an iffy body"), Language: ptr("en"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("held post = %d %s, want 202", rec.Code, rec.Body.String())
-	}
-	held := decodePost(t, rec)
-	if held.Moderation != ModerationHeld || held.ModerationReason != "needs a look" {
-		t.Fatalf("held post = %+v", held)
-	}
-	if in := mod.last(); in.Kind != KindPost || in.Title != "Hello" || in.Text != "an iffy body" || in.Ref.ContentID != held.ID || in.ItemID != held.ID {
-		t.Fatalf("moderator input = %+v", in)
-	}
-	if n := len(listPosts(t, h, "")); n != 0 {
-		t.Fatalf("held post listed publicly (%d)", n)
-	}
-	if rec = doJSON(t, h, reader, "GET", "/posts/"+held.ID, nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("held post to a reader = %d, want 404", rec.Code)
-	}
-	if rec = doJSON(t, h, editor, "GET", "/posts/"+held.ID, nil); rec.Code != http.StatusOK || decodePost(t, rec).ModerationReason != "needs a look" {
-		t.Fatalf("held post to its author = %d %s", rec.Code, rec.Body.String())
-	}
-	if rec = doJSON(t, h, reader, "POST", "/posts/"+held.ID+"/like", nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("like on a held post = %d, want 404", rec.Code)
-	}
-	docs, err := rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, held.ID)})
-	if err != nil || len(docs) != 0 {
-		t.Fatalf("held post produced a keyword document: %v err=%v", docs, err)
-	}
-	if refs, _, _, _ := rt.ListContent(ctx, testTenant, KindPost, "en", "", 10); len(refs) != 0 {
-		t.Fatalf("held post listed for indexing: %v", refs)
-	}
-	page, _ := rt.ListHeld(ctx, KindPost, "", 10)
-	if len(page.Items) != 1 || page.Items[0].ID != held.ID || page.Items[0].Title != "Hello" || page.Items[0].AuthorID != "reviewer" || page.Items[0].Ref.ContentKind != KindPost {
-		t.Fatalf("held posts = %+v", page.Items)
-	}
-	if err := rt.Resolve(ctx, KindPost, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(listPosts(t, h, "")); n != 1 {
-		t.Fatalf("approved post not listed (%d)", n)
-	}
-	if docs, _ = rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, held.ID)}); len(docs) != 1 || docs[0].Title != "Hello" {
-		t.Fatalf("approved post keyword document = %v", docs)
-	}
-	if rec = doJSON(t, h, reader, "POST", "/posts/"+held.ID+"/like", nil); rec.Code != http.StatusOK {
-		t.Fatalf("like on the approved post = %d", rec.Code)
-	}
-
-	// reject on create: 422, nothing stored
-	if rec = doJSON(t, h, editor, "POST", "/posts", postWriteReq{Title: ptr("spam"), Body: ptr("b"), IsDraft: ptr(false)}); rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("rejected post = %d %s", rec.Code, rec.Body.String())
-	}
-	if n := len(listPosts(t, h, "")); n != 1 {
-		t.Fatalf("rejected post stored (%d)", n)
-	}
-
-	// drafts are not screened; publishing one is
-	calls := len(mod.inputs)
-	rec = doJSON(t, h, editor, "POST", "/posts", postWriteReq{Title: ptr("Draft"), Body: ptr("iffy draft"), IsDraft: ptr(true)})
-	if rec.Code != http.StatusCreated || len(mod.inputs) != calls {
-		t.Fatalf("draft = %d, moderator calls %d -> %d", rec.Code, calls, len(mod.inputs))
-	}
-	draft := decodePost(t, rec)
-	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{IsDraft: ptr(false)}); rec.Code != http.StatusAccepted || decodePost(t, rec).Moderation != ModerationHeld {
-		t.Fatalf("publishing an iffy draft = %d %s, want held", rec.Code, rec.Body.String())
-	}
-	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{Body: ptr("clean now")}); rec.Code != http.StatusOK || decodePost(t, rec).Moderation != "" {
-		t.Fatalf("fixed post = %d %s, want approved", rec.Code, rec.Body.String())
-	}
-	if n := len(listPosts(t, h, "")); n != 2 {
-		t.Fatalf("published posts = %d, want 2", n)
-	}
-	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{Title: ptr("spam title")}); rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("rejected edit = %d", rec.Code)
-	}
-	if rec = doJSON(t, h, editor, "GET", "/posts/"+draft.ID, nil); decodePost(t, rec).Title != "Draft" {
-		t.Fatal("rejected edit changed the title")
-	}
-}
-
 func TestModeration_BasicModeratorAndChain(t *testing.T) {
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	basic := &BasicModerator{now: func() time.Time { return now }}
 	ai := &fakeModerator{}
 	rt := moderatedRuntime(t, Chain{basic, ai})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	rejects := func(body, want string) {
 		t.Helper()
 		var rej RejectedError
-		if _, err := rt.comments.create(ctx, author, "gallery", "1", createInput{Body: body}); !errors.As(err, &rej) || rej.Reason != want {
+		if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: body}); !errors.As(err, &rej) || rej.Reason != want {
 			t.Fatalf("%q: %v, want reject %q", body, err, want)
 		}
 	}
 	rejects("see https://example.com/x", "links are not allowed")
 	rejects("visit www.example.com now", "links are not allowed")
+	if err := rt.addBannedWords(ctx, "staff", []BannedWordInput{{Word: "cp", Action: WordReject}}); err != nil {
+		t.Fatal(err)
+	}
 	rejects("cp trade", "content violates policy")
-	first := mustComment(t, rt, author, "gallery", "1", createInput{Body: "hello there"})
+	first := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "hello there"})
 	rejects("hello there", "duplicate submission, slow down")
 	if _, err := rt.comments.edit(ctx, author, first.ID, "hello there"); err != nil { // edits skip the dup guard
 		t.Fatalf("edit with the same text: %v", err)
 	}
-	if _, err := rt.comments.create(ctx, Actor{ID: "someone-else"}, "gallery", "1", createInput{Body: "hello there"}); err != nil {
+	if _, err := rt.comments.create(ctx, access.Actor{ID: "someone-else"}, rt.Ref("gallery", cid(1)), CommentInput{Body: "hello there"}); err != nil {
 		t.Fatalf("another actor's identical text: %v", err)
 	}
 	now = now.Add(31 * time.Second)
-	if _, err := rt.comments.create(ctx, author, "gallery", "1", createInput{Body: "hello there"}); err != nil {
+	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: "hello there"}); err != nil {
 		t.Fatalf("after the window: %v", err)
 	}
 	// the AI moderator behind it still holds
-	if cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy"}); cm.Moderation != ModerationHeld {
+	if cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy"}); cm.Moderation != ModerationHeld {
 		t.Fatalf("chain did not reach the second moderator: %+v", cm)
 	}
 	if in := ai.last(); in.Text != "iffy" {
@@ -526,7 +452,7 @@ func TestModeration_BasicModeratorAndChain(t *testing.T) {
 		t.Fatal("the chain called the AI moderator after a basic reject")
 	}
 	// options
-	lenient := &BasicModerator{AllowLinks: true, DupWindow: -1, CensorWords: []string{}}
+	lenient := &BasicModerator{AllowLinks: true, DupWindow: -1}
 	v, _ := lenient.Screen(ctx, ModerationInput{Actor: author, Text: "cp https://x.y"})
 	if v.Decision != DecisionApprove {
 		t.Fatalf("lenient basic = %+v", v)
@@ -540,15 +466,15 @@ func TestModeration_BasicModeratorAndChain(t *testing.T) {
 func TestModeration_ReviewRoutes(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	h := rt.Handler()
-	author, reviewer, user := Actor{ID: "author"}, Actor{ID: "reviewer"}, Actor{ID: "user"}
-	held := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy"})
+	author, reviewer, user := access.Actor{ID: "author"}, access.Actor{ID: "reviewer"}, access.Actor{ID: "user"}
+	held := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy"})
 
 	if rec := doJSON(t, h, user, "GET", "/moderation/held?kind=comment", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("queue without the perm = %d", rec.Code)
 	}
 	rec := doJSON(t, h, reviewer, "GET", "/moderation/held?kind=comment&limit=10", nil)
 	var page HeldPage
-	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].ID != held.ID || page.Items[0].Ref.ContentID != "1" {
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].ID != held.ID || page.Items[0].Ref.ContentID != cid(1) {
 		t.Fatalf("queue = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec = doJSON(t, h, reviewer, "GET", "/moderation/held?kind=gallery", nil); rec.Code != http.StatusBadRequest {
@@ -566,10 +492,10 @@ func TestModeration_ReviewRoutes(t *testing.T) {
 	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusNotFound {
 		t.Fatalf("re-resolve = %d, want 404", rec.Code)
 	}
-	if rec = doJSON(t, h, reviewer, "POST", "/moderation/post/nope/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusNotFound {
-		t.Fatalf("resolve a missing post = %d, want 404", rec.Code)
+	if rec = doJSON(t, h, reviewer, "POST", "/moderation/post/nope/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("resolve a kind without a held source = %d, want 400", rec.Code)
 	}
-	list, _ := rt.comments.list(context.Background(), author, "gallery", "1", "", 10, 0)
+	list, _ := rt.comments.list(context.Background(), author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if list[0].Moderation != ModerationRejected || list[0].ModerationReason != "nope" {
 		t.Fatalf("author's view after the route reject = %+v", list[0])
 	}
@@ -583,37 +509,26 @@ func TestModeration_ReviewRoutes(t *testing.T) {
 func TestModeration_TenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
+	res.set("gallery", cid(1), true, true)
 	mod := &fakeModerator{}
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod, Perms: Perms{PostWrite: postPerm}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod, Perms: Perms{PostWrite: postPerm}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, Kinds: testKinds("gallery"), Moderator: mod})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: res, Kinds: testKinds("gallery"), Moderator: mod})
 	if err != nil {
 		t.Fatal(err)
 	}
-	author := Actor{ID: "shared-account"}
-	held := mustComment(t, a, author, "gallery", "1", createInput{Body: "iffy"})
+	author := access.Actor{ID: "shared-account"}
+	held := mustComment(t, a, author, "gallery", cid(1), CommentInput{Body: "iffy"})
 	if in := mod.last(); in.Tenant != "site_a" {
 		t.Fatalf("moderator saw tenant %q", in.Tenant)
 	}
-	rec := doJSON(t, a.Handler(), author, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("iffy"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("held post = %d", rec.Code)
-	}
-	post := decodePost(t, rec)
 
 	if ids := heldIDs(t, b, KindComment); len(ids) != 0 {
 		t.Fatalf("tenant b sees a's held comments: %v", ids)
 	}
-	if ids := heldIDs(t, b, KindPost); len(ids) != 0 {
-		t.Fatalf("tenant b sees a's held posts: %v", ids)
-	}
 	if err := b.Resolve(ctx, KindComment, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tenant b resolved a's comment: %v", err)
 	}
-	if err := b.Resolve(ctx, KindPost, post.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("tenant b resolved a's post: %v", err)
-	}
-	if list, _ := b.comments.list(ctx, author, "gallery", "1", "", 10, 0); len(list) != 0 {
+	if list, _ := b.comments.list(ctx, author, b.Ref("gallery", cid(1)), "", "", 10, 0); len(list) != 0 {
 		t.Fatalf("the shared account sees a's held comment through tenant b: %v", commentIDs(list))
 	}
 	if ids := heldIDs(t, a, KindComment); len(ids) != 1 || ids[0] != held.ID {
@@ -622,3 +537,128 @@ func TestModeration_TenantIsolation(t *testing.T) {
 }
 
 func (*fakeModerator) StatelessPolicy() {}
+
+// hungModerator never answers until its context ends; healthy switches it
+// to approving.
+type hungModerator struct {
+	calls   atomic.Int32
+	healthy atomic.Bool
+}
+
+func (*hungModerator) StatelessPolicy() {}
+
+func (m *hungModerator) Screen(ctx context.Context, _ ModerationInput) (Verdict, error) {
+	m.calls.Add(1)
+	if m.healthy.Load() {
+		return Verdict{Decision: DecisionApprove, Model: "fake-llm"}, nil
+	}
+	<-ctx.Done()
+	return Verdict{}, ctx.Err()
+}
+
+// A hung moderator holds each write after the bound; after repeated
+// failures the breaker opens: writes are held at once without calling it,
+// CheckModerator reports it down, and it closes again once a trial passes.
+func TestModeration_HungModeratorBreaker(t *testing.T) {
+	mod := &hungModerator{}
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), Moderator: mod,
+		ModeratorTimeout: 200 * time.Millisecond, ModeratorCooldown: time.Second,
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
+	author := access.Actor{ID: "author"}
+	ctx := context.Background()
+	start := time.Now()
+	var ids []string
+	for range 6 {
+		ids = append(ids, mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "hello"}).ID)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("six writes took %v", took)
+	}
+	if n := mod.calls.Load(); n != moderatorBreakerFailures {
+		t.Fatalf("moderator called %d times, want the breaker to stop after %d", n, moderatorBreakerFailures)
+	}
+	held := heldIDs(t, rt, KindComment)
+	for _, id := range ids {
+		if !contains(held, id) {
+			t.Fatalf("comment %s not held: %v", id, held)
+		}
+	}
+	if err := rt.CheckModerator(ctx); err == nil {
+		t.Fatal("CheckModerator reports a tripped moderator as up")
+	}
+	mod.healthy.Store(true)
+	time.Sleep(1100 * time.Millisecond)
+	if cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "hello again"}); cm.Moderation != "" {
+		t.Fatalf("trial write after the cooldown: %+v", cm)
+	}
+	if err := rt.CheckModerator(ctx); err != nil {
+		t.Fatalf("CheckModerator after recovery: %v", err)
+	}
+}
+
+// slowModerator approves after a delay, counting calls.
+type slowModerator struct{ calls atomic.Int32 }
+
+func (*slowModerator) StatelessPolicy() {}
+
+func (m *slowModerator) Screen(ctx context.Context, _ ModerationInput) (Verdict, error) {
+	m.calls.Add(1)
+	select {
+	case <-time.After(300 * time.Millisecond):
+		return Verdict{Decision: DecisionApprove, Model: "fake-llm"}, nil
+	case <-ctx.Done():
+		return Verdict{}, ctx.Err()
+	}
+}
+
+// After the cooldown the breaker is half-open: one trial caller reaches the
+// moderator and the rest are held without calling it until the trial passes.
+func TestModeration_BreakerHalfOpenAdmitsOneTrial(t *testing.T) {
+	mod := &slowModerator{}
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), Moderator: mod,
+		ModeratorTimeout: time.Second, ModeratorCooldown: 200 * time.Millisecond,
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
+	b := rt.breaker
+	b.mu.Lock()
+	b.failures, b.openUntil = moderatorBreakerFailures, time.Now().Add(-time.Millisecond) // tripped, cooldown over
+	b.mu.Unlock()
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "hello"})
+		}()
+	}
+	wg.Wait()
+	if n := mod.calls.Load(); n != 1 {
+		t.Fatalf("half-open breaker let %d callers reach the moderator, want 1", n)
+	}
+	if err := rt.CheckModerator(context.Background()); err != nil {
+		t.Fatalf("breaker still open after a passing trial: %v", err)
+	}
+}
+
+// The review queue names its signed-in authors, as comment lists do.
+func TestModeration_HeldItemsCarryAuthors(t *testing.T) {
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery"), Moderator: &fakeModerator{},
+		UserInfo: commentsDirectory{}, Auth: testauth.Auth{Authz: reviewerOnly{}}})
+	mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "iffy"})
+	mustComment(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "gallery", cid(1), CommentInput{Body: "iffy too", AnonName: "guest"})
+	page, err := rt.ListHeld(context.Background(), KindComment, "", 10)
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("ListHeld = %+v err=%v", page, err)
+	}
+	if a := page.Items[0].Author; a == nil || a.Username != "name-author" {
+		t.Fatalf("held author = %+v", page.Items[0])
+	}
+	if it := page.Items[1]; it.Author != nil || it.AnonName != "guest" {
+		t.Fatalf("anonymous held item = %+v", it)
+	}
+}

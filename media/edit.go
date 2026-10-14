@@ -1,0 +1,128 @@
+package media
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strconv"
+)
+
+// Edit is a non-destructive image edit: Crop, in the source's pixels (EXIF
+// orientation applied), then a clockwise Rotate. Variants derive from the
+// source through it; the source is never modified.
+type Edit struct {
+	Crop   *Crop `json:"crop,omitempty"`
+	Rotate int   `json:"rotate,omitempty"` // clockwise degrees: 0, 90, 180 or 270
+}
+
+// Crop is a rectangle in source pixels.
+type Crop struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// Dims is a source's size with EXIF orientation applied.
+type Dims struct {
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// Normalize returns nil for an identity edit, else a copy.
+func (e *Edit) Normalize() *Edit {
+	if e == nil || (e.Crop == nil && e.Rotate == 0) {
+		return nil
+	}
+	out := *e
+	if e.Crop != nil {
+		c := *e.Crop
+		out.Crop = &c
+	}
+	return &out
+}
+
+// Check validates the edit's shape and, with a known size (w, h > 0), that
+// the crop lies inside it.
+func (e *Edit) Check(w, h int) error {
+	if e == nil {
+		return nil
+	}
+	switch e.Rotate {
+	case 0, 90, 180, 270:
+	default:
+		return fmt.Errorf("rotate must be 0, 90, 180 or 270, not %d", e.Rotate)
+	}
+	if c := e.Crop; c != nil {
+		if c.X < 0 || c.Y < 0 || c.W <= 0 || c.H <= 0 {
+			return fmt.Errorf("crop %dx%d at %d,%d is empty or negative", c.W, c.H, c.X, c.Y)
+		}
+		if w > 0 && h > 0 && (c.X+c.W > w || c.Y+c.H > h) {
+			return fmt.Errorf("crop %dx%d at %d,%d is outside the %dx%d source", c.W, c.H, c.X, c.Y, w, h)
+		}
+	}
+	return nil
+}
+
+// Size is the edited size of a w×h source.
+func (e *Edit) Size(w, h int) (int, int) {
+	if e == nil {
+		return w, h
+	}
+	if e.Crop != nil {
+		w, h = e.Crop.W, e.Crop.H
+	}
+	if e.Rotate == 90 || e.Rotate == 270 {
+		return h, w
+	}
+	return w, h
+}
+
+// Hash is the edit's stable identity; "" for no edit.
+func (e *Edit) Hash() string {
+	if e = e.Normalize(); e == nil {
+		return ""
+	}
+	s := "r" + strconv.Itoa(e.Rotate)
+	if c := e.Crop; c != nil {
+		s += fmt.Sprintf("|c%d,%d,%d,%d", c.X, c.Y, c.W, c.H)
+	}
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:4])
+}
+
+// Resolve is the edit im applies to a w×h source (EXIF-oriented): e with its
+// crop height fitted to Aspect, or without a crop the largest centred one at
+// Aspect (a native aspect: the whole source). It must lie inside the source
+// and be at least MinWidth wide once edited.
+func (im Image) Resolve(e *Edit, w, h int) (*Edit, error) {
+	e = e.Normalize()
+	rotate := 0
+	if e != nil {
+		rotate = e.Rotate
+	}
+	r := im.Aspect
+	if rotate == 90 || rotate == 270 {
+		r = r.Rotated()
+	}
+	switch {
+	case r.Native():
+	case e != nil && e.Crop != nil:
+		e.Crop.H = r.Height(e.Crop.W)
+	case w > 0 && h > 0:
+		cw := w
+		if r.Height(cw) > h {
+			cw = min(w, r.Width(h))
+		}
+		ch := min(h, r.Height(cw))
+		e = &Edit{Crop: &Crop{X: (w - cw) / 2, Y: (h - ch) / 2, W: cw, H: ch}, Rotate: rotate}
+	}
+	if err := e.Check(w, h); err != nil {
+		return nil, err
+	}
+	if ew, _ := e.Size(w, h); w > 0 && ew < im.MinWidth {
+		return nil, &ImageError{Code: CodeImageTooSmall, Message: fmt.Sprintf("the edited image must be at least %dpx wide; this one is %dpx", im.MinWidth, ew),
+			Details: ErrorDetails{Width: ew, MinWidth: im.MinWidth}}
+	}
+	return e.Normalize(), nil
+}

@@ -9,8 +9,8 @@
       "k": 5,
       "labels": {"score_domain": "keyword_match", "query_type": "keyword"},
       "judgments": [
-        {"key": {"content_kind": "gallery", "content_id": "1"}, "relevance": 3},
-        {"key": {"content_kind": "gallery", "content_id": "2"}, "relevance": 2}
+        {"key": {"content_kind": "gallery", "content_id": "01920000-0000-7000-8000-000000000001"}, "relevance": 3},
+        {"key": {"content_kind": "gallery", "content_id": "01920000-0000-7000-8000-000000000002"}, "relevance": 2}
       ]
     },
     {
@@ -21,7 +21,7 @@
       "k": 5,
       "labels": {"score_domain": "keyword_match", "query_type": "phrase"},
       "judgments": [
-        {"key": {"content_kind": "gallery", "content_id": "3"}, "relevance": 3}
+        {"key": {"content_kind": "gallery", "content_id": "01920000-0000-7000-8000-000000000003"}, "relevance": 3}
       ]
     },
     {
@@ -32,7 +32,7 @@
       "k": 5,
       "labels": {"score_domain": "keyword_match", "query_type": "keyword"},
       "judgments": [
-        {"key": {"content_kind": "gallery", "content_id": "1"}, "relevance": 3}
+        {"key": {"content_kind": "gallery", "content_id": "01920000-0000-7000-8000-000000000001"}, "relevance": 3}
       ]
     },
     {

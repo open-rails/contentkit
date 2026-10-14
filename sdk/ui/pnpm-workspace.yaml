@@ -1,0 +1,20 @@
+packages:
+  - "."
+
+ignoreScripts: true
+ignorePnpmfile: true
+strictDepBuilds: true
+enablePrePostScripts: false
+dangerouslyAllowAllBuilds: false
+autoInstallPeers: false
+
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeExclude:
+  - "@openrails/*"
+trustPolicy: no-downgrade
+# Pulled in by eslint-plugin-react-hooks (via @babel/core); same exclusion as billing-ui.
+trustPolicyExclude:
+  - "semver@6.3.1"
+blockExoticSubdeps: true

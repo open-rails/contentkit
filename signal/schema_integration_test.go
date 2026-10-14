@@ -12,15 +12,29 @@ import (
 func TestIntegrationMigrationsMatchCheckSchema(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	ctx := context.Background()
-	conn := env.Fresh(t, testDB)
-	if err := CheckSchema(ctx, conn, testDB); err != nil {
-		t.Fatalf("fresh lineage must satisfy CheckSchema: %v", err)
-	}
-	// migratekit may re-run a partially applied migration: every statement must
-	// be individually idempotent, including 0005's in-place exposures conversion.
+	conn := env.Empty(t, testDB)
 	env.Apply(t, conn)
 	if err := CheckSchema(ctx, conn, testDB); err != nil {
-		t.Fatalf("reapplied lineage: %v", err)
+		t.Fatalf("the baseline must satisfy CheckSchema: %v", err)
+	}
+	// migratekit may re-run a partially applied migration: every statement must
+	// be individually idempotent.
+	st, err := NewStore(conn, testDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := gallery("migration", cid(1))
+	sub := Subject{UserID: "u"}
+	if err := st.RecordSignals(ctx, "migration", []Signal{view("migration", ref.ContentID, sub, 1, 1, 1, 1, 1, false)}); err != nil {
+		t.Fatal(err)
+	}
+	env.Apply(t, conn)
+	if err := CheckSchema(ctx, conn, testDB); err != nil {
+		t.Fatalf("reapplied baseline: %v", err)
+	}
+	states, err := st.States(ctx, "migration", sub, []ContentRef{ref})
+	if err != nil || states[ref.Key()].TotalEvents != 1 {
+		t.Fatalf("migration replay changed current data: %+v %v", states, err)
 	}
 }
 

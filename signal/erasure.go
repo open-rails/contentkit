@@ -52,10 +52,6 @@ func (r ErasureReport) Complete() bool {
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
 var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures"}
 
-// legacySubjectTables are pre-ContentKit tables that may still hold subject
-// rows until a later migration drops them; erased when present.
-var legacySubjectTables = []string{"signal_events", "search_impressions", "events", "subject_state", "subject_daily"}
-
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.
 const maxErasurePasses = 3
@@ -69,8 +65,7 @@ const maxErasurePasses = 3
 //     replica drops or hides the subjects' rows (the barrier): the subject
 //     key is dead in the tenant forever;
 //  2. every row of the subjects that existed when the pass ran is deleted from
-//     signals, compact state, daily contributions, exposures and legacy raw
-//     tables on every replica (mutations_sync = 2) and re-counted as zero;
+//     signals, compact state, daily contributions and exposures on every replica (mutations_sync = 2) and re-counted as zero;
 //  3. co-engagement pairs touching works the subjects contributed to are
 //     removed (RefreshCoEngagement rebuilds them and re-verifies the ledger
 //     around its build).
@@ -203,16 +198,6 @@ func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []
 
 func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
-	tables := append([]string{}, subjectTables...)
-	for _, legacy := range legacySubjectTables {
-		exists, err := st.tableExists(ctx, legacy)
-		if err != nil {
-			return report, err
-		}
-		if exists {
-			tables = append(tables, legacy)
-		}
-	}
 	// Pairs first: the contributed work set is read from the rows being
 	// erased, and passed as literals so every replica deletes the same pairs
 	// (replicated mutations reject subqueries as nondeterministic).
@@ -244,12 +229,12 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 		}
 		report.PairsRemoved += n
 	}
-	for _, table := range tables {
+	for _, table := range subjectTables {
 		if err := st.mutate(ctx, table, "tenant = ? AND "+filter, append([]any{tenant}, args...)...); err != nil {
 			return report, err
 		}
 	}
-	for _, table := range tables {
+	for _, table := range subjectTables {
 		n, err := st.count(ctx, table, tenant, filter, args)
 		if err != nil {
 			return report, err
@@ -303,21 +288,6 @@ func (st *Store) count(ctx context.Context, table, tenant, filter string, args [
 		}
 	}
 	return n, rows.Err()
-}
-
-func (st *Store) tableExists(ctx context.Context, table string) (bool, error) {
-	rows, err := st.conn.Query(ctx, "SELECT count() FROM system.tables WHERE database = ? AND name = ?", st.db, table)
-	if err != nil {
-		return false, fmt.Errorf("signal: table lookup: %w", err)
-	}
-	defer rows.Close()
-	var n uint64
-	if rows.Next() {
-		if err := rows.Scan(&n); err != nil {
-			return false, err
-		}
-	}
-	return n > 0, rows.Err()
 }
 
 func subjectColumns(subjects []Subject) (kinds, keys []string) {

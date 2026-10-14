@@ -1,0 +1,5 @@
+{
+  // Playwright's: the package resolves to its build (dist), by its exports.
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "paths": {} }
+}

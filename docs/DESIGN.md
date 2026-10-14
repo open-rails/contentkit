@@ -10,7 +10,7 @@ clarification of 2026-09-17: semantic search stays entirely outside ContentKit.
 
 - **ContentKit** (this repo) is deterministic: keyword search, the signal
   plane, discovery reads, and — after C2/C3 — comments, reactions, favorites,
-  polls and the durable preference outbox. It links no model provider.
+  polls and the preference sync. It links no model provider.
 - **User Intelligence** is a separate, deferred library that owns semantic
   search and its own tables. ContentKit has no semantic runtime hook.
 - **DocumentSink** is a neutral document change feed for external indexes,
@@ -19,9 +19,9 @@ clarification of 2026-09-17: semantic search stays entirely outside ContentKit.
 ## Mechanism vs meaning
 
 ContentKit owns storage, indexing, aggregation and the queries. Content kinds,
-signal types, scoring weights, completion rules and visibility are host data:
-no business noun appears in a schema. Hosts supply a `Scorer` per kind, a
-`ContentCatalog` for the unseen universe and an `Eligibility` join for search.
+signal types, scoring weights and completion rules are configuration: no
+business noun appears in a schema. Visibility is ContentKit's own rule over
+`content_facets`, applied in every list, search and count.
 
 ## Tenant is a key
 
@@ -32,7 +32,7 @@ reference against the tenant of the call. Nothing is defaulted.
 ## Storage
 
 - Postgres, host schema: `content_search_documents`, `content_search_dirty`,
-  `content_search_backfill` (keyword profile). Social tables arrive with C2.
+  `content_search_invalid`, `content_search_backfill` (keyword profile). Interaction tables (`content_posts`, `content_comments`, ...) arrive with C2.
 - ClickHouse, dedicated database: `signals` (canonical, versioned), the
   rebuildable `subject_content_state` and `subject_content_daily`
   projections, `content_pairs`, `exposures`, `erasures`. See

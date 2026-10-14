@@ -1,0 +1,154 @@
+import { createContext, useCallback, useContext, useLayoutEffect, useRef } from "react";
+import type { ContentKitClient } from "../client/client.js";
+import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import type { ContentURLs } from "../urls/index.js";
+import type { ReadStore } from "./store.js";
+
+/** What failed: a component's or hook's save, load or render step. */
+export type ContentKitOperation =
+  | "poster.load"
+  | "poster.frame"
+  | "poster.save"
+  | "slot.load"
+  | "slot.decode"
+  | "slot.save"
+  | "slot.remove"
+  | "upload"
+  | "folder.load"
+  | "folder.commit"
+  | "folder.update"
+  | "folder.process"
+  | "crop.load"
+  | "crop.save"
+  | "version.download"
+  | SocialOperation;
+
+/** What failed in a content component: a load or a write. */
+export type SocialOperation =
+  | "comment.load"
+  | "comment.post"
+  | "comment.edit"
+  | "comment.delete"
+  | "comment.react"
+  | "comment.restore"
+  | "ban.save"
+  | "ban.lift"
+  | "reaction.save"
+  | "favorite.save"
+  | "poll.load"
+  | "poll.vote"
+  | "poll.answer"
+  | "poll.save"
+  | "post.load"
+  | "content.save"
+  | "moderation.load"
+  | "moderation.resolve"
+  | "rules.save"
+  | "reader.save"
+  | "media.save"
+  | "notifications.load"
+  | "notifications.read"
+  | "notifications.dismiss"
+  | "group.load"
+  | "group.save"
+  | "membership.save"
+  | "history.forget"
+  | "filters.save"
+  | "offer.save"
+  | "membership.join";
+
+/** The failure's context: the operation and, for one file, its name. */
+export interface ContentKitErrorInfo {
+  operation: ContentKitOperation;
+  file?: string;
+}
+
+/**
+ * Every failure a component shows is also reported here (aborts excepted), so
+ * the host can toast or log it. Components still show it in place.
+ */
+export type ContentKitErrorHandler = (error: ContentKitError, info: ContentKitErrorInfo) => void;
+
+/** The host router: in-app navigation, e.g. a canonical replace. */
+export type Navigate = (to: string, options?: { replace?: boolean }) => void;
+
+export interface ContentKitContextValue {
+  client: ContentKitClient;
+  /**
+   * The signed-in user's id as ContentKit sees it, null when signed out,
+   * undefined when the host does not say. Content reads are kept per viewer.
+   */
+  viewer?: string | null;
+  /** Request language; keep it in sync with the client's language callback. */
+  language?: string;
+  /** Change when the current viewer's permissions or entitlements change. */
+  accessRevision?: string | number;
+  readScope: string;
+  /** Asks the visitor to sign in; with it, signed-out visitors are prompted instead of acting anonymously. */
+  onSignIn?: () => void;
+  /** The host's content URL config (createContentURLs). */
+  urls?: ContentURLs;
+  navigate?: Navigate;
+  onError?: ContentKitErrorHandler;
+  /** The reads hooks share. */
+  store: ReadStore;
+}
+
+export const ContentKitContext = createContext<ContentKitContextValue | null>(null);
+
+/** Values that can change a read without changing its content reference. */
+export function useReadScope(): string {
+  return useContext(ContentKitContext)?.readScope ?? "{}";
+}
+
+/** The ContentKitProvider's value; throws outside one. */
+export function useContentKit(): ContentKitContextValue {
+  const ctx = useContext(ContentKitContext);
+  if (!ctx) throw new Error("contentkit-ui: wrap the tree in <ContentKitProvider client>");
+  return ctx;
+}
+
+/** The client a hook or component uses: its own, else the provider's; throws without either. */
+export function useContentKitClient(own?: ContentKitClient | null): ContentKitClient {
+  const c = useOptionalContentKitClient(own);
+  if (!c) throw new Error("contentkit-ui: pass `client` or render inside <ContentKitProvider client>");
+  return c;
+}
+
+export function useOptionalContentKitClient(own?: ContentKitClient | null): ContentKitClient | null {
+  const ctx = useContext(ContentKitContext);
+  const client = own ?? ctx?.client ?? null;
+  const scope = useReadScope();
+  useLayoutEffect(() => { client?.setReadScope(scope); }, [client, scope]);
+  return client;
+}
+
+/** The provider's content URL helpers; throws when none were given. */
+export function useContentURLs(): ContentURLs {
+  const urls = useContext(ContentKitContext)?.urls;
+  if (!urls) throw new Error("contentkit-ui: pass `urls` to <ContentKitProvider>");
+  return urls;
+}
+
+/** A stable reporter: the component's own `onError`, else the provider's. */
+export function useErrorReporter(own?: ContentKitErrorHandler): (e: unknown, operation: ContentKitOperation, file?: string) => void {
+  const ctx = useContext(ContentKitContext)?.onError;
+  const handler = useRef(own ?? ctx);
+  handler.current = own ?? ctx;
+  return useCallback((e: unknown, operation: ContentKitOperation, file?: string) => {
+    const error = toContentKitError(e);
+    if (error.code !== "aborted") handler.current?.(error, file === undefined ? { operation } : { operation, file });
+  }, []);
+}
+
+/** Runs a write, e.g. auth-ui's useStepUpGuard(): re-authenticates when the write asks for a recent sign-in, then retries. */
+export type ContentKitGuard = <T>(write: () => Promise<T>) => Promise<T>;
+
+/** The admin flow's guard; hooks run their writes through it. */
+export const GuardContext = createContext<ContentKitGuard | undefined>(undefined);
+
+/** Runs fn through the flow's guard, when the host gave one. */
+export function useGuarded(): <T>(fn: () => Promise<T>) => Promise<T> {
+  const guard = useContext(GuardContext);
+  return useCallback(<T,>(fn: () => Promise<T>) => (guard ? guard(fn) : fn()), [guard]);
+}

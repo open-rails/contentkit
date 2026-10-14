@@ -3,139 +3,98 @@ package content
 import (
 	"context"
 	"errors"
-	"fmt"
-	"reflect"
-	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-// galleryWork is a host canonical rule: the ":<lang>" route suffix is stripped
-// so every language route votes on one work; an explicit version stays; posts
-// export under their own id; taxonomy stays out of the boundary entirely.
-func galleryWork(r contentref.ContentRef) (contentref.ContentRef, bool) {
-	switch r.ContentKind {
-	case "gallery":
-		id, _, _ := strings.Cut(r.ContentID, ":")
-		return contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version()), true
-	case KindPost:
-		return r, true
-	}
-	return contentref.ContentRef{}, false
+// localeID is the content id of work n's language route: every language
+// edition is its own route id, which the resolver maps to its work.
+func localeID(n int, lang string) string {
+	return cid(n*1000 + map[string]int{"en": 1, "ja": 2}[lang])
+}
+
+var localeWorks = map[string]string{
+	localeID(42, "en"): cid(42), localeID(42, "ja"): cid(42), localeID(7, "en"): cid(7), localeID(9, "en"): cid(9),
 }
 
 func newPreferenceRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	res := &fakeResolver{}
-	for _, id := range []string{"42:en", "42:ja", "7:en", "9:en"} {
-		res.set("gallery", id, true, true)
+	for _, id := range []string{localeID(42, "en"), localeID(42, "ja"), localeID(7, "en"), localeID(9, "en")} {
+		res.setCanonical("gallery", id, localeWorks[id])
 	}
-	res.set("tag", "9", true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	res.set("tag", cid(9), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery", "tag")})
 	return rt
 }
 
-func prefKey(actor, kind, id, axis string) PreferenceKey {
-	return PreferenceKey{TenantID: testTenant, ActorID: actor, ContentKind: kind, ContentID: id, Axis: axis}
-}
-
-// snapshotRows reads the table directly, in key order: the authority the API
-// must agree with.
-func snapshotRows(t *testing.T, rt *Runtime) []PreferenceSnapshot {
+func mustReact(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, value int16) {
 	t.Helper()
-	rows, err := rt.store.pool.Query(context.Background(), `SELECT `+preferenceCols+` FROM `+rt.store.t.preferenceSnapshots+`
-		WHERE tenant_id = $1 ORDER BY actor_id, content_kind, content_id, content_version_id, axis`, rt.tenant)
-	if err != nil {
-		t.Fatalf("read snapshots: %v", err)
-	}
-	defer rows.Close()
-	var out []PreferenceSnapshot
-	for rows.Next() {
-		s, err := scanPreference(rows)
-		if err != nil {
-			t.Fatalf("scan snapshot: %v", err)
-		}
-		out = append(out, s)
-	}
-	return out
-}
-
-func snapshotRow(t *testing.T, rt *Runtime, key PreferenceKey) PreferenceSnapshot {
-	t.Helper()
-	for _, s := range snapshotRows(t, rt) {
-		if s.PreferenceKey == key {
-			return s
-		}
-	}
-	t.Fatalf("no snapshot for %+v", key)
-	return PreferenceSnapshot{}
-}
-
-func pending(t *testing.T, rt *Runtime) []PreferenceSnapshot {
-	t.Helper()
-	out, err := rt.PendingPreferences(context.Background(), PreferenceKey{}, 0)
-	if err != nil {
-		t.Fatalf("PendingPreferences: %v", err)
-	}
-	return out
-}
-
-// mustReact applies a reaction and returns the committed snapshot (nil for a
-// no-op or a non-exported target).
-func mustReact(t *testing.T, rt *Runtime, actor Actor, kind, id string, value int16) *PreferenceSnapshot {
-	t.Helper()
-	_, snap, err := rt.reactions.react(context.Background(), actor, kind, id, value)
-	if err != nil {
+	if _, err := rt.reactions.react(context.Background(), actor, rt.Ref(kind, id), value); err != nil {
 		t.Fatalf("react %s/%s=%d: %v", kind, id, value, err)
 	}
-	return snap
 }
 
-func mustFavorite(t *testing.T, rt *Runtime, actor Actor, kind, id string, add bool) *PreferenceSnapshot {
+func mustFavorite(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, add bool) {
 	t.Helper()
-	var snap *PreferenceSnapshot
 	var err error
 	if add {
-		snap, err = rt.favorites.add(context.Background(), actor, kind, id)
+		err = favErr(rt.favorites.add(context.Background(), actor, rt.Ref(kind, id)))
 	} else {
-		snap, err = rt.favorites.remove(context.Background(), actor, kind, id)
+		err = favErr(rt.favorites.remove(context.Background(), actor, rt.Ref(kind, id)))
 	}
 	if err != nil {
 		t.Fatalf("favorite %s/%s add=%v: %v", kind, id, add, err)
 	}
-	return snap
 }
 
-// Spec case 4: concurrent writes from different language routes resolve to
-// one work preference, and revisions follow the order the key lock granted.
+// exported is everything a full resync sends, in revision order.
+func exported(t *testing.T, rt *Runtime) []Preference {
+	t.Helper()
+	var out []Preference
+	if _, err := rt.ResyncPreferences(context.Background(), func(_ context.Context, page []Preference) error {
+		out = append(out, page...)
+		return nil
+	}); err != nil {
+		t.Fatalf("ResyncPreferences: %v", err)
+	}
+	return out
+}
+
+// row reads one stored (value, revision), or ok=false.
+func row(t *testing.T, rt *Runtime, table, user, id string) (value int16, revision int64, ok bool) {
+	t.Helper()
+	err := rt.store.pool.QueryRow(context.Background(), `SELECT value, revision FROM `+table+` WHERE tenant_id = $1 AND user_id = $2 AND content_id = $3`,
+		rt.tenant, user, id).Scan(&value, &revision)
+	if err != nil {
+		return 0, 0, false
+	}
+	return value, revision, true
+}
+
+// Concurrent writes from different language routes land on one work row, and
+// every committed change takes a strictly higher revision, across pools.
 func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	langs := []string{"42:en", "42:ja"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
+	langs := []string{localeID(42, "en"), localeID(42, "ja")}
 	values := []int16{1, -1, 0, 1}
-
-	var mu sync.Mutex
-	var committed []PreferenceSnapshot
 	var wg sync.WaitGroup
 	errs := make(chan error, 48)
 	for i := 0; i < 48; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, snap, err := rt.reactions.react(ctx, actor, "gallery", langs[i%2], values[i%4])
+			_, err := rt.reactions.react(ctx, actor, rt.Ref("gallery", langs[i%2]), values[i%4])
 			errs <- err
-			if snap != nil {
-				mu.Lock()
-				committed = append(committed, *snap)
-				mu.Unlock()
-			}
 		}(i)
 	}
 	wg.Wait()
@@ -145,803 +104,272 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 			t.Fatalf("concurrent react: %v", err)
 		}
 	}
-	if len(committed) == 0 {
-		t.Fatal("no committed transitions")
+	got := exported(t, rt)
+	if len(got) != 1 || got[0].ContentID != cid(42) || got[0].Version() != "" || got[0].Axis != PreferenceAxisReaction {
+		t.Fatalf("exported = %+v, want one work row", got)
 	}
-	sort.Slice(committed, func(i, j int) bool { return committed[i].Revision < committed[j].Revision })
-	for i, s := range committed {
-		if s.ContentID != "42" || s.ContentVersionID != "" || s.Axis != PreferenceAxisReaction || s.TenantID != testTenant {
-			t.Fatalf("snapshot %d is not keyed on the work: %+v", i, s)
-		}
-		if i > 0 {
-			if s.Revision <= committed[i-1].Revision {
-				t.Fatalf("revisions are not strictly increasing: %d then %d", committed[i-1].Revision, s.Revision)
-			}
-			if s.OccurredAt.Before(committed[i-1].OccurredAt) {
-				t.Fatalf("occurred_at regressed between revisions %d and %d", committed[i-1].Revision, s.Revision)
-			}
-		}
+	value, prev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
+	if got[0].Value != value || got[0].Revision != prev {
+		t.Fatalf("export %+v != stored (%d, %d)", got[0], value, prev)
 	}
-	last := committed[len(committed)-1]
-	row := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisReaction))
-	if row.Revision != last.Revision || row.Value != last.Value || !row.OccurredAt.Equal(last.OccurredAt) {
-		t.Fatalf("snapshot %+v != highest committed transition %+v", row, last)
-	}
-	if got := len(snapshotRows(t, rt)); got != 1 {
-		t.Fatalf("snapshots = %d, want one work row for two language routes", got)
-	}
-	var sourceRows int
-	var storedID string
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*), min(content_id) FROM `+rt.store.t.reactions+` WHERE tenant_id = $1 AND user_id = 'u1' AND content_kind = 'gallery'`, testTenant).Scan(&sourceRows, &storedID); err != nil {
-		t.Fatal(err)
-	}
-	if sourceRows != 1 || storedID != "42" {
-		t.Fatalf("source rows = %d under %q, want one row under the work", sourceRows, storedID)
-	}
-	c := countsOf(t, rt, ref("gallery", "42"))
-	if c.Likes != b2i(row.Value == 1) || c.Dislikes != b2i(row.Value == -1) {
-		t.Fatalf("work counts = %+v, want the one vote the final value %d implies", c, row.Value)
+	c := countsOf(t, rt, ref("gallery", cid(42)))
+	if c.Likes != b2i(value == 1) || c.Dislikes != b2i(value == -1) {
+		t.Fatalf("work counts = %+v, want the one vote value %d implies", c, value)
 	}
 
-	// Alternate database backends: a cached sequence block would hand an older
-	// revision to the second connection after the first committed.
+	// A cached sequence block would hand an older revision to the second pool.
 	second, err := pgxpool.New(ctx, rt.store.pool.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Identity: &fakeIdentity{}, Authz: allowAll{},
-		Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}},
+		Resolver: rt.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev := row.Revision
-	value := int16(1)
-	if row.Value == value {
-		value = -1
+	next := int16(1)
+	if value == next {
+		next = -1
 	}
 	for _, backend := range []*Runtime{other, rt, other, rt} {
-		mustReact(t, backend, actor, "gallery", "42:en", value)
-		next := snapshotRow(t, rt, row.PreferenceKey)
-		if next.Revision <= prev {
-			t.Fatalf("revision %d did not increase past %d across backends", next.Revision, prev)
+		mustReact(t, backend, actor, "gallery", localeID(42, "en"), next)
+		_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
+		if rev <= prev {
+			t.Fatalf("revision %d did not increase past %d across backends", rev, prev)
 		}
-		prev = next.Revision
-		value = -value
+		prev, next = rev, -next
 	}
 }
 
-// Own-state reads resolve through the same rule as the writes, so a host may
-// hydrate by either the language route reference or the work reference.
-func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	mustFavorite(t, rt, actor, "gallery", "42:ja", true)
-	locale, work := ref("gallery", "42:ja"), ref("gallery", "42")
-	reactions, err := rt.MyReactions(ctx, actor, []contentref.ContentRef{locale, work})
-	if err != nil || reactions[locale.Key()] != 1 || reactions[work.Key()] != 1 {
-		t.Fatalf("MyReactions = %+v err=%v, want the like under both keys", reactions, err)
-	}
-	favs, err := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{locale, work})
-	if err != nil || !favs[locale.Key()] || !favs[work.Key()] {
-		t.Fatalf("IsFavorited = %+v err=%v, want true under both keys", favs, err)
-	}
-}
-
-// Spec case 4 (second half): a no-op refreshes neither revision nor time.
+// A no-op refreshes no revision and creates no row.
 func TestPreferences_NoOpAllocatesNothing(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	actor := Actor{ID: "u1", Kind: "user"}
-	if snap := mustReact(t, rt, actor, "gallery", "42:en", 1); snap == nil {
-		t.Fatal("first like committed no snapshot")
+	actor := access.Actor{ID: "u1", Kind: "user"}
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	_, before, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
+	mustReact(t, rt, actor, "gallery", localeID(42, "ja"), 1) // same value from the other route
+	if _, after, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42)); after != before {
+		t.Fatalf("a no-op moved the revision %d -> %d", before, after)
 	}
-	before := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisReaction))
+	mustReact(t, rt, actor, "gallery", localeID(7, "en"), 0)
+	mustFavorite(t, rt, actor, "gallery", localeID(7, "en"), false)
+	if _, _, ok := row(t, rt, rt.store.t.reactions, "u1", cid(7)); ok {
+		t.Fatal("neutral with no prior reaction stored a row")
+	}
+	if _, _, ok := row(t, rt, rt.store.t.favorites, "u1", cid(7)); ok {
+		t.Fatal("unfavorite with no prior favorite stored a row")
+	}
+}
+
+// Unfavorite keeps the row at 0 with a newer revision; every read and count
+// treats it as absent, and re-favoriting restarts the bookmark's age.
+func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
+	rt := newPreferenceRuntime(t)
+	ctx := context.Background()
+	actor := access.Actor{ID: "u1", Kind: "user"}
+	work := ref("gallery", cid(42))
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+	_, r1, _ := row(t, rt, rt.store.t.favorites, "u1", cid(42))
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), false)
+	v, r2, ok := row(t, rt, rt.store.t.favorites, "u1", cid(42))
+	if !ok || v != 0 || r2 <= r1 {
+		t.Fatalf("unfavorite row = (%d, %d) ok=%v, want value 0 above revision %d", v, r2, ok, r1)
+	}
+	if favorited(t, rt, "u1", work) || len(favoriteIDs(t, rt, "u1")) != 0 {
+		t.Fatal("an unfavorited row reads as a favorite")
+	}
+	if c := countsOf(t, rt, work); c.Favorites != 0 {
+		t.Fatalf("counts = %+v, want no favorite", c)
+	}
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), false)
+	if _, again, _ := row(t, rt, rt.store.t.favorites, "u1", cid(42)); again != r2 {
+		t.Fatal("a repeated unfavorite took a revision")
+	}
 	time.Sleep(10 * time.Millisecond)
-	if snap := mustReact(t, rt, actor, "gallery", "42:ja", 1); snap != nil { // same value from the other route
-		t.Fatalf("a no-op returned a snapshot: %+v", snap)
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+	mustFavorite(t, rt, actor, "gallery", localeID(7, "en"), true)
+	if ids := favoriteIDs(t, rt, "u1"); len(ids) != 2 || ids[0] != cid(7) {
+		t.Fatalf("favorites %v", ids)
 	}
-	if after := snapshotRow(t, rt, before.PreferenceKey); !reflect.DeepEqual(before, after) {
-		t.Fatalf("a no-op changed the snapshot: %+v -> %+v", before, after)
+	if c := countsOf(t, rt, work); c.Favorites != 1 {
+		t.Fatalf("counts after re-favorite = %+v", c)
 	}
-}
-
-// Spec case 1: a delayed older delivery cannot hide the newer preference.
-func TestPreferences_DelayedOlderAckCannotHideNewer(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	key := prefKey("u1", "gallery", "42", PreferenceAxisReaction)
-
-	older := mustReact(t, rt, actor, "gallery", "42:en", 1)  // like
-	newer := mustReact(t, rt, actor, "gallery", "42:ja", -1) // dislike, from the other language route
-	if older.Revision >= newer.Revision || newer.Value != -1 {
-		t.Fatalf("revisions = %d then %d value %d", older.Revision, newer.Revision, newer.Value)
-	}
-	if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: older.Revision}}); err != nil {
-		t.Fatalf("ack older: %v", err)
-	}
-	got := pending(t, rt)
-	if len(got) != 1 || got[0].Revision != newer.Revision || got[0].Value != -1 || got[0].DeliveredRevision != older.Revision {
-		t.Fatalf("after the older ack, pending = %+v, want the dislike", got)
-	}
-	if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: newer.Revision}}); err != nil {
-		t.Fatalf("ack newer: %v", err)
-	}
-	if got := pending(t, rt); len(got) != 0 {
-		t.Fatalf("after the newer ack, pending = %+v, want none", got)
-	}
-	if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: older.Revision}}); err != nil {
-		t.Fatalf("late older ack: %v", err)
-	}
-	if row := snapshotRow(t, rt, key); row.DeliveredRevision != newer.Revision || row.Value != -1 {
-		t.Fatalf("row after the late older ack = %+v", row)
-	}
-}
-
-// Spec cases 2 and 7: replay keeps one identity, across a restarted process.
-func TestPreferences_ReplayKeepsOneIdentity(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	actor := Actor{ID: "u1", Kind: "user"}
-	committed := *mustReact(t, rt, actor, "gallery", "42:en", 1)
-
-	first := pending(t, rt)
-	time.Sleep(20 * time.Millisecond)
-	second := pending(t, rt)
-	if len(first) != 1 || len(second) != 1 || !reflect.DeepEqual(first[0], second[0]) {
-		t.Fatalf("a retry minted a new identity: %+v vs %+v", first, second)
-	}
-	if first[0].Revision != committed.Revision || !first[0].OccurredAt.Equal(committed.OccurredAt) || first[0].Value != committed.Value {
-		t.Fatalf("swept row %+v != committed snapshot %+v", first[0], committed)
-	}
-	restarted, err := New(context.Background(), Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: testTenant, Identity: &fakeIdentity{}, Authz: allowAll{},
-		Resolver: &fakeResolver{}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
-	if err != nil {
-		t.Fatalf("restart runtime: %v", err)
-	}
-	after, err := restarted.PendingPreferences(context.Background(), PreferenceKey{}, 10)
-	if err != nil || len(after) != 1 || !reflect.DeepEqual(after[0], first[0]) {
-		t.Fatalf("after the restart pending = %+v err=%v, want the same snapshot", after, err)
-	}
-}
-
-// Spec case 3: every transition, including removals, keeps a zero-valued
-// snapshot so a delayed like cannot resurrect removed state.
-func TestPreferences_RemovalsKeepZeroSnapshots(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	neutral := mustReact(t, rt, actor, "gallery", "42:en", 0) // neutral is a state, not a delete
-	row := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisReaction))
-	if row.Value != 0 || !row.Pending() || neutral == nil || neutral.Value != 0 {
-		t.Fatalf("neutral snapshot = %+v (returned %+v), want a pending zero", row, neutral)
-	}
-	mustFavorite(t, rt, actor, "gallery", "42:ja", true)
-	removed := mustFavorite(t, rt, actor, "gallery", "42:ja", false)
-	fav := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisFavorite))
-	if fav.Value != 0 || removed == nil || removed.Revision != fav.Revision {
-		t.Fatalf("unfavorite snapshot = %+v, want value 0", fav)
-	}
-	var favRows int
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.favorites+` WHERE user_id = 'u1'`).Scan(&favRows); err != nil || favRows != 0 {
-		t.Fatalf("favorite rows = %d err=%v, want the bookmark deleted while the snapshot keeps its zero", favRows, err)
-	}
-	mustFavorite(t, rt, actor, "gallery", "42:en", true)
-	if fav = snapshotRow(t, rt, fav.PreferenceKey); fav.Value != 1 || fav.Revision <= removed.Revision {
-		t.Fatalf("re-favorite snapshot = %+v, want value 1 above revision %d", fav, removed.Revision)
-	}
-	if c := countsOf(t, rt, ref("gallery", "42")); c.Favorites != 1 {
-		t.Fatalf("favorite count = %+v, want exactly 1", c)
-	}
-	if got := len(pending(t, rt)); got != 2 {
-		t.Fatalf("pending = %d, want both axes", got)
-	}
-}
-
-// Spec case 8: a newer revision commits while the acknowledgement for the older
-// one is in flight; the newer stays pending whichever order the lock grants.
-func TestPreferences_UpdateRacingAcknowledgement(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	key := prefKey("u1", "gallery", "42", PreferenceAxisReaction)
-
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	inFlight := pending(t, rt)[0]
-	mustReact(t, rt, actor, "gallery", "42:en", -1) // lands while the first is in flight
-	if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: inFlight.Revision}}); err != nil {
-		t.Fatalf("ack the in-flight revision: %v", err)
-	}
-	got := pending(t, rt)
-	if len(got) != 1 || got[0].Value != -1 || got[0].DeliveredRevision != inFlight.Revision {
-		t.Fatalf("pending after the racing ack = %+v, want the newer revision still pending", got)
-	}
-	acked := got[0].Revision
-
-	// True lock race: hold the snapshot row while a mutation and an
-	// acknowledgement both wait on it.
-	hold, err := rt.store.pool.Begin(ctx)
-	if err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hold.Exec(ctx, `SELECT 1 FROM `+rt.store.t.preferenceSnapshots+` WHERE actor_id = 'u1' AND content_id = '42' AND axis = 'reaction' FOR UPDATE`); err != nil {
-		t.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	results := make(chan error, 2)
-	go func() {
-		defer wg.Done()
-		results <- reactErr(rt.reactions.react(ctx, actor, "gallery", "42:ja", 1))
-	}()
-	go func() {
-		defer wg.Done()
-		results <- rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: acked}})
-	}()
-	time.Sleep(150 * time.Millisecond) // let both block on the held row
-	if err := hold.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	wg.Wait()
-	close(results)
-	for err := range results {
-		if err != nil {
-			t.Fatalf("racing operation: %v", err)
-		}
-	}
-	row := snapshotRow(t, rt, key)
-	if row.Value != 1 || row.Revision <= acked || row.DeliveredRevision != acked {
-		t.Fatalf("row after the lock race = %+v, want the newer like pending over acknowledged %d", row, acked)
-	}
-	if got := pending(t, rt); len(got) != 1 || got[0].Revision != row.Revision {
-		t.Fatalf("pending after the lock race = %+v", got)
+	if c := countsOf(t, rt, work); c.Favorites != 0 {
+		t.Fatalf("counts after erasure = %+v", c)
 	}
 }
 
-// Spec case 9: a key that never gets acknowledged does not strand the rest.
-func TestPreferences_FailingKeyDoesNotStarveOthers(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	for _, actor := range []string{"u1", "u2", "u3"} {
-		mustReact(t, rt, Actor{ID: actor, Kind: "user"}, "gallery", "42:en", 1)
-	}
-	for sweep := 0; sweep < 2; sweep++ {
-		var after PreferenceKey
-		for {
-			page, err := rt.PendingPreferences(ctx, after, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(page) == 0 {
-				break
-			}
-			after = page[0].PreferenceKey
-			if page[0].ActorID == "u1" {
-				continue // delivery keeps failing for this key
-			}
-			if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: page[0].PreferenceKey, Revision: page[0].Revision}}); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if got := pending(t, rt); len(got) != 1 || got[0].ActorID != "u1" {
-		t.Fatalf("pending = %+v, want only the failing key", got)
-	}
-}
-
-// Spec case 5: a rolled-back source transaction leaves no snapshot and no
-// source row; sequence gaps are harmless.
+// A rolled-back source transaction leaves no row to export.
 func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.store.pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
-	err := reactErr(rt.reactions.react(ctx, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1))
+	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, ref("gallery", localeID(42, "en")), 1))
 	var pgErr interface{ SQLState() string }
 	if err == nil || !errors.As(err, &pgErr) {
 		t.Fatalf("react with a broken rollup = %v, want the transaction to fail", err)
 	}
-	for _, table := range []string{rt.store.t.reactions, rt.store.t.preferenceSnapshots} {
-		var n int
-		if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil || n != 0 {
-			t.Fatalf("%s has %d rows err=%v, want none after the rollback", table, n, err)
-		}
-	}
-	if _, err := rt.store.pool.Exec(ctx, `CREATE TABLE `+rt.store.t.counts+` (
-		tenant_id text NOT NULL, content_kind text NOT NULL, content_id text NOT NULL, content_version_id text NOT NULL DEFAULT '',
-		likes int NOT NULL DEFAULT 0, dislikes int NOT NULL DEFAULT 0, favorites int NOT NULL DEFAULT 0, comment_count int NOT NULL DEFAULT 0,
-		updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id, content_kind, content_id, content_version_id))`); err != nil {
-		t.Fatal(err)
-	}
-	mustReact(t, rt, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1)
-	if row := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisReaction)); row.Revision < 1 || row.Value != 1 {
-		t.Fatalf("snapshot after recovery = %+v", row)
-	}
-}
-
-// Spec case 12: anonymous IP reactions never become analytics subjects,
-// declined targets stay out, another tenant sees nothing, and the source APIs
-// work with export disabled.
-func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	if snap := mustReact(t, rt, Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", "42:en", 1); snap != nil {
-		t.Fatalf("an anonymous reaction exported %+v", snap)
-	}
-	if snap := mustReact(t, rt, Actor{ID: "u1", Kind: "user"}, "tag", "9", 1); snap != nil {
-		t.Fatalf("a declined target exported %+v", snap)
-	}
-	if got := snapshotRows(t, rt); len(got) != 0 {
-		t.Fatalf("snapshots = %+v, want none", got)
-	}
-	var storedID string
-	if err := rt.store.pool.QueryRow(ctx, `SELECT content_id FROM `+rt.store.t.reactions+` WHERE ip = '10.0.0.1'`).Scan(&storedID); err != nil || storedID != "42" {
-		t.Fatalf("anonymous reaction stored under %q err=%v, want the work", storedID, err)
-	}
-	mustReact(t, rt, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1)
-	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Identity: &fakeIdentity{}, Authz: allowAll{},
-		Resolver: rt.resolver, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := other.PendingPreferences(ctx, PreferenceKey{}, 10); len(got) != 0 {
-		t.Fatalf("another tenant sees pending rows: %+v", got)
-	}
-	if err := other.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: prefKey("u1", "gallery", "42", PreferenceAxisReaction), Revision: 1}}); !errors.Is(err, ErrTenant) {
-		t.Fatalf("foreign-tenant ack: want ErrTenant, got %v", err)
-	}
-
-	// Export disabled (no Canonicalizer): reactions and favorites still work and
-	// keep their resolver reference; nothing is exported.
-	res := &fakeResolver{}
-	res.set("gallery", "42:en", true, true)
-	plain, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
-	actor := Actor{ID: "u1", Kind: "user"}
-	if snap := mustReact(t, plain, actor, "gallery", "42:en", 1); snap != nil {
-		t.Fatalf("export disabled returned %+v", snap)
-	}
-	mustFavorite(t, plain, actor, "gallery", "42:en", true)
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+plain.store.t.preferenceSnapshots).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("snapshots with export disabled = %d err=%v, want 0", n, err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+plain.store.t.reactions+` WHERE content_id = '42:en'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("reaction rows under the resolver reference = %d err=%v, want 1", n, err)
-	}
-	if got, err := plain.PendingPreferences(ctx, PreferenceKey{}, 10); err != nil || len(got) != 0 {
-		t.Fatalf("PendingPreferences with export disabled = %+v err=%v", got, err)
-	}
-	if _, err := plain.MigratePreferences(ctx, PreferenceMigrationOptions{}); err == nil {
-		t.Fatal("MigratePreferences without a canonical rule was accepted")
+	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("reactions = %d err=%v, want none after the rollback", n, err)
 	}
 }
 
-func TestPreferences_ScanEqualsSnapshotsAndPages(t *testing.T) {
+func TestPreferences_NilSenderCannotCheckpoint(t *testing.T) {
+	for _, name := range []string{"sync", "resync"} {
+		t.Run(name, func(t *testing.T) {
+			rt := newPreferenceRuntime(t)
+			send := rt.SyncPreferences
+			if name == "resync" {
+				send = rt.ResyncPreferences
+			}
+			ctx := t.Context()
+			if _, err := send(ctx, nil); err == nil {
+				t.Fatal("enabled export accepted a missing sender with no rows")
+			}
+			actor := access.Actor{ID: "u1", Kind: "user"}
+			mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+			mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+			if _, err := send(ctx, nil); err == nil {
+				t.Fatal("enabled export accepted a missing sender with rows")
+			}
+			var checkpoints int
+			if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.preferenceSync).Scan(&checkpoints); err != nil || checkpoints != 0 {
+				t.Fatalf("missing sender recorded checkpoints=%d, error=%v", checkpoints, err)
+			}
+			var sent []Preference
+			report, err := send(ctx, func(_ context.Context, page []Preference) error {
+				sent = append(sent, page...)
+				return nil
+			})
+			if err != nil || report.Sent != 2 || len(sent) != 2 {
+				t.Fatalf("valid retry lost preferences: report=%+v, sent=%+v, error=%v", report, sent, err)
+			}
+		})
+	}
+}
+
+// A failing send records no checkpoint: the next sync re-sends.
+func TestPreferences_FailedSyncKeepsTheWatermark(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	u1, u2 := Actor{ID: "u1", Kind: "user"}, Actor{ID: "u2", Kind: "user"}
-
-	mustReact(t, rt, u1, "gallery", "42:en", 1)
-	mustReact(t, rt, u1, "gallery", "42:en", 0)
-	mustReact(t, rt, u1, "gallery", "7:en", -1)
-	mustReact(t, rt, u2, "gallery", "42:ja", 1)
-	for _, a := range []Actor{u1, u2} {
-		mustFavorite(t, rt, a, "gallery", "7:en", true)
+	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
+	if _, err := rt.SyncPreferences(ctx, func(context.Context, []Preference) error { return errors.New("sink down") }); err == nil {
+		t.Fatal("a failing send must surface")
 	}
-	mustFavorite(t, rt, u2, "gallery", "7:en", false)
-	truth := snapshotRows(t, rt)
-	if len(truth) != 5 {
-		t.Fatalf("snapshots = %d, want 5", len(truth))
+	var n int
+	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.preferenceSync).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("checkpoints after a failed sync = %d err=%v", n, err)
 	}
-	for _, s := range truth[:2] {
-		if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: s.PreferenceKey, Revision: s.Revision}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	truth = snapshotRows(t, rt)
-	page := func(list func(context.Context, PreferenceKey, int) ([]PreferenceSnapshot, error), limit int) []PreferenceSnapshot {
-		var all []PreferenceSnapshot
-		var after PreferenceKey
-		for {
-			got, err := list(ctx, after, limit)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(got) > limit {
-				t.Fatalf("page of %d exceeds the limit %d", len(got), limit)
-			}
-			all = append(all, got...)
-			if len(got) < limit {
-				return all
-			}
-			after = got[len(got)-1].PreferenceKey
-		}
-	}
-	if scanned := page(rt.ScanPreferences, 2); !reflect.DeepEqual(scanned, truth) {
-		t.Fatalf("ScanPreferences pages != snapshot table:\n%+v\n%+v", scanned, truth)
-	}
-	var wantPending []PreferenceSnapshot
-	for _, s := range truth {
-		if s.Pending() {
-			wantPending = append(wantPending, s)
-		}
-	}
-	if len(wantPending) != 3 {
-		t.Fatalf("pending in truth = %d, want 3", len(wantPending))
-	}
-	if got := page(rt.PendingPreferences, 1); !reflect.DeepEqual(got, wantPending) {
-		t.Fatalf("PendingPreferences pages != pending rows:\n%+v\n%+v", got, wantPending)
+	var sent int
+	if _, err := rt.SyncPreferences(ctx, func(_ context.Context, page []Preference) error { sent += len(page); return nil }); err != nil || sent != 1 {
+		t.Fatalf("retry sent %d err=%v", sent, err)
 	}
 }
 
-func TestPreferences_AcknowledgeRejectsUnissuedRevisions(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	committed := mustReact(t, rt, actor, "gallery", "42:en", 1).Revision
-	key := prefKey("u1", "gallery", "42", PreferenceAxisReaction)
-
-	if err := rt.AcknowledgePreferences(ctx, nil); err != nil {
-		t.Fatalf("empty ack: %v", err)
-	}
-	for name, ack := range map[string]PreferenceAck{
-		"unknown actor": {PreferenceKey: prefKey("ghost", "gallery", "42", PreferenceAxisReaction), Revision: committed},
-		"future rev":    {PreferenceKey: key, Revision: committed + 1},
-		"zero rev":      {PreferenceKey: key, Revision: 0},
-		"route key":     {PreferenceKey: prefKey("u1", "gallery", "42:en", PreferenceAxisReaction), Revision: committed},
-	} {
-		if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{ack}); err == nil {
-			t.Fatalf("%s: ack accepted, want an error", name)
-		}
-	}
-	if row := snapshotRow(t, rt, key); row.DeliveredRevision != 0 {
-		t.Fatalf("rejected acks moved delivered_revision to %d", row.DeliveredRevision)
-	}
-	newest := mustReact(t, rt, actor, "gallery", "42:en", -1).Revision
-	if err := rt.AcknowledgePreferences(ctx, []PreferenceAck{{PreferenceKey: key, Revision: newest}, {PreferenceKey: key, Revision: committed}}); err != nil {
-		t.Fatalf("batch ack: %v", err)
-	}
-	if row := snapshotRow(t, rt, key); row.DeliveredRevision != newest || row.Value != -1 {
-		t.Fatalf("row after the batch ack = %+v", row)
-	}
-}
-
-// Cutover step 3: the sequence can be lifted above a sink's timestamp-derived
-// revisions, only ever advances, and fails closed outside the safe range.
+// The restore floor lifts the sequence above a retained sink's revisions,
+// only ever advances, and fails closed outside the safe range.
 func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-
-	floor := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC).UnixMicro() // the old clock domain
-	got, err := rt.SeedPreferenceRevisionFloor(ctx, floor)
-	if err != nil || got < floor {
-		t.Fatalf("seed floor = %d err=%v, want >= %d", got, err, floor)
+	actor := access.Actor{ID: "u1", Kind: "user"}
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	floor := int64(1) << 40
+	if err := raiseFloor(rt, floor); err != nil {
+		t.Fatal(err)
 	}
-	row := *mustReact(t, rt, actor, "gallery", "42:en", -1)
-	if row.Revision <= floor {
-		t.Fatalf("revision %d does not exceed the old domain floor %d", row.Revision, floor)
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), -1)
+	_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
+	if rev <= floor {
+		t.Fatalf("revision %d does not exceed the floor %d", rev, floor)
 	}
-	if again, err := rt.SeedPreferenceRevisionFloor(ctx, floor-1_000_000); err != nil || again < row.Revision {
-		t.Fatalf("re-seeding lowered the floor to %d err=%v", again, err)
+	if err := raiseFloor(rt, floor-1_000_000); err != nil {
+		t.Fatal(err)
 	}
-	if next := mustReact(t, rt, actor, "gallery", "42:en", 1); next.Revision <= row.Revision {
-		t.Fatalf("revision went backwards after a re-seed: %d then %d", row.Revision, next.Revision)
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	if _, again, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42)); again <= rev {
+		t.Fatalf("a lower floor moved the sequence back: %d after %d", again, rev)
 	}
-	if _, err := rt.SeedPreferenceRevisionFloor(ctx, maxPreferenceRevisionFloor+1); err == nil {
+	if err := raiseFloor(rt, maxPreferenceRevisionFloor+1); err == nil {
 		t.Fatal("an unsafe floor was accepted")
 	}
 }
 
-func TestPreferences_PurgeSubjectsRemovesTheObligation(t *testing.T) {
-	rt := newPreferenceRuntime(t)
+func raiseFloor(rt *Runtime, floor int64) error {
+	return pgx.BeginFunc(context.Background(), rt.store.pool, func(tx pgx.Tx) error { return rt.RaisePreferenceFloor(context.Background(), tx, floor) })
+}
+
+// A sync holds no connection across send, so a sender writing through the
+// runtime's only connection (an outbox in the same database) completes.
+func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
+	base := newPreferenceRuntime(t)
+	mustReact(t, base, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
+	cfg := base.store.pool.Config()
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}},
+		Resolver: &fakeResolver{}, Kinds: testKinds("gallery", "tag")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sent := 0
+	send := func(ctx context.Context, page []Preference) error {
+		if n := pool.Stat().AcquiredConns(); n != 0 {
+			t.Errorf("sync holds %d connections across send", n)
+		}
+		sent += len(page)
+		_, err := pool.Exec(ctx, "SELECT 1")
+		return err
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := rt.SyncPreferences(ctx, send); err != nil {
+			t.Fatalf("sync %d: %v", i, err)
+		}
+	}
+	if sent != 2 {
+		t.Fatalf("sent %d, want the row on both syncs (overlap window)", sent)
+	}
+}
+
+// Anonymous rows and comment threads never export; another tenant sees
+// nothing.
+func TestPreferences_ExportScope(t *testing.T) {
+	res := &fakeResolver{}
+	res.set("gallery", cid(42), true, true)
+	rt, pool := newTestRuntime(t, Options{Resolver: res, Kinds: testKinds("gallery")})
 	ctx := context.Background()
-	mustReact(t, rt, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1)
-	mustReact(t, rt, Actor{ID: "u2", Kind: "user"}, "gallery", "42:en", 1)
-	if n, err := rt.PurgePreferenceSubjects(ctx, []string{"u1"}); err != nil || n != 1 {
-		t.Fatalf("purge = %d err=%v, want 1", n, err)
-	}
-	if got := pending(t, rt); len(got) != 1 || got[0].ActorID != "u2" {
-		t.Fatalf("pending after the purge = %+v", got)
-	}
-}
-
-// Cutover step 2 / case 13: language-scoped history collapses onto canonical
-// references with the documented rule, archives the source, rebuilds counts,
-// seeds snapshots (zeros for keys a previous exporter sent included), is
-// idempotent and never overwrites a newer live preference.
-func TestPreferences_MigrateCollapsesLocaleHistory(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	tn := testTenant
-
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+`
-		(tenant_id, content_kind, content_id, content_version_id, user_id, ip, value, created_at, updated_at) VALUES
-		($2, 'gallery', '42:en', '', 'u1', NULL,  1, $1::timestamptz, $1::timestamptz),
-		($2, 'gallery', '42:ja', '', 'u1', NULL, -1, $1::timestamptz, $1::timestamptz + interval '1 day'),
-		($2, 'gallery', '7:en',  '', 'u1', NULL,  0, $1::timestamptz, $1::timestamptz),
-		($2, 'gallery', '9:en',  '', 'u2', NULL,  1, $1::timestamptz, $1::timestamptz),
-		($2, 'gallery', '42:en', '', NULL, '10.0.0.1', 1, $1::timestamptz, $1::timestamptz),
-		($2, 'gallery', '42:ja', '', NULL, '10.0.0.1', 1, $1::timestamptz, $1::timestamptz),
-		($2, 'tag',     '9',     '', 'u1', NULL,  1, $1::timestamptz, $1::timestamptz),
-		($2, 'comment', 'c1',    '', 'u1', NULL,  1, $1::timestamptz, $1::timestamptz)`, base, tn); err != nil {
+	u1 := access.Actor{ID: "u1", Kind: "user"}
+	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", cid(42), 1)
+	commentID := cid(501)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'gallery', $2, NULL, 'a', 'hi')`, testTenant, cid(42), commentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (tenant_id, user_id, content_kind, content_id, content_version_id, created_at) VALUES
-		($2, 'u1', 'gallery', '42:en', '', $1::timestamptz),
-		($2, 'u1', 'gallery', '42:ja', '', $1::timestamptz + interval '1 hour'),
-		($2, 'u2', 'gallery', '9:en',  '', $1::timestamptz)`, base, tn); err != nil {
+	if _, err := rt.comments.reactTx(ctx, u1, commentID, 1); err != nil {
 		t.Fatal(err)
 	}
-	// A localized comment thread must survive untouched.
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+`
-		(tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($1, 'gallery', '42:ja', '', 'u1', 'hi')`, tn); err != nil {
-		t.Fatal(err)
+	if got := exported(t, rt); len(got) != 0 {
+		t.Fatalf("exported = %+v, want nothing", got)
 	}
-	// Stale rollup rows under language keys (what the old writers maintained).
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.counts+`
-		(tenant_id, content_kind, content_id, content_version_id, likes, dislikes, favorites, comment_count) VALUES
-		($1, 'gallery', '42:en', '', 2, 0, 1, 0), ($1, 'gallery', '42:ja', '', 0, 1, 1, 1)`, tn); err != nil {
-		t.Fatal(err)
+	mustReact(t, rt, u1, "gallery", cid(42), -1)
+	if got := exported(t, rt); len(got) != 1 || got[0].ContentID != cid(42) || got[0].Value != -1 || got[0].ActorID != "u1" {
+		t.Fatalf("exported = %+v, want the work dislike", got)
 	}
-	// u3 has no source row but a previous exporter sent a like for the work.
-	exported := []PreferenceKey{prefKey("u3", "gallery", "42", PreferenceAxisReaction)}
-
-	dry, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{ExportedKeys: exported, DryRun: true})
-	if err != nil {
-		t.Fatalf("dry run: %v", err)
-	}
-	if !dry.DryRun || dry.ArchivedRows == 0 || dry.Seeded == 0 {
-		t.Fatalf("dry run report = %+v", dry)
-	}
-	if got := len(snapshotRows(t, rt)); got != 0 || archiveCount(t, rt) != 0 {
-		t.Fatalf("the dry run wrote %d snapshots / %d archive rows", got, archiveCount(t, rt))
-	}
-
-	report, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{ExportedKeys: exported})
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	// 6 gallery reaction rows (tag/comment declined) + 3 favorites archived.
-	if report.ArchivedRows != 9 || report.Tombstoned != 1 {
-		t.Fatalf("report = %+v, want 9 archived and 1 tombstone", report)
-	}
-	if len(report.Conflicts) != 3 {
-		t.Fatalf("conflicts = %+v, want the three collapsed groups", report.Conflicts)
-	}
-	for _, c := range report.Conflicts {
-		if c.Axis == PreferenceAxisReaction && c.ActorID == "u1" && c.Resolved != -1 {
-			t.Fatalf("u1's conflicting group resolved to %d, want the dislike", c.Resolved)
-		}
-	}
-	got := reactionInventory(t, rt)
-	want := []string{"comment/c1/u1=1", "gallery/42/10.0.0.1=1", "gallery/42/u1=-1", "gallery/7/u1=0", "gallery/9/u2=1", "tag/9/u1=1"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("collapsed reactions =\n%v\nwant\n%v", got, want)
-	}
-	var favKeys []string
-	frows, err := rt.store.pool.Query(ctx, `SELECT user_id, content_id, created_at FROM `+rt.store.t.favorites+` ORDER BY user_id, content_id`)
+	other, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for frows.Next() {
-		var user, id string
-		var at time.Time
-		if err := frows.Scan(&user, &id, &at); err != nil {
-			t.Fatal(err)
-		}
-		if user == "u1" && !at.Equal(base) {
-			t.Fatalf("the collapsed favorite kept %v, want the oldest bookmark time", at)
-		}
-		favKeys = append(favKeys, user+"/"+id)
-	}
-	frows.Close()
-	if !reflect.DeepEqual(favKeys, []string{"u1/42", "u2/9"}) {
-		t.Fatalf("collapsed favorites = %v", favKeys)
-	}
-	if c := countsOf(t, rt, ref("gallery", "42")); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 {
-		t.Fatalf("work counts = %+v, want the anonymous like, u1's dislike and one favorite", c)
-	}
-	if c := countsOf(t, rt, ref("gallery", "42:ja")); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 || c.CommentCount != 1 {
-		t.Fatalf("language counts = %+v, want canonical preferences and localized comments", c)
-	}
-	var raw Counts
-	if err := rt.store.pool.QueryRow(ctx, `SELECT likes, dislikes, favorites, comment_count FROM `+rt.store.t.counts+` WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='42:ja'`, rt.tenant).Scan(&raw.Likes, &raw.Dislikes, &raw.Favorites, &raw.CommentCount); err != nil {
-		t.Fatal(err)
-	}
-	if raw.Likes != 0 || raw.Dislikes != 0 || raw.Favorites != 0 || raw.CommentCount != 1 {
-		t.Fatalf("physical locale rollup = %+v", raw)
-	}
-	var threads int
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.comments+` WHERE content_id = '42:ja'`).Scan(&threads); err != nil || threads != 1 {
-		t.Fatalf("the localized comment thread = %d rows err=%v, want it untouched", threads, err)
-	}
-	work := snapshotRow(t, rt, prefKey("u1", "gallery", "42", PreferenceAxisReaction))
-	if work.Value != -1 || !work.OccurredAt.Equal(base.Add(24*time.Hour)) {
-		t.Fatalf("seeded work snapshot = %+v, want the dislike at its source time", work)
-	}
-	if ghost := snapshotRow(t, rt, exported[0]); ghost.Value != 0 || !ghost.Pending() {
-		t.Fatalf("the exported-but-absent key = %+v, want a pending zero", ghost)
-	}
-	if n := len(snapshotRows(t, rt)); n != 6 {
-		t.Fatalf("snapshots = %+v, want 6", snapshotRows(t, rt))
-	}
-	before := snapshotRows(t, rt)
-	if _, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{ExportedKeys: exported}); err != nil {
-		t.Fatalf("second migrate: %v", err)
-	}
-	if after := snapshotRows(t, rt); !reflect.DeepEqual(before, after) {
-		t.Fatalf("the second migrate changed the snapshots:\n%+v\n%+v", before, after)
-	}
-	if got := reactionInventory(t, rt); !reflect.DeepEqual(got, want) {
-		t.Fatalf("the second migrate changed the source rows:\n%v", got)
-	}
-	// Spec case 10: a newer live mutation outranks a later reseed.
-	mustReact(t, rt, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1)
-	live := snapshotRow(t, rt, work.PreferenceKey)
-	if live.Value != 1 || live.Revision <= work.Revision {
-		t.Fatalf("live mutation = %+v", live)
-	}
-	if _, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if again := snapshotRow(t, rt, work.PreferenceKey); !reflect.DeepEqual(again, live) {
-		t.Fatalf("a reseed overwrote the newer live preference: %+v -> %+v", live, again)
-	}
-	if n := archiveCount(t, rt); n != 9+6+6 {
-		t.Fatalf("archive rows = %d, want every pre-collapse row of all three runs", n)
-	}
-}
-
-// reactionInventory is every reaction row as "kind/id/actor=value", in key order.
-func reactionInventory(t *testing.T, rt *Runtime) []string {
-	t.Helper()
-	rows, err := rt.store.pool.Query(context.Background(), `SELECT content_kind, content_id, COALESCE(user_id, ip), value
-		FROM `+rt.store.t.reactions+` WHERE tenant_id = $1 ORDER BY content_kind, content_id, COALESCE(user_id, ip)`, rt.tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var kind, id, who string
-		var v int16
-		if err := rows.Scan(&kind, &id, &who, &v); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, fmt.Sprintf("%s/%s/%s=%d", kind, id, who, v))
-	}
-	return out
-}
-
-func archiveCount(t *testing.T, rt *Runtime) int {
-	t.Helper()
-	var n int
-	if err := rt.store.pool.QueryRow(context.Background(), `SELECT count(*) FROM `+rt.store.t.preferenceArchive).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
-func TestPreferences_PostReactionsExportUnderTheirOwnReference(t *testing.T) {
-	rt, pool := newPostRuntime(t, Options{Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
-	ctx := context.Background()
-	var id string
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', false) RETURNING id`, testTenant).Scan(&id); err != nil {
-		t.Fatal(err)
-	}
-	actor := Actor{ID: "u1", Kind: "user"}
-	for _, v := range []int16{1, 1, -1} {
-		if err := rt.posts.react(ctx, actor, id, v); err != nil {
-			t.Fatalf("post react %d: %v", v, err)
-		}
-	}
-	row := snapshotRow(t, rt, prefKey("u1", KindPost, id, PreferenceAxisReaction))
-	if row.Value != -1 {
-		t.Fatalf("post snapshot = %+v", row)
-	}
-	v, err := rt.posts.loadByID(ctx, pool, id)
-	if err != nil || v.TotalLikes != 0 || v.TotalDislikes != 1 {
-		t.Fatalf("post counters = (%d,%d) err=%v, want (0,1)", v.TotalLikes, v.TotalDislikes, err)
-	}
-	var cid string
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($1, 'post', $2, '', 'a', 'hi') RETURNING id`, testTenant, id).Scan(&cid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rt.comments.reactTx(ctx, actor, cid, 1); err != nil {
-		t.Fatalf("comment react: %v", err)
-	}
-	if got := len(snapshotRows(t, rt)); got != 1 {
-		t.Fatalf("snapshots after a comment like = %d, want 1 (a comment reaction is never a preference)", got)
-	}
-}
-
-// deliverySink answers with a scripted disposition per actor.
-type deliverySink struct {
-	verdicts map[string]PreferenceDisposition
-	fail     error
-	seen     [][]PreferenceSnapshot
-}
-
-func (s *deliverySink) DeliverPreferences(_ context.Context, snaps []PreferenceSnapshot) ([]PreferenceDisposition, error) {
-	s.seen = append(s.seen, snaps)
-	if s.fail != nil {
-		return nil, s.fail
-	}
-	out := make([]PreferenceDisposition, len(snaps))
-	for i, snap := range snaps {
-		out[i] = s.verdicts[snap.ActorID]
-	}
-	return out, nil
-}
-
-// Spec cases 6, 7, 9 and 11: an unavailable sink keeps the obligation, accepted
-// rows are acknowledged at exactly their revision, a failing key does not block
-// the others, an erased subject is a terminal fence, and the full replay
-// re-delivers acknowledged rows and resumes from its cursor.
-func TestPreferences_DeliverySweepAndReplay(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	for _, actor := range []string{"u1", "u2", "u3"} {
-		mustReact(t, rt, Actor{ID: actor, Kind: "user"}, "gallery", "42:en", 1)
-	}
-	down := &deliverySink{fail: errors.New("clickhouse unavailable")}
-	if _, err := rt.DeliverPreferences(ctx, down, PreferenceKey{}, 10, 0); err == nil {
-		t.Fatal("a failing sink must surface its error")
-	}
-	if got := len(pending(t, rt)); got != 3 {
-		t.Fatalf("pending after the outage = %d, want 3", got)
-	}
-	sink := &deliverySink{verdicts: map[string]PreferenceDisposition{"u1": PreferenceRetry, "u2": PreferenceAccepted, "u3": PreferenceSubjectErased}}
-	report, err := rt.DeliverPreferences(ctx, sink, PreferenceKey{}, 2, 0)
-	if err != nil {
-		t.Fatalf("sweep: %v", err)
-	}
-	if report.Delivered != 3 || report.Acknowledged != 1 || report.Retried != 1 || report.Erased != 1 {
-		t.Fatalf("report = %+v", report)
-	}
-	if len(sink.seen) != 2 || len(sink.seen[0]) != 2 || len(sink.seen[1]) != 1 {
-		t.Fatalf("pages = %v, want the sweep bounded to 2 rows per page", sink.seen)
-	}
-	got := pending(t, rt)
-	if len(got) != 1 || got[0].ActorID != "u1" {
-		t.Fatalf("pending after the sweep = %+v, want only the retried key", got)
-	}
-	if rows := snapshotRows(t, rt); len(rows) != 2 {
-		t.Fatalf("snapshots = %+v, want the erased subject purged", rows)
-	}
-	acked := snapshotRow(t, rt, prefKey("u2", "gallery", "42", PreferenceAxisReaction))
-	if acked.DeliveredRevision != acked.Revision {
-		t.Fatalf("accepted row = %+v, want it acknowledged at exactly its revision", acked)
-	}
-	// A crash between acceptance and acknowledgement replays the same snapshot.
-	replay := &deliverySink{verdicts: map[string]PreferenceDisposition{"u1": PreferenceAccepted}}
-	if _, err := rt.DeliverPreferences(ctx, replay, PreferenceKey{}, 10, 0); err != nil {
-		t.Fatal(err)
-	}
-	if len(replay.seen) != 1 || replay.seen[0][0].PreferenceKey != got[0].PreferenceKey || replay.seen[0][0].Revision != got[0].Revision {
-		t.Fatalf("replayed snapshot = %+v, want the same identity", replay.seen)
-	}
-	if n := len(pending(t, rt)); n != 0 {
-		t.Fatalf("pending after the replay = %d, want 0", n)
-	}
-	// Full replay: every row (acknowledged ones included), bounded and resumable.
-	full := &deliverySink{verdicts: map[string]PreferenceDisposition{"u1": PreferenceAccepted, "u2": PreferenceAccepted}}
-	first, err := rt.ReplayPreferences(ctx, full, PreferenceKey{}, 1, 1)
-	if err != nil || first.Delivered != 1 || first.Next == (PreferenceKey{}) {
-		t.Fatalf("bounded replay = %+v err=%v", first, err)
-	}
-	rest, err := rt.ReplayPreferences(ctx, full, first.Next, 10, 0)
-	if err != nil || rest.Delivered != 1 || rest.Next != (PreferenceKey{}) {
-		t.Fatalf("resumed replay = %+v err=%v", rest, err)
-	}
-	if len(full.seen) != 2 || full.seen[0][0].ActorID != "u1" || full.seen[1][0].ActorID != "u2" {
-		t.Fatalf("replay pages = %v", full.seen)
+	if got := exported(t, other); len(got) != 0 {
+		t.Fatalf("another tenant exports %+v", got)
 	}
 }

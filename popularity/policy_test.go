@@ -209,7 +209,7 @@ func TestSessionScoreIsCoverageTimesDwell(t *testing.T) {
 func TestMemoryCacheExpires(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	c := NewMemoryCache()
+	c := NewMemoryCache(0)
 	c.Set(ctx, "k", []byte("v"), time.Millisecond)
 	c.Set(ctx, "forever", []byte("v"), 0)
 	time.Sleep(5 * time.Millisecond)
@@ -218,6 +218,39 @@ func TestMemoryCacheExpires(t *testing.T) {
 	}
 	if v, ok := c.Get(ctx, "forever"); !ok || string(v) != "v" {
 		t.Fatal("ttl 0 must not expire")
+	}
+}
+
+// The budget covers keys and values; past it the least recently used entry
+// goes first, and a value larger than the budget is never stored.
+func TestMemoryCacheStaysWithinItsBudget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c := NewMemoryCache(30)
+	c.Set(ctx, "a", []byte("123456789"), 0)
+	c.Set(ctx, "b", []byte("123456789"), 0)
+	c.Set(ctx, "c", []byte("12345678"), 0)
+	if c.Bytes() != 29 || c.Len() != 3 {
+		t.Fatalf("bytes=%d len=%d, want 29 and 3", c.Bytes(), c.Len())
+	}
+	if _, ok := c.Get(ctx, "a"); !ok {
+		t.Fatal("entry within the budget evicted")
+	}
+	c.Set(ctx, "d", []byte("123"), 0)
+	if _, ok := c.Get(ctx, "b"); ok {
+		t.Fatal("least recently used entry survived going over budget")
+	}
+	for _, k := range []string{"a", "c", "d"} {
+		if _, ok := c.Get(ctx, k); !ok {
+			t.Fatalf("entry %q evicted though more recently used than b", k)
+		}
+	}
+	if c.Bytes() != 23 || c.Len() != 3 {
+		t.Fatalf("bytes=%d len=%d, want 23 and 3", c.Bytes(), c.Len())
+	}
+	c.Set(ctx, "a", make([]byte, 30), 0)
+	if _, ok := c.Get(ctx, "a"); ok || c.Bytes() != 13 || c.Len() != 2 {
+		t.Fatalf("an over-budget value was stored or left the old one: bytes=%d len=%d", c.Bytes(), c.Len())
 	}
 }
 

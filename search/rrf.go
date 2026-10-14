@@ -14,7 +14,8 @@ type RRFOptions struct {
 	// K is the stabilizer constant; higher K flattens rank differences.
 	// Defaults to 60 when <= 0.
 	K int
-	// Weights applied to each list. Empty => all 1.0.
+	// Finite weights apply to each list; missing weights default to 1.
+	// Zero excludes a list. Negative weights subtract its contributions.
 	Weights []float32
 }
 
@@ -109,8 +110,12 @@ func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, ma
 	}
 	for li, list := range lists {
 		w := float32(1.0)
-		if li < len(opts.Weights) && opts.Weights[li] > 0 {
+		// Keep the untraced API's existing handling of nonfinite weights.
+		if li < len(opts.Weights) && (opts.Weights[li] > 0 || finiteFloat32(opts.Weights[li])) {
 			w = opts.Weights[li]
+		}
+		if w == 0 {
+			continue
 		}
 		for i, item := range list {
 			rank := i + 1

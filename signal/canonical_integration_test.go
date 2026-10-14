@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
 // deliveries is a multiset of source deliveries: superseded revisions, exact
@@ -18,7 +16,7 @@ import (
 func deliveries(tenant string) []Signal {
 	day := func(d, h int) time.Time { return time.Date(2026, 5, d, h, 0, 0, 0, time.UTC) }
 	u1, u2, u3, a1 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}, Subject{AnonKey: "a1"}
-	g := func(id string) ContentRef { return gallery(tenant, id) }
+	g := func(id string) ContentRef { return gallery(tenant, lid(id)) }
 	var out []Signal
 	for r := uint64(1); r <= 4; r++ {
 		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
@@ -57,38 +55,41 @@ func snapshot(t *testing.T, st *Store, tenant string) storeSnapshot {
 	subjects := []Subject{{UserID: "u1"}, {UserID: "u2"}, {UserID: "u3"}, {AnonKey: "a1"}}
 	snap := storeSnapshot{States: map[string]map[string]State{}, History: map[string][]string{}, Metrics: map[string]map[string]ContentMetrics{}, Popular: map[string][]string{}, CoEng: map[string]int64{}}
 	for _, s := range subjects {
-		states, err := st.States(ctx, tenant, s, refs(tenant, "g1", "g2", "g3"))
+		states, err := st.States(ctx, tenant, s, refs(tenant, lid("g1"), lid("g2"), lid("g3")))
 		if err != nil {
 			t.Fatal(err)
 		}
 		snap.States[s.Key()] = map[string]State{}
 		for k, v := range states {
-			snap.States[s.Key()][k.ContentID] = v
+			snap.States[s.Key()][lname(k.ContentID)] = v
 		}
 		hist, err := st.History(ctx, tenant, s, HistoryOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, h := range hist {
-			snap.History[s.Key()] = append(snap.History[s.Key()], fmt.Sprintf("%s:%+v", h.ContentID, h.State))
+			snap.History[s.Key()] = append(snap.History[s.Key()], fmt.Sprintf("%s:%+v", lname(h.ContentID), h.State))
 		}
 	}
 	for _, w := range []Window{AllTime(), Between(time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)), LastDays(30, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))} {
-		snap.Metrics[w.String()] = metricsByID(t, st, tenant, []string{"g1", "g2", "g3"}, w)
+		snap.Metrics[w.String()] = map[string]ContentMetrics{}
+		for id, m := range metricsByID(t, st, tenant, []string{lid("g1"), lid("g2"), lid("g3")}, w) {
+			snap.Metrics[w.String()][lname(id)] = m
+		}
 		hits, err := st.Popular(ctx, tenant, "gallery", PopularOptions{Window: w, Limit: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, h := range hits {
-			snap.Popular[w.String()] = append(snap.Popular[w.String()], fmt.Sprintf("%s:%g:%+v", h.ContentID, h.Score, h.ContentMetrics))
+			snap.Popular[w.String()] = append(snap.Popular[w.String()], fmt.Sprintf("%s:%g:%+v", lname(h.ContentID), h.Score, h.ContentMetrics))
 		}
 	}
-	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "g1"), CoEngagedOptions{SkipRollup: true})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, lid("g1")), CoEngagedOptions{SkipRollup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, h := range co {
-		snap.CoEng[h.ContentID] = h.Strength
+		snap.CoEng[lname(h.ContentID)] = h.Strength
 	}
 	return snap
 }
@@ -194,7 +195,7 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	day := func(d int) time.Time { return time.Date(2026, 5, d, 9, 0, 0, 0, time.UTC) }
-	w := gallery("t", "w")
+	w := gallery("t", lid("w"))
 	edition := func(v string) ContentRef { return w.WithVersion(v) }
 	var sigs []Signal
 	session := func(sub Subject, id, version string, d int, completed bool) {
@@ -260,14 +261,14 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	sub := Subject{UserID: "u"}
-	ref := gallery("t", "g")
+	ref := gallery("t", lid("g"))
 	d := func(day int) time.Time { return time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC) }
 	rev := func(r uint64, occurred time.Time) Signal {
 		return Signal{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
 	}
 	viewsOn := func(day int) uint64 {
 		t.Helper()
-		return metricsByID(t, st, "t", []string{"g"}, Between(d(day), d(day+1)))["g"].Views
+		return metricsByID(t, st, "t", []string{lid("g")}, Between(d(day), d(day+1)))[lid("g")].Views
 	}
 	if err := st.RecordSignals(ctx, "t", []Signal{rev(1, d(5).Add(time.Hour))}); err != nil {
 		t.Fatal(err)
@@ -281,14 +282,14 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 
 	// A stale nonzero day row left by an interrupted projection.
 	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), '2000-01-01 00:00:00')`); err != nil {
+VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if viewsOn(3) != 1 {
 		t.Fatal("precondition: orphan row visible")
 	}
-	if _, err := st.RepairProjections(ctx, "t", RepairOptions{Rebuild: true}); err != nil {
-		t.Fatal(err)
+	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 1 {
+		t.Fatalf("orphan day repair: %+v %v", res, err)
 	}
 	if viewsOn(3) != 0 || viewsOn(6) != 1 {
 		t.Fatalf("repair must zero the orphan day: day3=%d day6=%d", viewsOn(3), viewsOn(6))
@@ -320,92 +321,5 @@ VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('v
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 0 {
 		t.Fatalf("no projection may be left stale: %+v %v", res, err)
-	}
-}
-
-// Rows written by the pre-ContentKit schemas survive every migration: the 0002
-// copy of legacy raw rows and the 0005 copy into content-referenced tables.
-func TestIntegrationLegacyRowsMigrateIntoContentReferencedTables(t *testing.T) {
-	env := signaltest.FromEnv(t)
-	ctx := context.Background()
-	conn := env.Empty(t, testDB)
-	env.ApplyRange(t, conn, 0, 1)
-	legacy := `INSERT INTO signal_events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, value, label, weight, score, completed, resume, recorded_at) VALUES
-('doujins', 'gallery', '7', 'user', 'u1', 'view', 'legacy-view', '2026-04-01 10:00:00', 5, 10, 0, '', 1, 40, false, 'p:5', '2026-04-01 10:00:01'),
-('doujins', 'gallery', '7', 'user', 'u1', 'view', 'legacy-view', '2026-04-01 10:00:00', 5, 10, 0, '', 1, 40, false, 'p:5', '2026-04-01 10:00:02'),
-('doujins', 'gallery', '7', 'user', 'u1', 'like', 'legacy-like', '2026-04-01 10:05:00', 0, 0, 1, 'like', 1, 0, false, '', '2026-04-01 10:05:01'),
-('doujins', 'tag', '3', 'user', 'u1', 'view', 'legacy-view:tag:3', '2026-04-01 10:00:00', 0, 0, 0, '', 0.25, 0, false, '', '2026-04-01 10:00:01')`
-	if err := conn.Exec(ctx, legacy); err != nil {
-		t.Fatal(err)
-	}
-	// Up to the last pre-ContentKit schema (0004), then write and project a
-	// canonical event, an exposure and a pair there before 0005 converts.
-	env.ApplyRange(t, conn, 1, 4)
-	for _, stmt := range []string{
-		`INSERT INTO events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, resume) VALUES ('doujins', 'gallery', '8', 'user', 'u2', 'view', 'pre-cut', '2026-04-02 10:00:00', 10, 10, 70, true, 'p:10')`,
-		`INSERT INTO subject_state (tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version) VALUES ('doujins', 'user', 'u2', 'gallery', '8', '2026-04-02 10:00:00', '2026-04-02 10:00:00', 1, 1, 1, 0, 10, 10, true, 'p:10', 70, 0, 0, '2026-04-02 10:00:01')`,
-		`INSERT INTO subject_daily (tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version) VALUES ('doujins', 'gallery', '8', 'user', 'u2', '2026-04-02', 1, 1, 1, 0, 70, 0, map('view', 1), '2026-04-02 10:00:01')`,
-		`INSERT INTO item_pairs (tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b, strength) VALUES ('doujins', 'gallery', '7', 'gallery', '8', 3)`,
-		`INSERT INTO exposures (tenant, render_id, stage, surface, subject_kind, subject, entity_types, entity_ids, positions, occurred_at) VALUES ('doujins', 'pre-cut', 'rendered', 'search', 'user', 'u2', ['gallery'], ['8'], [1], '2026-04-02 10:00:00')`,
-	} {
-		if err := conn.Exec(ctx, stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
-	env.ApplyRange(t, conn, 4, len(env.Migrations(t)))
-	if err := CheckSchema(ctx, conn, testDB); err != nil {
-		t.Fatal(err)
-	}
-	st, err := NewStore(conn, testDB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Projections copied by 0005 are readable before any repair.
-	g8 := gallery("doujins", "8")
-	states, err := st.States(ctx, "doujins", Subject{UserID: "u2"}, []ContentRef{g8})
-	if err != nil || states[g8.Key()].LastScore != 70 || !states[g8.Key()].Completed {
-		t.Fatalf("copied state: %+v %v", states, err)
-	}
-	if m := metricsByID(t, st, "doujins", []string{"8"}, AllTime()); m["8"].Views != 1 {
-		t.Fatalf("copied daily: %+v", m)
-	}
-	co, err := st.CoEngaged(ctx, "doujins", gallery("doujins", "7"), CoEngagedOptions{})
-	if err != nil || len(co) != 1 || co[0].ContentID != "8" || co[0].Strength != 3 {
-		t.Fatalf("copied pairs: %+v %v", co, err)
-	}
-	page, err := st.Attribution(ctx, "doujins", AttributionOptions{Stage: StageRendered})
-	if err != nil || len(page.Renders) != 1 || !page.Renders[0].Shown[0].Equal(g8) {
-		t.Fatalf("converted exposures: %+v %v", page, err)
-	}
-	// The legacy raw rows, copied twice over, rebuild into canonical projections.
-	res, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true})
-	if err != nil || res.Repaired != 3 {
-		t.Fatalf("rebuild legacy keys: %+v %v", res, err)
-	}
-	g7 := gallery("doujins", "7")
-	states, err = st.States(ctx, "doujins", Subject{UserID: "u1"}, []ContentRef{g7})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := states[g7.Key()]; s.TotalEvents != 2 || s.Views != 1 || s.NetValue != 1 || s.Resume != "p:5" || s.LastScore != 40 {
-		t.Fatalf("legacy state: %+v", s)
-	}
-	// Re-running the copies (a partially applied migration) must not add events.
-	env.ApplyRange(t, conn, 1, 2)
-	env.ApplyRange(t, conn, 4, 5)
-	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
-		t.Fatal(err)
-	}
-	if m := metricsByID(t, st, "doujins", []string{"7", "8"}, AllTime()); m["7"].Views != 1 || m["7"].Events != 2 || m["8"].Views != 1 {
-		t.Fatalf("re-applied copies duplicated events: %+v", m)
-	}
-	// Erasure still clears the kept pre-ContentKit tables.
-	if report, err := st.EraseSubjects(ctx, []string{"doujins"}, []Subject{{UserID: "u2"}}); err != nil || !report.Complete() {
-		t.Fatalf("erase across kept tables: %+v %v", report, err)
-	}
-	for _, table := range []string{"events", "subject_state", "subject_daily", "signals", "subject_content_state", "subject_content_daily", "exposures"} {
-		if n := countWhere(t, conn, table, "tenant = 'doujins' AND subject = 'u2'"); n != 0 {
-			t.Fatalf("%s still holds %d rows of the erased subject", table, n)
-		}
 	}
 }

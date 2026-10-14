@@ -8,39 +8,43 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // pollAdmin is the gated writer; pollWritePerm must be non-empty or requirePerm
 // fails closed even under allowAll.
-var pollAdmin = Actor{ID: "admin", Kind: "user"}
+// pollAdmin holds every permission when it calls the module directly; over
+// HTTP the runtime's Authorizer decides.
+var pollAdmin = testauth.Actor(access.Actor{ID: "admin", Kind: "user"}, testauth.All{})
 
-const pollWritePerm = "poll:write"
+const pollWritePerm = string(access.PollsWrite)
 
 // newPollTest builds a Runtime with PollWrite wired and returns the polls service.
 func newPollTest(t *testing.T, opts Options) (*Runtime, *polls) {
 	t.Helper()
-	if opts.Perms.PollWrite == "" {
-		opts.Perms.PollWrite = pollWritePerm
-	}
 	rt, _ := newTestRuntime(t, opts)
 	return rt, newPolls(rt)
 }
 
-func twoOptionPoll(language string) createPollInput {
-	return createPollInput{
+func twoOptionPoll(language string) PollInput {
+	return PollInput{
 		Question: "Best girl?",
 		Language: language,
-		Options: []createOptionInput{
+		Options: []PollOptionInput{
 			{Label: "Rei", Position: 0},
 			{Label: "Asuka", Position: 1},
 		},
 	}
 }
 
-func optVoteCount(v pollView, optID string) int {
+func optVoteCount(v Poll, optID string) int {
 	for _, o := range v.Options {
 		if o.ID == optID {
 			return o.VoteCount
@@ -49,7 +53,7 @@ func optVoteCount(v pollView, optID string) int {
 	return -1
 }
 
-func totalVotes(v pollView) int {
+func totalVotes(v Poll) int {
 	n := 0
 	for _, o := range v.Options {
 		n += o.VoteCount
@@ -77,7 +81,7 @@ func TestPolls_LifecycleCreateListVoteTally(t *testing.T) {
 		t.Fatalf("list = %+v, want the one created poll with 2 options", views)
 	}
 
-	voter := Actor{ID: "v1", Kind: "user"}
+	voter := access.Actor{ID: "v1", Kind: "user"}
 	opt := created.Options[0].ID
 	view, err := p.vote(ctx, voter, created.ID, opt)
 	if err != nil {
@@ -103,7 +107,7 @@ func TestPolls_ConcurrentDuplicateVoteIsExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	racer := Actor{ID: "racer", Kind: "user"}
+	racer := access.Actor{ID: "racer", Kind: "user"}
 	opt := created.Options[0].ID
 
 	var wg sync.WaitGroup
@@ -142,7 +146,7 @@ func TestPolls_AnonymousDedupByIP(t *testing.T) {
 	}
 	opt := created.Options[0].ID
 
-	anon1 := Actor{IP: "10.0.0.1", Anonymous: true}
+	anon1 := access.Actor{IP: "10.0.0.1", Anonymous: true}
 	if _, err := p.vote(ctx, anon1, created.ID, opt); err != nil {
 		t.Fatalf("anon1 vote: %v", err)
 	}
@@ -150,7 +154,7 @@ func TestPolls_AnonymousDedupByIP(t *testing.T) {
 		t.Fatalf("anon1 re-vote: %v", err)
 	}
 	// distinct IP counts separately
-	anon2 := Actor{IP: "10.0.0.2", Anonymous: true}
+	anon2 := access.Actor{IP: "10.0.0.2", Anonymous: true}
 	if _, err := p.vote(ctx, anon2, created.ID, opt); err != nil {
 		t.Fatalf("anon2 vote: %v", err)
 	}
@@ -163,7 +167,7 @@ func TestPolls_AnonymousDedupByIP(t *testing.T) {
 	}
 
 	// unidentifiable actor (no id, no ip) is rejected
-	if _, err := p.vote(ctx, Actor{Anonymous: true}, created.ID, opt); err == nil {
+	if _, err := p.vote(ctx, access.Actor{Anonymous: true}, created.ID, opt); err == nil {
 		t.Fatal("expected rejection for unidentifiable voter")
 	}
 }
@@ -189,10 +193,10 @@ func TestPolls_LanguageSlicing(t *testing.T) {
 }
 
 func TestPolls_AdminGateDeniedReturns403(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: denyAll{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: denyAll{}}})
 	ctx := context.Background()
 
-	_, err := p.create(ctx, pollAdmin, twoOptionPoll(""))
+	_, err := p.create(ctx, rt.as(pollAdmin), twoOptionPoll(""))
 	var he httpError
 	if !errors.As(err, &he) || he.status != http.StatusForbidden {
 		t.Fatalf("create under denyAll: want 403 httpError, got %v", err)
@@ -200,7 +204,7 @@ func TestPolls_AdminGateDeniedReturns403(t *testing.T) {
 
 	// same gate over HTTP
 	mux := http.NewServeMux()
-	p.mount(mux)
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST /polls under denyAll: status %d, body %s", rec.Code, rec.Body.String())
@@ -216,7 +220,7 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	opt := created.Options[1].ID
-	voter := Actor{ID: "voter", Kind: "user"}
+	voter := access.Actor{ID: "voter", Kind: "user"}
 	if _, err := p.vote(ctx, voter, created.ID, opt); err != nil {
 		t.Fatalf("vote: %v", err)
 	}
@@ -238,7 +242,7 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 	}
 
 	// a different caller has not voted
-	other := Actor{ID: "other", Kind: "user"}
+	other := access.Actor{ID: "other", Kind: "user"}
 	ov, err := p.get(ctx, other, created.ID)
 	if err != nil {
 		t.Fatalf("get other: %v", err)
@@ -249,30 +253,30 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 }
 
 func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
-	_, p := newPollTest(t, Options{})
+	_, p := newPollTest(t, Options{Anonymous: Anonymous{Votes: true}})
 	mux := http.NewServeMux()
-	p.mount(mux)
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
 
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /polls: status %d, body %s", rec.Code, rec.Body.String())
 	}
-	var created pollView
+	var created Poll
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create resp: %v", err)
 	}
 
-	rec = doPollReq(t, mux, "GET", "/polls", nil, Actor{Anonymous: true, IP: "9.9.9.9"})
+	rec = doPollReq(t, mux, "GET", "/polls", nil, access.Actor{Anonymous: true, IP: "9.9.9.9"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /polls: status %d", rec.Code)
 	}
 
 	vote := map[string]string{"option_id": created.Options[0].ID}
-	rec = doPollReq(t, mux, "POST", "/polls/"+created.ID+"/vote", vote, Actor{Anonymous: true, IP: "9.9.9.9"})
+	rec = doPollReq(t, mux, "POST", "/polls/"+created.ID+"/vote", vote, access.Actor{Anonymous: true, IP: "9.9.9.9"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST vote: status %d, body %s", rec.Code, rec.Body.String())
 	}
-	var voted pollView
+	var voted Poll
 	if err := json.Unmarshal(rec.Body.Bytes(), &voted); err != nil {
 		t.Fatalf("decode vote resp: %v", err)
 	}
@@ -281,7 +285,7 @@ func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
 	}
 }
 
-func doPollReq(t *testing.T, h http.Handler, method, target string, body any, actor Actor) *httptest.ResponseRecorder {
+func doPollReq(t *testing.T, h http.Handler, method, target string, body any, actor access.Actor) *httptest.ResponseRecorder {
 	t.Helper()
 	var r io.Reader
 	if body != nil {
@@ -292,7 +296,7 @@ func doPollReq(t *testing.T, h http.Handler, method, target string, body any, ac
 		r = bytes.NewReader(b)
 	}
 	req := httptest.NewRequest(method, target, r)
-	req = req.WithContext(withActor(req.Context(), actor))
+	req = testauth.As(req, actor)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -302,12 +306,12 @@ func doPollReq(t *testing.T, h http.Handler, method, target string, body any, ac
 // admin success and public denial paths.
 type pollAdminOnly struct{}
 
-func (pollAdminOnly) Can(_ context.Context, a Actor, _ string) (bool, error) {
+func (pollAdminOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 	return a.ID == "admin", nil
 }
 
 func TestPolls_LiveGatingAndAdminList(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: pollAdminOnly{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: pollAdminOnly{}}})
 	ctx := context.Background()
 	future := time.Now().Add(time.Hour)
 
@@ -323,7 +327,7 @@ func TestPolls_LiveGatingAndAdminList(t *testing.T) {
 	}
 
 	// Public list: only the live poll; admin list: both, newest-live-first.
-	pub, err := p.list(ctx, Actor{ID: "user1"}, listFilter{limit: 20})
+	pub, err := p.list(ctx, access.Actor{ID: "user1"}, listFilter{limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,43 +344,43 @@ func TestPolls_LiveGatingAndAdminList(t *testing.T) {
 
 	// HTTP: a future poll 404s for the public but serves for the admin; the
 	// admin list endpoint 403s for the public.
-	get := func(actor Actor, path string) int {
+	get := func(actor access.Actor, path string) int {
 		req := httptest.NewRequest("GET", path, nil)
-		req = req.WithContext(withActor(req.Context(), actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		return rec.Code
 	}
-	if code := get(Actor{ID: "user1"}, "/polls/"+scheduled.ID); code != http.StatusNotFound {
+	if code := get(access.Actor{ID: "user1"}, "/polls/"+scheduled.ID); code != http.StatusNotFound {
 		t.Fatalf("public GET future poll = %d, want 404", code)
 	}
 	if code := get(pollAdmin, "/polls/"+scheduled.ID); code != http.StatusOK {
 		t.Fatalf("admin GET future poll = %d, want 200", code)
 	}
-	if code := get(Actor{ID: "user1"}, "/polls/admin"); code != http.StatusForbidden {
+	if code := get(access.Actor{ID: "user1"}, "/polls/admin"); code != http.StatusForbidden {
 		t.Fatalf("public GET /polls/admin = %d, want 403", code)
 	}
 
 	// Voting on a not-yet-live poll is a 404 (no schedule leak).
-	if _, err := p.vote(ctx, Actor{ID: "user1"}, scheduled.ID, scheduled.Options[0].ID); !errors.Is(err, ErrNotFound) {
+	if _, err := p.vote(ctx, access.Actor{ID: "user1"}, scheduled.ID, scheduled.Options[0].ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("vote on future poll: want ErrNotFound, got %v", err)
 	}
 	// Rescheduling it into the past makes it publicly live.
 	past := time.Now().Add(-time.Minute)
-	if _, err := p.update(ctx, pollAdmin, scheduled.ID, updatePollInput{LiveAt: &past}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, scheduled.ID, PollUpdate{LiveAt: &past}); err != nil {
 		t.Fatal(err)
 	}
-	pub, _ = p.list(ctx, Actor{ID: "user1"}, listFilter{limit: 20})
+	pub, _ = p.list(ctx, access.Actor{ID: "user1"}, listFilter{limit: 20})
 	if len(pub) != 2 {
 		t.Fatalf("after reschedule, public list = %v, want both", pollIDs(pub))
 	}
 }
 
-func TestPolls_MonthWindowsTotalsAndImageAbsolutization(t *testing.T) {
-	_, p := newPollTest(t, Options{Storage: &StorageConfig{Bucket: "b", PublicBaseURL: "https://cdn.test/"}})
+func TestPolls_MonthWindowsAndTotals(t *testing.T) {
+	_, p := newPollTest(t, Options{})
 	ctx := context.Background()
 
-	mk := func(lang, live string) pollView {
+	mk := func(lang, live string) Poll {
 		t.Helper()
 		at, _ := time.Parse("2006-01-02", live)
 		in := twoOptionPoll(lang)
@@ -406,10 +410,10 @@ func TestPolls_MonthWindowsTotalsAndImageAbsolutization(t *testing.T) {
 	}
 
 	// TotalVotes sums option counters.
-	if _, err := p.vote(ctx, Actor{ID: "v1"}, may.ID, may.Options[0].ID); err != nil {
+	if _, err := p.vote(ctx, access.Actor{ID: "v1"}, may.ID, may.Options[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.vote(ctx, Actor{ID: "v2"}, may.ID, may.Options[1].ID); err != nil {
+	if _, err := p.vote(ctx, access.Actor{ID: "v2"}, may.ID, may.Options[1].ID); err != nil {
 		t.Fatal(err)
 	}
 	v, _ := p.get(ctx, pollAdmin, may.ID)
@@ -417,27 +421,9 @@ func TestPolls_MonthWindowsTotalsAndImageAbsolutization(t *testing.T) {
 		t.Fatalf("TotalVotes = %d (options sum %d), want 2", v.TotalVotes, totalVotes(v))
 	}
 
-	// A stored RELATIVE path (backfilled legacy row) absolutizes against the
-	// public bucket origin; an absolute URL passes through untouched.
-	rel := "assets/poll-images/legacy.webp"
-	if _, err := p.update(ctx, pollAdmin, may.ID, updatePollInput{ImageURL: &rel}); err != nil {
-		t.Fatal(err)
-	}
-	abs := "https://elsewhere.example/x.png"
-	if _, err := p.update(ctx, pollAdmin, jun.ID, updatePollInput{ImageURL: &abs}); err != nil {
-		t.Fatal(err)
-	}
-	v, _ = p.get(ctx, pollAdmin, may.ID)
-	if v.ImageURL != "https://cdn.test/assets/poll-images/legacy.webp" {
-		t.Fatalf("relative image not absolutized: %q", v.ImageURL)
-	}
-	v, _ = p.get(ctx, pollAdmin, jun.ID)
-	if v.ImageURL != abs {
-		t.Fatalf("absolute image mangled: %q", v.ImageURL)
-	}
 }
 
-func pollIDs(vs []pollView) []string {
+func pollIDs(vs []Poll) []string {
 	ids := make([]string, len(vs))
 	for i := range vs {
 		ids[i] = vs[i].ID
@@ -446,21 +432,21 @@ func pollIDs(vs []pollView) []string {
 }
 
 func TestPolls_OptionCRUD(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: pollAdminOnly{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: pollAdminOnly{}}})
 	ctx := context.Background()
 	v, err := p.create(ctx, pollAdmin, twoOptionPoll("en"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	do := func(actor Actor, method, path, body string) *httptest.ResponseRecorder {
+	do := func(actor access.Actor, method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		var rdr io.Reader
 		if body != "" {
 			rdr = bytes.NewBufferString(body)
 		}
 		req := httptest.NewRequest(method, path, rdr)
-		req = req.WithContext(withActor(req.Context(), actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		return rec
@@ -471,7 +457,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("add option: %d %s", rec.Code, rec.Body.String())
 	}
-	var added pollOption
+	var added PollOption
 	if err := json.Unmarshal(rec.Body.Bytes(), &added); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +470,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update option: %d %s", rec.Code, rec.Body.String())
 	}
-	var upd pollOption
+	var upd PollOption
 	_ = json.Unmarshal(rec.Body.Bytes(), &upd)
 	if upd.Label != "Kaji" || upd.Position != 0 {
 		t.Fatalf("update result = %+v", upd)
@@ -499,7 +485,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 	}
 
 	// Non-admin is denied on all three.
-	user := Actor{ID: "user1"}
+	user := access.Actor{ID: "user1"}
 	if rec = do(user, "POST", "/polls/"+v.ID+"/options", `{"label":"x"}`); rec.Code != http.StatusForbidden {
 		t.Fatalf("non-admin add = %d, want 403", rec.Code)
 	}
@@ -517,7 +503,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 	_, p := newPollTest(t, Options{})
 	ctx := context.Background()
-	public := Actor{ID: "anon", Kind: "user"}
+	public := access.Actor{ID: "anon", Kind: "user"}
 
 	// A live, then-deactivated poll dated to a specific past month.
 	past := time.Date(2020, 3, 15, 12, 0, 0, 0, time.UTC)
@@ -528,7 +514,7 @@ func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	deactivate := false
-	if _, err := p.update(ctx, pollAdmin, created.ID, updatePollInput{IsActive: &deactivate}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, created.ID, PollUpdate{IsActive: &deactivate}); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
 
@@ -570,6 +556,62 @@ func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 	for _, v := range fpub {
 		if v.LiveAt.After(time.Now()) {
 			t.Fatalf("future poll leaked publicly in archive window: %+v", v)
+		}
+	}
+}
+
+// closes_at: absent leaves it, a time sets it, null clears it and reopens the poll.
+func TestPolls_ClosesAtClearsWithNull(t *testing.T) {
+	_, p := newPollTest(t, Options{})
+	mux := http.NewServeMux()
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
+	var poll Poll
+	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll("en"), pollAdmin)
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &poll) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	patch := func(body string) Poll {
+		t.Helper()
+		req := httptest.NewRequest("PATCH", "/polls/"+poll.ID, strings.NewReader(body))
+		req = testauth.As(req, pollAdmin)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var out Poll
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("PATCH %s: %d %s", body, rec.Code, rec.Body)
+		}
+		return out
+	}
+	past := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	if got := patch(`{"closes_at": "` + past.Format(time.RFC3339) + `"}`); got.ClosesAt == nil || !got.ClosesAt.Equal(past) || !got.Closed {
+		t.Fatalf("set closes_at: %+v", got)
+	}
+	if got := patch(`{"question": "Renamed?"}`); got.ClosesAt == nil || !got.ClosesAt.Equal(past) || got.Question != "Renamed?" {
+		t.Fatalf("absent closes_at: %+v", got)
+	}
+	if got := patch(`{"closes_at": null}`); got.ClosesAt != nil || got.Closed {
+		t.Fatalf("null closes_at: %+v", got)
+	}
+	if _, err := p.vote(context.Background(), access.Actor{ID: "voter"}, poll.ID, poll.Options[0].ID); err != nil {
+		t.Fatalf("vote after reopening: %v", err)
+	}
+	if rec := doPollReq(t, mux, "PATCH", "/polls/"+poll.ID, map[string]any{"closes_at": "soon"}, pollAdmin); rec.Code != http.StatusBadRequest {
+		t.Fatalf("closes_at not a time: %d", rec.Code)
+	}
+	// A Go client's PollUpdate encodes the same three: unset is left out.
+	for _, c := range []struct {
+		in   PollUpdate
+		want string
+	}{
+		{PollUpdate{Question: ptr("Q?")}, `{"question":"Q?","is_active":null,"live_at":null}`},
+		{PollUpdate{ClosesAt: Nullable[time.Time]{Set: true}}, `{"question":null,"is_active":null,"live_at":null,"closes_at":null}`},
+		{PollUpdate{ClosesAt: Nullable[time.Time]{Set: true, Value: &past}}, `{"question":null,"is_active":null,"live_at":null,"closes_at":"` + past.Format(time.RFC3339) + `"}`},
+	} {
+		if b, err := json.Marshal(c.in); err != nil || string(b) != c.want {
+			t.Fatalf("encode %+v: %s %v, want %s", c.in, b, err, c.want)
+		}
+		if rec := doPollReq(t, mux, "PATCH", "/polls/"+poll.ID, c.in, pollAdmin); rec.Code != http.StatusOK {
+			t.Fatalf("PATCH %s: %d %s", c.want, rec.Code, rec.Body)
 		}
 	}
 }

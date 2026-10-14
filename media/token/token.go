@@ -1,0 +1,210 @@
+// Package token signs and verifies media access tokens, shared by the host
+// signer and the media gateway so the format cannot drift:
+//
+//	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
+//
+// An item token's scope is an item's, "{ns}/{kind}/{id}" or a version's
+// "{ns}/{kind}/{id}/{version}": every file in the item's private/ or none. A
+// download token's is one key in an item's download/, which no item token
+// opens. Tokens are bearer tokens, revoked only by expiry.
+package token
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+var (
+	ErrMalformed  = errors.New("token: malformed")
+	ErrExpired    = errors.New("token: expired")
+	ErrUnknownKey = errors.New("token: unknown key")
+	ErrInvalid    = errors.New("token: signature does not cover this path")
+)
+
+// CookieName carries an item token in cookie delivery mode.
+const CookieName = "mt"
+
+// DefaultWindow aligns expiries so tokens and URLs repeat within a window.
+const DefaultWindow = 4 * time.Hour
+
+// Key is one signing key.
+type Key struct {
+	ID     string
+	Secret []byte
+}
+
+// Ring signs with the current key and verifies with the current or previous one.
+type Ring struct {
+	current  Key
+	previous *Key
+}
+
+// NewRing validates keys: ids are non-empty without '.', secrets at least 32 bytes.
+func NewRing(current Key, previous *Key) (Ring, error) {
+	for _, k := range []*Key{&current, previous} {
+		if k == nil {
+			continue
+		}
+		if k.ID == "" || strings.ContainsAny(k.ID, ".|") || len(k.Secret) < 32 {
+			return Ring{}, fmt.Errorf("token: key %q needs a dot-free id and a secret of at least 32 bytes", k.ID)
+		}
+	}
+	if previous != nil && previous.ID == current.ID {
+		return Ring{}, fmt.Errorf("token: previous key reuses id %q", current.ID)
+	}
+	return Ring{current: current, previous: previous}, nil
+}
+
+// ParseKey parses "{kid}:{base64 secret}" (standard or URL alphabet, padding
+// optional), the form hosts and the access worker read from their secret store.
+func ParseKey(s string) (Key, error) {
+	id, enc, ok := strings.Cut(strings.TrimSpace(s), ":")
+	if !ok {
+		return Key{}, fmt.Errorf("token: key must be \"{kid}:{base64 secret}\"")
+	}
+	enc = strings.TrimRight(enc, "=")
+	secret, err := base64.RawStdEncoding.DecodeString(enc)
+	if err != nil {
+		if secret, err = base64.RawURLEncoding.DecodeString(enc); err != nil {
+			return Key{}, fmt.Errorf("token: key %q: secret is not base64", id)
+		}
+	}
+	return Key{ID: id, Secret: secret}, nil
+}
+
+// ParseRing builds a ring from ParseKey strings; previous may be empty.
+func ParseRing(current, previous string) (Ring, error) {
+	cur, err := ParseKey(current)
+	if err != nil {
+		return Ring{}, err
+	}
+	var prev *Key
+	if strings.TrimSpace(previous) != "" {
+		p, err := ParseKey(previous)
+		if err != nil {
+			return Ring{}, err
+		}
+		prev = &p
+	}
+	return NewRing(cur, prev)
+}
+
+// Expiry rounds now+ttl up to a window. Token timestamps store whole Unix
+// seconds, so fractional-second windows round up to whole seconds.
+func Expiry(now time.Time, ttl, window time.Duration) time.Time {
+	if window <= 0 {
+		window = DefaultWindow
+	}
+	w := int64(window / time.Second)
+	if window%time.Second != 0 {
+		w++
+	}
+	target := now.Add(ttl)
+	seconds := target.Unix()
+	if target.Nanosecond() != 0 {
+		seconds++
+	}
+	intervals := seconds / w
+	if seconds%w > 0 {
+		intervals++
+	}
+	return time.Unix(intervals*w, 0).UTC()
+}
+
+// ItemScope covers every private file of one item: "{ns}/{kind}/{id}", or
+// "{ns}/{kind}/{id}/{version}" for a version's.
+func ItemScope(ns, kind, id, version string) string {
+	if version != "" {
+		return ns + "/" + kind + "/" + id + "/" + version
+	}
+	return ns + "/" + kind + "/" + id
+}
+
+// Sign signs scope until exp with the current key.
+func (r Ring) Sign(scope string, exp time.Time) string {
+	e := strconv.FormatInt(exp.Unix(), 10)
+	return r.current.ID + "." + e + "." + mac(r.current.Secret, scope, e)
+}
+
+// VerifyPrivate checks tok for the private object key
+// "{ns}/{kind}/{id}[/{version}]/private/{name}" at now: its item's token.
+func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
+	p := strings.Split(key, "/")
+	if slices.Contains(p, "") {
+		return ErrInvalid
+	}
+	switch {
+	case len(p) == 5 && p[3] == "private":
+		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], ""), now)
+	case len(p) == 6 && p[4] == "private" && !slices.Contains(reserved, p[3]):
+		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], p[3]), now)
+	}
+	return ErrInvalid
+}
+
+// reserved are an item folder's own names, never a version.
+var reserved = []string{"manifest.json", "private", "download", "public", "temp"}
+
+// VerifyDownload checks tok for the download key
+// "{ns}/{kind}/{id}[/{version}]/download/{name}" at now: that one key's
+// download token.
+func (r Ring) VerifyDownload(tok, key string, now time.Time) error {
+	p := strings.Split(key, "/")
+	if slices.Contains(p, "") || !(len(p) == 5 && p[3] == "download" || len(p) == 6 && p[4] == "download" && !slices.Contains(reserved, p[3])) {
+		return ErrInvalid
+	}
+	return r.VerifyScope(tok, DownloadScope(key), now)
+}
+
+// DownloadScope is the scope of a download token for key: the key itself,
+// which no item scope equals.
+func DownloadScope(key string) string { return key }
+
+// VerifyScope checks tok for exactly scope at now.
+func (r Ring) VerifyScope(tok, scope string, now time.Time) error {
+	kid, rest, ok := strings.Cut(tok, ".")
+	if !ok || kid == "" { // a zero Ring's empty key id would verify an empty secret
+		return ErrMalformed
+	}
+	e, sig, ok := strings.Cut(rest, ".")
+	if !ok || e == "" || sig == "" {
+		return ErrMalformed
+	}
+	exp, err := strconv.ParseInt(e, 10, 64)
+	if err != nil || strconv.FormatInt(exp, 10) != e {
+		return ErrMalformed
+	}
+	var secret []byte
+	switch {
+	case kid == r.current.ID:
+		secret = r.current.Secret
+	case r.previous != nil && kid == r.previous.ID:
+		secret = r.previous.Secret
+	default:
+		return ErrUnknownKey
+	}
+	if now.Unix() >= exp {
+		return ErrExpired
+	}
+	got, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil {
+		return ErrMalformed
+	}
+	if want, _ := base64.RawURLEncoding.DecodeString(mac(secret, scope, e)); !hmac.Equal(got, want) {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func mac(secret []byte, scope, exp string) string {
+	h := hmac.New(sha256.New, secret)
+	h.Write([]byte(scope + "|" + exp))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}

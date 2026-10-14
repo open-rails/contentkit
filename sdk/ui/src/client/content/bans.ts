@@ -1,0 +1,43 @@
+import { ContentKitError } from "../errors.js";
+import type { BanInput, CommentBan } from "../generated/wire.js";
+import type { Http } from "../http.js";
+import { call, type PageQuery } from "../route.js";
+import type { BanScope } from "./types.js";
+
+/** Comment bans: "owner" on the caller's own content, "global" across the site (CommentBan). */
+export class BansClient {
+  constructor(private readonly http: Http) {}
+
+  /** The scope's bans, newest first, expired ones included. */
+  list(scope: BanScope, q: PageQuery = {}, signal?: AbortSignal): Promise<CommentBan[]> {
+    return scope === "global"
+      ? call(this.http, "GET", "/global-comment-bans", { query: q, signal })
+      : call(this.http, "GET", "/comment-bans", { query: q, signal });
+  }
+  /** The user's site-wide ban, expired or not; null when they have none (root:comments:ban). */
+  async get(scope: "global", user: string, signal?: AbortSignal): Promise<CommentBan | null> {
+    try {
+      return await call(this.http, "GET", "/global-comment-bans/{user}", { params: { user }, signal });
+    } catch (e) {
+      if (e instanceof ContentKitError && e.code === "not_found") return null;
+      throw e;
+    }
+  }
+  /** Bans user from commenting in the scope, replacing any ban there; no until lasts until lifted. */
+  async ban(scope: BanScope, user: string, input: BanInput = {}): Promise<CommentBan> {
+    const emit = this.http.captureChanges();
+    const o = { params: { user }, body: input };
+    const ban: CommentBan = await (scope === "global"
+      ? call(this.http, "PUT", "/global-comment-bans/{user}", o)
+      : call(this.http, "PUT", "/comment-bans/{user}", o));
+    emit({ type: "ban.saved", scope, ban });
+    return ban;
+  }
+  /** Lifts user's ban in the scope; idempotent. */
+  async lift(scope: BanScope, user: string): Promise<void> {
+    const emit = this.http.captureChanges();
+    const o = { params: { user } };
+    await (scope === "global" ? call(this.http, "DELETE", "/global-comment-bans/{user}", o) : call(this.http, "DELETE", "/comment-bans/{user}", o));
+    emit({ type: "ban.lifted", scope, user });
+  }
+}

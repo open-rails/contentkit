@@ -14,7 +14,7 @@ func TestReviewAttributionPaginationRetainsUnattributedClicks(t *testing.T) {
 	ctx := context.Background()
 	at := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
 	subject := Subject{UserID: "review-viewer"}
-	ref := gallery("review", "1")
+	ref := gallery("review", cid(1))
 	for _, id := range []string{"r1", "r2"} {
 		if err := st.RecordExposures(ctx, "review", []Exposure{{RenderID: id, Stage: StageRendered, Subject: subject, OccurredAt: at, Shown: []Placement{{ContentRef: ref, Position: 1}}}}); err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestReviewAttributionPaginationRetainsUnattributedClicks(t *testing.T) {
 func TestAttributionCursorCodec(t *testing.T) {
 	opts := AttributionOptions{Stage: StageVisible, Surface: " search ", Window: LastDays(7, time.Date(2026, 9, 16, 5, 0, 0, 0, time.UTC))}
 	scope := attributionScope(opts)
-	key := clickKey{Render: "r1", OccurredAt: time.Date(2026, 9, 16, 1, 2, 3, 0, time.UTC), ContentKind: "gallery", ContentID: "g1", ContentVersionID: "v2", SubjectKind: "user", Subject: "u1", EventID: "e1"}
+	key := clickKey{Render: "r1", OccurredAt: time.Date(2026, 9, 16, 1, 2, 3, 0, time.UTC), ContentKind: "gallery", ContentID: cid(1), ContentVersionID: "v2", SubjectKind: "user", Subject: "u1", EventID: "e1"}
 	for _, c := range []attributionCursor{
 		{Scope: scope, Phase: phaseRenders, Render: "r9"},
 		{Scope: scope, Phase: phaseRenders, Render: "r1", Partial: true, Click: &key},

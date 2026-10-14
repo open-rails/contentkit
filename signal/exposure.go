@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // RecordExposures appends one row per result list and stage, batched into a
@@ -87,4 +88,20 @@ func (st *Store) ForgetExposures(ctx context.Context, tenant string, subject Sub
 		return err
 	}
 	return st.mutate(ctx, "exposures", "tenant = ? AND subject_kind = ? AND subject = ?", tenant, subject.Kind(), subject.Key())
+}
+
+// ForgetExposuresBefore removes a subject's exposures through the second
+// containing before. Exposure occurrence times are stored at second precision.
+func (st *Store) ForgetExposuresBefore(ctx context.Context, tenant string, subject Subject, before time.Time) error {
+	if strings.TrimSpace(tenant) == "" {
+		return fmt.Errorf("signal: tenant is required")
+	}
+	if err := subject.Validate(); err != nil {
+		return err
+	}
+	if before.IsZero() {
+		return fmt.Errorf("signal: exposure clear time is required")
+	}
+	end := before.UTC().Truncate(time.Second).Add(time.Second)
+	return st.mutate(ctx, "exposures", "tenant = ? AND subject_kind = ? AND subject = ? AND occurred_at < ?", tenant, subject.Kind(), subject.Key(), end)
 }

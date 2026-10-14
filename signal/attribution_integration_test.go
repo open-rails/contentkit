@@ -37,7 +37,7 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 	g := func(tenant string, ids ...string) []Placement {
 		out := make([]Placement, len(ids))
 		for i, id := range ids {
-			out[i] = Placement{ContentRef: gallery(tenant, id), Position: uint32(i + 1)}
+			out[i] = Placement{ContentRef: gallery(tenant, lid(id)), Position: uint32(i + 1)}
 		}
 		return out
 	}
@@ -67,7 +67,7 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 		t.Fatal(err)
 	}
 	click := func(tenant string, sub Subject, render, id string, pos uint32, event string, at time.Time) Signal {
-		return Signal{ContentRef: gallery(tenant, id), Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
+		return Signal{ContentRef: gallery(tenant, lid(id)), Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
 			WithAttribution(Attribution{RenderID: render, Surface: SurfaceSearch, Position: pos})
 	}
 	s := func(n int) time.Time { return f.day1.Add(time.Duration(n) * time.Second) }
@@ -93,7 +93,7 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 		click("t", f.u1, "N01", "g1", 1, "cN1-1", s(16)),  // render never recorded
 		click("t", f.u2, "N01", "g2", 2, "cN1-2", s(17)),
 		click("t", f.a1, "N02", "g3", 1, "cN2-1", s(18)),
-		{ContentRef: gallery("t", "g1"), Subject: f.u1, Type: TypeClick, EventID: "organic", OccurredAt: s(19)},
+		{ContentRef: gallery("t", lid("g1")), Subject: f.u1, Type: TypeClick, EventID: "organic", OccurredAt: s(19)},
 	}
 	// Deliver twice, the second time reversed.
 	reversed := make([]Signal, len(clicks))
@@ -113,11 +113,11 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 	// Residue a writer that passed the fence check before the fence could leave:
 	// the export must exclude it through the ledger, not only through deletion.
 	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, payload)
-VALUES (?, 'gallery', 'g14', ?, ?, ?, 'c09-residue', ?, ?)`, testDB), f.tenant, f.u3.Kind(), f.u3.Key(), TypeClick, s(20), `{"render_id":"R09","position":1}`); err != nil {
+VALUES (?, 'gallery', '%s', ?, ?, ?, 'c09-residue', ?, ?)`, testDB, lid("g14")), f.tenant, f.u3.Kind(), f.u3.Key(), TypeClick, s(20), `{"render_id":"R09","position":1}`); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, query_id, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at)
-VALUES (?, 'R09', ?, 'q-R09', ?, ?, ?, ['gallery'], ['g14'], [1], ?)`, testDB), f.tenant, string(StageRendered), SurfaceSearch, f.u3.Kind(), f.u3.Key(), f.day1); err != nil {
+VALUES (?, 'R09', ?, 'q-R09', ?, ?, ?, ['gallery'], ['%s'], [1], ?)`, testDB, lid("g14")), f.tenant, string(StageRendered), SurfaceSearch, f.u3.Kind(), f.u3.Key(), f.day1); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -126,7 +126,7 @@ VALUES (?, 'R09', ?, 'q-R09', ?, ?, ?, ['gallery'], ['g14'], [1], ?)`, testDB), 
 func clickIDs(cs []AttributedClick) []string {
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, c.ContentID+":"+c.EventID+"@"+c.Subject.Key())
+		out = append(out, lname(c.ContentID)+":"+c.EventID+"@"+c.Subject.Key())
 	}
 	return out
 }

@@ -8,11 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // Conn is the minimal ClickHouse surface the Store needs; clickhouse-go's
-// driver.Conn satisfies it.
+// driver.Conn satisfies it. Implementations must forward the context unchanged
+// so clickhouse-go receives query options, including external tables.
 type Conn interface {
 	Exec(ctx context.Context, query string, args ...any) error
 	Query(ctx context.Context, query string, args ...any) (driver.Rows, error)
@@ -27,7 +31,7 @@ type Store struct {
 }
 
 // NewStore returns a Store over an existing ClickHouse connection. The schema
-// comes from migrations.SignalClickHouse; verify it with CheckSchema.
+// comes from migrations.ClickHouse; verify it with CheckSchema.
 func NewStore(conn Conn, database string) (*Store, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("signal: conn is required")
@@ -65,16 +69,30 @@ func (k ProjectionKey) less(o ProjectionKey) bool {
 	return false
 }
 
-// keyFilter renders "(content_kind, content_id, content_version_id,
-// subject_kind, subject) IN (...)" for sorted, deduplicated keys.
-func keyFilter(keys []ProjectionKey) (string, []any) {
-	tuples := make([]string, len(keys))
-	args := make([]any, 0, len(keys)*5)
-	for i, k := range keys {
-		tuples[i] = "(?, ?, ?, ?, ?)"
-		args = append(args, k.args()...)
+const projectionKeyFilter = "(" + refColumns + ", subject_kind, subject) IN " +
+	"(SELECT " + refColumns + ", subject_kind, subject FROM contentkit_projection_keys)"
+
+// Send keys as query-local data, not SQL literals repeated in each subquery.
+func projectionKeyContext(ctx context.Context, keys []ProjectionKey) (context.Context, error) {
+	table, err := ext.NewTable("contentkit_projection_keys",
+		ext.Column("content_kind", "String"),
+		ext.Column("content_id", "String"),
+		ext.Column("content_version_id", "String"),
+		ext.Column("subject_kind", "String"),
+		ext.Column("subject", "String"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("signal: projection keys: %w", err)
 	}
-	return "(" + refColumns + ", subject_kind, subject) IN (" + strings.Join(tuples, ", ") + ")", args
+	for _, k := range keys {
+		if err := table.Append(
+			k.ContentKind, k.ContentID, k.ContentVersionID,
+			k.Subject.Kind(), k.Subject.Key(),
+		); err != nil {
+			return nil, fmt.Errorf("signal: projection keys: %w", err)
+		}
+	}
+	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
 // RecordSignals appends source events, then rebuilds the compact state and
@@ -83,6 +101,9 @@ func keyFilter(keys []ProjectionKey) (string, []any) {
 // incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
 // process stops between the insert and the projections, the events are durable
 // and RepairProjections restores the projections.
+// insertChunk bounds the rows of one signals INSERT.
+const insertChunk = 200
+
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -138,15 +159,22 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if len(rows) == 0 {
 		return nil
 	}
-	insert := fmt.Sprintf(`INSERT INTO %s.signals
+	// The driver inlines arguments, so chunks keep each statement well under
+	// ClickHouse's max_query_size (256 KiB). Events are idempotent by
+	// event_id, so a retry after a partial insert converges.
+	const perRow = 18
+	for start := 0; start < len(rows); start += insertChunk {
+		end := min(start+insertChunk, len(rows))
+		insert := fmt.Sprintf(`INSERT INTO %s.signals
 (tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
  duration_s, progress, progress_max, value, score, completed, resume, payload)
 SELECT tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
        duration_s, progress, progress_max, value, score, completed, resume, payload
 FROM (%s) AS incoming
-WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
-	if err := st.conn.Exec(ctx, insert, args...); err != nil {
-		return fmt.Errorf("signal: insert signals: %w", err)
+WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
+		if err := st.conn.Exec(ctx, insert, args[start*perRow:end*perRow]...); err != nil {
+			return fmt.Errorf("signal: insert signals: %w", err)
+		}
 	}
 	keys := make([]ProjectionKey, 0, len(touched))
 	for k := range touched {
@@ -157,37 +185,40 @@ WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 
 // canonicalEvents selects, per logical event of the filtered keys, the
 // highest-version row as c = (occurred_at, revision, duration_s, progress,
-// progress_max, value, score, completed, resume) plus the newest ingest time of
-// any of its rows. Superseded and duplicate rows never count, whether or not
-// ClickHouse has merged them.
+// progress_max, value, score, completed, resume) plus its winning raw version.
+// Superseded and duplicate rows never count, whether or not ClickHouse has
+// merged them.
 func (st *Store) canonicalEvents(filter string) string {
 	return fmt.Sprintf(`SELECT %[3]s, subject_kind, subject, signal_type, event_id,
         argMax(tuple(occurred_at, revision, duration_s, progress, progress_max, value, score, completed, resume), version) AS c,
-        max(ingested_at) AS ing
+        max(version) AS ver
     FROM %[1]s.signals
     WHERE tenant = ? AND %[2]s AND %[4]s
     GROUP BY %[3]s, subject_kind, subject, signal_type, event_id`, st.db, filter, refColumns, st.notErased())
 }
 
 // project rebuilds subject_content_state and subject_content_daily for keys
-// from canonical events. Every derived row carries version = newest raw ingest
-// time of its key, so a projection that saw more events replaces one that saw
-// fewer and a late stale projection cannot win. Day rows that lost their
-// canonical events (a revision moved a session to another day) are rewritten
-// as zeros.
+// from canonical events. The sum of each winning raw version plus one advances
+// on additions and revisions, but not duplicate deliveries. Every day carries
+// the full key's generation. Days that lost events after a revision are zeroed.
 func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKey) error {
 	if len(keys) == 0 {
 		return nil
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].less(keys[j]) })
-	filter, keyArgs := keyFilter(keys)
-	canon := st.canonicalEvents(filter)
+	ctx, err := projectionKeyContext(ctx, keys)
+	if err != nil {
+		return err
+	}
+	canon := st.canonicalEvents(projectionKeyFilter)
+	// A rebuild after projection loss is a new insert, even at the same generation.
+	insertToken := contentref.NewID()
 
 	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
-(tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, total_events, views,
+(tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, last_view_at, total_events, views,
  completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
 SELECT ?, subject_kind, subject, %[4]s,
-    min(c.1), max(c.1), toUInt32(count()),
+    min(c.1), max(c.1), maxIf(c.1, signal_type = '%[3]s'), toUInt32(count()),
     toUInt32(countIf(signal_type = '%[3]s')),
     toUInt32(countIf(signal_type = '%[3]s' AND c.8)),
     sumIf(toUInt64(c.3), signal_type = '%[3]s'),
@@ -198,11 +229,16 @@ SELECT ?, subject_kind, subject, %[4]s,
     argMaxIf(c.7, (c.1, c.2, event_id), signal_type = '%[3]s'),
     sum(c.6),
     toUInt32(countIf(c.6 != 0)),
-    max(ing)
+    sum(toUInt256(ver) + 1)
 FROM (%[2]s)
-GROUP BY subject_kind, subject, %[4]s`, st.db, canon, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, state, append([]any{tenant, tenant}, keyArgs...)...); err != nil {
+GROUP BY subject_kind, subject, %[4]s
+SETTINGS insert_deduplication_token = ?`, st.db, canon, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, state, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
+	}
+	months, err := st.projectionMonths(ctx, tenant)
+	if err != nil {
+		return err
 	}
 
 	daily := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_daily
@@ -214,31 +250,66 @@ FROM (
     SELECT %[5]s, subject_kind, subject, day,
         toUInt32(sum(n)) AS events, toUInt32(sum(v)) AS views, toUInt32(sum(done)) AS completions,
         sum(active) AS active_s, sum(score) AS score_sum, sum(val) AS value_sum, sumMap(types) AS type_counts,
-        max(max(ing)) OVER (PARTITION BY %[5]s, subject_kind, subject) AS version,
+        sum(sum(generation)) OVER (PARTITION BY %[5]s, subject_kind, subject) AS version,
         max(prior) AS prior_events
     FROM (
         SELECT %[5]s, subject_kind, subject, toDate(c.1) AS day,
             toUInt32(1) AS n, toUInt32(signal_type = '%[4]s') AS v, toUInt32(signal_type = '%[4]s' AND c.8) AS done,
             if(signal_type = '%[4]s', toUInt64(c.3), 0) AS active, if(signal_type = '%[4]s', toInt64(c.7), 0) AS score,
-            c.6 AS val, map(signal_type, toUInt32(1)) AS types, ing, toUInt32(0) AS prior
+            c.6 AS val, map(signal_type, toUInt32(1)) AS types, toUInt256(ver) + 1 AS generation, toUInt32(0) AS prior
         FROM (%[2]s)
         UNION ALL
         SELECT %[5]s, subject_kind, subject, day, 0, 0, 0, 0, 0, 0,
-            CAST(map(), 'Map(LowCardinality(String), UInt32)'), toDateTime64(0, 6, 'UTC'), events
+            CAST(map(), 'Map(LowCardinality(String), UInt32)'), toUInt256(0), events
         FROM %[1]s.subject_content_daily FINAL
         WHERE tenant = ? AND %[3]s
     )
     GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, filter, TypeView, refColumns)
-	dailyArgs := append([]any{tenant, tenant}, keyArgs...)
-	dailyArgs = append(dailyArgs, tenant)
-	dailyArgs = append(dailyArgs, keyArgs...)
-	if err := st.conn.Exec(ctx, daily, dailyArgs...); err != nil {
-		return fmt.Errorf("signal: project daily: %w", err)
+WHERE version > 0 AND toYYYYMM(day) IN ?
+SETTINGS insert_deduplication_token = ?`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
+	// Filter only the output: the window must retain the full key's generation.
+	// ClickHouse's default max_partitions_per_insert_block is 100.
+	const partitionsPerInsert = 100
+	for start := 0; start < len(months); start += partitionsPerInsert {
+		batch := months[start:min(start+partitionsPerInsert, len(months))]
+		if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, batch, contentref.NewID()); err != nil {
+			return fmt.Errorf("signal: project daily: %w", err)
+		}
 	}
 	return nil
+}
+
+// Raw months include every canonical month, even while revisions are arriving.
+// Prior positive months must also be visited to zero orphan days after revisions.
+func (st *Store) projectionMonths(ctx context.Context, tenant string) ([]uint32, error) {
+	q := fmt.Sprintf(`SELECT DISTINCT month FROM (
+    SELECT toYYYYMM(toDate(occurred_at)) AS month
+    FROM %[1]s.signals
+    WHERE tenant = ? AND %[2]s AND %[3]s
+    UNION ALL
+    SELECT toYYYYMM(day) AS month
+    FROM %[1]s.subject_content_daily FINAL
+    WHERE tenant = ? AND %[2]s AND %[3]s AND events > 0
+) ORDER BY month`, st.db, projectionKeyFilter, st.notErased())
+	rows, err := st.conn.Query(ctx, q, tenant, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("signal: projection months: %w", err)
+	}
+	defer rows.Close()
+	var months []uint32
+	for rows.Next() {
+		var month uint32
+		if err := rows.Scan(&month); err != nil {
+			return nil, fmt.Errorf("signal: projection months: %w", err)
+		}
+		months = append(months, month)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("signal: projection months: %w", err)
+	}
+	return months, nil
 }
 
 // RepairOptions bounds one RepairProjections call.
@@ -268,8 +339,9 @@ type RepairResult struct {
 
 // RepairProjections is the owned projection repair. It examines up to Limit
 // candidate keys in key order and rebuilds those whose state or daily
-// projection is missing or older than their newest raw event (all of them with
-// Rebuild). Idempotent; call again with After = Next until Next is nil.
+// projection is missing or behind its canonical generation, or whose positive
+// daily rows do not cover exactly the canonical days (all keys with Rebuild).
+// Idempotent; call again with After = Next until Next is nil.
 func (st *Store) RepairProjections(ctx context.Context, tenant string, opts RepairOptions) (RepairResult, error) {
 	var res RepairResult
 	if strings.TrimSpace(tenant) == "" {
@@ -325,25 +397,24 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 }
 
 func (st *Store) staleKeys(ctx context.Context, tenant string, keys []ProjectionKey) ([]ProjectionKey, error) {
-	filter, keyArgs := keyFilter(keys)
+	ctx, err := projectionKeyContext(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
 	const cols = refColumns + ", subject_kind, subject"
 	q := fmt.Sprintf(`SELECT r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject
-FROM (SELECT %[4]s, max(ingested_at) AS raw
-      FROM %[1]s.signals WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS r
+FROM (SELECT %[4]s, sum(toUInt256(ver) + 1) AS raw, groupUniqArray(toDate(c.1)) AS days
+      FROM (%[5]s) GROUP BY %[4]s) AS r
 LEFT JOIN (SELECT %[4]s, max(version) AS projected
       FROM %[1]s.subject_content_state WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS s
   USING (%[4]s)
-LEFT JOIN (SELECT %[4]s, max(version) AS projected
-      FROM %[1]s.subject_content_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
+LEFT JOIN (SELECT %[4]s, minIf(version, events > 0) AS projected, groupUniqArrayIf(day, events > 0) AS days
+      FROM %[1]s.subject_content_daily FINAL WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
   USING (%[4]s)
-WHERE s.projected < r.raw OR d.projected < r.raw
-ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, filter, st.notErased(), cols)
-	args := make([]any, 0, 3+3*len(keyArgs))
-	for i := 0; i < 3; i++ {
-		args = append(args, tenant)
-		args = append(args, keyArgs...)
-	}
-	keys, err := st.scanKeys(ctx, tenant, q, args...)
+WHERE ifNull(s.projected, 0) < r.raw OR ifNull(d.projected, 0) < r.raw
+   OR arraySort(ifNull(d.days, [])) != arraySort(r.days)
+ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, projectionKeyFilter, st.notErased(), cols, st.canonicalEvents(projectionKeyFilter))
+	keys, err = st.scanKeys(ctx, tenant, q, tenant, tenant, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: detect stale projections: %w", err)
 	}

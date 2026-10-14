@@ -32,7 +32,7 @@ func TestSubject(t *testing.T) {
 
 func TestAttributionRoundTrip(t *testing.T) {
 	base := Signal{
-		ContentRef: contentref.New("t", "gallery", "1"),
+		ContentRef: contentref.New("t", "gallery", cid(1)),
 		Subject:    Subject{UserID: "u1"},
 		Type:       "click",
 		Payload:    map[string]any{"existing": "keep"},
@@ -105,7 +105,7 @@ func TestRecordSignalsValidation(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	valid := Signal{
-		ContentRef: contentref.New("t", "a", "1"), Subject: Subject{UserID: "u"},
+		ContentRef: contentref.New("t", "a", cid(1)), Subject: Subject{UserID: "u"},
 		Type: TypeView, EventID: "e1", OccurredAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
 	if err := st.RecordSignals(ctx, "", []Signal{valid}); err == nil {
@@ -138,10 +138,10 @@ func TestStatesEmptyRefs(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("empty refs: got %v err %v", got, err)
 	}
-	if _, err := st.States(context.Background(), "t", Subject{UserID: "u"}, []ContentRef{contentref.New("other", "a", "1")}); err == nil {
+	if _, err := st.States(context.Background(), "t", Subject{UserID: "u"}, []ContentRef{contentref.New("other", "a", cid(1))}); err == nil {
 		t.Fatal("foreign tenant reference must error")
 	}
-	if _, err := st.CoEngaged(context.Background(), "t", contentref.NewVersion("t", "a", "1", "v"), CoEngagedOptions{}); err == nil {
+	if _, err := st.CoEngaged(context.Background(), "t", contentref.NewVersion("t", "a", cid(1), "v"), CoEngagedOptions{}); err == nil {
 		t.Fatal("co-engagement is work-level")
 	}
 }
@@ -151,7 +151,7 @@ func TestExposureValidate(t *testing.T) {
 	item := func(id string, pos uint32) Placement {
 		return Placement{ContentRef: contentref.New("t", "gallery", id), Position: pos}
 	}
-	valid := Exposure{RenderID: "r1", Stage: StageVisible, OccurredAt: at, Shown: []Placement{item("a", 1), item("b", 3)}}
+	valid := Exposure{RenderID: "r1", Stage: StageVisible, OccurredAt: at, Shown: []Placement{item(cid(1), 1), item(cid(2), 3)}}
 	if err := valid.validate("t"); err != nil {
 		t.Fatalf("valid exposure rejected: %v", err)
 	}
@@ -160,11 +160,11 @@ func TestExposureValidate(t *testing.T) {
 		"stage":              func(e *Exposure) { e.Stage = "shown" },
 		"time":               func(e *Exposure) { e.OccurredAt = time.Time{} },
 		"empty":              func(e *Exposure) { e.Shown = nil },
-		"zero position":      func(e *Exposure) { e.Shown = []Placement{item("a", 0)} },
-		"duplicate position": func(e *Exposure) { e.Shown = []Placement{item("a", 2), item("b", 2)} },
+		"zero position":      func(e *Exposure) { e.Shown = []Placement{item(cid(1), 0)} },
+		"duplicate position": func(e *Exposure) { e.Shown = []Placement{item(cid(1), 2), item(cid(2), 2)} },
 		"content":            func(e *Exposure) { e.Shown = []Placement{{Position: 1}} },
 		"foreign tenant": func(e *Exposure) {
-			e.Shown = []Placement{{ContentRef: contentref.New("o", "gallery", "a"), Position: 1}}
+			e.Shown = []Placement{{ContentRef: contentref.New("o", "gallery", cid(1)), Position: 1}}
 		},
 		"subject": func(e *Exposure) { e.Subject = Subject{UserID: "u", AnonKey: "a"} },
 	} {
@@ -203,16 +203,15 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	at := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	valid := Signal{ContentRef: contentref.New("t", "a", "1"), Subject: Subject{UserID: "u"}, Type: TypeView, EventID: "e", OccurredAt: at}
+	valid := Signal{ContentRef: contentref.New("t", "a", cid(1)), Subject: Subject{UserID: "u"}, Type: TypeView, EventID: "e", OccurredAt: at}
 	var limit *LimitError
 	long := strings.Repeat("x", MaxIdentifierBytes+1)
 	for name, mutate := range map[string]func(*Signal){
-		"content id": func(s *Signal) { s.ContentID = long },
-		"version":    func(s *Signal) { s.ContentRef = s.WithVersion(long) },
-		"event id":   func(s *Signal) { s.EventID = long },
-		"subject":    func(s *Signal) { s.Subject = Subject{AnonKey: long} },
-		"resume":     func(s *Signal) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
-		"payload":    func(s *Signal) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
+		"version":  func(s *Signal) { s.ContentRef = s.WithVersion(long) },
+		"event id": func(s *Signal) { s.EventID = long },
+		"subject":  func(s *Signal) { s.Subject = Subject{AnonKey: long} },
+		"resume":   func(s *Signal) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
+		"payload":  func(s *Signal) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
 	} {
 		bad := valid
 		mutate(&bad)
@@ -220,12 +219,17 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 			t.Fatalf("%s: want LimitError, got %v", name, err)
 		}
 	}
+	badID := valid
+	badID.ContentID = long
+	if err := st.RecordSignals(ctx, "t", []Signal{badID}); !errors.Is(err, contentref.ErrInvalidID) {
+		t.Fatalf("content id: want ErrInvalidID, got %v", err)
+	}
 	if err := st.RecordSignals(ctx, "t", make([]Signal, MaxSignalsPerBatch+1)); !errors.As(err, &limit) || limit.Got != MaxSignalsPerBatch+1 {
 		t.Fatalf("batch: %v", err)
 	}
 	shown := make([]Placement, MaxShownPerExposure+1)
 	for i := range shown {
-		shown[i] = Placement{ContentRef: contentref.New("t", "a", "1"), Position: uint32(i + 1)}
+		shown[i] = Placement{ContentRef: contentref.New("t", "a", cid(1)), Position: uint32(i + 1)}
 	}
 	exposure := Exposure{RenderID: "r", Stage: StageServed, OccurredAt: at, Shown: shown}
 	if err := st.RecordExposures(ctx, "t", []Exposure{exposure}); !errors.As(err, &limit) {

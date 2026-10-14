@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 type failedAnswerClassifier struct{ fail string }
@@ -25,7 +27,7 @@ func TestClassificationPageContinuesPastFailureAndRevisitsEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"a", "b"} {
-		if _, err := p.answer(ctx, Actor{ID: id}, poll.ID, id); err != nil {
+		if _, err := p.answer(ctx, access.Actor{ID: id}, poll.ID, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -44,7 +46,7 @@ func TestClassificationPageContinuesPastFailureAndRevisitsEdits(t *testing.T) {
 		t.Fatalf("healthy answer starved: %+v %v", next, err)
 	}
 	// A changed answer behind the cursor is reconsidered at the next sweep.
-	if _, err := p.answer(ctx, Actor{ID: actor}, poll.ID, "changed"); err != nil {
+	if _, err := p.answer(ctx, access.Actor{ID: actor}, poll.ID, "changed"); err != nil {
 		t.Fatal(err)
 	}
 	cl.fail = ""

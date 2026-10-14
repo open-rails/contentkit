@@ -1,60 +1,54 @@
-// Package migrations embeds ContentKit's migratekit lineages: the keyword
-// Postgres profile, the pre-ContentKit combined Postgres lineage that converges
-// on it, the taxonomy and social Postgres lineages, and the ClickHouse signal plane.
+// Package migrations owns ContentKit's PostgreSQL and ClickHouse migrations.
 package migrations
 
 import (
+	"context"
+	"database/sql"
 	"embed"
+	"fmt"
 	"io/fs"
+
+	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/migratekit"
 )
 
-//go:embed keyword/*.sql
-var keywordFS embed.FS
+//go:embed postgres/*.sql clickhouse/*.sql
+var files embed.FS
 
-// Postgres is the keyword profile: the only Postgres search lineage for new
-// installations. It requires pg_trgm and PGroonga and no vector extension.
-// Apply it under its own migratekit app id, scoped to the keyword schema.
-var Postgres fs.FS = mustSubFS(keywordFS, "keyword")
+// Postgres installs ContentKit's tables in its own schema.
+var Postgres fs.FS = mustSubFS("postgres")
 
-//go:embed legacy/*.sql
-var legacyFS embed.FS
+// ClickHouse installs the signal-plane tables in the selected database.
+var ClickHouse fs.FS = mustSubFS("clickhouse")
 
-// LegacyPostgres is the pre-ContentKit combined lineage (searchkit app id).
-// Installations created from it keep applying it: its final migration
-// converges on the keyword profile schema and drops the embedding tables.
-// Export those tables before applying it (docs/migration.md). Never use it
-// for a new installation.
-var LegacyPostgres fs.FS = mustSubFS(legacyFS, "legacy")
-
-//go:embed taxonomy/*.sql
-var taxonomyFS embed.FS
-
-// Taxonomy is the catalog lineage (content_nodes, content_node_names,
-// content_edges, content_assignments, content_node_counts). Apply it under its
-// own migratekit app id (contentkit_taxonomy) into the same host schema after
-// the keyword profile, which it depends on.
-var Taxonomy fs.FS = mustSubFS(taxonomyFS, "taxonomy")
-
-//go:embed social/*.sql
-var socialFS embed.FS
-
-// Social is the interaction lineage (social_* tables) applied into the host
-// schema under content.MigratekitApp; every file carries a parent link.
-var Social fs.FS = mustSubFS(socialFS, "social")
-
-func mustSubFS(fsys fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(fsys, dir)
+func mustSubFS(dir string) fs.FS {
+	sub, err := fs.Sub(files, dir)
 	if err != nil {
 		panic(err)
 	}
 	return sub
 }
 
-//go:embed clickhouse/signal/*.sql
-var signalClickHouseFS embed.FS
-
-// SignalClickHouse is the signal-plane ClickHouse lineage. Apply it with
-// migratekit chmigrate to the dedicated signal database (see signal.CreateDatabase)
-// under its own app identity; check compatibility at startup with
-// signal.CheckSchema.
-var SignalClickHouse fs.FS = mustSubFS(signalClickHouseFS, "clickhouse/signal")
+// ApplyPostgres applies ContentKit's migrations in its schema under its
+// ledger identity and migration lock (contentkit.New calls it).
+func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
+	if db == nil {
+		return fmt.Errorf("contentkit: DB is required")
+	}
+	if _, err := search.QuoteSchema(schema); err != nil {
+		return fmt.Errorf("contentkit: Schema: %w", err)
+	}
+	// MigrateKit creates the selected schema under its migration lock.
+	steps, err := migratekit.Load(Postgres, ".")
+	if err != nil {
+		return fmt.Errorf("contentkit: load PostgreSQL migrations: %w", err)
+	}
+	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
+		return fmt.Errorf("contentkit: apply PostgreSQL migrations: %w", err)
+	}
+	if err := postgres.MigrateDB(ctx, db, schema); err != nil {
+		return fmt.Errorf("contentkit: apply shared notification migrations: %w", err)
+	}
+	return nil
+}

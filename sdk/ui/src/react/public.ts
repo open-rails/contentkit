@@ -1,0 +1,101 @@
+import { useEffect, useMemo, useState } from "react";
+import type { ContentKitClient } from "../client/client.js";
+import type { ContentKitError } from "../client/errors.js";
+import type { ReadResult, RefBody } from "../client/generated/wire.js";
+import type { PresetRule } from "../client/generated/wire.js";
+import { defaultImage, isPattern, ruleDir, stableImage } from "../client/media/rules.js";
+import type { PublicPreset } from "../client/public.js";
+import { useOptionalContentKitClient } from "./context.js";
+import { useKinds } from "./groups.js";
+import { useMediaRead } from "./read.js";
+
+export interface UsePresets {
+  /** Every kind's public presets; empty until they load (or when the server has none). */
+  presets: PresetRule[];
+  loaded: boolean;
+  error?: ContentKitError;
+}
+
+const settled = new WeakMap<ContentKitClient, { presets: PresetRule[]; error?: ContentKitError }>();
+const inflight = new WeakMap<ContentKitClient, Promise<void>>();
+
+/** The public presets (`GET /media/presets`), fetched once per client. */
+export function usePresets(o: { client?: ContentKitClient | null } = {}): UsePresets {
+  const client = useOptionalContentKitClient(o.client);
+  const [, rerender] = useState(0);
+  const done = client ? settled.get(client) : undefined;
+  useEffect(() => {
+    if (!client || settled.has(client)) return;
+    let live = true;
+    let load = inflight.get(client);
+    if (!load) {
+      load = client.media.presets().then(
+        (presets) => void settled.set(client, { presets }),
+        (error: ContentKitError) => void settled.set(client, { presets: [], error }),
+      ).finally(() => inflight.delete(client));
+      inflight.set(client, load);
+    }
+    void load.then(() => live && rerender((n) => n + 1));
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return { presets: done?.presets ?? [], loaded: !!done || !client, error: done?.error };
+}
+
+export interface PublicImageOptions {
+  /** The host's listing of the item's image (its API's): shown without a read. */
+  image?: PublicPreset | null;
+  /** A read of the item the host already has. */
+  read?: ReadResult | null;
+  /** Overrides the provider's client. */
+  client?: ContentKitClient | null;
+}
+
+export interface UsePublicImage {
+  /** The item's current renditions; else the kind's default image (when the preset has one); null while unknown or when there is neither. */
+  image: PublicPreset | null;
+  /** The preset's rules (aspect, widths, min_width) once the presets load. */
+  rule?: PresetRule;
+  /** image is the kind's default, not the item's own. */
+  isDefault: boolean;
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+}
+
+/**
+ * An item's public image for a preset ("avatar", "cover", a version's
+ * "poster"): the exact renditions from a read's `public` (or the host's
+ * listing), else the kind's default image, else none. Reads refresh after
+ * commits through the same client.
+ */
+export function usePublicImage(item: RefBody, preset: string, o: PublicImageOptions = {}): UsePublicImage {
+  const { kind, id, version } = item;
+  const client = useOptionalContentKitClient(o.client);
+  const { presets, loaded } = usePresets({ client });
+  const rule = presets.find((p) => p.kind === kind && p.name === preset);
+  const listed = o.image !== undefined;
+  // The read waits for the presets, so it lists only the preset's upload.
+  const prefix = rule ? (isPattern(rule.from) ? ruleDir(rule.from) : rule.from) : undefined;
+  const r = useMediaRead(item, { prefix, read: listed || !loaded ? null : o.read, client });
+  const image = useMemo((): { image: PublicPreset | null; isDefault: boolean } => {
+    const own = listed ? o.image : r.read?.public?.find((p) => p.preset === preset);
+    if (own && own.renditions.length) return { image: { preset, renditions: own.renditions, aspect: ("aspect" in own && own.aspect) || rule?.aspect }, isDefault: false };
+    if (!listed && !r.read) return { image: null, isDefault: false };
+    const def = rule && defaultImage(rule, id, version);
+    return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
+  }, [listed, o.image, r.read, preset, rule, id, version]);
+  return { ...image, rule, loading: !loaded || r.loading, error: r.error, reload: r.reload };
+}
+
+/**
+ * A person's avatar (the content model's `avatars`, a Stable preset): URLs
+ * built from their id on this site's media host, showing their image or
+ * the default. null while the model loads or when the site shows none.
+ */
+export function useAvatar(userId: string | null | undefined, o: { client?: ContentKitClient } = {}): PublicPreset | null {
+  const { kinds } = useKinds(o);
+  const rule = kinds?.avatars;
+  return useMemo(() => (rule && userId ? stableImage(rule, userId) : null), [rule, userId]);
+}
