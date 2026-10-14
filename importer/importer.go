@@ -171,7 +171,8 @@ type VersionRecord struct {
 	Attributes  map[string]any `json:"attributes,omitempty"`
 	Ordinal     *int           `json:"ordinal,omitempty"`
 	// Cover selects one of the version's cover uploads (i-{uuid}): a
-	// record's one legacy cover is uploaded to each of its versions.
+	// record's one legacy cover is uploaded to each of its versions. Left
+	// out, the stored selection stays.
 	Cover     string                         `json:"cover,omitempty"`
 	Text      map[string]catalog.VersionText `json:"text,omitempty"`
 	Segments  []catalog.Segment              `json:"segments,omitempty"`

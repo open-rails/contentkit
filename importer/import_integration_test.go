@@ -725,6 +725,22 @@ func TestImportCoversPerVersion(t *testing.T) {
 			t.Fatalf("version %s cover %+v, want %s", v.ID, v.Cover, covers[v.ID])
 		}
 	}
+
+	// A re-sync that sends neither covers nor segments keeps both.
+	for i := range record.Versions {
+		record.Versions[i].Cover, record.Versions[i].Segments = "", nil
+	}
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Contents: []importer.ContentRecord{record}}); len(res.Failed) > 0 {
+		t.Fatalf("re-sync %+v", res.Failed)
+	}
+	if c, err = f.e.Client().GetContent(t.Context(), record.ID, contentkit.GetContentQuery{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range c.Versions {
+		if v.Cover == nil || v.Cover.Image != covers[v.ID] {
+			t.Fatalf("re-synced version %s cover %+v, want %s", v.ID, v.Cover, covers[v.ID])
+		}
+	}
 }
 
 func png(t *testing.T, w int) []byte {
