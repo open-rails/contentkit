@@ -224,7 +224,15 @@ export const ko: ContentKitUiMessageBundle = {
       unknown: "지금은 이 동영상을 재생할 수 없습니다.",
     },
   },
+  versionDownload: {
+    label: "다운로드",
+    preparing: "다운로드 준비 중…",
+    locked: "다운로드하려면 잠금을 해제하세요.",
+    limited: "다운로드 한도에 도달했습니다. {minutes}분 후에 다시 시도하세요.",
+    failed: "다운로드를 시작할 수 없습니다. 다시 시도하세요.",
+  },
   errors: {
+    no_download: "아직 다운로드할 항목이 없습니다.",
     generic: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
     network: "연결이 끊어졌습니다. 네트워크를 확인하고 다시 시도해 주세요.",
     storage: "업로드가 중단되었습니다. 다시 시도해 주세요.",

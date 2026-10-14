@@ -14,17 +14,33 @@ const MaxDownloadName = 200
 // downloadExts are the extensions a download name may end in, by the
 // object's content type.
 var downloadExts = map[string][]string{
-	"application/zip": {".zip"},
-	"application/pdf": {".pdf"},
-	"video/mp4":       {".mp4"},
-	"audio/mp4":       {".m4a", ".mp4"},
-	"audio/mpeg":      {".mp3"},
-	"image/webp":      {".webp"},
-	"image/png":       {".png"},
-	"image/jpeg":      {".jpg", ".jpeg"},
-	"image/gif":       {".gif"},
-	"image/avif":      {".avif"},
-	"text/vtt":        {".vtt"},
+	"application/zip":  {".zip"},
+	"application/pdf":  {".pdf"},
+	"video/mp4":        {".mp4"},
+	"video/webm":       {".webm"},
+	"video/x-matroska": {".mkv"},
+	"video/quicktime":  {".mov"},
+	"video/x-msvideo":  {".avi"},
+	"video/x-ms-wmv":   {".wmv"},
+	"video/x-flv":      {".flv"},
+	"audio/mp4":        {".m4a", ".mp4"},
+	"audio/mpeg":       {".mp3"},
+	"image/webp":       {".webp"},
+	"image/png":        {".png"},
+	"image/jpeg":       {".jpg", ".jpeg"},
+	"image/gif":        {".gif"},
+	"image/avif":       {".avif"},
+	"text/vtt":         {".vtt"},
+}
+
+// DownloadExt is the extension a download name of an object of contentType
+// ends in: its first, or "" when the type has none.
+func DownloadExt(contentType string) string {
+	typ, _, _ := mime.ParseMediaType(contentType)
+	if exts := downloadExts[typ]; len(exts) > 0 {
+		return exts[0]
+	}
+	return ""
 }
 
 // Disposition is the Content-Disposition of a download requested as name

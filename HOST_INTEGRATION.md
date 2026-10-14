@@ -289,6 +289,52 @@ apply it; staff, creators and owner-group editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
+## Downloads (`kinds.Kind.Download`)
+
+`GET /v1/contents/{id}/versions/{vid}/download` serves what the version's kind
+serves, to viewers who open the whole version (every segment released;
+editors and staff always), each granted download charged once to
+`media.downloads`:
+
+```yaml
+content:
+  kinds:
+    video:
+      download:
+        serve: original             # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
+        tiers: [premium]            # optional: only these tiers' holders download (editors always)
+    gallery:
+      download:                     # readers serve pages: the media kind's Publish.Download zip
+        watermark:
+          pages: [3, 5, 7]          # from 1; pages past the end are skipped
+          tiers: [premium]          # the version's rule locks behind one of these
+          groups: [{kind: translator, slug: doujins-com}]   # the version (or its content) is in one
+media:
+  downloads:
+    anonymous: [{limit: 5, per: 1h}]   # by address
+    user: [{limit: 20, per: 1h}]
+    tiers: [{tier: premium, quotas: [{limit: 50, per: 1h}]}]   # the first tier held replaces user
+    ttl: 5m                            # a file download URL's life
+```
+
+- The route answers `200` JSON `FileDownload{url, name, type, size,
+  expires_at}`. `url` serves the download as an attachment for `ttl`;
+  navigate to it (contentkit-ui's `useVersionDownload` does). Files (the
+  original, an MP4) and unmarked zips are the media host's, with a download
+  token of that one `download/` key, so bytes never pass the app; files are
+  named `{title} [{version code}].{ext}`, zips by the zip preset's
+  `Download` template.
+- A zip the watermark marks for a signed-in viewer is
+  `archive?for=&ticket=`, relative to the download route: `GET
+  .../versions/{vid}/archive` streams the pages, those the policy names
+  passed through `Deps.Watermark.Mark(ctx, actor, version, page, bytes)`
+  (page from 1). No watermark on video kinds; without `Deps.Watermark`
+  nothing is marked.
+- `202 Pending` while the file is placed or produced, `403` locked, `404` no
+  download for the kind, `409 no_download` when the version has no file to
+  serve, `429 rate_limited` with `retry_after`. Quotas are charged when the
+  download is granted.
+
 ## Interactions (`content`)
 
 The content module owns comments, reactions, favorites and polls in
@@ -718,7 +764,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
+- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private|download}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
@@ -814,13 +860,18 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   for viewers with access; otherwise the read API never returns an upload's
   path or URL.
 - **Host-only presets.** `Private.HostOnly` keeps an output out of generic
-  reads, downloads and playlists; a host route applies its own checks and
-  calls `grant.HostURL(path, download)`, which answers the file's URL with
-  the item token for a viewer with access.
+  reads, downloads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private
   file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
   what the token reaches: a viewer with access who learns a blob's hash can
-  fetch it. Put what must be gated separately in another item.
+  fetch it.
+- **`download/`.** `Kind.Downloads` names the uploads and presets (Image,
+  MP4, Zip) whose files live in `download/`: no item token or cookie opens
+  them, reads never list them, and only the version download route's token
+  opens one, that one key, for minutes (`media.downloads.ttl`, default 5m).
+  `media.ForContent` fills it for content kinds: page uploads and imports,
+  the zip and the presets it packs, videos' HLS sources, the served MP4.
+  Workers read them with storage credentials as before.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; `NewRegistry` checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -1203,7 +1254,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
+  key reads only `*/private/*`, `*/download/*` and `*/public/*` of each; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache: names are fixed and
   overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
   revalidated by ETag), so wire `Hooks.PurgePublic` to purge every URL it is

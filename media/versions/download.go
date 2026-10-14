@@ -8,16 +8,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/open-rails/authkit/auth"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/ratelimit"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Watermarker marks one page of a viewer's page download: the host's
@@ -133,161 +137,202 @@ func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 	return nil
 }
 
-// Download is a granted download: the Archive the route streams, or the
-// File the media host serves.
-type Download struct {
-	Archive *Archive
-	File    *FileDownload
-}
-
-// FileDownload is a version's file at the media host: URL serves it as an
-// attachment named Name until ExpiresAt (a transfer begun runs to its end).
+// FileDownload is a granted download. URL serves it as an attachment named
+// Name until ExpiresAt (a transfer begun runs to its end): the media host's
+// URL of the file (the original, a rendition, a prepared zip), or, for a zip
+// the kind's watermark marks for its viewer, this module's archive route,
+// relative to the download route ("archive?..."). Size is 0 when the zip is
+// marked as it streams.
 type FileDownload struct {
 	URL       string    `json:"url"`
 	Name      string    `json:"name"`
 	Type      string    `json:"type"`
-	Size      int64     `json:"size"`
+	Size      int64     `json:"size,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// Archive is a page download ready to stream: the prepared archive, or the
-// pages to zip with their marks.
+// Archive is a marked page archive ready to stream.
 type Archive struct {
 	Name string // the attachment's file name
-	Size int64  // the prepared archive's, 0 when zipped as it streams
 	ctx  context.Context
 	s    *Service
-	src  io.ReadCloser
 	keys []string
 	mark []int // pages from 0
 	v    Target
 	who  access.Actor
 }
 
-// Download opens t's download for actor, what its kind's download serves
-// (kinds.Kind.Download): the version open (or actor edits it) with every
-// segment released. ErrNotFound when the kind serves none, ErrNoDownload
-// when the version has nothing to serve, ErrNotReady while it is placed or
-// produced; a QuotaError past actor's quota, charged once per download
-// granted.
-func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (Download, error) {
-	v, err := s.one(ctx, t)
+// Download grants t's download to actor, what its kind's download serves
+// (kinds.Kind.Download), and charges it to actor's quota: the version open
+// (or actor edits it) with every segment released. ErrNotFound when the kind
+// serves none, ErrNoDownload when the version has nothing to serve,
+// ErrNotReady while it is placed or produced, a QuotaError past the quota.
+func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*FileDownload, error) {
+	v, k, item, m, err := s.downloadable(ctx, t)
 	if err != nil {
-		return Download{}, err
+		return nil, err
 	}
-	mk, err := s.reg.Kind(v.Kind)
-	if err != nil || mk.VersionKind() == nil || mk.VersionKind().Download == "" {
-		return Download{}, ErrNotFound
-	}
-	k := mk.VersionKind()
 	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, nil)
 	if err != nil {
-		return Download{}, err
+		return nil, err
 	}
 	switch d := ds[t]; {
 	case !d.res.Visible:
-		return Download{}, ErrNotFound
+		return nil, ErrNotFound
 	case !d.whole():
-		return Download{}, ErrForbidden
-	}
-	ref, err := s.ref(k.Name, t)
-	if err != nil {
-		return Download{}, err
-	}
-	item, err := s.reg.Item(ref)
-	if err != nil {
-		return Download{}, err
-	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return Download{}, ErrNoDownload
-	} else if err != nil {
-		return Download{}, err
-	}
-	if m.Meta[forkMeta] != nil {
-		return Download{}, ErrNotReady
-	}
-	if z := private(k, k.Download); z != nil && z.Zip != "" {
-		a, err := s.archive(ctx, actor, v, k, z, item, m)
-		if err != nil {
-			return Download{}, err
+		return nil, ErrForbidden
+	case !d.res.Editor:
+		if ok, err := s.holds(ctx, actor, s.o.Kinds.Kinds[v.Kind].Download); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, ErrForbidden
 		}
-		if err := s.charge(ctx, actor); err != nil {
-			a.Close()
-			return Download{}, err
-		}
-		return Download{Archive: a}, nil
-	}
-	if s.m.Reader == nil {
-		return Download{}, ErrNotFound
-	}
-	f, state := k.DownloadFile(m)
-	switch state {
-	case media.DownloadNone:
-		return Download{}, ErrNoDownload
-	case media.DownloadPending:
-		return Download{}, ErrNotReady
-	}
-	if err := s.charge(ctx, actor); err != nil {
-		return Download{}, err
 	}
 	title, code := s.title(ctx, v)
-	name := media.CleanName(title + " [" + code + "]" + path.Ext(f.Path))
-	url, exp, err := s.m.Reader.DownloadURL(item, f, name, cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL))
-	if errors.Is(err, media.ErrNotAllowed) {
-		return Download{}, ErrNoDownload // stored before its kind put it in download/
-	} else if err != nil {
-		return Download{}, err
+	ttl := cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL)
+	var f media.File
+	var name string
+	if z := private(k, k.Download); z != nil && z.Zip != "" {
+		pages, err := zipPages(k, z, m)
+		if err != nil {
+			return nil, err
+		}
+		if len(pages) == 0 {
+			return nil, ErrNoDownload
+		}
+		name = archiveName(title, z)
+		mark, err := s.marked(ctx, actor, v, len(pages))
+		if err != nil {
+			return nil, err
+		}
+		if len(mark) > 0 {
+			if err := s.charge(ctx, actor); err != nil {
+				return nil, err
+			}
+			exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
+			q := url.Values{"for": {actor.ID}, "ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID), exp)}}
+			return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
+		}
+		var ok bool
+		if f, ok = m.Get(z.To); !ok || f.Blob == "" || k.ZipStale(m, z) {
+			return nil, ErrNotReady
+		}
+	} else {
+		var state media.DownloadState
+		switch f, state = k.DownloadFile(m); state {
+		case media.DownloadNone:
+			return nil, ErrNoDownload
+		case media.DownloadPending:
+			return nil, ErrNotReady
+		}
+		name = media.CleanName(title + " [" + code + "]" + cmp.Or(layout.DownloadExt(f.Type), path.Ext(f.Path)))
 	}
-	return Download{File: &FileDownload{URL: url, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}}, nil
+	if area, _, _ := layout.SplitBlobRef(f.Blob); area != layout.AreaDownload {
+		return nil, ErrNoDownload // stored before its kind put it in download/
+	}
+	if err := s.charge(ctx, actor); err != nil {
+		return nil, err
+	}
+	u, exp, err := s.m.Reader.DownloadURL(item, f, name, ttl)
+	if err != nil {
+		return nil, err
+	}
+	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
-// archive opens v's pages as a zip: the prepared archive, or its pages
-// zipped as they stream with the kind's watermark on those it marks.
-func (s *Service) archive(ctx context.Context, actor access.Actor, v version, k *media.Kind, z *media.Private, item media.Item, m *media.Manifest) (*Archive, error) {
+// Archive opens the marked archive a Download handed viewer for t, by its
+// ticket: the pages zipped as they stream, the kind's watermark on those it
+// marks. A ticket that is expired or not viewer's for t is ErrNotFound.
+func (s *Service) Archive(ctx context.Context, t Target, viewer, ticket string) (*Archive, error) {
+	if s.m.Reader == nil || viewer == "" || s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer)) != nil {
+		return nil, ErrNotFound
+	}
+	v, k, item, m, err := s.downloadable(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	z := private(k, k.Download)
+	if z == nil || z.Zip == "" {
+		return nil, ErrNotFound
+	}
 	pages, err := zipPages(k, z, m)
 	if err != nil {
 		return nil, err
 	}
-	if len(pages) == 0 {
-		return nil, ErrNoDownload
-	}
 	title, _ := s.title(ctx, v)
-	a := &Archive{Name: archiveName(title, z), ctx: ctx, s: s, v: v.Target, who: actor}
-	if a.mark, err = s.marked(ctx, actor, v, len(pages)); err != nil {
+	who := access.Actor{ID: viewer, Kind: auth.SubjectUser}
+	a := &Archive{Name: archiveName(title, z), ctx: ctx, s: s, v: t, who: who}
+	if a.mark, err = s.marked(ctx, who, v, len(pages)); err != nil {
 		return nil, err
 	}
-	if len(a.mark) > 0 {
-		for _, f := range pages {
-			key, err := item.Blob(f.Blob)
-			if err != nil {
-				return nil, err
-			}
-			a.keys = append(a.keys, key)
-		}
-		if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
+	for _, f := range pages {
+		key, err := item.Blob(f.Blob)
+		if err != nil {
 			return nil, err
 		}
-		return a, nil
+		a.keys = append(a.keys, key)
 	}
-	f, ok := m.Get(z.To)
-	if !ok || f.Blob == "" || k.ZipStale(m, z) {
-		return nil, ErrNotReady
+	if len(a.keys) == 0 {
+		return nil, ErrNoDownload
 	}
-	key, err := item.Blob(f.Blob)
-	if err != nil {
+	if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
 		return nil, err
 	}
-	body, obj, err := s.m.Manifests.Store().Get(ctx, key, media.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	if obj.Size != f.Size || obj.Size <= 0 {
-		body.Close()
-		return nil, fmt.Errorf("versions: archive %s is %d bytes, its manifest says %d", key, obj.Size, f.Size)
-	}
-	a.src, a.Size = body, obj.Size
 	return a, nil
+}
+
+// holds reports whether actor holds one of the download's tiers, or it
+// names none.
+func (s *Service) holds(ctx context.Context, actor access.Actor, d *kinds.Download) (bool, error) {
+	if d == nil || len(d.Tiers) == 0 {
+		return true, nil
+	}
+	if actor.Anonymous || actor.ID == "" || s.o.Gate == nil {
+		return false, nil
+	}
+	f, err := s.o.Gate.Filter(ctx, actor)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(d.Tiers, f.Tier), nil
+}
+
+// archiveScope is the scope of viewer's ticket to t's marked archive; its
+// ':' keeps it apart from every media item and download scope.
+func archiveScope(tenant string, t Target, viewer string) string {
+	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer
+}
+
+// downloadable is t's version, its kind's version view serving a download,
+// its item and manifest.
+func (s *Service) downloadable(ctx context.Context, t Target) (version, *media.Kind, media.Item, *media.Manifest, error) {
+	v, err := s.one(ctx, t)
+	if err != nil {
+		return version{}, nil, media.Item{}, nil, err
+	}
+	mk, err := s.reg.Kind(v.Kind)
+	if err != nil || mk.VersionKind() == nil || mk.VersionKind().Download == "" || s.m.Reader == nil {
+		return version{}, nil, media.Item{}, nil, ErrNotFound
+	}
+	k := mk.VersionKind()
+	ref, err := s.ref(k.Name, t)
+	if err != nil {
+		return version{}, nil, media.Item{}, nil, err
+	}
+	item, err := s.reg.Item(ref)
+	if err != nil {
+		return version{}, nil, media.Item{}, nil, err
+	}
+	m, _, err := s.m.Manifests.Get(ctx, ref)
+	if errors.Is(err, media.ErrNotFound) {
+		return version{}, nil, media.Item{}, nil, ErrNoDownload
+	} else if err != nil {
+		return version{}, nil, media.Item{}, nil, err
+	}
+	if m.Meta[forkMeta] != nil {
+		return version{}, nil, media.Item{}, nil, ErrNotReady
+	}
+	return v, k, item, m, nil
 }
 
 // marked are the pages (from 0) of v's pages its kind's watermark marks for
@@ -384,21 +429,9 @@ func archiveName(title string, z *media.Private) string {
 	return title + ".zip"
 }
 
-// WriteTo streams the archive within Download's context.
+// WriteTo streams the archive within its request's context.
 func (a *Archive) WriteTo(w io.Writer) (int64, error) {
-	if a.src != nil {
-		defer a.src.Close()
-		return io.Copy(w, a.src)
-	}
 	return 0, a.s.streamMarked(a.ctx, w, a)
-}
-
-// Close releases an archive not streamed.
-func (a *Archive) Close() error {
-	if a.src != nil {
-		return a.src.Close()
-	}
-	return nil
 }
 
 // streamMarked zips the pages one at a time, marking those the kind's

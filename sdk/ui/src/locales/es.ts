@@ -224,7 +224,15 @@ export const es: ContentKitUiMessageBundle = {
       unknown: "Este vídeo no se puede reproducir ahora.",
     },
   },
+  versionDownload: {
+    label: "Descargar",
+    preparing: "Preparando la descarga…",
+    locked: "Desbloquéalo para descargarlo.",
+    limited: "Has alcanzado el límite de descargas. Inténtalo de nuevo en {minutes} min.",
+    failed: "No se pudo iniciar la descarga. Inténtalo de nuevo.",
+  },
   errors: {
+    no_download: "Todavía no hay nada que descargar.",
     generic: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",
     network: "Se perdió la conexión. Revisa tu red e inténtalo de nuevo.",
     storage: "La subida se interrumpió. Inténtalo de nuevo.",

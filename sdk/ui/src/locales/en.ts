@@ -223,7 +223,15 @@ export const en = {
       unknown: "This video can't be played right now.",
     },
   },
+  versionDownload: {
+    label: "Download",
+    preparing: "Preparing download…",
+    locked: "Unlock this to download it.",
+    limited: "Download limit reached. Try again in {minutes} min.",
+    failed: "The download couldn't start. Please try again.",
+  },
   errors: {
+    no_download: "There is nothing to download yet.",
     generic: "Something went wrong on our end. Please try again.",
     network: "Connection lost. Check your network and try again.",
     storage: "The upload was interrupted. Please try again.",

@@ -107,6 +107,7 @@ export {
 } from "./discovery.js";
 export {
   nextRelease,
+  startDownload,
   useReaderPlan,
   useSegmentPages,
   useVersionDownload,

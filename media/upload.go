@@ -771,6 +771,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		from  Item
 		files []File
 		todo  []string // blobs this op copies first
+		first int      // the index of todo[0] in the allocations
 	}
 	var (
 		sources  []source
@@ -810,23 +811,22 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		if to != group || op.Edit != nil {
 			files = files[:1]
 		}
-		sc := source{n: n, from: from, files: files}
-		for _, b := range fileBlobs(files) {
-			srcKey, _ := from.Blob(b)
-			if _, seen := names[srcKey]; seen {
+		sc := source{n: n, from: from, files: files, first: len(sums)}
+		for _, b := range copyBlobs(item.Kind(), cmpOr(op.To, op.From.Path), files) {
+			srcKey, _ := from.Blob(b[0])
+			if _, seen := names[srcKey+"|"+b[1]]; seen {
 				continue
 			}
-			sum, ok := layout.BlobDigest(b)
+			sum, ok := layout.BlobDigest(b[0])
 			if !ok {
-				return nil, nil, fmt.Errorf("media: invalid copy source %q", b)
+				return nil, nil, fmt.Errorf("media: invalid copy source %q", b[0])
 			}
-			names[srcKey] = ""
-			area, _, _ := layout.SplitBlobRef(b)
-			sc.todo, sums, srcKeys, areas = append(sc.todo, b), append(sums, sum), append(srcKeys, srcKey), append(areas, area)
+			names[srcKey+"|"+b[1]] = ""
+			sc.todo, sums, srcKeys, areas = append(sc.todo, b[0]), append(sums, sum), append(srcKeys, srcKey), append(areas, b[1])
 		}
 		sources = append(sources, sc)
 	}
-	// A copy stays in its source's area: both items are of one kind.
+	// Each copy lands in its destination file's area.
 	allocated := make([]string, len(sums))
 	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload} {
 		var at []int
@@ -848,7 +848,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		}
 	}
 	for i, key := range srcKeys {
-		names[key] = allocated[i]
+		names[key+"|"+areas[i]] = allocated[i]
 	}
 	var reserved []string
 	if u.o.Limiter != nil && !grant.Exempt {
@@ -858,8 +858,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			if len(sc.todo) == 0 {
 				continue
 			}
-			from, _ := sc.from.Blob(sc.todo[0])
-			key, _ := item.Blob(names[from])
+			key, _ := item.Blob(allocated[sc.first])
 			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
 				Owner: grant.Owner, Key: key, Size: sc.files[0].Size}); err != nil {
 				return nil, reserved, err
@@ -884,17 +883,17 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 	}
 	out := make(map[int][]File, len(sources))
 	for _, sc := range sources {
-		files := sc.files
+		files, op := sc.files, ops[sc.n]
 		for i := range files {
 			files[i].Editor = nil // editor views belong to their original item's allocation
 			if !files[i].Gone && files[i].Blob != "" {
 				from, _ := sc.from.Blob(files[i].Blob)
-				files[i].Blob = names[from]
+				files[i].Blob = names[from+"|"+copyArea(item.Kind(), cmpOr(op.To, op.From.Path), i, files[i])]
 			}
 			if files[i].Track != nil && files[i].Track.Index != "" {
 				track := *files[i].Track
 				from, _ := sc.from.Blob(track.Index)
-				track.Index = names[from]
+				track.Index = names[from+"|"+layout.AreaPrivate]
 				files[i].Track = &track
 			}
 		}
@@ -904,6 +903,30 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 }
 
 // fileBlobs are the blobs files reference.
+// copyBlobs are the blobs of a copy's files, each with the area it lands in
+// at the destination: the upload's at to, an output's by its preset; track
+// indexes in private/.
+func copyBlobs(k *Kind, to string, files []File) [][2]string {
+	var out [][2]string
+	for i, f := range files {
+		if f.Blob != "" && !f.Gone {
+			out = append(out, [2]string{f.Blob, copyArea(k, to, i, f)})
+		}
+		if f.Track != nil && f.Track.Index != "" {
+			out = append(out, [2]string{f.Track.Index, layout.AreaPrivate})
+		}
+	}
+	return out
+}
+
+// copyArea is the area the i-th file of a copy to path to lands in.
+func copyArea(k *Kind, to string, i int, f File) string {
+	if i == 0 {
+		return k.Area(to, "")
+	}
+	return k.Area("", f.Preset)
+}
+
 func fileBlobs(files []File) []string {
 	var blobs []string
 	for _, f := range files {

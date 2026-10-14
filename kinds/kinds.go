@@ -90,6 +90,9 @@ type Download struct {
 	// Serve is DownloadPages, DownloadOriginal or a private MP4 preset of the
 	// kind's media ("mp4-1080"); empty is the presentation's default.
 	Serve string `json:"serve,omitempty" yaml:"serve"`
+	// Tiers, when set, keep downloads to holders of one of them (editors
+	// always), even of versions anyone opens.
+	Tiers []string `json:"tiers,omitempty" yaml:"tiers"`
 	// Watermark marks pages of a page download through the host's
 	// watermarker; nil marks none.
 	Watermark *Watermark `json:"watermark,omitempty" yaml:"watermark"`
@@ -133,8 +136,13 @@ type Watermark struct {
 }
 
 func (d Download) validate(k Kind, tiers []string) error {
-	if d.Off && (d.Serve != "" || d.Watermark != nil) {
-		return errors.New("download is off: it serves nothing and marks nothing")
+	if d.Off && (d.Serve != "" || d.Watermark != nil || len(d.Tiers) > 0) {
+		return errors.New("download is off: it serves nothing to no one and marks nothing")
+	}
+	for _, t := range d.Tiers {
+		if !slices.Contains(tiers, t) {
+			return fmt.Errorf("download names unknown tier %q", t)
+		}
 	}
 	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal && !routeRE.MatchString(d.Serve) {
 		return fmt.Errorf("download serves %q: pages, original or a preset name", d.Serve)

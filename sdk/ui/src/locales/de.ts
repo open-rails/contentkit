@@ -224,7 +224,15 @@ export const de: ContentKitUiMessageBundle = {
       unknown: "Dieses Video kann gerade nicht abgespielt werden.",
     },
   },
+  versionDownload: {
+    label: "Herunterladen",
+    preparing: "Download wird vorbereitet…",
+    locked: "Schalte das frei, um es herunterzuladen.",
+    limited: "Download-Limit erreicht. Versuche es in {minutes} Min. erneut.",
+    failed: "Der Download konnte nicht starten. Bitte versuche es erneut.",
+  },
   errors: {
+    no_download: "Hier gibt es noch nichts herunterzuladen.",
     generic: "Auf unserer Seite ist etwas schiefgelaufen. Bitte versuche es erneut.",
     network: "Verbindung unterbrochen. Prüfe dein Netzwerk und versuche es erneut.",
     storage: "Der Upload wurde unterbrochen. Bitte versuche es erneut.",

@@ -277,6 +277,24 @@ func (r *Reader) DownloadURL(item Item, f File, name string, ttl time.Duration) 
 	return r.base + layout.URLPrefix + key + "?" + q.Encode(), exp, nil
 }
 
+// SignTicket signs a host route's own scope until exp with the delivery key:
+// a short-lived ticket. Its scope must hold a ':', which no item or download
+// scope does, so a ticket opens no media.
+func (r *Reader) SignTicket(scope string, exp time.Time) string {
+	if !strings.Contains(scope, ":") {
+		panic("media: a ticket scope needs a ':'")
+	}
+	return r.ring.Sign(scope, exp)
+}
+
+// VerifyTicket checks a SignTicket ticket for scope now.
+func (r *Reader) VerifyTicket(ticket, scope string) error {
+	if !strings.Contains(scope, ":") {
+		return token.ErrInvalid
+	}
+	return r.ring.VerifyScope(ticket, scope, r.o.Now())
+}
+
 // EditorView returns the upload's recorded view when its source/spec still
 // matches. Only editor reads list it; presign, put and copy cannot adopt it.
 func (r *Registry) EditorView(f File) string {

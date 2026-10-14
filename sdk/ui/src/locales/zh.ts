@@ -224,7 +224,15 @@ export const zh: ContentKitUiMessageBundle = {
       unknown: "目前无法播放此视频。",
     },
   },
+  versionDownload: {
+    label: "下载",
+    preparing: "正在准备下载…",
+    locked: "解锁后即可下载。",
+    limited: "已达到下载上限，请在 {minutes} 分钟后重试。",
+    failed: "无法开始下载，请重试。",
+  },
   errors: {
+    no_download: "暂时没有可下载的内容。",
     generic: "我们这边出了问题，请重试。",
     network: "连接已断开，请检查网络后重试。",
     storage: "上传中断，请重试。",

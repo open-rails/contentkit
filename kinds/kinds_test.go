@@ -66,6 +66,7 @@ func TestValidate(t *testing.T) {
 		"unknown property":   func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{"body"} },
 		"repeated property":  func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{ShowCover, ShowCover} },
 		"off and serving":    func(c *Config) { c.Kinds["movie"].Download.Off = true },
+		"download tier":      func(c *Config) { c.Kinds["movie"].Download.Tiers = []string{"gold"} },
 		"serve a path":       func(c *Config) { c.Kinds["movie"].Download.Serve = "video/source.mp4" },
 		"watermarked video":  func(c *Config) { c.Kinds["movie"].Download.Watermark = &Watermark{Pages: []int{1}} },
 		"watermark no pages": func(c *Config) { c.Kinds["gallery"].Download.Watermark.Pages = nil },

@@ -224,7 +224,15 @@ export const ja: ContentKitUiMessageBundle = {
       unknown: "この動画は現在再生できません。",
     },
   },
+  versionDownload: {
+    label: "ダウンロード",
+    preparing: "ダウンロードを準備中…",
+    locked: "ダウンロードするにはロックを解除してください。",
+    limited: "ダウンロードの上限に達しました。{minutes} 分後に再試行してください。",
+    failed: "ダウンロードを開始できませんでした。もう一度お試しください。",
+  },
   errors: {
+    no_download: "まだダウンロードできるものがありません。",
     generic: "サーバー側で問題が発生しました。もう一度お試しください。",
     network: "接続が切れました。ネットワークを確認して再試行してください。",
     storage: "アップロードが中断されました。もう一度お試しください。",

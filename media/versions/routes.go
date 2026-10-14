@@ -54,10 +54,15 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.Accepted(Pending{})}},
 		Serve: httpapi.H(handler.fork)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "A version's download, as its kind's download serves it: its pages as a zip (marked where the kind's watermark says), or its file (the original or a rendition) as a FileDownload whose short-lived URL the media host serves as an attachment. Every segment released and the version open; each download is charged to the viewer's download quota. 202 while it is prepared; 409 no_download when the version has no file to serve.",
-		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
+		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the kind's watermark marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 409 no_download when the version has nothing to serve.",
+		Responses: []httpapi.Reply{httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, httpapi.CodeRateLimited, CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/archive", Resource: "reader", Auth: httpapi.Public,
+		Doc:       "Streams the marked zip a download granted: the version's pages, those its kind's watermark names marked for the viewer the ticket is for. 404 for an expired or foreign ticket.",
+		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("ticket", "the download's ticket")},
+		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"})}},
+		Serve: httpapi.H(handler.archive)},
 }
 
 // CodeNoDownload is a version without the file its kind's download serves.
@@ -131,19 +136,22 @@ func (h handler) download(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	if d.File != nil {
-		writeJSON(w, http.StatusOK, d.File)
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (h handler) archive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	q := r.URL.Query()
+	a, err := h.s.Archive(r.Context(), target(r), q.Get("for"), q.Get("ticket"))
+	if err != nil {
+		h.fail(w, r, err)
 		return
 	}
-	a := d.Archive
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
-	if a.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
-	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := a.WriteTo(w); err != nil && r.Context().Err() == nil {
-		h.log.ErrorContext(r.Context(), "versions: download stream failed", "version", target(r).Version, "error", err)
+		h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
 	}
 }
 
