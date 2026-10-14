@@ -15,7 +15,7 @@ const read = (access: Access, files: FileInfo[]): ReadResult => ({
   limit: 50,
   expires: 0,
   files,
-  hls: [...new Set(files.filter((f) => f.type.startsWith("video/") && !f.locked).map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)))],
+  hls: [...new Set(files.filter((f) => f.type.startsWith("video/")).map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)))],
 });
 const img = (index: number, w = 800, h = 600): FileInfo => ({ path: `low-res/${index}.webp`, type: "image/webp", w, h, url: `https://m/${index}.webp` });
 const vid = (index: number): FileInfo => ({ path: `hls/${index}/1080-h264.mp4`, type: "video/mp4", w: 1080, h: 1920, dur: 42, url: "u" });
@@ -186,37 +186,36 @@ it("one item renders alone, without toggle or dots", () => {
   expect(stage.style.maxHeight).toBe("80svh");
 });
 
-it("locked items: the public preview behind the host's unlock slot, no locked URLs", async () => {
+it("locked items: the public preview behind the host's unlock slot, nothing counted", async () => {
   const user = userEvent.setup();
-  const files: FileInfo[] = [
-    { path: "low-res/1.webp", type: "image/webp", locked: true },
-    { path: "hls/480-h264.mp4", type: "video/mp4", locked: true },
-    { path: "hls/sprite.jpg", type: "image/jpeg", locked: true },
-    { path: "low-res/3.webp", type: "image/webp", locked: true },
-  ];
-  const renderLocked = vi.fn(({ count }: { count: number }) => <button type="button">Unlock {count}</button>);
-  const { container } = render(<MediaGallery read={read("none", files)} renderLocked={renderLocked} />);
+  const locked: ReadResult = { ...read("none", []), locked: true };
+  const renderLocked = vi.fn(() => <button type="button">Unlock</button>);
+  const { container } = render(<MediaGallery read={locked} renderLocked={renderLocked} />);
   expect(container.querySelectorAll("img")).toHaveLength(0);
-  expect(screen.getByText("3 more items are locked")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Unlock 3" })).toBeInTheDocument();
-  expect(renderLocked).toHaveBeenCalledWith({ count: 3, videos: 1 });
-  await user.click(screen.getByRole("button", { name: "Unlock 3" }));
+  expect(screen.getByText("The rest is locked")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Unlock" }));
+  expect(renderLocked).toHaveBeenCalledWith();
 
   // With a public preview: it is the first item, and the backdrop of the lock.
   document.body.innerHTML = "";
   const preview = "https://m/v1/d/gallery/1/public/preview-1.webp";
-  const withPreview = render(<MediaGallery read={{ ...read("none", files), previews: [preview] }} defaultView="grid" storageKey={null} />);
-  expect(screen.getByRole("button", { name: "Open item 2 of 2" })).toHaveTextContent("+2");
+  const withPreview = render(<MediaGallery read={{ ...locked, previews: [preview] }} defaultView="grid" storageKey={null} />);
+  expect(screen.getByRole("button", { name: "Open item 2 of 2" })).not.toHaveTextContent(/\d/);
   const srcs = [...withPreview.container.querySelectorAll("img")].map((i) => i.getAttribute("src"));
   expect(new Set(srcs)).toEqual(new Set([preview]));
 
   // In the carousel the teaser carries the unlock: nothing to swipe past.
   document.body.innerHTML = "";
-  const carousel = render(<MediaGallery read={{ ...read("none", files), previews: [preview] }} renderLocked={renderLocked} defaultView="carousel" storageKey={null} />);
+  const carousel = render(<MediaGallery read={{ ...locked, previews: [preview] }} renderLocked={renderLocked} defaultView="carousel" storageKey={null} />);
   const first = carousel.container.querySelector<HTMLElement>("[data-ckui=slide][data-current]")!;
   expect(within(first).getByRole("img", { name: "Image 1" })).toHaveAttribute("src", preview);
-  expect(within(first).getByText("2 more items are locked")).toBeInTheDocument();
-  expect(within(first).getByRole("button", { name: "Unlock 2" })).toBeVisible();
+  expect(within(first).getByText("The rest is locked")).toBeInTheDocument();
+  expect(within(first).getByRole("button", { name: "Unlock" })).toBeVisible();
+
+  // An item holding no locked files (a site image's) shows no lock.
+  document.body.innerHTML = "";
+  render(<MediaGallery read={read("none", [])} renderLocked={renderLocked} />);
+  expect(screen.queryByText("The rest is locked")).toBeNull();
 });
 
 it("failed and processing images, and translated labels", async () => {

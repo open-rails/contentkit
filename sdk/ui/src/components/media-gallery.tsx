@@ -56,7 +56,7 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   /** Playable videos preview muted inline (hover, or in view on touch); default the provider's. */
   inlinePreview?: boolean;
   /** The host's unlock call to action, drawn over the locked item. */
-  renderLocked?: (locked: { count: number; videos: number }) => ReactNode;
+  renderLocked?: () => ReactNode;
   /** Below the carousel, for its current item (e.g. downloads). */
   renderDetails?: (item: GalleryItem) => ReactNode;
   /** `sizes` for carousel images. Default "(min-width: 768px) 720px, 100vw". */
@@ -277,7 +277,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
           draggable={false}
           className="absolute inset-0 size-full object-contain"
         />
-        {locked && <LockedBar ctx={ctx} item={locked} />}
+        {locked && <LockedBar ctx={ctx} />}
       </>
     );
   }
@@ -358,10 +358,6 @@ function Processing({ children }: { children: string }) {
   );
 }
 
-function lockedText(t: ReturnType<typeof useMessages>["t"], count: number) {
-  return count === 1 ? t("gallery.lockedOne") : t("gallery.lockedMany", { count });
-}
-
 function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?: boolean }) {
   const { t } = useMessages();
   return (
@@ -369,12 +365,10 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
       {item.backdrop && <img src={item.backdrop} alt="" draggable={false} className="absolute inset-0 size-full scale-110 object-cover blur-xl" />}
       <div className={cn("absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center", item.backdrop ? "bg-black/45 text-white" : "text-foreground")}>
         <HugeiconsIcon icon={SquareLock02Icon} className={tile ? "size-6" : "size-8"} strokeWidth={1.75} />
-        {tile ? (
-          <span className="text-lg font-semibold tabular-nums">+{item.count}</span>
-        ) : (
+        {!tile && (
           <>
-            <p className="text-sm font-medium text-balance">{lockedText(t, item.count)}</p>
-            {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked({ count: item.count, videos: item.videos })}</div>}
+            <p className="text-sm font-medium text-balance">{t("gallery.locked")}</p>
+            {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked()}</div>}
           </>
         )}
       </div>
@@ -382,7 +376,7 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
   );
 }
 
-function LockedBar({ ctx, item }: { ctx: Ctx; item: GalleryLockedItem }) {
+function LockedBar({ ctx }: { ctx: Ctx }) {
   const { t } = useMessages();
   return (
     <div
@@ -391,9 +385,9 @@ function LockedBar({ ctx, item }: { ctx: Ctx; item: GalleryLockedItem }) {
     >
       <span className="flex items-center gap-2 text-sm font-medium">
         <HugeiconsIcon icon={SquareLock02Icon} className="size-5 shrink-0" strokeWidth={1.75} />
-        {lockedText(t, item.count)}
+        {t("gallery.locked")}
       </span>
-      {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked({ count: item.count, videos: item.videos })}</div>}
+      {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked()}</div>}
     </div>
   );
 }

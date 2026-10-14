@@ -67,7 +67,7 @@ var readRoutes = []httpapi.Route[readHandler]{
 		Responses: []httpapi.Reply{httpapi.OK([]PresetRule{})}},
 		Serve: httpapi.H(readHandler.presets)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}", Resource: "media", Auth: httpapi.Public,
-		Doc: "An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked.",
+		Doc: "An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones.",
 		Query: []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
 			httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
 			httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")},

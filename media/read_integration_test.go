@@ -66,7 +66,7 @@ func TestReadFullAccess(t *testing.T) {
 		t.Fatalf("read %+v", res)
 	}
 	for _, fi := range res.Files {
-		if fi.URL == "" || fi.Locked || strings.HasPrefix(fi.Path, "originals/") {
+		if fi.URL == "" || strings.HasPrefix(fi.Path, "originals/") {
 			t.Fatalf("file %+v", fi)
 		}
 	}
@@ -93,9 +93,9 @@ func TestReadFullAccess(t *testing.T) {
 }
 
 // Private is all or nothing: a viewer who can see the item but has no
-// access gets no URL, token or cookie, and each file as its path, type and
-// size only. Nothing in the answer names a blob. The item's previews are
-// public, so the same viewer gets those.
+// access gets no URL, token, cookie, meta or file, so nothing tells how many
+// files it holds or names a blob; only that it holds locked ones. The
+// item's previews are public, so the same viewer gets those.
 func TestReadWithoutAccess(t *testing.T) {
 	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
 		c.Kinds[0].Public = append(c.Kinds[0].Public, media.Public{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 2})
@@ -122,14 +122,12 @@ func TestReadWithoutAccess(t *testing.T) {
 	}
 	for _, r := range []*media.Reader{f.rd, rd} {
 		res, err := r.Read(ctx, g, anon, media.ReadOptions{Download: true})
-		if err != nil || res.Access != media.AccessNone || res.Cookie != nil || len(res.HLS) != 0 || res.Total != 7 || !slices.Equal(res.Previews, want) {
+		if err != nil || res.Access != media.AccessNone || res.Cookie != nil || len(res.HLS) != 0 || res.Total != 0 || len(res.Files) != 0 ||
+			!res.Locked || res.Meta != nil || !slices.Equal(res.Previews, want) {
 			t.Fatalf("without access: %+v %v", res, err)
 		}
 		if !reflect.DeepEqual(res.Public, full.Public) {
 			t.Fatalf("public renditions depend on private access: %+v", res.Public)
-		}
-		if fi := res.Files[0]; !reflect.DeepEqual(fi, media.FileInfo{Path: "thumb/000.webp", Type: "image/png", Size: int64(len(png(100))), Locked: true}) {
-			t.Fatalf("a locked file is its path, type and size: %+v", fi)
 		}
 		body, _ := json.Marshal(res)
 		if strings.Contains(string(body), "sha256-") || strings.Contains(string(body), "?t=") || strings.Contains(string(body), "/private/") {
@@ -183,15 +181,14 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 	if fi := res.Files[0]; err != nil || fi.Edit == nil || fi.Meta["alt"] != "private note" || fi.Frame == nil || fi.Failed == nil || !fi.Upload {
 		t.Fatalf("editor read %+v %v", fi, err)
 	}
-	// Without access the file is listed locked: its path, type and size,
-	// and no blob name, source or editor field.
+	// Without access nothing is listed: no file, blob name or editor field.
 	f.res.set(cid(1), resolve.Resolution{Visible: true})
 	res, err = f.rd.Read(ctx, post, access.Actor{Anonymous: true, IP: "203.0.113.9"}, media.ReadOptions{Editor: true, Download: true})
-	if err != nil || len(res.Files) != 1 || !reflect.DeepEqual(res.Files[0], media.FileInfo{Path: p, Type: "image/png", Size: int64(len(png(1))), Locked: true}) {
-		t.Fatalf("locked listing %+v %v", res.Files, err)
+	if err != nil || len(res.Files) != 0 || res.Total != 0 || !res.Locked {
+		t.Fatalf("locked read %+v %v", res, err)
 	}
-	if body, _ := json.Marshal(res); strings.Contains(string(body), "sha256-") {
-		t.Fatalf("a locked listing names a blob: %s", body)
+	if body, _ := json.Marshal(res); strings.Contains(string(body), "sha256-") || strings.Contains(string(body), p) {
+		t.Fatalf("a locked read names a file or blob: %s", body)
 	}
 }
 

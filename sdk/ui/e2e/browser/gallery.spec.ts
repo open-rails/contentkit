@@ -87,10 +87,10 @@ for (const theme of ["light", "dark"] as const) {
     await post.getByRole("button", { name: "Carousel" }).click();
 
     // Locked post and a lone vertical clip.
-    // The teaser (the first photo's public preview) is one of the five locked items and carries the unlock.
+    // The teaser (the first photo's public preview) carries the uncounted unlock.
     const locked = page.locator("[data-demo=locked]");
-    await expect(locked.locator("[data-ckui=slide][data-current] [data-ckui=locked-bar]")).toContainText("4 more items are locked");
-    await expect(locked.getByRole("button", { name: "Unlock 4 for $5" })).toBeVisible();
+    await expect(locked.locator("[data-ckui=slide][data-current] [data-ckui=locked-bar]")).toContainText("The rest is locked");
+    await expect(locked.getByRole("button", { name: "Unlock for $5" })).toBeVisible();
     await locked.screenshot({ path: `${dir}/gallery-locked-${tag}.png` });
 
     // A lone vertical clip.
