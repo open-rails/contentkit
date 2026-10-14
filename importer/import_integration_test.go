@@ -674,6 +674,59 @@ func TestImportThenIngestMedia(t *testing.T) {
 	}
 }
 
+// A legacy record's one cover is ingested into each of its versions' folders
+// and each version record selects its copy: covers live in versions.
+func TestImportCoversPerVersion(t *testing.T) {
+	env := mediatest.Open(t)
+	f := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
+		cfg.Tenant = env.Tenant
+		pngs := []string{"image/png"}
+		cfg.Media = &contentkit.MediaConfig{
+			Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
+				Uploads: []media.Upload{{Path: "covers/{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 5},
+					{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20}},
+				Public: []media.Public{{Name: "cover", From: "covers/{name}", To: "cover-{name}-{w}.webp", Widths: []int{64}}}}}},
+			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
+			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
+		deps.Store = env.Store
+	})
+	if err := f.e.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	b := catalogBatch()
+	record := b.Contents[0]
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Groups: b.Groups, Contents: []importer.ContentRecord{record}}); len(res.Failed) > 0 {
+		t.Fatalf("import %+v", res.Failed)
+	}
+	legacy := png(t, 12)
+	covers := map[string]string{}
+	for i := range record.Versions {
+		v := &record.Versions[i]
+		out, err := f.e.Client().IngestMedia(t.Context(), nil, media.RefBody{Kind: "gallery", ID: record.ID, Version: v.ID}, uuid.NewString(),
+			[]contentkit.MediaFile{{Path: "covers/legacy.png", Type: "image/png", Body: bytes.NewReader(legacy)}})
+		if err != nil || len(out.Files) != 1 || !strings.HasPrefix(out.Files[0].Path, "covers/i-") {
+			t.Fatalf("version %s cover %+v %v", v.ID, out.Files, err)
+		}
+		v.Cover = strings.TrimSuffix(strings.TrimPrefix(out.Files[0].Path, "covers/"), ".png")
+		covers[v.ID] = v.Cover
+	}
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Contents: []importer.ContentRecord{record}}); len(res.Failed) > 0 {
+		t.Fatalf("re-import %+v", res.Failed)
+	}
+	c, err := f.e.Client().GetContent(t.Context(), record.ID, contentkit.GetContentQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Versions) != 2 || covers[c.Versions[0].ID] == covers[c.Versions[1].ID] {
+		t.Fatalf("versions %+v, covers %v", c.Versions, covers)
+	}
+	for _, v := range c.Versions {
+		if v.Cover == nil || v.Cover.Image != covers[v.ID] {
+			t.Fatalf("version %s cover %+v, want %s", v.ID, v.Cover, covers[v.ID])
+		}
+	}
+}
+
 func png(t *testing.T, w int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, w))
 	img.Set(0, 0, color.RGBA{R: 200, A: 255})
