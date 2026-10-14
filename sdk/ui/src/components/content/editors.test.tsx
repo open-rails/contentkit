@@ -47,7 +47,7 @@ const model: ContentModel = {
 };
 
 const at = "2026-10-13T00:00:00Z";
-const version: Version = { id: "v1", position: 1, languages: ["en"], traits: [], live: false, has_audio: false, attributes: {}, segments: [], decision: { allowed: true } };
+const version: Version = { id: "v1", code: "AB12", position: 1, languages: ["en"], traits: [], live: false, has_audio: false, attributes: {}, segments: [], decision: { allowed: true } };
 const content = (o: Partial<Content> = {}): Content => ({
   id: "p1",
   kind: "post",

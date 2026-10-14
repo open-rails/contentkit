@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -54,7 +55,10 @@ type ImportContent struct {
 
 // ImportVersion is one version of an ImportContent, positioned as listed.
 type ImportVersion struct {
-	ID          string
+	ID string
+	// Code is the version code to keep; empty keeps the stored one or
+	// assigns one. A version never changes its code.
+	Code        string
 	Languages   []string
 	Traits      []string
 	Label       string
@@ -101,6 +105,7 @@ type importItemRow struct {
 type importVersionRow struct {
 	ID          string          `json:"id"`
 	ContentID   string          `json:"content_id"`
+	Code        *string         `json:"code"`
 	Position    int             `json:"position"`
 	Languages   []string        `json:"languages"`
 	Traits      []string        `json:"traits"`
@@ -210,6 +215,9 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		return err
 	}
 	if err := s.checkOwners(ctx, tx, owners); err != nil {
+		return err
+	}
+	if err := s.checkVersionCodes(ctx, tx, b.versions); err != nil {
 		return err
 	}
 	var republish []versions.Target
@@ -336,6 +344,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			}
 			vr := importVersionRow{ID: v.ID, ContentID: c.ID, Position: pos, Languages: v.Languages, Traits: v.Traits, Label: v.Label,
 				State: v.State, Attributes: v.Attributes, Ordinal: v.Ordinal}
+			if v.Code != "" {
+				vr.Code = &v.Code
+			}
 			if k.Versions.Hidden {
 				switch {
 				case c.Text != nil:
@@ -436,11 +447,11 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			return nil, nil, err
 		}
 	}
-	if err := run(changed, `INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, position, languages, traits, label, state, publish_at,
+	if err := run(changed, `INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
  published_at, deleted_at, access, attributes, ordinal, created_at, updated_at)
- SELECT $1, r.id, r.content_id, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
+ SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
   r.access, r.attributes, r.ordinal, r.created_at, r.updated_at
- FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, position int, languages text[], traits text[], label text, state text,
+ FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text, position int, languages text[], traits text[], label text, state text,
   publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
@@ -486,6 +497,37 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	return changed, retitled, nil
+}
+
+// checkVersionCodes refuses codes the import can't keep: one a stored version
+// holds under another, or another version of its content holds.
+func (s *Store) checkVersionCodes(ctx context.Context, tx pgx.Tx, rows []importVersionRow) error {
+	seen := map[[2]string]string{}
+	for _, r := range rows {
+		if r.Code == nil {
+			continue
+		}
+		k := [2]string{r.ContentID, *r.Code}
+		if id, ok := seen[k]; ok && id != r.ID {
+			return invalid("versions %s and %s share code %s", id, r.ID, *r.Code)
+		}
+		seen[k] = r.ID
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	data, _ := json.Marshal(rows)
+	var id, code string
+	err := tx.QueryRow(ctx, `SELECT r.id, r.code FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text)
+ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND ((v.id = r.id AND v.code <> r.code) OR (v.content_id = r.content_id AND v.code = r.code AND v.id <> r.id))
+ WHERE r.code IS NOT NULL LIMIT 1`, s.tenant, string(data)).Scan(&id, &code)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	}
+	return fmt.Errorf("%w: version %s cannot take code %s: it has another, or another version of its content has it", ErrConflict, id, code)
 }
 
 // RefreshCountsJob is RefreshCounts' job, for Queue: an import queues it.
@@ -648,6 +690,13 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
+	}
+	if v.Code != "" {
+		code, err := contenturl.ParseVersionCode(v.Code)
+		if err != nil {
+			return invalid("code %q is not a version code", v.Code)
+		}
+		v.Code = string(code)
 	}
 	switch v.State {
 	case "":

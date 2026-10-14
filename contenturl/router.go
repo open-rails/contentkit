@@ -31,10 +31,10 @@ const (
 type RouterOptions struct {
 	// Routes maps content kinds to the host's routes. Required.
 	Routes Routes
-	// Languages are the site's languages, its default first: the segments a
-	// path may start with (/{lang}/{route}/...). A request's prefix is kept
-	// in its canonical path and picks the localized slug; Path and the codes
-	// route leave the default language unprefixed (Prefix).
+	// Languages are the site's languages, its default first. Required: every
+	// content page is under one (/{lang}/{route}/...), which picks its slug;
+	// a request without one redirects to the language Accept-Language names,
+	// else the default.
 	Languages []string
 	// BaseURL ("https://example.com") makes Middleware send the canonical URL
 	// as a `Link: <url>; rel="canonical"` header. Empty: no header.
@@ -61,6 +61,9 @@ func NewRouter(store *Store, opts RouterOptions) (*Router, error) {
 	if store == nil {
 		return nil, fmt.Errorf("%w: Store is required", ErrInvalid)
 	}
+	if len(opts.Languages) == 0 {
+		return nil, fmt.Errorf("%w: Languages is required", ErrInvalid)
+	}
 	if err := opts.Routes.Validate(opts.Languages); err != nil {
 		return nil, err
 	}
@@ -80,14 +83,10 @@ func NewRouter(store *Store, opts RouterOptions) (*Router, error) {
 	return &Router{store: store, opts: opts, log: log}, nil
 }
 
-// Path returns link's canonical path in language: its slug there, under
-// Prefix(language); false when its kind has no route.
+// Path returns link's canonical path in language (the default when ""), with
+// its slug there; false when its kind has no route.
 func (r *Router) Path(link Link, language string) (string, bool) {
-	route, ok := r.opts.Routes[link.ContentKind]
-	if !ok {
-		return "", false
-	}
-	return Path(Prefix(r.opts.Languages, language), route, link.Code, link.SlugFor(language)), true
+	return Canonical(r.opts.Routes, r.opts.Languages, language, link)
 }
 
 // Decision is the canonical verdict on a request.
@@ -107,8 +106,9 @@ type Decision struct {
 }
 
 // Decide parses the request path, resolves its code and compares the path
-// with the canonical one. A wrong route, a non-canonical code spelling, a
-// merged code, a missing or stale slug and a trailing slash all redirect.
+// with the canonical one. A missing language prefix, a wrong route, a
+// non-canonical code spelling, a merged code, a missing or stale slug and a
+// trailing slash all redirect; the query (?v= included) is kept.
 func (r *Router) Decide(req *http.Request) (Decision, error) {
 	p, ok := ParsePath(req.URL.Path, r.opts.Routes, r.opts.Languages)
 	if !ok {
@@ -122,7 +122,11 @@ func (r *Router) Decide(req *http.Request) (Decision, error) {
 	if !ok {
 		return Decision{}, nil
 	}
-	d, err := r.decide(req, link, p.Language)
+	language := p.Language
+	if language == "" {
+		language = Prefix(r.opts.Languages, AcceptLanguage(r.opts.Languages, req.Header.Get("Accept-Language")))
+	}
+	d, err := r.decide(req, link, language)
 	if err != nil || !d.Matched {
 		return d, err
 	}
@@ -134,8 +138,7 @@ func (r *Router) Decide(req *http.Request) (Decision, error) {
 }
 
 func (r *Router) decide(req *http.Request, link Link, language string) (Decision, error) {
-	// The request's own prefix stays: hosts routing /{default}/... keep theirs.
-	path, ok := Canonical(r.opts.Routes, language, link)
+	path, ok := r.Path(link, language)
 	if !ok {
 		return Decision{}, nil
 	}
@@ -213,6 +216,9 @@ func (r *Router) Middleware(next http.Handler) http.Handler {
 type Resolved struct {
 	Link
 	Path string `json:"path"`
+	// VersionID is the live version ?v= names; "" when it names none, and the
+	// page shows its language's default edition.
+	VersionID string `json:"version_id,omitempty"`
 }
 
 type errorBody struct {
@@ -307,14 +313,15 @@ func init() { httpapi.Register(httpapi.Codes, codeRoutes) }
 
 var codeRoutes = []httpapi.Route[*Router]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Open,
-		Doc:       "A content code's link and canonical path; any spelling of the code resolves.",
-		Query:     []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug")},
+		Doc: "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.",
+		Query: []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug; the site's default by default"),
+			httpapi.Text("v", "a version code (the page's ?v=)")},
 		Responses: []httpapi.Reply{httpapi.OK(Resolved{})}, Errors: []string{"gone", httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Router).resolve)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/aliases", Resource: "codes", Auth: httpapi.Open,
 		Doc: "Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: " +
 			"found, not_found (unknown or hidden) or gone; at most 100.",
-		Query:   []httpapi.Param{httpapi.Text("lang", "the language of the paths' prefix and slug")},
+		Query:   []httpapi.Param{httpapi.Text("lang", "the language of the paths' prefix and slug; the site's default by default")},
 		Request: AliasLookup{}, Responses: []httpapi.Reply{httpapi.OK(AliasResults{})}},
 		Serve: httpapi.H((*Router).aliases)},
 }
@@ -349,7 +356,18 @@ func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusGone, errorBody{Error: "this content was removed", Code: "gone"})
 	default:
 		path, _ := r.Path(link, lang)
-		writeJSON(w, http.StatusOK, Resolved{Link: link, Path: path})
+		out := Resolved{Link: link, Path: path}
+		if v, err := ParseVersionCode(req.URL.Query().Get(VersionParam)); err == nil {
+			key := VersionKey{ContentID: link.ContentID, Code: v}
+			ids, err := r.store.Versions(req.Context(), []VersionKey{key})
+			if err != nil {
+				r.log.ErrorContext(req.Context(), "contenturl: resolve version", "code", code, "version", v, "err", err)
+				writeJSON(w, http.StatusInternalServerError, errorBody{Error: "internal error", Code: "internal_error"})
+				return
+			}
+			out.VersionID = ids[key]
+		}
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 

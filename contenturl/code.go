@@ -1,8 +1,9 @@
-// Package contenturl gives content uniform URLs, [/{lang}]/{route}/{CODE}[/{slug}]:
-// a short random code ContentKit assigns once per content record (unique per
-// tenant across every kind), a decorative slug, and the host's route for the
-// content kind. The server reads only the code; any other spelling of the path
-// redirects to the canonical one.
+// Package contenturl gives content uniform URLs, /{lang}/{route}/{CODE}[/{slug}]:
+// the page's language (every page has one, the default included), a short
+// random code ContentKit assigns once per content record (unique per tenant
+// across every kind), a decorative slug, and the host's route for the content
+// kind. The server reads only the code; any other spelling of the path
+// redirects to the canonical one. ?v= selects a version (VersionParam).
 //
 // Store registers codes and resolves them (and legacy aliases); Router maps
 // content kinds to the host's routes, decides canonical redirects and serves a
@@ -42,8 +43,16 @@ func (c Code) String() string { return string(c) }
 // refused, as are any length but nine and an all-digit result (a legacy
 // numeric id such as /watch/346791971 is never a code).
 func ParseCode(s string) (Code, error) {
-	var b [CodeLength]byte
-	n := 0
+	c, ok := parseCrockford(s, CodeLength)
+	if !ok {
+		return "", fmt.Errorf("%w: %q", ErrInvalidCode, s)
+	}
+	return Code(c), nil
+}
+
+// parseCrockford reads n Crockford characters, at least one a letter.
+func parseCrockford(s string, n int) (string, bool) {
+	b := make([]byte, 0, n)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
@@ -58,22 +67,60 @@ func ParseCode(s string) (Code, error) {
 		case 'I', 'L':
 			c = '1'
 		}
-		if strings.IndexByte(Alphabet, c) < 0 || n == CodeLength {
-			return "", fmt.Errorf("%w: %q", ErrInvalidCode, s)
+		if strings.IndexByte(Alphabet, c) < 0 || len(b) == n {
+			return "", false
 		}
-		b[n] = c
-		n++
+		b = append(b, c)
 	}
-	if n != CodeLength || strings.IndexFunc(string(b[:]), func(r rune) bool { return r >= 'A' && r <= 'Z' }) < 0 {
-		return "", fmt.Errorf("%w: %q", ErrInvalidCode, s)
+	if len(b) != n || strings.IndexFunc(string(b), func(r rune) bool { return r >= 'A' && r <= 'Z' }) < 0 {
+		return "", false
 	}
-	return Code(b[:]), nil
+	return string(b), true
 }
 
 // Valid reports whether c is in canonical form.
 func (c Code) Valid() bool {
 	p, err := ParseCode(string(c))
 	return err == nil && p == c
+}
+
+// VersionParam is the query parameter that selects a version on its content's
+// page: /{lang}/{route}/{CODE}/{slug}?v={version code}. A page without it, or
+// whose code names no live version, shows the language's default edition.
+const VersionParam = "v"
+
+// VersionCodeLength is the length of a version code.
+const VersionCodeLength = 4
+
+// ErrInvalidVersionCode refuses what is not a version code.
+var ErrInvalidVersionCode = fmt.Errorf("%w: not a version code", codes.ErrInvalid)
+
+// VersionCode is a version's code in canonical form: four characters of
+// Alphabet, at least one a letter, unique within its content and fixed for
+// the version's life.
+type VersionCode string
+
+func (c VersionCode) String() string { return string(c) }
+
+// ParseVersionCode reads a version code with ParseCode's rules.
+func ParseVersionCode(s string) (VersionCode, error) {
+	c, ok := parseCrockford(s, VersionCodeLength)
+	if !ok {
+		return "", fmt.Errorf("%w: %q", ErrInvalidVersionCode, s)
+	}
+	return VersionCode(c), nil
+}
+
+// Versioned is path with ?v=code selecting a version; "" leaves path as is.
+func Versioned(path string, code VersionCode) string {
+	if code == "" {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + VersionParam + "=" + string(code)
 }
 
 // Slugify turns a title into a URL slug: ASCII [a-z0-9] words joined by

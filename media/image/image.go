@@ -697,10 +697,11 @@ func (p *Processor) rules(animation media.Animation) rules {
 
 // putBlob records ownership and writes one immutable private allocation.
 func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	name, err := p.c.Manifests.NewBlob(ctx, item.Ref(), sum)
+	names, err := p.c.Manifests.NewBlobs(ctx, item.Ref(), [][]byte{sum})
 	if err != nil {
 		return "", err
 	}
+	name := names[0]
 	key, err := item.Blob(name)
 	if err != nil {
 		return "", err

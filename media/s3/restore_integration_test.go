@@ -65,10 +65,11 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 		names := make([]string, 2)
 		for i, body := range []string{original, output} {
 			sum := sha256.Sum256([]byte(body))
-			name, err := ms.NewBlob(ctx, ref, sum[:])
+			allocated, err := ms.NewBlobs(ctx, ref, [][]byte{sum[:]})
 			if err != nil {
 				t.Fatal(err)
 			}
+			name := allocated[0]
 			names[i] = name
 			key, err := item.Blob(name)
 			if err != nil {

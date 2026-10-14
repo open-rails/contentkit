@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { isPending, type ContentKitClient } from "../../src/client/index.js";
 import { ContentKitProvider, useContentDetail, useReaderPlan, useSegmentPages } from "../../src/react/index.js";
@@ -61,6 +61,17 @@ describe("content pages against the real ContentKit", () => {
     expect(result.current.decision).toMatchObject({ allowed: false, sell: expect.arrayContaining(["premium"]), preview: { pages: 2 } });
     rerender({ version: draft!.id });
     expect(result.current.version?.id).toBe(ja!.id);
+    // A version code (any spelling) selects as its id does; one naming no live version falls back.
+    expect(new Set([en!.code, ja!.code, draft!.code]).size).toBe(3);
+    rerender({ version: en!.code.toLowerCase() });
+    expect(result.current.version?.id).toBe(en!.id);
+    rerender({ version: draft!.code });
+    expect(result.current.version?.id).toBe(ja!.id);
+    // Without one, the page's ?v= selects.
+    history.replaceState(null, "", `/ja/c/${c!.code}/atlas?v=${en!.code}`);
+    rerender({});
+    expect(result.current.version?.id).toBe(en!.id);
+    history.replaceState(null, "", "/");
 
     // An edit shows on the next read; one made through the page's own client, at once.
     await staff.contents.putText(c!.id, "ja", { title: `新アトラス ${r}` });
@@ -114,11 +125,11 @@ describe("content pages against the real ContentKit", () => {
       },
     ]);
     const [plain, colored, ja] = c!.versions;
+    history.replaceState(null, "", "/en/c/x/reel");
     const { result } = renderHook(
       () => {
-        const [version, setVersion] = useState<string | null>(null);
-        const d = useContentDetail(c!.id, { version });
-        return { shown: d.version?.id, menu: useVersionMenuItems(d.versions, d.version?.id, setVersion) as Extract<PlayerMenuItem, { options: unknown }>[] };
+        const d = useContentDetail(c!.id);
+        return { shown: d.version?.id, menu: useVersionMenuItems(d.versions) as Extract<PlayerMenuItem, { options: unknown }>[] };
       },
       { wrapper: wrap(client(h, cfg, null), { viewer: null, language: "en" }) },
     );
@@ -127,11 +138,15 @@ describe("content pages against the real ContentKit", () => {
     expect(language).toMatchObject({ label: "Language", value: "en", options: [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }] });
     expect(variant).toMatchObject({ label: "Version", options: [{ value: plain!.id, label: "English (locked)" }, { value: colored!.id, label: "Colored" }] });
 
+    // Each entry writes the chosen version's code to ?v=, which the page shows.
     act(() => variant!.onChange(colored!.id));
+    expect(location.search).toBe(`?v=${colored!.code}`);
     expect(result.current.shown).toBe(colored!.id);
     expect(result.current.menu[1]!.value).toBe(colored!.id);
     act(() => language!.onChange("ja"));
+    expect(location.search).toBe(`?v=${ja!.code}`);
     expect(result.current.shown).toBe(ja!.id);
     expect(result.current.menu.map((m) => [m.label, m.value])).toEqual([["Language", "ja"]]);
+    history.replaceState(null, "", "/");
   });
 });

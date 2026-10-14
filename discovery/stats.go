@@ -239,6 +239,7 @@ func (s *Service) name(ctx context.Context, kind, language string, ranked []Rank
 	if len(ranked) == 0 {
 		return nil
 	}
+	language = contenturl.Prefix(s.languages(), language)
 	ids := make([]string, len(ranked))
 	for i, c := range ranked {
 		ids[i] = c.ID
@@ -265,7 +266,7 @@ WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.o.Tenant, ids, language, s.languag
 			}
 			ranked[i].Title = title
 			if route != "" && code != "" {
-				ranked[i].Path = contenturl.Path(contenturl.Prefix(s.languages(), language), route, contenturl.Code(code), slug)
+				ranked[i].Path = contenturl.Path(s.languages(), language, route, contenturl.Code(code), slug)
 			}
 		}
 	}

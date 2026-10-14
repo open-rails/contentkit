@@ -274,6 +274,44 @@ func (s *Store) Resolve(ctx context.Context, cs []Code) (map[Code]Link, error) {
 	return out, nil
 }
 
+// VersionKey names a version by its content and version code.
+type VersionKey struct {
+	ContentID string
+	Code      VersionCode
+}
+
+// Versions answers the id of each key's version while it is live (published,
+// past its publication time, its content live), as readers open it; keys
+// naming none are left out.
+func (s *Store) Versions(ctx context.Context, keys []VersionKey) (map[VersionKey]string, error) {
+	out := make(map[VersionKey]string, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	contents, cs := make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		contents[i], cs[i] = k.ContentID, string(k.Code)
+	}
+	rows, err := s.q().Query(ctx, fmt.Sprintf(`SELECT v.content_id, v.code, v.id FROM unnest($2::text[], $3::text[]) AS k(content_id, code)
+JOIN %[1]s.content_versions v ON v.tenant_id = $1 AND v.content_id = k.content_id AND v.code = k.code
+JOIN %[1]s.content_facets f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
+WHERE NOT f.deleted AND f.live_from <= now()`, s.qs), s.tenant, contents, cs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k VersionKey
+		var code, id string
+		if err := rows.Scan(&k.ContentID, &code, &id); err != nil {
+			return nil, err
+		}
+		k.Code = VersionCode(code)
+		out[k] = id
+	}
+	return out, rows.Err()
+}
+
 // Merge makes from's code redirect to into's: both stay valid, from's resolves
 // to into. Use it when duplicate content is folded into one record. Both
 // must be registered (ErrNotFound); a merge back into from is ErrConflict.
