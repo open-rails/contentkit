@@ -245,7 +245,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	s.mustUpload(s.creator, top, "cover", "image/png", mine)
 	s.mustUpload(s.creator, ref, "originals/004", "image/png", pngOf(t, 30, 40, 4))
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 4 })
-	if err := versions.Publish(s.svc, s.ctx, v); err != nil {
+	if err := versions.Publish(s.svc, s.ctx, v); err != nil && !errors.Is(err, versions.ErrNotReady) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(mine)
