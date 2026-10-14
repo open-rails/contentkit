@@ -114,6 +114,48 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	}
 }
 
+func TestImportedExternalIDPagination(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	_, user := w.person(iam.Role{})
+	f := serve(t, w.engine(nil))
+	var imported importer.Result
+	f.want(http.StatusOK, staff, "POST", "/import", importer.Batch{Source: "e2e-external",
+		Groups: []importer.GroupRecord{
+			{ExternalID: "tag:1", Kind: "tag", Slug: "first"},
+			{ExternalID: "tag:2", Kind: "tag", Slug: "second"},
+			{ExternalID: "tag:3", Kind: "tag", Slug: "third"},
+		}}, &imported)
+	if len(imported.Failed) > 0 || len(imported.IDs["group"]) != 3 {
+		t.Fatalf("import: %+v", imported)
+	}
+	q := importer.ExternalIDsQuery{Source: "e2e-external", Lists: []importer.ExternalIDList{{Entity: importer.EntityGroup, Limit: 1}}}
+	f.want(http.StatusUnauthorized, "", "POST", "/import/external-ids", q, nil)
+	f.want(http.StatusForbidden, user, "POST", "/import/external-ids", q, nil)
+	for n := 1; n <= 3; n++ {
+		var page importer.ExternalIDs
+		f.want(http.StatusOK, staff, "POST", "/import/external-ids", q, &page)
+		if len(page.Lists) != 1 || len(page.Lists[0].IDs) != 1 {
+			t.Fatalf("page %d: %+v", n, page)
+		}
+		id := page.Lists[0].IDs[0]
+		want := fmt.Sprintf("tag:%d", n)
+		if page.Lists[0].Entity != importer.EntityGroup || id.ExternalID != want || id.ID != imported.IDs["group"][want] || id.Deleted {
+			t.Fatalf("page %d: %+v", n, page)
+		}
+		q.Lists[0].Cursor = page.Lists[0].NextCursor
+		if (q.Lists[0].Cursor == "") != (n == 3) {
+			t.Fatalf("page %d cursor: %q", n, q.Lists[0].Cursor)
+		}
+	}
+	q.Source = "another-source"
+	var empty importer.ExternalIDs
+	f.want(http.StatusOK, staff, "POST", "/import/external-ids", q, &empty)
+	if len(empty.Lists) != 1 || len(empty.Lists[0].IDs) != 0 || empty.Lists[0].NextCursor != "" {
+		t.Fatalf("another source's ids: %+v", empty)
+	}
+}
+
 // A group shows in the typeahead a moment after it is made, well before the
 // next periodic sync: the write queues its documents' sync.
 func TestTypeaheadFollowsGroupWrites(t *testing.T) {
