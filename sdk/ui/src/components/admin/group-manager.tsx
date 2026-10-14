@@ -75,9 +75,9 @@ function Manager({ basePath, navigation, ...p }: Inner) {
     <>
       {list.length > 1 && (
         <Tabs value={kind} onValueChange={(v) => loc.go(String(v))}>
-          <TabsList className="flex-wrap">
+          <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {list.map((x) => (
-              <TabsTrigger key={x} value={x}>
+              <TabsTrigger key={x} value={x} className="h-7.5">
                 {labelOf(p.labels, x)}
               </TabsTrigger>
             ))}
