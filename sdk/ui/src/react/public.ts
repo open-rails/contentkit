@@ -71,7 +71,7 @@ export interface UsePublicImage {
  * commits through the same client.
  */
 export function usePublicImage(item: RefBody, preset: string, o: PublicImageOptions = {}): UsePublicImage {
-  const { kind, id } = item;
+  const { kind, id, version } = item;
   const client = useOptionalContentKitClient(o.client);
   const { presets, loaded } = usePresets({ client });
   const rule = presets.find((p) => p.kind === kind && p.name === preset);
@@ -83,9 +83,9 @@ export function usePublicImage(item: RefBody, preset: string, o: PublicImageOpti
     const own = listed ? o.image : r.read?.public?.find((p) => p.preset === preset);
     if (own && own.renditions.length) return { image: { preset, renditions: own.renditions, aspect: ("aspect" in own && own.aspect) || rule?.aspect }, isDefault: false };
     if (!listed && !r.read) return { image: null, isDefault: false };
-    const def = rule && defaultImage(rule, id);
+    const def = rule && defaultImage(rule, id, version);
     return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
-  }, [listed, o.image, r.read, preset, rule, id]);
+  }, [listed, o.image, r.read, preset, rule, id, version]);
   return { ...image, rule, loading: !loaded || r.loading, error: r.error, reload: r.reload };
 }
 

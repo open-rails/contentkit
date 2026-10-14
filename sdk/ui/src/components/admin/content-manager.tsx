@@ -7,6 +7,7 @@ import { useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
+import { useKinds } from "../../react/groups.js";
 import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
@@ -295,6 +296,8 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
   const languages = choices(offered);
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
   const ed = useContent(id, kind, language, { client });
+  // A hidden version's cover is edited here; a visible version's in its own form.
+  const hidden = !!useKinds({ client }).kinds?.kinds[kind]?.versions.hidden;
   const report = useErrorReporter(onError);
   // The body is kept as stored (image references); the editor shows it with URLs.
   const [form, setForm] = useState<Form | null>(id ? null : empty);
@@ -449,7 +452,7 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
         <Label htmlFor={`${ids}-description`}>{t("contentManager.description")}</Label>
         <Textarea id={`${ids}-description`} rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} />
       </div>
-      <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />
+      {(hidden || !item) && <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />}
       <div className="grid gap-1.5">
         <span className="text-sm font-medium">{t("contentManager.body")}</span>
         {renderEditor ? renderEditor(editor) : <Textarea aria-label={editor["aria-label"]} rows={12} value={f.body} placeholder={editor.placeholder} onChange={(e) => set({ body: e.target.value })} />}

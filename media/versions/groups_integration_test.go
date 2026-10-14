@@ -118,16 +118,29 @@ func TestGroupMedia(t *testing.T) {
 		t.Fatalf("card %+v %v", page, err)
 	}
 
-	// A member content's cover: its own item's.
+	// A member content's cover: its default edition's, the first version,
+	// which follows the versions' order.
 	c := s.content("gallery", `{"level":"public"}`)
-	s.mustUpload(s.creator, s.ref("gallery", versions.Target{Content: c}), "cover", "image/png", pngOf(t, 64, 64, 7))
+	a, b := s.version(c), s.version(c)
+	s.mustUpload(s.creator, s.ref("gallery", a), "cover", "image/png", pngOf(t, 64, 64, 7))
+	s.mustUpload(s.creator, s.ref("gallery", b), "cover", "image/png", pngOf(t, 64, 64, 8))
 	if _, err := store.UpdateGroups(s.ctx, []groups.GroupUpdate{{ID: tag.ID, Cover: &groups.Cover{ContentID: c}}}); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the member's cover", 2*time.Minute, func() bool {
-		d, _ = store.Detail(s.ctx, tag.ID, "en")
-		return d.Cover != nil && len(d.Cover.Renditions) > 0 && strings.Contains(d.Cover.Renditions[0].URL, "/gallery/"+c+"/public/cover-")
-	})
+	coverOf := func(v versions.Target) {
+		t.Helper()
+		eventually(t, "the member's cover from "+v.Version, 2*time.Minute, func() bool {
+			d, _ = store.Detail(s.ctx, tag.ID, "en")
+			return d.Cover != nil && len(d.Cover.Renditions) > 0 && strings.Contains(d.Cover.Renditions[0].URL, "/gallery/"+c+"/"+v.Version+"/public/cover-")
+		})
+	}
+	coverOf(a)
+	for _, table := range []string{"content_versions", "content_facets"} {
+		col := map[string]string{"content_versions": "id", "content_facets": "version_id"}[table]
+		s.exec(`UPDATE `+s.table(table)+` SET position = CASE WHEN `+col+` = $2 THEN 0 ELSE 1 END WHERE tenant_id = $1 AND `+col+` = ANY($3)`,
+			s.tenant, b.Version, []string{a.Version, b.Version})
+	}
+	coverOf(b)
 	got, err := s.svc.Covers(s.ctx, []versions.CoverOf{{Kind: "gallery", ID: c}, {Kind: "tag", ID: string(tag.ID), ContentID: contentref.NewID()},
 		{Kind: "channel", ID: string(channel.ID)}})
 	if err != nil || len(got[0]) == 0 || got[0][0].URL != d.Cover.Renditions[0].URL || got[1] != nil || got[2] != nil {

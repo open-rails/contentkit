@@ -23,8 +23,7 @@
             "image/png",
             "image/jpeg"
           ],
-          "max_bytes": 10485760,
-          "content": true
+          "max_bytes": 10485760
         }
       ],
       "private": [
@@ -64,8 +63,7 @@
             "image/png"
           ],
           "max_bytes": 1048576,
-          "max": 2,
-          "content": true
+          "max": 2
         },
         {
           "path": "inline/{name}",
@@ -75,16 +73,7 @@
           ],
           "max_bytes": 1048576,
           "named": true,
-          "max": 100,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max": 100
         }
       ],
       "public": [
@@ -259,8 +248,7 @@
             "image/jpeg",
             "image/webp"
           ],
-          "max_bytes": 26214400,
-          "content": true
+          "max_bytes": 26214400
         },
         {
           "path": "cover",
@@ -269,16 +257,7 @@
             "image/jpeg",
             "image/webp"
           ],
-          "max_bytes": 26214400,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max_bytes": 26214400
         }
       ],
       "public": [
@@ -321,16 +300,7 @@
             "application/octet-stream",
             "video/mp4"
           ],
-          "max_bytes": 1073741824,
-          "content": true
-        },
-        {
-          "path": "versions/{name}",
-          "types": [
-            "image/png",
-            "image/jpeg"
-          ],
-          "max_bytes": 10485760
+          "max_bytes": 1073741824
         }
       ],
       "versions": true
@@ -381,7 +351,18 @@
           "max_bytes": 10485760,
           "named": true,
           "max": 100,
-          "content": true
+          "body": true
+        },
+        {
+          "path": "covers/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 10485760,
+          "named": true,
+          "max": 10
         },
         {
           "path": "files/{name}",
@@ -395,15 +376,26 @@
       ],
       "public": [
         {
+          "name": "cover",
+          "from": "covers/{name}",
+          "to": "cover-{name}-{w}.webp",
+          "widths": [
+            320,
+            640
+          ]
+        }
+      ],
+      "versions": true,
+      "private": [
+        {
           "name": "inline",
           "from": "{name}",
-          "to": "{name}.webp",
+          "to": "inline/{name}.webp",
           "image": {
             "width": 1600
           }
         }
-      ],
-      "versions": true
+      ]
     },
     {
       "name": "poll",
@@ -496,7 +488,6 @@
       "uploads": [
         {
           "path": "cover",
-          "content": true,
           "types": [
             "image/png",
             "image/jpeg"
@@ -541,10 +532,16 @@
           }
         },
         {
+          "name": "high",
+          "from": "originals/{name}",
+          "to": "high/{name}.webp",
+          "image": {}
+        },
+        {
           "name": "zip",
           "to": "download/pages.zip",
           "download": "{title}.zip",
-          "zip": "low-res/",
+          "zip": "high/",
           "host_only": true
         }
       ],

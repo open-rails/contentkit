@@ -121,10 +121,10 @@ func (s *Service) fork(ctx context.Context, a forkArgs) error {
 		return ErrNotFound
 	}
 	mk, err := s.reg.Kind(vs[dst].Kind)
-	if err != nil || mk.VersionKind() == nil {
+	if err != nil || !mk.Versions {
 		return ErrNotFound
 	}
-	k := mk.VersionKind()
+	k := mk
 	first, second := dst, src
 	if second.Version < first.Version {
 		first, second = second, first

@@ -68,8 +68,8 @@ type harness struct {
 }
 
 // site is the content model: the items tests create (/__test/items) and
-// blogs, each a content kind whose media item tests use is its content-level
-// one (kinds.json); comics and movies with traits, segments and every group
+// blogs, each a content kind whose media live in its versions (kinds.json);
+// comics and movies with traits, segments and every group
 // kind; group kinds that between them declare roles, attributes, order,
 // parents, scopes, windows and version-level memberships; a tier and a
 // content filter.

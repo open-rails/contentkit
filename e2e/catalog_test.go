@@ -45,7 +45,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	// takes their uploads.
 	g1, g1v := w.published(f, staff, "gallery", o.ID)
 	g2, _ := w.published(f, staff, "gallery")
-	album, _ := w.published(f, staff, "album", u.ID)
+	album, albumV := w.published(f, staff, "album", u.ID)
 	item := "/contents/" + g1
 
 	// What signed-out visitors may do: nothing here (the default).
@@ -70,7 +70,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+post.ID+"/text/en", catalog.Text{Title: "Hello", Description: "Short", Body: "World"}, nil)
 	f.want(http.StatusOK, staff, "PATCH", "/contents/"+post.ID, catalog.ContentPatch{Attributes: map[string]any{}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+post.ID+"/creators", catalog.CreatorsInput{Creators: []catalog.Creator{{UserID: o.ID}}}, nil)
-	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
+	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/images", catalog.BodyImageInput{Image: ptr("i-" + uuid.NewString()), Version: post.Versions[0].ID}, nil)
 	f.want(http.StatusBadRequest, staff, "POST", "/contents/"+post.ID+"/versions", catalog.VersionInput{Languages: []string{"en"}}, nil)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, &post)
 	f.want(http.StatusOK, anon, "GET", "/contents/"+post.ID+"?language=en", nil, &post)
@@ -317,13 +317,14 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
 
 	discoveryScenario(t, f, g1, user, anon)
-	mediaScenario(t, f, album, user, anon)
+	mediaScenario(t, f, album, albumV, user, anon)
 	versionsScenario(t, w, f, staff, o.ID, owner, user, anon)
 
 }
 
-func mediaScenario(t *testing.T, f *server, album, user, anon string) {
-	ref := media.RefBody{Kind: "album", ID: album}
+func mediaScenario(t *testing.T, f *server, album, version, user, anon string) {
+	ref := media.RefBody{Kind: "album", ID: album, Version: version}
+	item := "/media/album/" + album + "/versions/" + version
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
 	presign := func(path string) media.PresignBody { return presignPNG(ref, path, body) }
@@ -351,12 +352,12 @@ func mediaScenario(t *testing.T, f *server, album, user, anon string) {
 		f.want(http.StatusBadRequest, user, "POST", p, media.TicketBody{Ticket: "forged"}, nil)
 	}
 	f.want(http.StatusBadRequest, user, "POST", "/media/upload/parts", media.PartsBody{Ticket: "forged", Parts: []media.PartBody{{Number: 1, Size: 1, SHA256: hex.EncodeToString(sum[:])}}}, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=album&id="+album+"&path=originals/001&t=1", nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=album&id="+album+"&version="+version+"&path=originals/001&t=1", nil, nil)
 
 	// An editor read carries the kind's upload rules; a viewer's does not.
 	var read media.ReadResult
-	f.want(http.StatusOK, user, "GET", "/media/album/"+album+"?editor", nil, &read)
-	if len(read.Files) != 2 || !read.Files[0].Upload || len(read.Uploads) != 3 {
+	f.want(http.StatusOK, user, "GET", item+"?editor", nil, &read)
+	if len(read.Files) != 2 || !read.Files[0].Upload || len(read.Uploads) != 4 {
 		t.Fatalf("editor read %+v", read)
 	}
 	if r := read.Uploads[0]; r.Path != "originals/{name}" || r.MaxBytes != 1<<20 || r.Max != 10 || len(r.Types) != 1 || r.Video != nil {
@@ -366,24 +367,24 @@ func mediaScenario(t *testing.T, f *server, album, user, anon string) {
 		t.Fatalf("cover rule %+v", r)
 	}
 	var viewer media.ReadResult
-	f.want(http.StatusOK, anon, "GET", "/media/album/"+album+"?limit=10&editor", nil, &viewer)
+	f.want(http.StatusOK, anon, "GET", item+"?limit=10&editor", nil, &viewer)
 	if viewer.Uploads != nil {
 		t.Fatalf("a viewer read the upload rules: %+v", viewer.Uploads)
 	}
-	f.want(http.StatusNotFound, anon, "GET", "/media/album/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
-	f.want(http.StatusNotFound, user, "GET", "/media/album/"+album+"/hls/master.m3u8?audio=ja", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/media/album/"+album+"/versions/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
+	f.want(http.StatusNotFound, user, "GET", item+"/hls/master.m3u8?audio=ja", nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/request/"+uuid.Must(uuid.NewV7()).String()+"/hls/master.m3u8", nil, nil)
 
 	// The preset rules, without a read.
 	var presets []media.PresetRule
 	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
-	if len(presets) != 8 ||
-		!slices.ContainsFunc(presets, func(p media.PresetRule) bool {
-			return p.Kind == "album" && p.Name == "cover" && p.MinWidth == 8 && p.Base == "https://media.test" && p.To == "cover-{w}.webp" && slices.Equal(p.Widths, []int{200})
-		}) ||
+	if !slices.ContainsFunc(presets, func(p media.PresetRule) bool {
+		return p.Kind == "album" && p.Name == "cover" && p.MinWidth == 8 && p.Base == "https://media.test" && p.To == "cover-{w}.webp" && slices.Equal(p.Widths, []int{200})
+	}) ||
 		!slices.ContainsFunc(presets, func(p media.PresetRule) bool {
 			return p.Kind == "user" && p.Name == "avatar" && p.Namespace == "accounts" && p.Stable
 		}) ||
-		!slices.ContainsFunc(presets, func(p media.PresetRule) bool { return p.Kind == "blog.body" && p.Name == "inline" }) {
+		slices.ContainsFunc(presets, func(p media.PresetRule) bool { return p.Kind == "blog" }) {
 		t.Fatalf("presets %+v", presets)
 	}
 }

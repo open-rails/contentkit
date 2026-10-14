@@ -17,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	"github.com/open-rails/contentkit/media"
 )
 
 // totalsPath is the totals route under a ContentKit mount.
@@ -57,7 +56,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a content item's listing, access, restrictions, attributes, cover or creators." + editorsDoc,
+		Doc:     "Edits a content item's listing, access, restrictions, attributes or creators." + editorsDoc,
 		Request: ContentPatch{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
 		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleUpdate)},
@@ -92,8 +91,9 @@ var routes = []httpapi.Route[*Store]{
 		Request: CreatorsInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutCreators)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/images", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now." + editorsDoc,
-		Request: content.ImageInput{}, Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
+		Doc: "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, " +
+			"and returns the reference to store in the body and a URL that shows it to the editor now." + editorsDoc,
+		Request: BodyImageInput{}, Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleImage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Adds a version after the others, a draft unless state says otherwise." + editorsDoc,
@@ -104,7 +104,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: OrderInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments." + editorsDoc,
+		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover." + editorsDoc,
 		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
@@ -497,47 +497,19 @@ func (s *Store) handlePutCreators(w http.ResponseWriter, r *http.Request) {
 
 func (s *Store) handleImage(w http.ResponseWriter, r *http.Request) {
 	actor, err := writer(r.Context())
-	var in content.ImageInput
+	var in BodyImageInput
 	if err == nil {
 		err = decode(r, &in)
 	}
-	if err == nil && (in.Image == nil || !media.ValidNamed(*in.Image)) {
-		err = invalid("image must be an inline image name (i-{uuid})")
-	}
-	if err == nil && s.media == nil {
-		err = errMediaNotConfigured
-	}
-	var got map[string]owned
+	var out InlineImage
 	if err == nil {
-		got, err = s.lookup(r.Context(), actor, r.PathValue("id"))
-	}
-	var url string
-	if err == nil {
-		url, err = s.previewURL(r.Context(), actor, got[r.PathValue("id")].kind+media.BodySuffix, r.PathValue("id"), *in.Image)
+		out, err = s.BodyImage(r.Context(), actor, r.PathValue("id"), in)
 	}
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	out := InlineImage{Ref: ImageRef(*in.Image)}
-	if url != "" {
-		out.URL = &url
-	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// lookup authorizes actor to edit one live item without writing.
-func (s *Store) lookup(ctx context.Context, actor access.Actor, id string) (map[string]owned, error) {
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-	got, err := s.authorize(ctx, tx, actor, []string{id})
-	if err == nil && got[id].state == StateDeleted {
-		err = ErrNotFound
-	}
-	return got, err
 }
 
 func (s *Store) handleCreateVersion(w http.ResponseWriter, r *http.Request) {

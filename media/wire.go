@@ -9,8 +9,8 @@ import (
 // (Reader.Handler). The browser SDK's types are generated from them
 // (internal/contract). SHA-256 values are lowercase hex.
 
-// RefBody names an item of the handler's registry: of a Versions kind, one
-// version's, or ("") its content-level item.
+// RefBody names an item of the handler's registry: of a content kind, one
+// version's; of any other kind, Version "".
 type RefBody struct {
 	Kind    string `json:"kind"`
 	ID      string `json:"id"`
@@ -218,8 +218,10 @@ type UploadRule struct {
 	Types    []string `json:"types"`
 	MaxBytes int64    `json:"max_bytes"`
 	// Max caps the files at Path; 0 is unlimited.
-	Max    int    `json:"max,omitempty"`
-	Named  bool   `json:"named,omitempty"`
+	Max   int  `json:"max,omitempty"`
+	Named bool `json:"named,omitempty"`
+	// Body: the upload holds the body's images (Upload.Body).
+	Body   bool   `json:"body,omitempty"`
 	Frames string `json:"frames,omitempty"`
 	// Aspect and MinWidth bound an image's edit: its first public preset's.
 	Aspect   Aspect `json:"aspect,omitzero"`

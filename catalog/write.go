@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,8 +54,6 @@ type ContentPatch struct {
 	Restrictions *[]string      `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"` // replaces all
 	Creators     *[]Creator     `json:"creators,omitempty"`
-	// Cover is an inline image name of the content's folder; "" clears.
-	Cover *string `json:"cover,omitempty"`
 	// Revision, when set, refuses the edit (409) unless it is current.
 	Revision *int64 `json:"revision,omitempty"`
 }
@@ -76,6 +75,9 @@ type VersionInput struct {
 	Text        map[string]VersionText `json:"text,omitempty"`       // replaces all
 	Segments    *[]Segment             `json:"segments,omitempty"`   // replaces all
 	Ordinal     *int                   `json:"ordinal,omitempty"`
+	// Cover selects one of the version's cover uploads by name (i-{uuid});
+	// "" returns to its first.
+	Cover *string `json:"cover,omitempty"`
 	// Fork fills a new version's media from a sibling (creation only).
 	Fork *VersionFork `json:"fork,omitempty"`
 }
@@ -130,6 +132,7 @@ type effects struct {
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
 	forks     []versions.Fork
+	bodies    []versions.BodyCopy
 }
 
 // mutate runs fn over the authorized, locked items in one transaction, then
@@ -180,6 +183,11 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 			return errMediaNotConfigured
 		}
 		if err := s.media.Versions.ForkTx(ctx, tx, fx.forks); err != nil {
+			return err
+		}
+	}
+	if s.media != nil && len(fx.bodies) > 0 {
+		if err := s.media.Versions.CopyBodiesTx(ctx, tx, fx.bodies); err != nil {
 			return err
 		}
 	}
@@ -368,9 +376,6 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			}
 			in[i].Restrictions = &rs
 		}
-		if u.Cover != nil && *u.Cover != "" && !media.ValidNamed(*u.Cover) {
-			return invalid("cover must be an inline image name (i-{uuid})")
-		}
 	}
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{expose: true}
@@ -391,7 +396,7 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			if err := s.checkRuleGroups(ctx, tx, u.Access); err != nil {
 				return fx, err
 			}
-			var access, attrs, cover []byte
+			var access, attrs []byte
 			if u.Access != nil {
 				access, _ = json.Marshal(u.Access)
 			}
@@ -402,20 +407,13 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 				}
 				attrs, _ = json.Marshal(a)
 			}
-			if u.Cover != nil && *u.Cover != "" {
-				if s.media == nil {
-					return fx, errMediaNotConfigured
-				}
-				cover, _ = json.Marshal(Cover{Image: *u.Cover})
-			}
 			var restrictions []string
 			if u.Restrictions != nil {
 				restrictions = *u.Restrictions
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET listing = coalesce($3, listing), access = coalesce($4, access),
- restrictions = coalesce($5, restrictions), attributes = coalesce($6, attributes),
- cover = CASE WHEN $7 THEN $8::jsonb ELSE cover END, comments = coalesce($9, comments) WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, u.ID, u.Listing, access, restrictions, attrs, u.Cover != nil, cover, u.Comments); err != nil {
+ restrictions = coalesce($5, restrictions), attributes = coalesce($6, attributes), comments = coalesce($7, comments) WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, u.ID, u.Listing, access, restrictions, attrs, u.Comments); err != nil {
 				return fx, err
 			}
 			if u.Creators != nil {
@@ -911,8 +909,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			if o.state == StateDeleted {
 				return fx, ErrNotFound
 			}
-			if k.Versions.Hidden {
-				return fx, invalid("kind %s has one hidden version", o.kind)
+			if k.Versions.Hidden && (p.VersionID == "" || !coverOnly(p.VersionInput)) {
+				return fx, invalid("kind %s has one hidden version: only its cover is edited", o.kind)
 			}
 			if p.Fork != nil {
 				if err := s.checkFork(ctx, tx, p); err != nil {
@@ -930,9 +928,19 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 					return fx, err
 				}
 				out[i] = vid
+				from := ""
 				if f := p.Fork; f != nil {
 					fx.forks = append(fx.forks, versions.Fork{Version: versions.Target{Content: p.ContentID, Version: vid}, From: f.From,
 						Playback: f.Playback, Segments: f.Segments})
+					from = f.From
+				}
+				// A new version starts with its own copy of the body's images
+				// and, forked, of its source's cover selection.
+				if from, err = s.sibling(ctx, tx, p.ContentID, vid, from, in.Cover == nil); err != nil {
+					return fx, err
+				}
+				if from != "" {
+					fx.bodies = append(fx.bodies, versions.BodyCopy{Content: p.ContentID, From: from, To: []string{vid}})
 				}
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 				continue
@@ -964,6 +972,7 @@ type versionRow struct {
 	access            []byte
 	attributes        []byte
 	ordinal           *int
+	cover             []byte
 }
 
 func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versionRow) (versionRow, error) {
@@ -1019,6 +1028,15 @@ func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versi
 	if v.Ordinal != nil {
 		r.ordinal = v.Ordinal
 	}
+	switch {
+	case v.Cover == nil:
+	case *v.Cover == "":
+		r.cover = nil
+	case !media.ValidNamed(*v.Cover):
+		return r, invalid("cover must be an image name (i-{uuid})")
+	default:
+		r.cover, _ = json.Marshal(Cover{Image: *v.Cover})
+	}
 	if v.Segments != nil && !k.Segments {
 		return r, invalid("kind %s has no segments", kind)
 	}
@@ -1034,16 +1052,44 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 		return "", err
 	}
 	id := contentref.NewID()
-	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes, ordinal)
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
+ ordinal, cover)
  SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $3), 0), $4, $5, $6, $7, $8,
-  CASE WHEN $7 = 'published' AND ($8::timestamptz IS NULL OR $8 <= $12) THEN coalesce($8, $12) END, $9, $10, $11`,
-		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, s.now()); err != nil {
+  CASE WHEN $7 = 'published' AND ($8::timestamptz IS NULL OR $8 <= $12) THEN coalesce($8, $12) END, $9, $10, $11, $13`,
+		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, s.now(), r.cover); err != nil {
 		return "", err
 	}
 	if err := s.writeVersionExtras(ctx, tx, id, v); err != nil {
 		return "", err
 	}
 	return id, nil
+}
+
+// coverOnly reports an edit of nothing but the cover.
+func coverOnly(v VersionInput) bool {
+	v.Cover = nil
+	return reflect.DeepEqual(v, VersionInput{})
+}
+
+// sibling is the version new version vid copies its body images from: fork,
+// else its content's first other version ("" when it has none). With cover
+// a fork's source's cover selection is copied too.
+func (s *Store) sibling(ctx context.Context, tx pgx.Tx, contentID, vid, fork string, cover bool) (string, error) {
+	if fork != "" && cover {
+		_, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET cover = f.cover FROM `+s.t.versions+` f
+ WHERE v.tenant_id = $1 AND v.id = $2 AND f.tenant_id = $1 AND f.id = $3`, s.tenant, vid, fork)
+		return fork, err
+	}
+	if fork != "" {
+		return fork, nil
+	}
+	var from string
+	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id <> $3 AND state <> 'deleted'
+ ORDER BY position, id LIMIT 1`, s.tenant, contentID, vid).Scan(&from)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return from, err
 }
 
 // checkFork accepts a fork into a new version from a live sibling.
@@ -1076,9 +1122,9 @@ func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) err
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {
 	var cur versionRow
-	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal FROM `+s.t.versions+`
+	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal, cover FROM `+s.t.versions+`
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3 FOR UPDATE`, s.tenant, contentID, id).
-		Scan(&cur.languages, &cur.traits, &cur.label, &cur.state, &cur.publishAt, &cur.access, &cur.attributes, &cur.ordinal)
+		Scan(&cur.languages, &cur.traits, &cur.label, &cur.state, &cur.publishAt, &cur.access, &cur.attributes, &cur.ordinal, &cur.cover)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && cur.state == StateDeleted && v.State == "") {
 		return ErrNotFound
 	}
@@ -1097,9 +1143,10 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	restart := r.state != was || v.PublishAt != nil
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $4, traits = $5, label = $6, state = $7, publish_at = $8,
  published_at = CASE WHEN NOT $12 THEN published_at WHEN $7 = 'published' AND ($8::timestamptz IS NULL OR $8 <= $13) THEN coalesce($8, $13) END,
- deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, updated_at = clock_timestamp(), revision = revision + 1
+ deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $14, updated_at = clock_timestamp(),
+ revision = revision + 1
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
-		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, restart, s.now()); err != nil {
+		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, restart, s.now(), r.cover); err != nil {
 		return err
 	}
 	return s.writeVersionExtras(ctx, tx, id, v)

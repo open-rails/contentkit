@@ -143,9 +143,9 @@ export function presetFor(presets: readonly PresetRule[], kind: string, path: st
  * serves for an item without its own (a URL from the template never names a
  * current file). null when the preset has no default (`rule.default`).
  */
-export function defaultImage(rule: PresetRule, id: string): PublicPreset | null {
+export function defaultImage(rule: PresetRule, id: string, version?: string): PublicPreset | null {
   if (!rule.default || rule.first || rule.to.includes(NAME)) return null;
-  return logicalImage(rule, id);
+  return logicalImage(rule, id, version);
 }
 
 /**
@@ -157,11 +157,11 @@ export function stableImage(rule: PresetRule, id: string): PublicPreset | null {
   return rule.stable ? logicalImage(rule, id) : null;
 }
 
-function logicalImage(rule: PresetRule, id: string): PublicPreset {
+function logicalImage(rule: PresetRule, id: string, version?: string): PublicPreset {
   const r = ratio(rule.aspect);
   return {
     preset: rule.name,
     aspect: rule.aspect,
-    renditions: rule.widths.map((w) => ({ url: publicURL(rule.base, rule.namespace, rule.kind, id, fill(rule.to, { w })), w, ...(r ? { h: Math.round(w / r) } : {}) })),
+    renditions: rule.widths.map((w) => ({ url: publicURL(rule.base, rule.namespace, rule.kind, id, fill(rule.to, { w }), version), w, ...(r ? { h: Math.round(w / r) } : {}) })),
   };
 }

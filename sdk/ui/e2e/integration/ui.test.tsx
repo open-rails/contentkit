@@ -8,7 +8,7 @@ import type { CropSource, FileInfo, ReadResult, RefBody } from "../../src/client
 import { AvatarUpload, ContentKitUiProvider, CoverUpload, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, useSlotEditor } from "../../src/index.js";
 import { ContentKitProvider } from "../../src/react/index.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { client, harness, item, png, recorder, wait } from "./setup.js";
+import { client, harness, item, itemFolder, png, recorder, wait } from "./setup.js";
 
 const h = harness();
 let cfg: Config;
@@ -21,8 +21,7 @@ beforeAll(async () => {
 
 /** A channel (avatar 1:1, cover 3:1 public presets) its owner edits. */
 async function channel(): Promise<RefBody> {
-  const { kind, id } = await item(h, "channel", owner);
-  return { kind, id };
+  return item(h, "channel", owner);
 }
 
 function setup() {
@@ -174,7 +173,7 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   const user = userEvent.setup();
   const onChange = vi.fn();
   // The host draws its own header image.
-  const shown = { preset: "cover", aspect: "3:1", renditions: [{ url: `${cfg.media}/v1/${cfg.namespace}/channel/${ref.id}/public/cover-1500-host.webp`, w: 1500, h: 500 }] };
+  const shown = { preset: "cover", aspect: "3:1", renditions: [{ url: `${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/public/cover-1500-host.webp`, w: 1500, h: 500 }] };
   function Header() {
     const { has } = useSlotEditor();
     return <SlotImage image={has ? shown : null} alt="cover" />;

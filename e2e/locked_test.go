@@ -51,7 +51,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 		c.Content.Kinds["album"] = album
 		for i, k := range c.Media.Config.Kinds {
 			if k.Name == "book" {
-				c.Media.Config.Kinds[i].Uploads = append(k.Uploads, media.Upload{Path: "covers/{name}", Content: true, Named: true, Max: 1, Types: []string{"image/png"}, MaxBytes: 1 << 20})
+				c.Media.Config.Kinds[i].Uploads = append(k.Uploads, media.Upload{Path: "covers/{name}", Named: true, Max: 1, Types: []string{"image/png"}, MaxBytes: 1 << 20})
 			}
 		}
 		d.Billing = bill
@@ -72,7 +72,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 		var c catalog.Content
 		f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: kind, Access: &premiumRule, Attributes: map[string]any{"format": "manga"},
 			Text: map[string]catalog.Text{"en": {Title: kind + " title", Description: kind + " teaser", Body: "the paid part"}}, Versions: []catalog.VersionInput{v}}, &c)
-		f.want(http.StatusOK, staff, "PATCH", "/contents/"+c.ID, catalog.ContentPatch{Cover: &cover}, nil)
+		f.want(http.StatusOK, staff, "PATCH", "/contents/"+c.ID+"/versions/"+c.Versions[0].ID, catalog.VersionInput{Cover: &cover}, nil)
 		f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tags[0].ID}}}, nil)
 		f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
 		f.want(http.StatusOK, premiumToken, "POST", "/contents/"+c.ID+"/like", nil, nil)
@@ -105,7 +105,8 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 			var c catalog.Content
 			f.want(http.StatusOK, v.token, "GET", "/contents/"+id+"?language=en", nil, &c)
 			ver := c.Versions[0]
-			if c.Title != kind+" title" || c.Cover == nil || c.Cover.Image != cover || len(c.Groups) != 1 || c.Decision.Allowed != v.opens ||
+			if c.Title != kind+" title" || c.Cover == nil || c.Cover.Image != cover || ver.Cover == nil || ver.Cover.Image != cover || len(c.Groups) != 1 ||
+				c.Decision.Allowed != v.opens ||
 				(c.Body != "") != v.opens || (c.Description != "") != shows || (len(c.Attributes) > 0) != shows || (c.Views != nil) != shows {
 				t.Fatalf("%s: detail %+v", name, c)
 			}
@@ -182,8 +183,8 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 }
 
 // A locked gallery's raw media read over the real engine, AuthKit and
-// OpenRails lists none of its pages: a viewer without access gets its
-// public cover and that it holds locked files, never a page's path, size,
+// OpenRails lists none of its pages: a viewer without access gets the
+// version's public cover and that it holds locked files, never a page's path, size,
 // count or the item's meta. A premium holder and staff get every page.
 func TestLockedMediaListsNoPages(t *testing.T) {
 	w := newWorld(t)
@@ -198,7 +199,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 		gallery.Locked = &kinds.Locked{Show: []string{kinds.ShowCover, kinds.ShowGroups}}
 		c.Content.Kinds["gallery"] = gallery
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "gallery", KeepOriginals: true, ServeOriginals: true,
-			Uploads: []media.Upload{{Path: "cover", Content: true, Types: images, MaxBytes: 1 << 20}, {Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
+			Uploads: []media.Upload{{Path: "cover", Types: images, MaxBytes: 1 << 20}, {Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
 			Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}}}})
 		d.Billing = bill
 	}))
@@ -207,7 +208,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 	f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: "gallery", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}},
 		Text: map[string]catalog.Text{"en": {Title: "Premium pages"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
-	item, version := media.RefBody{Kind: "gallery", ID: c.ID}, media.RefBody{Kind: "gallery", ID: c.ID, Version: c.Versions[0].ID}
+	version := media.RefBody{Kind: "gallery", ID: c.ID, Version: c.Versions[0].ID}
 	ops := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "Premium pages"}}}
 	for i := range 3 {
 		plan := upload(t, f, staff, version, fmt.Sprintf("pages/%03d.png", i+1), pngBytes(t, 16+i))
@@ -221,14 +222,10 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 	if _, err := w.jobs.Manifests().Place(ctx, versionRef); err != nil {
 		t.Fatal(err)
 	}
-	coverPlan := upload(t, f, staff, item, "cover", pngBytes(t, 32))
-	f.want(http.StatusOK, staff, "POST", "/media/upload/commit", media.CommitBody{Ref: item, OperationID: uuid.NewString(),
+	coverPlan := upload(t, f, staff, version, "cover", pngBytes(t, 32))
+	f.want(http.StatusOK, staff, "POST", "/media/upload/commit", media.CommitBody{Ref: version, OperationID: uuid.NewString(),
 		Ops: []media.Op{{Op: media.OpPut, Path: coverPlan.Path, Blob: coverPlan.Blob}}}, nil)
-	itemRef, err := w.reg.Ref("gallery", c.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cover := publish(t, w, itemRef, coverPlan.Path, "cover")
+	cover := publish(t, w, versionRef, coverPlan.Path, "cover")
 
 	pages := "/media/gallery/" + c.ID + "/versions/" + version.Version
 	for _, v := range []struct{ name, token string }{{"anonymous", ""}, {"stranger", stranger}} {
@@ -237,19 +234,17 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 		if read.Access != media.AccessNone || !read.Locked || read.Total != 0 || len(read.Files) != 0 || read.Meta != nil || strings.Contains(rec.Body.String(), "pages/") {
 			t.Fatalf("%s reads the locked pages: %s", v.name, rec.Body)
 		}
+		if len(read.Public) != 1 || !reflect.DeepEqual(read.Public[0], cover) {
+			t.Fatalf("%s reads the cover: %+v", v.name, read.Public)
+		}
 		f.want(http.StatusOK, v.token, "GET", pages+"?editor", nil, &read)
 		if read.Total != 0 || len(read.Files) != 0 {
 			t.Fatalf("%s reads the locked pages as an editor: %+v", v.name, read)
 		}
-		var top media.ReadResult
-		f.want(http.StatusOK, v.token, "GET", "/media/gallery/"+c.ID, nil, &top)
-		if len(top.Public) != 1 || !reflect.DeepEqual(top.Public[0], cover) || len(top.Files) != 0 {
-			t.Fatalf("%s reads the cover: %+v", v.name, top)
-		}
 	}
 	for _, v := range []struct{ name, token string }{{"premium", premiumToken}, {"staff", staff}} {
 		var read media.ReadResult
-		f.want(http.StatusOK, v.token, "GET", pages, nil, &read)
+		f.want(http.StatusOK, v.token, "GET", pages+"?prefix=pages/", nil, &read)
 		if read.Access != media.AccessFull || read.Locked || read.Total != 3 || len(read.Files) != 3 || read.Meta["title"] != "Premium pages" {
 			t.Fatalf("%s reads the pages: %+v", v.name, read)
 		}
@@ -260,7 +255,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 		}
 	}
 	var edit media.ReadResult
-	f.want(http.StatusOK, staff, "GET", pages+"?editor", nil, &edit)
+	f.want(http.StatusOK, staff, "GET", pages+"?editor&prefix=pages/", nil, &edit)
 	if edit.Total != 3 || !edit.Files[0].Upload || len(edit.Uploads) == 0 {
 		t.Fatalf("staff's editor read %+v", edit)
 	}

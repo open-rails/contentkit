@@ -1023,7 +1023,7 @@ func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (c
 	return out, err
 }
 
-// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes, cover or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -1077,8 +1077,8 @@ func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog
 	return out, err
 }
 
-// PostContentImages is POST /v1/contents/{id}/images (public). The reference to store in a body for an inline image uploaded to the item's media folder, and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
-func (c *Client) PostContentImages(ctx context.Context, id string, body content.ImageInput) (catalog.InlineImage, error) {
+// PostContentImages is POST /v1/contents/{id}/images (public). Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+func (c *Client) PostContentImages(ctx context.Context, id string, body catalog.BodyImageInput) (catalog.InlineImage, error) {
 	var out catalog.InlineImage
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
@@ -1098,7 +1098,7 @@ func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body ca
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text and segments. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
@@ -1170,7 +1170,7 @@ type GetMediaUploadFrameQuery struct {
 	Kind string
 	// the item's id
 	Id string
-	// a Versions kind's version id; absent for its content-level item
+	// a content kind's version id; absent for any other kind's item
 	Version string
 	// the video upload's path
 	Path string
@@ -1314,7 +1314,7 @@ func (q GetMediaVersionQuery) values() url.Values {
 	return v
 }
 
-// GetMediaVersion is GET /v1/media/{kind}/{id}/versions/{version} (public). A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.
+// GetMediaVersion is GET /v1/media/{kind}/{id}/versions/{version} (public). A content version's item, read as GET /{kind}/{id} reads any other kind's item.
 func (c *Client) GetMediaVersion(ctx context.Context, kind string, id string, version string, q GetMediaVersionQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}/versions/{version}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil, &out)

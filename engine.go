@@ -156,7 +156,7 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 		if e.avatars, err = e.newAvatars(deps); err != nil {
 			return nil, err
 		}
-		if err := e.catalog.BindMedia(catalog.Media{Images: e.media.jobs.Manifests(), Reader: e.media.reader, Versions: e.media.versions}); err != nil {
+		if err := e.catalog.BindMedia(catalog.Media{Reader: e.media.reader, Versions: e.media.versions}); err != nil {
 			return nil, err
 		}
 	}

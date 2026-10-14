@@ -8,7 +8,7 @@ import type { Decision, Sale, Terms, Version } from "../../client/generated/wire
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
-import { findVersion } from "../../react/detail.js";
+import { editionOf, findVersion } from "../../react/detail.js";
 import { useVersionParam } from "../../react/location.js";
 import { useKinds } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
@@ -160,9 +160,10 @@ function useChoices(versions: readonly Version[], value: string | null | undefin
   const selected = value === undefined ? param : value;
   const change = useCallback((v: Version) => (onChange ? onChange(v) : setParam(v.code)), [onChange, setParam]);
   return useMemo(() => {
-    const current = findVersion(versions, selected) ?? (reader ? versions.find((v) => v.languages.includes(reader)) : undefined) ?? versions[0];
+    const sorted = [...versions].sort((a, b) => a.position - b.position);
+    const current = findVersion(versions, selected) ?? editionOf(sorted, reader ?? undefined);
     const language = current ? primary(current) : "";
-    return { current, language, languages: [...new Set(versions.map(primary))], variants: versions.filter((v) => primary(v) === language), change };
+    return { current, language, languages: [...new Set(sorted.map(primary))], variants: sorted.filter((v) => primary(v) === language), change };
   }, [versions, selected, reader, change]);
 }
 
@@ -182,7 +183,7 @@ export function VersionPicker({ versions, value, onChange, labels, className, ap
         <Select
           value={language}
           onValueChange={(l) => {
-            const v = versions.find((x) => primary(x) === l);
+            const v = [...versions].sort((a, b) => a.position - b.position).find((x) => primary(x) === l);
             if (v) change(v);
           }}
         >

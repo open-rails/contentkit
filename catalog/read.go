@@ -10,7 +10,7 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -66,7 +66,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		}
 	}
 	built := map[string]*Content{}
-	images := s.imageSet()
+	bodies := map[string]string{} // content -> the version whose body images it shows
 	for _, id := range visible {
 		iv, it := views[id], items[id]
 		if it == nil {
@@ -104,13 +104,6 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			}
 			c.EverSold = it.everSold
 		}
-		if it.cover != nil && show(kinds.ShowCover) {
-			c.Cover = &Cover{Image: it.cover.Image}
-			images.add(it.kind, id, it.cover.Image)
-		}
-		for _, name := range imageNames(c.Body) {
-			images.add(it.kind+media.BodySuffix, id, name)
-		}
 		if l, ok := links[id]; ok {
 			c.Code = string(l.Code)
 			if route := s.cfg.Kinds[it.kind].Route; route != "" {
@@ -136,9 +129,12 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			s.lockVersion(it.kind, &out)
 			c.Versions = append(c.Versions, out)
 		}
+		if b := bodyVersion(c, iv.editor, v.language); b != nil {
+			bodies[id] = b.ID
+		}
 		built[id] = c
 	}
-	if err := images.resolve(ctx); err != nil {
+	if err := s.fillCovers(ctx, built, v.language); err != nil {
 		return nil, err
 	}
 	names, err := s.groupSummaries(ctx, groupIDs, v.language)
@@ -146,23 +142,9 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		return nil, err
 	}
 	for id, c := range built {
-		if c.Cover != nil {
-			if u, ok := images.url(c.Kind, id, c.Cover.Image); ok {
-				c.Cover.URL = &u
-				c.images()[c.Cover.Image] = u
-			}
-		}
-		var locked []string
-		for _, name := range imageNames(c.Body) {
-			if u, ok := images.url(c.Kind+media.BodySuffix, id, name); ok {
-				c.images()[name] = u
-			} else {
-				locked = append(locked, name)
-			}
-		}
-		// Body images without public files are the opened item's alone.
-		if len(locked) > 0 && s.media != nil && s.media.Reader != nil {
-			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind+media.BodySuffix, id), v.actor, locked)
+		// Body images are the opened version's private files, signed for its openers.
+		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
+			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind, id).WithVersion(bodies[id]), v.actor, names)
 			if err != nil {
 				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
 			}
@@ -295,6 +277,9 @@ func (s *Store) shows(kind string, d Decision, p string) bool {
 // lockVersion withholds from a version its viewer does not open what its
 // kind's locked view hides.
 func (s *Store) lockVersion(kind string, v *Version) {
+	if !s.shows(kind, v.Decision, kinds.ShowCover) {
+		v.Cover = nil
+	}
 	if !s.shows(kind, v.Decision, kinds.ShowDescription) {
 		v.Description = ""
 	}
@@ -304,6 +289,55 @@ func (s *Store) lockVersion(kind string, v *Version) {
 	if !s.shows(kind, v.Decision, kinds.ShowLength) {
 		v.Pages, v.DurationMS, v.Segments = nil, nil, []Segment{}
 	}
+}
+
+// bodyVersion is the version whose body images c's body shows: of the
+// versions its viewer opens (all for an editor), the one language opens by
+// default; nil without a body or such a version.
+func bodyVersion(c *Content, editor bool, language string) *Version {
+	if c.Body == "" {
+		return nil
+	}
+	var open []Version
+	for _, v := range c.Versions {
+		if editor || v.Decision.Allowed {
+			open = append(open, v)
+		}
+	}
+	return DefaultVersion(open, language)
+}
+
+// fillCovers resolves every version's cover in one call; a content's is its
+// default edition's in language.
+func (s *Store) fillCovers(ctx context.Context, built map[string]*Content, language string) error {
+	var asked []versions.CoverOf
+	var at []*Version
+	for id, c := range built {
+		for i := range c.Versions {
+			if v := &c.Versions[i]; v.Cover != nil {
+				asked, at = append(asked, versions.CoverOf{Kind: c.Kind, ID: id, Version: v.ID}), append(at, v)
+			}
+		}
+	}
+	if len(asked) > 0 && s.media != nil {
+		got, err := s.media.Versions.Covers(ctx, asked)
+		if err != nil {
+			return err
+		}
+		for i, v := range at {
+			v.Cover.Renditions, v.Cover.URL = got[i], coverURL(got[i])
+			if len(got[i]) == 0 && v.Cover.Image == "" {
+				v.Cover = nil
+			}
+		}
+	}
+	for _, c := range built {
+		if d := DefaultVersion(c.Versions, language); d != nil && d.Cover != nil {
+			cover := *d.Cover
+			c.Cover = &cover
+		}
+	}
+	return nil
 }
 
 // bundle is the viewer's access to an item's body: allowed when they edit it
@@ -375,7 +409,6 @@ type itemRow struct {
 	access                            access.Rule
 	restrictions                      []string
 	attributes                        map[string]any
-	cover                             *Cover
 	snapshot                          map[string]Text
 	everSold                          bool
 	publishAt, publishedAt, deletedAt *time.Time
@@ -385,7 +418,7 @@ type itemRow struct {
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, c.listing, coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
- c.access, c.restrictions, c.attributes, c.cover, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
+ c.access, c.restrictions, c.attributes, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
  c.revision, c.comments, c.view_baseline + coalesce((SELECT max((f.popularity->>'views')::bigint) FROM `+s.t.facets+` f
   WHERE f.tenant_id = c.tenant_id AND f.content_id = c.id), 0)
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
@@ -397,9 +430,9 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 	for rows.Next() {
 		var id string
 		var r itemRow
-		var access, attrs, cover, snapshot []byte
+		var access, attrs, snapshot []byte
 		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
-			&attrs, &cover, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments,
+			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments,
 			&r.views); err != nil {
 			return nil, err
 		}
@@ -408,11 +441,6 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		}
 		if err := json.Unmarshal(attrs, &r.attributes); err != nil {
 			return nil, err
-		}
-		if cover != nil {
-			if err := json.Unmarshal(cover, &r.cover); err != nil {
-				return nil, err
-			}
 		}
 		if snapshot != nil {
 			if err := json.Unmarshal(snapshot, &r.snapshot); err != nil {
@@ -471,17 +499,18 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 // readVersions reads every version of the items with its text and segments.
 func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Version, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
- pages, duration_ms, width, height, has_audio, ordinal FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2)`, s.tenant, ids)
+ pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', '') FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2)`,
+		s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]*Version{}
 	var vids []string
 	for rows.Next() {
-		v := &Version{Segments: []Segment{}}
+		v := &Version{Segments: []Segment{}, Cover: &Cover{}}
 		var access, attrs []byte
 		if err := rows.Scan(&v.ID, &v.Code, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
-			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal); err != nil {
+			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image); err != nil {
 			rows.Close()
 			return nil, err
 		}

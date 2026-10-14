@@ -1,10 +1,11 @@
 // Package versions binds media to content versions. A content kind's media
-// items are its versions, {kind, content, version}, and one content-level
-// item per content; this package answers media's hooks from the content
-// model (who uploads, who reads, the facts a version's media yields),
-// publishes versions to viewers (segment items, previews, playback), forks
-// and imports versions' media, and serves the reader plan, reader metadata
-// and downloads.
+// items are its versions, {kind, content, version}; a content has none of
+// its own. This package answers media's
+// hooks from the content model (who uploads, who reads, the facts a
+// version's media yields), publishes versions to viewers (segment items,
+// previews, playback), forks and imports versions' media, copies body
+// images between versions, and serves the reader plan, reader metadata and
+// downloads.
 //
 // Whether a viewer sees, opens or edits a content or a version is the
 // catalog's decision over the access gate, ContentKit's own
@@ -59,9 +60,9 @@ type Options struct {
 	Pool   *pgxpool.Pool
 	Kinds  kinds.Config       // the site's content and group kinds
 	Auth   auth.Authenticator // the host's: staff and group scope checks
-	// Resolver decides contents ({kind, content}) and versions ({kind,
-	// content, version}) for a viewer: Visible (live, or edited by them),
-	// Accessible (opened by them) and Editor.
+	// Resolver decides versions ({kind, content, version}) for a viewer:
+	// Visible (live, or edited by them), Accessible (opened by them) and
+	// Editor.
 	Resolver resolve.Resolver
 	// Gate answers the tiers a viewer holds for download quotas; optional.
 	Gate      *access.Gate
@@ -94,7 +95,7 @@ type Service struct {
 }
 
 type tables struct {
-	items, versions, segments, publications, pubItems, groups string
+	items, versions, segments, publications, pubItems, groups, facets string
 }
 
 // New validates o. Build the media runtime with Hooks, then Bind it.
@@ -116,7 +117,7 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgxIdent(o.Schema, t) }
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
-		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups")}}
+		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups"), facets: q("content_facets")}}
 	var err error
 	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err
@@ -236,13 +237,13 @@ func (s *Service) one(ctx context.Context, t Target) (version, error) {
 	return v, nil
 }
 
-// published is a version's kind as its versions see it, which must publish.
+// published is a version's kind, which must publish.
 func (s *Service) published(v version) (*media.Kind, error) {
 	k, err := s.reg.Kind(v.Kind)
-	if err != nil || k.VersionKind() == nil || k.VersionKind().Publish == nil {
+	if err != nil || !k.Versions || k.Publish == nil {
 		return nil, fmt.Errorf("%w: kind %q publishes no versions", ErrNotFound, v.Kind)
 	}
-	return k.VersionKind(), nil
+	return k, nil
 }
 
 type querier interface {

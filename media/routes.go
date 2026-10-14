@@ -11,7 +11,7 @@ func init() {
 }
 
 var refQuery = []httpapi.Param{httpapi.Text("kind", "the item's kind"), httpapi.Text("id", "the item's id"),
-	httpapi.Text("version", "a Versions kind's version id; absent for its content-level item")}
+	httpapi.Text("version", "a content kind's version id; absent for any other kind's item")}
 
 var uploadRoutes = []httpapi.Route[uploadHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/presign", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
@@ -80,7 +80,7 @@ var readRoutes = []httpapi.Route[readHandler]{
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: HLSContentType}), httpapi.OK(httpapi.Stream{ContentType: VTTContentType})}},
 		Serve: httpapi.H(readHandler.playlist)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/versions/{version}", Resource: "media", Auth: httpapi.Public,
-		Doc: "A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.",
+		Doc: "A content version's item, read as GET /{kind}/{id} reads any other kind's item.",
 		Query: []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
 			httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
 			httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")},

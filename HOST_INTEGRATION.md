@@ -384,28 +384,39 @@ hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
 
-**Content and poll images.** A content item's cover is its content-level
-media item's (`{tenant}/{kind}/{id}/`, uploads marked `Content`); its body
-images are its body item's (`{tenant}/{kind}.body/{id}/`, `media.BodySuffix`,
-derived by `media.ForContent` from the kind's `Named` `Content` uploads and
-their public presets). A body item shows only to viewers who open the item
-(and its editors): a locked item's body images have no public files and are
-never listed or signed to anyone else, while a buyer's body shows them
-through the item token (a private `{preset}-open` rendition); an item anyone
-opens keeps public files. Poll images live in `{tenant}/poll/{poll_id}/`.
-Each is a `Named` upload (the server names it `i-{uuid}`) with a public
-preset. The catalog and the content module answer their uploads and reads.
+**Content and poll images.** Every file of a content lives in a version,
+`{tenant}/{kind}/{id}/{version}/`: there is no content-level item, and
+versions share no files. A version's cover is one of its uploads with a
+public preset (shown while locked). Its copy of the body's images is its
+`Body` uploads (`Named`, with a private image preset and no public one, of a
+kind that publishes nothing): private files behind the version's item token,
+so a locked version's body images reach nobody else, and its openers, free or
+paid, are signed them as they are pages. A body image taken by `POST
+/contents/{id}/images` is copied into every other version, and a new version
+copies its sibling's (its fork source, else the first version). Poll images
+live in `{tenant}/poll/{poll_id}/`. Each is a `Named` upload (the server
+names it `i-{uuid}`).
+
+**One default-version rule.** A language opens the first live version by
+position serving it, else the first live version (`position` is creation
+order until staff reorder; contentkit-ui `defaultVersion`, Go
+`catalog.DefaultVersion`). Cards show that version and its cover and link to
+the language page; a card a filter narrows to another version links with
+`?v=`. Detail carries every version's `cover`; `Content.cover` is the default
+edition's (meta tags). Group covers and sitemap `image`s follow the same rule
+per language.
 
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body
 stores a reference, `contentkit:i-{uuid}` (the SDK's `imageRef`), which
-`Deps.BodyProcessor` must keep. Reads resolve them to current public files in
-one lookup per response; one without a public file stays as it is.
+`Deps.BodyProcessor` must keep. Reads resolve a body's references to signed
+URLs of the opened version's private images, a cover to its current public
+file; one not rendered yet stays as it is.
 
 | Route | Body | Result |
 |---|---|---|
-| `POST /v1/contents/{id}/images` | `{"image": "i-…"}` | `{"ref", "url"}`: the reference for the body; a URL that shows it now (null until rendered) |
-| `PATCH /v1/contents/{id}` | `{"cover": "i-…"}` (`""` clears) | the content, `cover.url` null until it has a public file |
+| `POST /v1/contents/{id}/images` | `{"image": "i-…", "version": "…"}` | `{"ref", "url"}`: the reference for the body; a URL that shows it now (null until rendered) |
+| `PATCH /v1/contents/{id}/versions/{vid}` | `{"cover": "i-…"}` (`""` returns to its first) | the version, `cover.url` null until it has a public file |
 | `PUT /v1/polls/{id}/image` | same | `{"image_url"}` (same) |
 | `PUT /v1/polls/{id}/options/{oid}/image` | same | `{"image_url"}` (same) |
 
@@ -740,8 +751,8 @@ layouts.
 
 - **Items.** An item is `{namespace}/{kind}/{id}/`, or for a content kind
   (`Kind.Versions`, derived from the kinds config by `media.ForContent`) a
-  version's `{namespace}/{kind}/{content}/{version}/` beside its content's
-  item, which holds the `Content` uploads (the cover). An item holds
+  version's `{namespace}/{kind}/{content}/{version}/`; a content has no item
+  of its own. An item holds
   `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
   uploads, derived files, editor views), `public/` (published renditions
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
@@ -757,9 +768,9 @@ layouts.
   kind's `preview`), and one playback item,
   planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Forks, page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
-  complete it. A content with no cover of its own gets its first live
-  version's leading released page as its cover (an upload marked
-  `auto_cover`); a cover an editor uploads replaces it for good.
+  complete it. A reader version with no cover of its own gets its leading
+  released page as its cover (an upload marked `auto_cover`); a cover an
+  editor uploads replaces it for good.
 - **Manifest.** An ordered virtual file system over the item's private
   blobs: each Upload's files in natural order unless an op reorders them,
   then each private preset's outputs in their uploads' order. A derived file
@@ -1435,6 +1446,6 @@ dwell a page), seconds (player kinds) or scroll percent (post kinds). See
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
-- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' content-level `Named` uploads and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
+- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.

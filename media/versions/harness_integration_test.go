@@ -51,7 +51,7 @@ var (
 )
 
 // mediaKinds is a site's media: galleries publishing their versions' pages,
-// previews, audio, archives and downloads, with a content-level cover;
+// previews, audio, archives and downloads, each version with its cover;
 // movies with an HLS ladder, subtitles and audio tracks per version; and
 // people's avatars.
 func mediaKinds(ns string, hooks media.Hooks) media.Config {
@@ -62,7 +62,7 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 				Publish: &media.Publish{Pages: "originals/{name}", Renditions: []string{"low", "thumb"}, Previews: "preview",
 					Playback: "listen", Import: "import/{name}", Download: "zip"},
 				Uploads: []media.Upload{
-					{Path: "cover", Content: true, Types: pngs, MaxBytes: 10 << 20},
+					{Path: "cover", Types: pngs, MaxBytes: 10 << 20},
 					{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20},
 					{Path: "audio/{name}", Types: []string{"audio/wav"}, MaxBytes: 10 << 20},
 					{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 10 << 20},
@@ -81,7 +81,7 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 				}},
 			{Name: "movie", Versions: true, KeepOriginals: true,
 				Uploads: []media.Upload{
-					{Path: "cover", Content: true, Types: pngs, MaxBytes: 10 << 20},
+					{Path: "cover", Types: pngs, MaxBytes: 10 << 20},
 					{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 					{Path: "subs/{name}", Types: media.SubtitleTypes, MaxBytes: 1 << 20},
 					{Path: "poster", Types: pngs, MaxBytes: 10 << 20, Frames: "source"},
@@ -456,11 +456,16 @@ func (s *site) content(kind, rule string) string {
 	return id
 }
 
-// version adds a published English version to content.
+// version adds a published English version to content, last, with the
+// listing projection the catalog would write.
 func (s *site) version(content string) versions.Target {
 	id := contentref.NewID()
-	s.exec(`INSERT INTO `+s.table("content_versions")+` (tenant_id, id, content_id, languages, state, published_at) VALUES ($1, $2, $3, '{en}', 'published', now())`,
+	s.exec(`INSERT INTO `+s.table("content_versions")+` (tenant_id, id, content_id, position, languages, state, published_at)
+SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND content_id = $3), 0), '{en}', 'published', now()`,
 		s.tenant, id, content)
+	s.exec(`INSERT INTO `+s.table("content_facets")+` (tenant_id, content_id, version_id, kind, live_from, listing, languages, access_level, position)
+SELECT v.tenant_id, v.content_id, v.id, c.kind, now(), 'listed', v.languages, 'public', v.position FROM `+s.table("content_versions")+` v
+JOIN `+s.table("content_items")+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = $2`, s.tenant, id)
 	return versions.Target{Content: content, Version: id}
 }
 

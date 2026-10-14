@@ -2,7 +2,6 @@ package versions
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
@@ -126,63 +126,73 @@ func ParseGroupOwner(owner string) (kind, id string, ok bool) {
 
 // CoverOf names a content's or a group's cover: Kind and ID are its owner;
 // Image an image uploaded to the owner's item ("i-{uuid}"), else ContentID a
-// content whose cover it shows; with neither, a content owner's own. With
-// Preset media.AvatarPreset it names a group's avatar: Image, else the
-// item's first, else the kind's default.
+// content whose cover it shows; with neither, a content owner's own. A
+// content's cover is its Version's, else its default edition's in Language
+// (internal/edition). With Preset media.AvatarPreset it names a group's
+// avatar: Image, else the item's first, else the kind's default.
 type CoverOf struct {
 	Kind      string
 	ID        string
 	Image     string
 	ContentID string
+	Version   string
+	Language  string
 	Preset    string
 }
 
 // Covers resolves covers to their public renditions, per cover in order,
-// in two queries for the page. A content's cover is the image its cover
-// selects, else its item's first cover image, else its kind's default.
+// in two queries for the page. A content's cover is the image its version's
+// cover selects, else the version's first cover image, else its kind's
+// default.
 func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.PublicRendition, error) {
 	out := make([][]media.PublicRendition, len(covers))
-	targets := make([]string, len(covers))
-	var contents []string
+	type ask struct{ content, version, language string }
+	var asks []ask
+	at := make([]int, len(covers))
 	for i, c := range covers {
+		at[i] = -1
 		if c.Image != "" || c.Preset == media.AvatarPreset {
 			continue
 		}
-		targets[i] = c.ContentID
-		if _, isContent := s.o.Kinds.Kinds[c.Kind]; targets[i] == "" && isContent {
-			targets[i] = c.ID
+		id := c.ContentID
+		if _, isContent := s.o.Kinds.Kinds[c.Kind]; id == "" && isContent {
+			id = c.ID
 		}
-		if targets[i] != "" {
-			contents = append(contents, targets[i])
+		if id != "" {
+			at[i] = len(asks)
+			asks = append(asks, ask{id, c.Version, c.Language})
 		}
 	}
-	type content struct{ kind, image string }
-	found := map[string]content{}
-	if len(contents) > 0 {
-		rows, err := s.o.Pool.Query(ctx, `SELECT id, kind, coalesce(cover, '{}'::jsonb) FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`,
-			s.o.Tenant, contents)
+	type chosen struct{ kind, version, image string }
+	found := map[int]chosen{}
+	if len(asks) > 0 {
+		contents, versions, languages := make([]string, len(asks)), make([]string, len(asks)), make([]string, len(asks))
+		for i, a := range asks {
+			contents[i], versions[i], languages[i] = a.content, a.version, a.language
+		}
+		rows, err := s.o.Pool.Query(ctx, `SELECT t.n, f.kind, f.version_id, coalesce(v.cover->>'image', '')
+FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS t(content, version, language, n)
+CROSS JOIN LATERAL (SELECT f.kind, f.version_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.content_id = t.content
+ AND (t.version = '' OR f.version_id = t.version) ORDER BY `+edition.Order("f", "t.language")+` LIMIT 1) f
+JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant, contents, versions, languages)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			var id, kind string
-			var raw []byte
-			if err := rows.Scan(&id, &kind, &raw); err != nil {
+			var n int
+			var e chosen
+			if err := rows.Scan(&n, &e.kind, &e.version, &e.image); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			var cover struct {
-				Image string `json:"image"`
-			}
-			_ = json.Unmarshal(raw, &cover)
-			found[id] = content{kind, cover.Image}
+			found[n-1] = e
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
 	}
 	var qs []media.ImageQuery
-	var at []int
+	var put []int
 	for i, c := range covers {
 		q := media.ImageQuery{Preset: media.CoverPreset, Name: c.Image}
 		kind := c.Kind
@@ -192,10 +202,10 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
 		} else if c.Image != "" {
 			q.Ref, err = s.reg.Ref(c.Kind, c.ID)
-		} else if f, ok := found[targets[i]]; ok {
-			kind = f.kind
-			q.Ref, err = s.reg.Ref(f.kind, targets[i])
-			q.Name = f.image
+		} else if e, ok := found[at[i]]; ok && at[i] >= 0 {
+			kind = e.kind
+			q.Ref, err = s.reg.VersionRef(e.kind, asks[at[i]].content, e.version)
+			q.Name = e.image
 		} else {
 			continue
 		}
@@ -203,13 +213,13 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 		if k, kerr := s.reg.Kind(kind); err != nil || kerr != nil || !slices.ContainsFunc(k.Public, func(p media.Public) bool { return p.Name == q.Preset }) {
 			continue
 		}
-		qs, at = append(qs, q), append(at, i)
+		qs, put = append(qs, q), append(put, i)
 	}
 	images, err := s.m.Manifests.Images(ctx, qs...)
 	if err != nil {
 		return nil, err
 	}
-	for j, i := range at {
+	for j, i := range put {
 		image, ok := media.PublicImage{}, len(images[j]) > 0
 		if ok {
 			image = images[j][0]
@@ -232,7 +242,7 @@ type groupCovers struct{ s *Service }
 func (g groupCovers) Covers(ctx context.Context, cs []groups.CoverOf) ([][]groups.Rendition, error) {
 	asked := make([]CoverOf, len(cs))
 	for i, c := range cs {
-		asked[i] = CoverOf{Kind: c.Kind, ID: string(c.ID), Image: c.Cover.Image, ContentID: c.Cover.ContentID, Preset: c.Preset}
+		asked[i] = CoverOf{Kind: c.Kind, ID: string(c.ID), Image: c.Cover.Image, ContentID: c.Cover.ContentID, Language: c.Language, Preset: c.Preset}
 	}
 	got, err := g.s.Covers(ctx, asked)
 	if err != nil {

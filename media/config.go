@@ -58,9 +58,9 @@ type Kind struct {
 	// Namespace is "" for Config.Namespace, or a shared one such as
 	// "accounts" whose items every app importing the kind serves.
 	Namespace string `json:"namespace,omitempty"`
-	// Versions marks a content kind (ForContent): its items are versions,
-	// {kind, content, version}, plus one content-level item per content,
-	// {kind, content}, which holds only the uploads marked Content.
+	// Versions marks a content kind (ForContent): its items are its
+	// contents' versions, {kind, content, version}; a content has no item of
+	// its own.
 	Versions bool `json:"versions,omitempty"`
 	// Publish publishes a Versions kind's versions to viewers through
 	// immutable items of the kind {Name}.published (Publish).
@@ -98,13 +98,16 @@ type Kind struct {
 // path plus its extension ("cover.png", "originals/001.png"); a put to the
 // same stem replaces it.
 type Upload struct {
-	Path     string   `json:"path"`
-	Content  bool     `json:"content,omitempty"` // a Versions kind's content-level upload, e.g. its cover
-	Types    []string `json:"types"`             // accepted content types
-	MaxBytes int64    `json:"max_bytes"`         // per file
-	Max      int      `json:"max,omitempty"`     // uploads matching Path; 0 is unlimited
-	Frames   string   `json:"frames,omitempty"`  // may be grabbed from a frame of this video upload (the frame op)
-	Named    bool     `json:"named,omitempty"`   // the server names it ({name} is "i-{uuid}"): inline images
+	Path string `json:"path"`
+	// Body marks a content kind's body images (Named, with a private image
+	// preset and no public one): each version keeps its copy in private/,
+	// which only the version's openers read.
+	Body     bool     `json:"body,omitempty"`
+	Types    []string `json:"types"`            // accepted content types
+	MaxBytes int64    `json:"max_bytes"`        // per file
+	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
+	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
+	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
 	// Video bounds a video or audio upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`

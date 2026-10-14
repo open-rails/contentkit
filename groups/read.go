@@ -290,7 +290,7 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 	for i := range page.Groups {
 		shows[i] = cardShown(&page.Groups[i])
 	}
-	return page, s.fill(ctx, shows)
+	return page, s.fill(ctx, shows, opts.Language)
 }
 
 // CardOptions resolve Cards.
@@ -327,7 +327,7 @@ func (s *Store) Cards(ctx context.Context, ids []GroupID, o CardOptions) ([]Grou
 			g := &page.Groups[i]
 			shows[i] = shown{kind: g.Kind, id: g.ID, cover: g.Cover, avatar: &g.Avatar}
 		}
-		if err := s.fill(ctx, shows); err != nil {
+		if err := s.fill(ctx, shows, o.Language); err != nil {
 			return nil, err
 		}
 	}
@@ -430,7 +430,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 			shows = append(shows, cardShown(g))
 		}
 	}
-	if err := s.fill(ctx, shows); err != nil {
+	if err := s.fill(ctx, shows, language); err != nil {
 		return d, err
 	}
 	d.Offer = s.currentOffer(ctx, d.Group)

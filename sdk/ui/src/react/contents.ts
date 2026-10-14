@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { CatalogText, Content, ContentInput, ContentPatch } from "../client/generated/wire.js";
-import { BODY_SUFFIX, IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
+import type { CatalogText, Content, ContentInput, ContentPatch, Version } from "../client/generated/wire.js";
+import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -43,9 +43,15 @@ export interface UseContent {
   unpublish: () => Promise<Content>;
   remove: () => Promise<void>;
   restore: () => Promise<Content>;
-  /** Uploads the cover (null clears it); resolves with a URL that shows it now. */
+  /**
+   * The version whose cover and body images the hook edits: the one asked
+   * for, else the first. Every version has its own cover and its own copy of
+   * the body's images.
+   */
+  version: Version | null;
+  /** Uploads the version's cover (null returns to its first upload); resolves with a URL that shows it now. */
   setCover: (file: Blob | null) => Promise<string | null>;
-  /** Uploads an image for the body; resolves with a URL that shows it now, to place in the editor. */
+  /** Uploads an image for the body into the version, copied into the others; resolves with a URL that shows it now, to place in the editor. */
   uploadImage: (file: Blob) => Promise<string>;
   /**
    * A URL that shows one of the item's images now, by name ("i-{uuid}") or
@@ -54,7 +60,7 @@ export interface UseContent {
    * signed editor view from an editor read. Anything else is returned as is.
    */
   imageSrc: (image: string | null | undefined) => string | undefined;
-  /** The cover through imageSrc. */
+  /** The version's cover through imageSrc. */
   coverSrc: string | undefined;
   /** The language's stored text, its body's images through imageSrc: what an editor shows. */
   text: CatalogText | undefined;
@@ -72,9 +78,15 @@ const uploadName = (path: string) => {
 
 /**
  * One content item of kind for its editors: read, create, text in language,
- * publish, delete, restore, cover and body images. null creates a new item.
+ * publish, delete, restore, a version's cover and the body's images. null
+ * creates a new item.
  */
-export function useContent(id: string | null | undefined, kind: string, language: string, o: { initial?: Content; client?: ContentKitClient } = {}): UseContent {
+export function useContent(
+  id: string | null | undefined,
+  kind: string,
+  language: string,
+  o: { initial?: Content; client?: ContentKitClient; version?: string } = {},
+): UseContent {
   const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
   const cid = id ?? created;
@@ -97,7 +109,16 @@ export function useContent(id: string | null | undefined, kind: string, language
   }, [cid]);
   const stored = content?.text?.[language];
   const body = stored?.body;
-  const cover = content?.cover;
+  const version = useMemo(() => {
+    const vs = [...(content?.versions ?? [])].sort((a, b) => a.position - b.position);
+    return vs.find((v) => v.id === o.version) ?? vs[0] ?? null;
+  }, [content?.versions, o.version]);
+  const vid = version?.id;
+  const cover = version?.cover;
+  const needVersion = useCallback(() => {
+    if (!vid) throw new Error("contentkit-ui: the item has no version yet");
+    return vid;
+  }, [vid]);
 
   // Images: fresh uploads show from their file, published ones from
   // content.images, the rest (an unpublished item's) from an editor read.
@@ -109,16 +130,18 @@ export function useContent(id: string | null | undefined, kind: string, language
       for (const u of urls) URL.revokeObjectURL(u);
     };
   }, []);
-  const published = useMemo(() => new Map(Object.entries(content?.images ?? {})), [content?.images]);
-  // The cover is the item's folder's; body images are its body folder's ({kind}.body).
-  const coverPending = !!cover && !cover.url && !previews.has(cover.image) && !published.has(cover.image);
+  const published = useMemo(() => {
+    const out = new Map(Object.entries(content?.images ?? {}));
+    if (cover?.image && cover.url) out.set(cover.image, cover.url);
+    return out;
+  }, [content?.images, cover?.image, cover?.url]);
+  // The cover and the body's images are the version's.
+  const coverPending = !!cover?.image && !cover.url && !previews.has(cover.image) && !published.has(cover.image);
   const bodyPending = useMemo(() => refNames(body).filter((n) => !previews.has(n) && !published.has(n)), [body, previews, published]);
-  const pending = useMemo(() => (coverPending ? [...bodyPending, cover!.image] : bodyPending), [coverPending, bodyPending, cover]);
-  const folder = useMemo(() => ({ kind, id: cid ?? "none" }), [kind, cid]);
-  const bodyFolder = useMemo(() => ({ kind: kind + BODY_SUFFIX, id: cid ?? "none" }), [kind, cid]);
-  const coverRead = useMediaRead(folder, { editor: true, read: coverPending ? undefined : null, client });
-  const bodyRead = useMediaRead(bodyFolder, { editor: true, read: bodyPending.length ? undefined : null, client });
-  const files = useMemo(() => [...(coverRead.read?.files ?? []), ...(bodyRead.read?.files ?? [])], [coverRead.read, bodyRead.read]);
+  const pending = useMemo(() => (coverPending ? [...bodyPending, cover!.image!] : bodyPending), [coverPending, bodyPending, cover]);
+  const folder = useMemo(() => ({ kind, id: cid ?? "none", version: vid }), [kind, cid, vid]);
+  const folderRead = useMediaRead(folder, { editor: true, read: pending.length && vid ? undefined : null, client });
+  const files = useMemo(() => folderRead.read?.files ?? [], [folderRead.read]);
   const views = useMemo(() => {
     const out = new Map<string, string>();
     for (const f of files) if (f.upload && f.editor_url) out.set(uploadName(f.path), f.editor_url);
@@ -126,14 +149,9 @@ export function useContent(id: string | null | undefined, kind: string, language
   }, [files]);
   // Editor views render on the first editor read that misses them: read again, backing off.
   const failed = (n: string) => files.some((f) => f.failed && uploadName(f.path) === n);
-  const missing = (!!coverRead.read || !!bodyRead.read) && pending.some((n) => !views.has(n) && !failed(n));
+  const missing = !!folderRead.read && pending.some((n) => !views.has(n) && !failed(n));
   const tries = useRef(0);
-  const reloadCover = coverRead.reload;
-  const reloadBody = bodyRead.reload;
-  const reload = useCallback(() => {
-    reloadCover();
-    reloadBody();
-  }, [reloadCover, reloadBody]);
+  const reload = folderRead.reload;
   useEffect(() => {
     if (!missing) {
       tries.current = 0;
@@ -205,26 +223,27 @@ export function useContent(id: string | null | undefined, kind: string, language
     (file: Blob | null) =>
       run(async () => {
         if (!file) {
-          await client.contents.setCover(need(), null);
+          await client.contents.setCover(need(), needVersion(), null);
           return null;
         }
-        const up = await client.media.uploadNamed({ kind, id: need() }, file);
-        const saved = await client.contents.setCover(need(), up.name);
+        const ref = { kind, id: need(), version: needVersion() };
+        const up = await client.media.uploadNamed(ref, file, { path: await client.media.presetPath(kind, "cover", file) });
+        const saved = await client.contents.setCover(ref.id, ref.version, up.name);
         const url = preview(up.name, file) ?? saved.cover?.url ?? null;
         if (url) shown.current.set(url, up.name);
         return url;
       }),
-    [client, run, need, kind, preview],
+    [client, run, need, needVersion, kind, preview],
   );
   const uploadImage = useCallback(
     (file: Blob) =>
       run(async () => {
-        const up = await client.media.uploadInline({ kind: kind + BODY_SUFFIX, id: need() }, file);
+        const up = await client.media.uploadInline({ kind, id: need(), version: needVersion() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
         shown.current.set(url, up.name);
         return url;
       }),
-    [client, run, need, kind, preview],
+    [client, run, need, needVersion, kind, preview],
   );
   return {
     content,
@@ -239,10 +258,11 @@ export function useContent(id: string | null | undefined, kind: string, language
     unpublish,
     remove,
     restore,
+    version,
     setCover,
     uploadImage,
     imageSrc,
-    coverSrc: imageSrc(cover?.image),
+    coverSrc: cover?.image ? imageSrc(cover.image) : (cover?.url ?? undefined),
     text,
     storedBody,
   };

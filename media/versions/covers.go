@@ -8,33 +8,27 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/media"
 )
 
-// A reader content without a cover of its own shows its first published
-// page: its content-level cover upload is a copy of the leading released
-// page of its first live version, marked media.MetaAutoCover. A cover an editor
-// uploads replaces it and is never touched; once that is removed, the next
-// publication brings the automatic one back.
+// A reader version without a cover of its own shows its first released
+// page: its cover upload is a copy of that page, marked media.MetaAutoCover.
+// A cover an editor uploads replaces it and is never touched; once that is
+// removed, the next publication brings the automatic one back.
 
-// applyCover brings content's automatic cover to its source page, removing
-// it when no live version shows a released page.
-func (s *Service) applyCover(ctx context.Context, kind, content string) error {
-	ref, err := s.reg.Ref(kind, content)
-	if err != nil {
-		return nil // no content-level uploads
-	}
-	item, err := s.reg.Item(ref)
-	if err != nil {
-		return nil
-	}
-	cover := public(item.Kind(), media.CoverPreset)
+// applyCover brings version t's automatic cover to its source page, removing
+// it when the version shows no released page.
+func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error {
+	cover := public(k, media.CoverPreset)
 	if cover == nil {
 		return nil
 	}
-	unlock, err := media.PGLocker(s.o.Pool).Lock(ctx, "contentkit:covers:"+s.o.Tenant+":"+content)
+	ref, err := s.ref(k.Name, t)
+	if err != nil {
+		return err
+	}
+	unlock, err := media.PGLocker(s.o.Pool).Lock(ctx, "contentkit:covers:"+s.o.Tenant+":"+t.Version)
 	if err != nil {
 		return err
 	}
@@ -55,7 +49,7 @@ func (s *Service) applyCover(ctx context.Context, kind, content string) error {
 			auto = &f
 		}
 	}
-	src, page, err := s.coverSource(ctx, kind, content)
+	page, err := s.coverSource(ctx, t, m)
 	if err != nil {
 		return err
 	}
@@ -68,63 +62,42 @@ func (s *Service) applyCover(ctx context.Context, kind, content string) error {
 	case auto != nil && sameBlob(auto.Blob, page.Blob):
 		return nil
 	default:
-		ops = []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: content, Version: src, Path: page.Path}, To: coverTo(item.Kind(), cover.From, auto),
+		ops = []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: t.Content, Version: t.Version, Path: page.Path}, To: coverTo(k, cover.From, auto),
 			Meta: map[string]any{media.MetaAutoCover: true}}}
 	}
 	_, err = s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), ops)
 	if ue, ok := media.AsUploadError(err); ok && ue.Code != media.CodeUnavailable {
 		// A page the cover upload cannot take (its type, its size, a dropped
-		// original) leaves the content on its kind's default cover.
-		s.o.Logger.WarnContext(ctx, "versions: no automatic cover", "content", content, "error", err)
+		// original) leaves the version on its kind's default cover.
+		s.o.Logger.WarnContext(ctx, "versions: no automatic cover", "version", t.Version, "error", err)
 		return nil
 	}
 	return err
 }
 
-// coverSource is the leading page upload of content's first live version
-// whose current pages publication has it released, nil without one.
-func (s *Service) coverSource(ctx context.Context, kind, content string) (string, *media.File, error) {
-	var version string
-	err := s.o.Pool.QueryRow(ctx, `SELECT v.id FROM `+s.t.versions+` v
-JOIN `+s.t.publications+` p ON p.tenant_id = v.tenant_id AND p.version_id = v.id AND p.kind = 'pages' AND p.state = 'current'
-WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.state = 'published' AND (v.publish_at IS NULL OR v.publish_at <= now())
-ORDER BY v.position, v.id LIMIT 1`, s.o.Tenant, content).Scan(&version)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, nil
-	} else if err != nil {
-		return "", nil, err
-	}
-	t := Target{Content: content, Version: version}
+// coverSource is the leading page upload of version t, whose manifest is m,
+// while its current pages publication has it released; nil without one.
+func (s *Service) coverSource(ctx context.Context, t Target, m *media.Manifest) (*media.File, error) {
 	p, err := s.current(ctx, s.o.Pool, t, kindPages)
-	if err != nil || p == nil {
-		return "", nil, err
+	if err != nil || p == nil || m == nil {
+		return nil, err
 	}
 	var snap pagesSnapshot
 	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	segs, err := s.segments(ctx, s.o.Pool, []string{version})
+	segs, err := s.segments(ctx, s.o.Pool, []string{t.Version})
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	if len(snap.Pages) == 0 || released(segs[version], len(snap.Pages), s.o.Now()) == 0 {
-		return "", nil, nil
-	}
-	ref, err := s.ref(kind, t)
-	if err != nil {
-		return "", nil, err
-	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return "", nil, nil
-	} else if err != nil {
-		return "", nil, err
+	if len(snap.Pages) == 0 || released(segs[t.Version], len(snap.Pages), s.o.Now()) == 0 {
+		return nil, nil
 	}
 	f, ok := m.Get(snap.Pages[0].Path)
 	if !ok || f.Blob == "" {
-		return "", nil, nil
+		return nil, nil
 	}
-	return version, &f, nil
+	return &f, nil
 }
 
 // coverPath reports path an upload of the cover upload pattern.

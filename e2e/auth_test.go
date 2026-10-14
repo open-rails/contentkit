@@ -31,7 +31,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 	_, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
 	g, _ := w.published(f, staff, "gallery")
-	album, _ := w.published(f, staff, "album")
+	album, albumV := w.published(f, staff, "album")
 	item := "/contents/" + g
 	comment := content.CommentInput{Body: "hello"}
 
@@ -82,10 +82,10 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
 		{"groups of the site's, without the permission", user, "POST", "/groups", []map[string]string{{"kind": "tag", "slug": "nope"}}, 403, ""},
 		{"groups, an application holding it", app, "POST", "/groups", []any{}, 201, ""},
-		{"upload, a person who doesn't edit it", user, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album}, "cover", []byte("x")), 403, ""},
-		{"upload, an application holding it", app, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album}, "cover", []byte("x")), 200, ""},
-		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + album, nil, 401, `Bearer error="invalid_token"`},
-		{"media read, anonymous", "", "GET", "/media/album/" + album, nil, 200, ""},
+		{"upload, a person who doesn't edit it", user, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album, Version: albumV}, "cover", []byte("x")), 403, ""},
+		{"upload, an application holding it", app, "POST", "/media/upload/presign", presignPNG(media.RefBody{Kind: "album", ID: album, Version: albumV}, "cover", []byte("x")), 200, ""},
+		{"media read, a forged credential", owner + "x", "GET", "/media/album/" + album + "/versions/" + albumV, nil, 401, `Bearer error="invalid_token"`},
+		{"media read, anonymous", "", "GET", "/media/album/" + album + "/versions/" + albumV, nil, 200, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := f.call(tc.bearer, tc.method, tc.target, tc.body)

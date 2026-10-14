@@ -189,13 +189,13 @@ func TestImportStagesBucketCopies(t *testing.T) {
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
-	album, _ := w.published(f, staff, "album")
+	album, albumV := w.published(f, staff, "album")
 	src, body := "legacy-"+w.tenant+"/0001.png", pngBytes(t, 16)
 	if _, err := w.env.Store.Put(t.Context(), src, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/png"}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = w.env.Store.Delete(context.Background(), src) })
-	ref := media.RefBody{Kind: "album", ID: album}
+	ref := media.RefBody{Kind: "album", ID: album, Version: albumV}
 	in := media.CopyBody{Ref: ref, Files: []media.CopyRequest{{Path: "originals/0001", Type: "image/png", From: src, Size: int64(len(body))}}}
 	f.want(http.StatusForbidden, user, "POST", "/media/upload/copy", in, nil)
 	var staged media.CopyReply

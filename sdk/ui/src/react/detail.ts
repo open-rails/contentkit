@@ -11,10 +11,19 @@ export function liveVersions(c: Content | null | undefined): Version[] {
   return (c?.versions ?? []).filter((v) => v.live).sort((a, b) => a.position - b.position);
 }
 
-/** The version a reader of language opens by default: the first live one serving it, else the first live one. */
+/**
+ * The version a reader of language opens by default: the first live one by
+ * position serving it, else the first live one. The server picks cards'
+ * versions, covers and meta by the same rule.
+ */
 export function defaultVersion(c: Content | null | undefined, language?: string): Version | null {
-  const live = liveVersions(c);
-  return (language ? live.find((v) => v.languages.includes(language)) : undefined) ?? live[0] ?? null;
+  return editionOf(liveVersions(c), language);
+}
+
+/** defaultVersion among versions: the first by position serving language, else the first. */
+export function editionOf(versions: readonly Version[], language?: string): Version | null {
+  const sorted = [...versions].sort((a, b) => a.position - b.position);
+  return (language ? sorted.find((v) => v.languages.includes(language)) : undefined) ?? sorted[0] ?? null;
 }
 
 /** The version selected names: its code (any spelling, the page's ?v=) or its id; undefined when none. */

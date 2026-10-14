@@ -242,7 +242,14 @@ func (v *Viewer) Actor() access.Actor { return v.actor }
 // rows a truncated keyspace may unlock are admitted as candidates: decide
 // them with Contents (or access.Gate.Settle) before showing. Args are pgx
 // named args prefixed cv_ and access_.
-func (v *Viewer) Listed(alias string) (string, pgx.NamedArgs) {
+func (v *Viewer) Listed(alias string) (string, pgx.NamedArgs) { return v.listed(alias, true) }
+
+// Shown is Listed in every language: the versions a content's page offers
+// the viewer, among which its language's default edition opens. Its args are
+// Listed's.
+func (v *Viewer) Shown(alias string) (string, pgx.NamedArgs) { return v.listed(alias, false) }
+
+func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	f := func(col string) string { return alias + "." + col }
 	opens, accessArgs, err := v.filter.SQL(alias, access.Hide)
 	if err != nil {
@@ -269,8 +276,10 @@ func (v *Viewer) Listed(alias string) (string, pgx.NamedArgs) {
 	if v.mode == access.Hide {
 		listed += " AND " + opens
 	}
-	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND NOT (" + f("group_ids") + " && @cv_hidden::text[])" +
-		" AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")) AND " + listed + ")"
+	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND NOT (" + f("group_ids") + " && @cv_hidden::text[]) AND " + listed + ")"
+	if language {
+		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
+	}
 	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (" + f("content_id") + " = ANY(@cv_owned::text[]) OR " +
 		f("version_id") + " = ANY(@cv_owned_versions::text[]) OR @cv_owned_candidates::boolean))"
 	privileged := "(" + f("owner_group_id") + " = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +

@@ -76,6 +76,8 @@ describe("upload rules", () => {
         { url: "https://m.example/v1/app/user/0192f000-0000-7000-8000-000000000001/public/avatar-256.webp", w: 256, h: 256 },
       ],
     });
+    // A version's default sits at its own folder.
+    expect(defaultImage(preset, "c", "v")!.renditions.map((r) => r.url)).toEqual([128, 256].map((w) => `https://m.example/v1/app/user/c/v/public/avatar-${w}.webp`));
     expect(defaultImage({ ...preset, default: false }, "x")).toBeNull();
     expect(defaultImage({ ...preset, first: 1, to: "preview-{n}.webp" }, "x")).toBeNull();
   });

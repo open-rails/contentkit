@@ -68,10 +68,10 @@ export interface Config {
   members_api: string;
 }
 
-// Kinds whose uploads and private outputs live on version items (kinds.json).
-export const VERSIONED: ReadonlySet<string> = new Set(["gallery", "video", "album", "abr", "watch", "comic"]);
+// The content kinds (kinds.json): their media lives in their versions' items.
+export const VERSIONED: ReadonlySet<string> = new Set(["gallery", "video", "album", "abr", "watch", "comic", "note", "channel", "file", "blog", "movie"]);
 
-/** The item an item's uploads go to: its version for a kind whose media are versions'. */
+/** The item an item's uploads go to: its version, for a content kind. */
 export function mediaRef(it: { kind: string; id: string; version?: string }): { kind: string; id: string; version?: string } {
   return VERSIONED.has(it.kind) && it.version ? { kind: it.kind, id: it.id, version: it.version } : { kind: it.kind, id: it.id };
 }

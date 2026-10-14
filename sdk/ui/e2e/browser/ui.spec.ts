@@ -13,7 +13,7 @@ const h = harness();
 async function profile(theme: string, o: { empty?: boolean } = {}) {
   const owner = await h.user();
   const [channel, empty] = await Promise.all([seedChannel(h, owner), o.empty ? h.item({ kind: "channel", owner: owner.id }) : undefined]);
-  return at("", owner, { theme, channel: channel.id, empty: empty?.id });
+  return at("", owner, { theme, channel: itemParam(channel), empty: empty && itemParam(empty) });
 }
 
 async function shot(page: Page, name: string, project: string) {

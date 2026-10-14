@@ -422,10 +422,10 @@ func (s *Service) downloadKind(ctx context.Context, t Target) (version, *media.K
 		return version{}, nil, err
 	}
 	mk, err := s.reg.Kind(v.Kind)
-	if err != nil || mk.VersionKind() == nil || mk.VersionKind().Download == "" || s.m.Reader == nil {
+	if err != nil || !mk.Versions || mk.Download == "" || s.m.Reader == nil {
 		return version{}, nil, ErrNotFound
 	}
-	return v, mk.VersionKind(), nil
+	return v, mk, nil
 }
 
 // downloadItem is t's media item and manifest under k.

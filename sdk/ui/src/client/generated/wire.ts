@@ -176,6 +176,11 @@ export interface Batch {
   deletes?: DeleteRecord[];
 }
 
+export interface BodyImageInput {
+  image?: string;
+  version: string;
+}
+
 export interface Card {
   id: string;
   kind: string;
@@ -218,8 +223,9 @@ export interface CardVersion {
 }
 
 export interface CatalogCover {
-  image: string;
+  image?: string;
   url?: string;
+  renditions?: PublicRendition[];
 }
 
 export interface CatalogText {
@@ -437,7 +443,6 @@ export interface ContentPatch {
   restrictions?: string[];
   attributes?: Record<string, unknown>;
   creators?: Creator[];
-  cover?: string;
   revision?: number;
 }
 
@@ -456,7 +461,6 @@ export interface ContentRecord {
   restrictions?: string[];
   attributes?: Record<string, unknown>;
   owner_group?: Ref;
-  cover?: string;
   creators?: Creator[];
   text?: Record<string, CatalogText>;
   versions?: VersionRecord[];
@@ -1663,6 +1667,7 @@ export interface Signals {
 export interface SitemapAlias {
   language: string;
   path: string;
+  image?: string;
 }
 
 export interface SitemapEntry {
@@ -1739,6 +1744,7 @@ export interface UploadRule {
   max_bytes: number;
   max?: number;
   named?: boolean;
+  body?: boolean;
   frames?: string;
   aspect?: string;
   min_width?: number;
@@ -1768,6 +1774,7 @@ export interface Version {
   height?: number;
   has_audio: boolean;
   ordinal?: number;
+  cover?: CatalogCover;
   segments: Segment[];
   decision: Decision;
   text?: Record<string, VersionText>;
@@ -1793,6 +1800,7 @@ export interface VersionInput {
   text?: Record<string, VersionText>;
   segments?: Segment[];
   ordinal?: number;
+  cover?: string;
   fork?: VersionFork;
 }
 
@@ -1810,6 +1818,7 @@ export interface VersionRecord {
   access?: Rule;
   attributes?: Record<string, unknown>;
   ordinal?: number;
+  cover?: string;
   text?: Record<string, VersionText>;
   segments?: Segment[];
   created_at?: string;

@@ -268,8 +268,8 @@ commit ops, reads and exposure.
 ```
 
 A content kind's items are its versions, `{kind, content, version}`, each in
-its content's folder beside the content-level item (its cover); other kinds'
-items have no versions. Private blobs are content-addressed and immutable;
+its content's folder, which holds no item of its own: covers and body images
+live in versions too; other kinds' items have no versions. Private blobs are content-addressed and immutable;
 public names carry a generation. Every URL is
 `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
 `media/versions` publishes versions to viewers (see HOST_INTEGRATION "Media").

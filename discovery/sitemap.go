@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"time"
@@ -15,6 +16,9 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 // SitemapPage is one page of a site's public pages of one kind, by id.
@@ -35,10 +39,13 @@ type SitemapEntry struct {
 	Languages []SitemapAlias `json:"languages"`
 }
 
-// SitemapAlias is a page in one language.
+// SitemapAlias is a page in one language. A content page's Image is the
+// cover of the edition the language opens by default, its widest rendition,
+// where its kind's locked view shows covers.
 type SitemapAlias struct {
 	Language string `json:"language"`
 	Path     string `json:"path"`
+	Image    string `json:"image,omitempty"`
 }
 
 // SitemapOptions select one page of the feed.
@@ -105,7 +112,7 @@ func (s *Service) SitemapContents(ctx context.Context, o SitemapOptions) (Sitema
 	if !ok || k.Route == "" {
 		return SitemapPage{Entries: []SitemapEntry{}}, fmt.Errorf("%w: kind %q is no content kind with pages", ErrInvalid, o.Kind)
 	}
-	return s.sitemap(ctx, o, k.Route, func(pred string) string {
+	page, err := s.sitemap(ctx, o, k.Route, func(pred string) string {
 		return fmt.Sprintf(`SELECT c.id, coalesce(cd.code, ''), coalesce(cd.slug, ''), coalesce(cd.slugs, '{}'), c.updated_at, l.languages
 FROM %[1]s c
 CROSS JOIN LATERAL (SELECT array_agg(DISTINCT x ORDER BY x) AS languages FROM %[2]s f CROSS JOIN LATERAL unnest(f.languages) x
@@ -114,6 +121,30 @@ JOIN %[3]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.
 WHERE c.tenant_id = @d_tenant AND c.kind = @d_kind AND c.id > @d_after AND l.languages IS NOT NULL
 ORDER BY c.id LIMIT @d_limit`, s.t.items, s.t.facets, s.t.codes, pred)
 	})
+	if err != nil || s.o.Covers == nil || !k.LockedView().Shows(kinds.ShowCover) {
+		return page, err
+	}
+	var asked []versions.CoverOf
+	var at []*SitemapAlias
+	for i := range page.Entries {
+		for j := range page.Entries[i].Languages {
+			a := &page.Entries[i].Languages[j]
+			asked, at = append(asked, versions.CoverOf{Kind: o.Kind, ID: page.Entries[i].ID, Language: a.Language}), append(at, a)
+		}
+	}
+	if len(asked) == 0 {
+		return page, nil
+	}
+	got, err := s.o.Covers.Covers(ctx, asked)
+	if err != nil {
+		return page, err
+	}
+	for i, a := range at {
+		if len(got[i]) > 0 {
+			a.Image = media.PublicImage{Renditions: got[i]}.URL(math.MaxInt)
+		}
+	}
+	return page, nil
 }
 
 // SitemapGroups pages the site's public pages of a group kind: active

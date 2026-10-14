@@ -101,9 +101,8 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingListed), Revision: ptr(c.Revision)}, nil)
 	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/creators", CreatorsInput{Creators: []Creator{{UserID: "carol"}}}, &c)
 	f.want(http.StatusForbidden, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingUnlisted)}, nil)
-	f.want(http.StatusNotImplemented, "staff", "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: ptr("i-01920000-0000-7000-8000-000000000001")}, nil)
-	f.want(http.StatusBadRequest, "staff", "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: ptr("../x")}, nil)
-	f.want(http.StatusNotImplemented, "staff", "PATCH", "/v1/contents/"+id, ContentPatch{Cover: ptr("i-01920000-0000-7000-8000-000000000001")}, nil)
+	f.want(http.StatusNotImplemented, "staff", "POST", "/v1/contents/"+id+"/images", BodyImageInput{Image: ptr("i-01920000-0000-7000-8000-000000000001")}, nil)
+	f.want(http.StatusBadRequest, "staff", "POST", "/v1/contents/"+id+"/images", BodyImageInput{Image: ptr("../x")}, nil)
 
 	// Schedule, unpublish, delete, restore.
 	at := f.now().Add(time.Hour).UTC().Truncate(time.Second)
