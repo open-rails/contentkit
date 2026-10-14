@@ -373,6 +373,7 @@ func mediaScenario(t *testing.T, f *server, album, version, user, anon string) {
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/media/album/"+album+"/versions/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
 	f.want(http.StatusNotFound, user, "GET", item+"/hls/master.m3u8?audio=ja", nil, nil)
+	f.want(http.StatusNotFound, user, "GET", "/media/request/"+uuid.Must(uuid.NewV7()).String()+"/hls/master.m3u8", nil, nil)
 
 	// The preset rules, without a read.
 	var presets []media.PresetRule
