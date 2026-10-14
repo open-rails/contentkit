@@ -5589,7 +5589,7 @@
         "tags": [
           "media"
         ],
-        "summary": "An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked.",
+        "summary": "An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones.",
         "parameters": [
           {
             "name": "kind",
@@ -12767,9 +12767,6 @@
           "url": {
             "type": "string"
           },
-          "locked": {
-            "type": "boolean"
-          },
           "upload": {
             "type": "boolean"
           },
@@ -15302,6 +15299,9 @@
             "items": {
               "$ref": "#/components/schemas/PublicImage"
             }
+          },
+          "locked": {
+            "type": "boolean"
           },
           "total": {
             "type": "integer"
