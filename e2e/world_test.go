@@ -125,6 +125,7 @@ func (w *world) mediaConfig() media.Config {
 	}
 	blog := folder("blog")
 	blog.Uploads[0].Body = true
+	blog.Public, blog.Private = nil, []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: images, MaxBytes: 1 << 20})
 	return media.Config{BaseURL: "https://media.test",
 		Kinds: []media.Kind{

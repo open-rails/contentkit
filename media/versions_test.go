@@ -78,7 +78,7 @@ func TestVersionsKind(t *testing.T) {
 	pngs := []string{"image/png"}
 	post := func() media.Kind {
 		return media.Kind{Name: "post", Versions: true, Uploads: []media.Upload{{Path: "inline/{name}", Body: true, Named: true, Max: 10, Types: pngs, MaxBytes: 1 << 20}},
-			Private: []media.Private{{Name: "inline", From: "inline/{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}}
+			Private: []media.Private{{Name: "inline", From: "inline/{name}", To: "shown/{name}.webp", Image: &media.Image{Width: 800}}}}
 	}
 	posts, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{post()}})
 	if err != nil {

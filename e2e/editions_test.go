@@ -1,7 +1,10 @@
 package e2e
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -13,9 +16,12 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/gateway"
+	"github.com/open-rails/contentkit/media/token"
 )
 
 // Every file lives in a version, and one rule picks the edition a language
@@ -140,11 +146,14 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	}
 }
 
-// A body's images are each version's own copies: one taken into a version
-// is copied into its siblings, and a new version starts with them. A locked
-// version's copies reach only those who open it.
+// A body's images are each version's own private files: one taken into a
+// version is copied into its siblings, and a new version starts with them.
+// A locked version gets its readers no URL or token; its openers' URLs open
+// through the gateway with the version's item token, which opens no other
+// version's.
 func TestBodyImagesLiveInEachVersion(t *testing.T) {
 	w := newWorld(t)
+	ctx := t.Context()
 	_, staff := w.person(w.staff)
 	premium, premiumToken := w.person(iam.Role{})
 	_, stranger := w.person(iam.Role{})
@@ -153,74 +162,136 @@ func TestBodyImagesLiveInEachVersion(t *testing.T) {
 		for i, k := range c.Media.Config.Kinds {
 			if k.Name == "album" {
 				k.Uploads = append(k.Uploads, media.Upload{Path: "inline/{name}", Body: true, Named: true, Max: 10, Types: []string{"image/png"}, MaxBytes: 1 << 20})
-				k.Public = append(k.Public, media.Public{Name: "inline", From: "inline/{name}", To: "inline-{name}-{w}.webp", Widths: []int{64}})
+				k.Private = append(k.Private, media.Private{Name: "inline", From: "inline/{name}", To: "shown/{name}.webp", Image: &media.Image{Width: 64}})
 				c.Media.Config.Kinds[i] = k
 			}
 		}
 		d.Billing = bill
 	}))
-	body := media.BodySuffix
+	key, err := token.ParseKey(w.config().Media.Delivery.SigningKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring, err := token.NewRing(key, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := w.env.Config
+	gw, err := gateway.New(gateway.Config{Endpoint: cfg.Endpoint, Region: cfg.Region, AccessKeyID: cfg.AccessKeyID, SecretAccessKey: cfg.SecretAccessKey,
+		Ring: ring, Hosts: map[string][]string{"media.test": {w.tenant}}, Buckets: map[string]string{w.tenant: cfg.Bucket}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	media0 := httptest.NewServer(gw)
+	t.Cleanup(media0.Close)
+	fetch := func(u string) int {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, media0.URL+strings.TrimPrefix(u, "https://media.test"), nil)
+		req.Host = "media.test"
+		resp, err := media0.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
 	var c catalog.Content
 	f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: "album", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}},
 		Text:     map[string]catalog.Text{"en": {Title: "Illustrated", Body: "soon"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"ja"}}}}, &c)
 	a, b := c.Versions[0], c.Versions[1]
-	ref := media.RefBody{Kind: "album" + body, ID: c.ID, Version: a.ID}
+	ref := media.RefBody{Kind: "album", ID: c.ID, Version: a.ID}
 	plan := upload(t, f, staff, ref, "inline/photo.png", pngBytes(t, 20))
 	f.want(http.StatusOK, staff, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
 		Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
-	item, err := w.reg.VersionRef("album"+body, c.ID, a.ID)
-	if err != nil {
-		t.Fatal(err)
+	itemOf := func(version string) contentref.ContentRef {
+		r, err := w.reg.VersionRef("album", c.ID, version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
 	}
-	if _, err := w.jobs.Manifests().Place(t.Context(), item); err != nil {
+	if _, err := w.jobs.Manifests().Place(ctx, itemOf(a.ID)); err != nil {
 		t.Fatal(err)
 	}
 	name := strings.TrimSuffix(strings.TrimPrefix(plan.Path, "inline/"), ".png")
-	// The worker's private rendition for openers, stood in for over the upload's blob.
-	if _, err := w.jobs.Manifests().EditExisting(t.Context(), item, func(m *media.Manifest) error {
-		i := m.Find(plan.Path)
-		m.Files = append(m.Files, media.File{Path: "inline-open/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1,
-			From: plan.Path, Preset: "inline-open"})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	var inline catalog.InlineImage
 	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/images", catalog.BodyImageInput{Image: &name, Version: a.ID}, &inline)
 	f.want(http.StatusBadRequest, staff, "POST", "/contents/"+c.ID+"/images", catalog.BodyImageInput{Image: &name, Version: uuid.Must(uuid.NewV7()).String()}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/text/en", catalog.Text{Title: "Illustrated", Body: "see " + inline.Ref}, nil)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
 
-	holds := func(version string) bool {
-		ref, err := w.reg.VersionRef("album"+body, c.ID, version)
+	// rendered is the version's body image rendered (the worker stood in for
+	// over its own copy's blob): nil until the copy lands.
+	rendered := func(version string) *media.File {
+		m, _, err := w.jobs.Manifests().Get(ctx, itemOf(version))
 		if err != nil {
+			return nil
+		}
+		i := m.Find(plan.Path)
+		if i < 0 || m.Files[i].Blob == "" {
+			return nil
+		}
+		out := media.File{Path: "shown/" + name + ".webp", Blob: m.Files[i].Blob, Type: "image/webp", Size: 1, From: plan.Path, Preset: "inline"}
+		if _, err := w.jobs.Manifests().EditExisting(ctx, itemOf(version), func(m *media.Manifest) error {
+			if m.Find(out.Path) < 0 {
+				m.Files = append(m.Files, out)
+			}
+			return nil
+		}); err != nil {
 			t.Fatal(err)
 		}
-		m, _, err := w.jobs.Manifests().Get(t.Context(), ref)
-		return err == nil && m.Find(plan.Path) >= 0
+		return &out
 	}
-	eventually(t, "the sibling's copy", func() bool { return holds(b.ID) })
 	var added catalog.Version
 	f.want(http.StatusCreated, staff, "POST", "/contents/"+c.ID+"/versions", catalog.VersionInput{Languages: []string{"en"}, State: catalog.StatePublished}, &added)
-	eventually(t, "the new version's copy", func() bool { return holds(added.ID) })
+	files := map[string]*media.File{}
+	for _, v := range []string{a.ID, b.ID, added.ID} {
+		eventually(t, "the body image in version "+v, func() bool { files[v] = rendered(v); return files[v] != nil })
+	}
 
-	// Locked: the body and every version's copies stay with those who open it.
+	// Locked: neither the body nor a token for its files.
 	for _, who := range []string{"", stranger} {
 		var d catalog.Content
 		f.want(http.StatusOK, who, "GET", "/contents/"+c.ID+"?language=en", nil, &d)
 		if d.Body != "" || len(d.Images) != 0 {
 			t.Fatalf("a locked viewer is shown the body: %+v", d)
 		}
-		for _, v := range []string{a.ID, b.ID, added.ID} {
-			f.want(http.StatusNotFound, who, "GET", "/media/album"+body+"/"+c.ID+"/versions/"+v, nil, nil)
+		var read media.ReadResult
+		rec := f.want(http.StatusOK, who, "GET", "/media/album/"+c.ID+"/versions/"+a.ID, nil, &read)
+		if read.Access == media.AccessFull || len(read.Files) != 0 || strings.Contains(rec.Body.String(), "t=") || rec.Header().Get("Set-Cookie") != "" {
+			t.Fatalf("a locked viewer is handed the body's files: %s", rec.Body)
 		}
 	}
+	// An opener's body shows the version's private file, which opens with
+	// its item token.
 	var opened catalog.Content
 	f.want(http.StatusOK, premiumToken, "GET", "/contents/"+c.ID+"?language=en", nil, &opened)
 	u, ok := opened.Images[name]
-	if !ok || !strings.Contains(opened.Body, u) || !strings.Contains(u, "/album"+body+"/"+c.ID+"/"+a.ID+"/private/") {
+	if !ok || !strings.Contains(opened.Body, u) || !strings.Contains(u, "/album/"+c.ID+"/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
 		t.Fatalf("the opener's body %+v", opened)
+	}
+	if strings.Contains(u, "t=") && fetch(strings.Split(u, "?")[0]) == http.StatusOK {
+		t.Fatal("a body image opens without its token")
+	}
+
+	// A free version opens to everyone, its siblings' files only to theirs.
+	public := access.Rule{Level: access.Public}
+	f.want(http.StatusOK, staff, "PATCH", "/contents/"+c.ID+"/versions/"+a.ID, catalog.VersionInput{Access: &public}, nil)
+	var free catalog.Content
+	f.want(http.StatusOK, stranger, "GET", "/contents/"+c.ID+"?language=en", nil, &free)
+	u, ok = free.Images[name]
+	if !ok || !strings.Contains(u, "/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
+		t.Fatalf("the free version's body %+v", free)
+	}
+	item, _ := w.reg.Item(itemOf(b.ID))
+	other, _ := item.Blob(files[b.ID].Blob)
+	parsed, _ := url.Parse(u)
+	parsed.Path = "/v1/" + other
+	if code := fetch(parsed.String()); code == http.StatusOK {
+		t.Fatalf("a token of version %s opened locked version %s's body image: %d", a.ID, b.ID, code)
 	}
 }
 
