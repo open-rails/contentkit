@@ -114,9 +114,9 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
-// mediaConfig is the site's media registry: albums' content-level files,
-// books' versions, blog images, poll images and the covers of a record the
-// host keeps (request).
+// mediaConfig is the site's media registry: albums' and books' versions,
+// blog body images, poll images and the covers of a record the host keeps
+// (request).
 func (w *world) mediaConfig() media.Config {
 	images := []string{"image/png"}
 	folder := func(name string) media.Kind {
@@ -124,14 +124,14 @@ func (w *world) mediaConfig() media.Config {
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}
 	}
 	blog := folder("blog")
-	blog.Uploads[0].Content = true
+	blog.Uploads[0].Body = true
 	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: images, MaxBytes: 1 << 20})
 	return media.Config{BaseURL: "https://media.test",
 		Kinds: []media.Kind{
 			{Name: "album", KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "originals/{name}", Content: true, Types: images, MaxBytes: 1 << 20, Max: 10},
-					{Path: "cover", Content: true, Types: images, MaxBytes: 1 << 20},
-					{Path: "extras/{name}", Content: true, Types: images, MaxBytes: 1 << 20, Max: 1},
+				Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10},
+					{Path: "cover", Types: images, MaxBytes: 1 << 20},
+					{Path: "extras/{name}", Types: images, MaxBytes: 1 << 20, Max: 1},
 					{Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}},
 			{Name: "book", Versions: true, KeepOriginals: true,
