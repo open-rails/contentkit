@@ -1,4 +1,4 @@
-import { ContentKitError, aborted, readContentKitError } from "./errors.js";
+import { readContentKitError, requestFailure } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
 import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
@@ -123,8 +123,7 @@ export class Http {
         ...(keepalive ? { keepalive } : {}),
       });
     } catch (err) {
-      if (signal?.aborted) throw aborted(signal);
-      throw new ContentKitError("network", `ContentKit API ${new URL(url, "http://x").pathname} unreachable`, { cause: err });
+      throw requestFailure(err, signal, `ContentKit API ${new URL(url, "http://x").pathname}`);
     }
     if (!res.ok) throw await readContentKitError(res);
     if (blob) return (await res.blob()) as T;
