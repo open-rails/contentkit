@@ -11195,6 +11195,22 @@
           "allowed": {
             "type": "boolean"
           },
+          "level": {
+            "type": "string",
+            "enum": [
+              "group",
+              "group_ppv",
+              "ppv",
+              "public",
+              "tier"
+            ]
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "unknown": {
             "type": "boolean"
           },
@@ -11222,7 +11238,8 @@
           }
         },
         "required": [
-          "allowed"
+          "allowed",
+          "level"
         ]
       },
       "CardVersion": {
@@ -11254,13 +11271,17 @@
           },
           "duration_ms": {
             "type": "integer"
+          },
+          "has_audio": {
+            "type": "boolean"
           }
         },
         "required": [
           "id",
           "code",
           "languages",
-          "traits"
+          "traits",
+          "has_audio"
         ]
       },
       "CatalogCover": {

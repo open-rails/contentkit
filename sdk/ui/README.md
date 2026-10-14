@@ -281,6 +281,20 @@ slot crops at its image's aspect, else its public preset's
 (`GET /media/presets`), so an item without an image yet still crops a 3:1
 cover at 3:1.
 
+### Card lists: decorations and locked cards
+
+Every card list (`ContentGrid`, `ContentListing`, `ContentRail`,
+`SearchResults`, `ContentHistory`) and `ContentCard` take `decorate(card)`:
+the host's badges, drawn over the cover (place them yourself; clicks reach
+the card, and click signals stay intact). Cards carry what badges need:
+`access.level` and `access.tiers` (the effective rule, the same for every
+reader), `version.has_audio`, `viewer.favorited` and `groups`.
+
+`ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
+cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
+the open ones and puts the rest behind a counted toggle that loads them on
+opening (`useLockedCount` counts them).
+
 ### MediaFolderEditor
 
 ```tsx

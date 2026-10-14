@@ -98,7 +98,7 @@ export interface TypeaheadQuery extends ReaderQuery {
 }
 
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["groups", "exclude_groups", "traits", "card_groups", "group_kinds"]);
+const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_groups", "group_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {

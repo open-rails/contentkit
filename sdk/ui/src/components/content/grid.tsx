@@ -1,12 +1,12 @@
 import { cn } from "cn";
-import { useContext, useEffect, useMemo, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
 import type { Card } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
-import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
+import { useContents, useExposure, useHistory, useLockedCount, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
 import { useKinds } from "../../react/groups.js";
 import type { UseList } from "../../react/use-resource.js";
 import { useNearViewport } from "../../react/viewport.js";
@@ -81,6 +81,7 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
                   labels={p.labels}
                   owner={p.owner}
                   ownerHref={p.ownerHref}
+                  decorate={p.decorate}
                   onOpen={() => exposure.click(card.id, i + 1)}
                 />
               )}
@@ -99,11 +100,50 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
   );
 }
 
+/**
+ * What a list does with cards the reader doesn't open: shows them marked
+ * (show), leaves them out (hide), or lists them apart, counted, behind a
+ * toggle that loads them when opened (collapse).
+ */
+export type LockedCards = "show" | "hide" | "collapse";
+
+const LOCKED_LEVELS = ["tier", "group", "ppv", "group_ppv"] as const;
+
 /** Contents as cards (GET /v1/contents): any sort and filter, paged. */
-export function ContentGrid({ query, ...p }: CardListProps & { query: ContentQuery }) {
-  const q = useMemo(() => ({ ...query, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
+export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery; locked?: LockedCards }) {
+  const q = useMemo<ContentQuery>(
+    () => ({ ...query, limit: query.limit ?? p.pageSize, ...(locked === "show" ? {} : { mode: "hide" }) }),
+    [query, p.pageSize, locked],
+  );
   const list = useContents(q, { client: p.client });
-  return <CardGrid {...p} list={list} render={JSON.stringify(q)} />;
+  return (
+    <>
+      {locked === "collapse" && <LockedSection {...p} query={query} />}
+      <CardGrid {...p} list={list} render={JSON.stringify(q)} />
+    </>
+  );
+}
+
+/** A list's locked cards, counted, loaded and shown on opening. */
+function LockedSection({ query, ...p }: CardListProps & { query: ContentQuery }) {
+  const m = useMessages();
+  const [open, setOpen] = useState(false);
+  const { count } = useLockedCount(query, { client: p.client });
+  const q = useMemo<ContentQuery | null>(
+    () => (open ? { ...query, mode: "lock", access: query.access ?? LOCKED_LEVELS, limit: query.limit ?? p.pageSize } : null),
+    [open, query, p.pageSize],
+  );
+  const list = useContents(q, { client: p.client });
+  const items = useMemo(() => list.items.filter((c) => !c.access.allowed), [list.items]);
+  if (!count) return null;
+  return (
+    <ContentKitUiRoot appearance={p.appearance} className="grid gap-3 text-sm" data-ckui="locked-cards">
+      <Button variant="outline" size="sm" className="justify-self-start" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? m.t("contents.lockedHide") : m.plural("contents.lockedShow", count)}
+      </Button>
+      {open && <CardGrid {...p} list={{ ...list, items }} render={JSON.stringify(q)} />}
+    </ContentKitUiRoot>
+  );
 }
 
 /** Search results as cards; nothing until the query has text. */
@@ -149,6 +189,7 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               labels={p.labels}
               owner={p.owner}
               ownerHref={p.ownerHref}
+              decorate={p.decorate}
             >
               <Button size="xs" variant="ghost" className="justify-self-start" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
                 {t("contents.removeFromHistory")}
@@ -233,6 +274,7 @@ export function ContentRail({ title, similar, recommendations, history, group, l
                 labels={p.labels}
                 owner={p.owner}
                 ownerHref={p.ownerHref}
+                decorate={p.decorate}
                 onOpen={() => exposure.click(card.id, i + 1)}
               />
             )}

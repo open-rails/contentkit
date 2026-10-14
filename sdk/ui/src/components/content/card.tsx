@@ -32,9 +32,22 @@ export interface ContentCardProps {
   owner?: boolean;
   /** The owner group's link; default its canonical path. */
   ownerHref?: (g: GroupLike) => string | undefined;
+  /** Over the cover: the host's badges for the card, placed in the cover's box; clicks reach the card. */
+  decorate?: (card: Card) => ReactNode;
   /** Below the meta line: the host's own. */
   children?: ReactNode;
   className?: string;
+}
+
+/** The host's badges over a cover. */
+function Decorations({ card, decorate }: { card: Card; decorate?: (card: Card) => ReactNode }) {
+  const badges = decorate?.(card);
+  if (badges == null || badges === false) return null;
+  return (
+    <span className="pointer-events-none absolute inset-0" data-ckui="card-decorations">
+      {badges}
+    </span>
+  );
 }
 
 const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
@@ -67,7 +80,7 @@ function useLink(url: string | undefined, before?: () => void) {
 }
 
 /** One content in a listing: cover, title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, children, className }: ContentCardProps) {
+export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
@@ -88,29 +101,32 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
   const title = card.title || card.code;
   return (
     <article className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
-        <div className={shape === "landscape" ? "aspect-video" : "aspect-[3/4]"}>
-          <RenditionImg
-            outputs={card.cover}
-            alt=""
-            fit="cover"
-            skeleton
-            className="size-full transition-transform group-hover/card:scale-[1.02]"
-            fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
-          />
-        </div>
-        {lock && (
-          <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
-            <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
-            {lock}
-          </span>
-        )}
-        {progress > 0 && (
-          <span className="absolute inset-x-0 bottom-0 h-1 bg-background/60" data-ckui="card-progress">
-            <span className="block h-full bg-primary" style={{ width: `${Math.round(progress * 100)}%` }} />
-          </span>
-        )}
-      </a>
+      <div className="relative overflow-hidden rounded-lg">
+        <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
+          <div className={shape === "landscape" ? "aspect-video" : "aspect-[3/4]"}>
+            <RenditionImg
+              outputs={card.cover}
+              alt=""
+              fit="cover"
+              skeleton
+              className="size-full transition-transform group-hover/card:scale-[1.02]"
+              fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
+            />
+          </div>
+          {lock && (
+            <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
+              <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
+              {lock}
+            </span>
+          )}
+          {progress > 0 && (
+            <span className="absolute inset-x-0 bottom-0 h-1 bg-background/60" data-ckui="card-progress">
+              <span className="block h-full bg-primary" style={{ width: `${Math.round(progress * 100)}%` }} />
+            </span>
+          )}
+        </a>
+        <Decorations card={card} decorate={decorate} />
+      </div>
       <div className="grid gap-1">
         <a href={url} onClick={onClick} className="line-clamp-2 font-medium break-words hover:underline" data-ckui="card-title">
           {title}
@@ -189,7 +205,7 @@ export interface PostCardProps extends Omit<ContentCardProps, "shape" | "chips" 
 }
 
 /** A post in a feed: a wide cover, its title, when it was published and what unlocking it costs. */
-export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, children, className }: PostCardProps) {
+export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, decorate, children, className }: PostCardProps) {
   const m = useMessages();
   const url = href ? href(card) : card.path;
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
@@ -206,6 +222,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
         {card.cover.length > 0 && (
           <span className="relative block aspect-video overflow-hidden rounded-md bg-muted">
             <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton className={cn("size-full", lock && "blur-md")} />
+            <Decorations card={card} decorate={decorate} />
             {lock && (
               <span className="absolute inset-0 grid place-items-center">
                 <span className="inline-flex items-center gap-1 rounded-md bg-background/85 px-2 py-1 text-xs font-medium shadow-sm" data-ckui="card-lock">

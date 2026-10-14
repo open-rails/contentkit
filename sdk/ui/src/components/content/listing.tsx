@@ -8,7 +8,7 @@ import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { labelOf } from "../groups/parts.js";
-import { ContentGrid, type CardListProps } from "./grid.js";
+import { ContentGrid, type CardListProps, type LockedCards } from "./grid.js";
 
 const SORTS: readonly ListSort[] = ["newest", "popular:7d", "popular:30d", "popular", "top_rated", "most_favorited", "title", "oldest"];
 const ANY = "*";
@@ -28,6 +28,8 @@ export interface ContentListingProps extends CardListProps {
   onQueryChange?: (query: ContentQuery) => void;
   /** The sorts offered; default newest, popular (week, month, all time), top rated, most favorited, title, oldest. */
   sorts?: readonly ListSort[];
+  /** Cards the reader doesn't open: show (default), hide or collapse. */
+  locked?: LockedCards;
   /** Offer a language filter; default when the site has several languages. */
   languages?: boolean;
   /** The traits and attributes offered; default every trait and filterable attribute of the kind. */

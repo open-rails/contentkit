@@ -1,5 +1,5 @@
 export { ContentCard, OwnerChip, PostCard, lockLabel, type ContentCardProps, type PostCardProps } from "./card.js";
-export { CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardListProps, type ContentRailProps } from "./grid.js";
+export { CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardListProps, type ContentRailProps, type LockedCards } from "./grid.js";
 export { SearchBox, type SearchBoxProps } from "./search.js";
 export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ReleaseDateIndexProps } from "./filters.js";
 export { ContentListing, sortLabel, type ContentListingProps } from "./listing.js";
