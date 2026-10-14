@@ -360,6 +360,7 @@
             128,
             256
           ],
+          "stable": true,
           "image": {
             "aspect": "1:1",
             "quality": 85
