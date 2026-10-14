@@ -6,7 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ContentKitClient, RefBody } from "../../src/client/index.js";
 import { ContentKitProvider, useMediaRead } from "../../src/react/index.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, content, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
+import { Accounts, client, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
 
 describe("useMediaRead against the real ContentKit", () => {
   const h = harness();
@@ -67,7 +67,7 @@ describe("useMediaRead against the real ContentKit", () => {
   });
 
   it("shares one request per item and options; set() updates every reader; a commit reloads the item's reads", async () => {
-    const ref = content(await item(h, "gallery", alice));
+    const ref = await item(h, "gallery", alice);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
     const seeding = client(h, cfg, alice);
@@ -121,7 +121,7 @@ describe("useMediaRead against the real ContentKit", () => {
     await pages(ref, 1);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
-    const path = `/api/contentkit/v1/media/gallery/${ref.id}`;
+    const path = `/api/contentkit/v1/media/gallery/${ref.id}/versions/${ref.version}`;
     await h.faults([{ fault: "api", path, method: "GET", status: 429, code: "rate_limited", error: "slow down", retry_after: 1, times: 1 }]);
     const { result } = renderHook(() => useMediaRead(ref, { client: c }));
     await waitFor(() => expect(result.current.read?.files).toHaveLength(1), { timeout: 5000 });

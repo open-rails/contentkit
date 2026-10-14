@@ -388,15 +388,25 @@ export class MediaClient {
   }
 
   /**
-   * An image for a content item's rich-text body, uploaded to the item's body
-   * folder ({kind}.body and its id, BODY_SUFFIX), which only viewers who open
-   * the item see; resolves with its reference to store in the body (`ref`) and
-   * a URL that shows it to the editor now (`url`, null while none exists).
+   * An image for a content item's rich-text body, uploaded to a version's
+   * body folder ({kind}.body, id and version, BODY_SUFFIX), which only viewers
+   * who open the version see, and copied into every other version's; resolves
+   * with its reference to store in the body (`ref`) and a URL that shows it to
+   * the editor now (`url`, null while none exists).
    */
   async uploadInline(item: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
-    const up = await this.uploadNamed(item, file, o);
-    const r: InlineImage = await call(this.http, "POST", "/contents/{id}/images", { params: { id: item.id }, body: { image: up.name }, signal: o.signal });
+    if (!item.version) throw new ContentKitError("invalid_request", "body images live in a version's body folder");
+    const up = await this.uploadNamed(item, file, { ...o, path: o.path ?? (await this.presetPath(item.kind, undefined, file)) });
+    const r: InlineImage = await call(this.http, "POST", "/contents/{id}/images", { params: { id: item.id }, body: { image: up.name, version: item.version }, signal: o.signal });
     return { ...up, ...r };
+  }
+
+  /** The upload path of file for kind's public preset (its first without one): the preset's source, its {name} the file's. */
+  async presetPath(kind: string, preset: string | undefined, file: Uploadable): Promise<string> {
+    const name = file.name || "image";
+    const rule = (await this.presets()).find((p) => p.kind === kind && (!preset || p.name === preset));
+    if (!rule) return name;
+    return rule.from.endsWith("{name}") ? rule.from.slice(0, -"{name}".length) + name : rule.from;
   }
 
   /** The media folder of a poll. */

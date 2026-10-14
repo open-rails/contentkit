@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitClient, Op } from "../../src/client/index.js";
 import { ContentKitProvider, useMediaFolder, useMediaRead, usePublicImage } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
-import { Accounts, client, fixture, harness, item, png, wait, NodeFile, content } from "./setup.js";
+import { Accounts, client, fixture, harness, item, itemFolder, png, wait, NodeFile } from "./setup.js";
 
 describe("media hooks against the real ContentKit", () => {
   const h = harness();
@@ -125,7 +125,7 @@ describe("media hooks against the real ContentKit", () => {
 
   it("usePublicImage shows an item's published image from its read, else the kind's default", async () => {
     const c = as();
-    const ref = content(await item(h, "gallery", accounts.get("alice")));
+    const ref = await item(h, "gallery", accounts.get("alice"));
     await c.media.put(fixture("small.png", "image/png", "cover.png"), { ref, path: "cover" });
     await c.media.waitFor(ref, "cover", wait);
     expect(await c.media.presets()).toContainEqual(expect.objectContaining({ kind: "gallery", name: "cover", from: "cover", namespace: cfg.namespace }));
@@ -140,9 +140,9 @@ describe("media hooks against the real ContentKit", () => {
 
     // An item without a cover shows the kind's default (the preset declares one).
     expect(result.current.rule?.default).toBe(true);
-    const empty = content(await item(h, "gallery", accounts.get("alice")));
+    const empty = await item(h, "gallery", accounts.get("alice"));
     const other = renderHook(() => usePublicImage({ kind: "gallery", id: empty.id }, "cover"), { wrapper: provider(c) });
     await waitFor(() => expect(other.result.current.isDefault).toBe(true), wait);
-    expect(other.result.current.image!.renditions.map((r) => r.url)).toEqual([230, 460].map((w) => `${cfg.media}/v1/${cfg.namespace}/gallery/${empty.id}/public/cover-${w}.webp`));
+    expect(other.result.current.image!.renditions.map((r) => r.url)).toEqual([230, 460].map((w) => `${cfg.media}/v1/${cfg.namespace}/${itemFolder(empty)}/public/cover-${w}.webp`));
   });
 });

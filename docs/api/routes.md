@@ -127,7 +127,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
 | GET | `/v1/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
 | GET | `/v1/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
-| GET | `/v1/media/{kind}/{id}/versions/{version}` | public | — | 200 `ReadResult` | A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
+| GET | `/v1/media/{kind}/{id}/versions/{version}` | public | — | 200 `ReadResult` | A content version's item, read as GET /{kind}/{id} reads any other kind's item. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
 | GET | `/v1/media/{kind}/{id}/versions/{version}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's. Query: `audio`, `subs`. |
 
 ## Content codes (`/v1/codes`)

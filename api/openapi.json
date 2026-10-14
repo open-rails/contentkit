@@ -5485,7 +5485,7 @@
           {
             "name": "version",
             "in": "query",
-            "description": "a Versions kind's version id; absent for its content-level item",
+            "description": "a content kind's version id; absent for any other kind's item",
             "schema": {
               "type": "string"
             }
@@ -5782,7 +5782,7 @@
         "tags": [
           "media"
         ],
-        "summary": "A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.",
+        "summary": "A content version's item, read as GET /{kind}/{id} reads any other kind's item.",
         "parameters": [
           {
             "name": "kind",

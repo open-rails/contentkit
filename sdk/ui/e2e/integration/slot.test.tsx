@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { CropSource, RefBody } from "../../src/client/index.js";
 import { useSlotCrop, useSlotImage } from "../../src/react/slot.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, harness, item, png, recorder, wait } from "./setup.js";
+import { Accounts, client, harness, item, itemFolder, png, recorder, wait } from "./setup.js";
 
 // jsdom decodes no images: the crop source is the file's known size.
 const decode = vi.fn(async (file: File): Promise<CropSource> => ({ url: "blob:preview", width: 800, height: 400, file, revoke: vi.fn() }));
@@ -127,7 +127,7 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
       status: "cropping",
       mode: "recrop",
       edit: first,
-      source: { url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/channel/${ref.id}/private/sha256-`)), width: 900, height: 300 },
+      source: { url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/sha256-`)), width: 900, height: 300 },
     });
     const puts = r.puts.length;
     const next = { crop: { x: 300, y: 100, w: 600, h: 200 }, rotate: 180 };

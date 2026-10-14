@@ -1170,7 +1170,7 @@ type GetMediaUploadFrameQuery struct {
 	Kind string
 	// the item's id
 	Id string
-	// a Versions kind's version id; absent for its content-level item
+	// a content kind's version id; absent for any other kind's item
 	Version string
 	// the video upload's path
 	Path string
@@ -1314,7 +1314,7 @@ func (q GetMediaVersionQuery) values() url.Values {
 	return v
 }
 
-// GetMediaVersion is GET /v1/media/{kind}/{id}/versions/{version} (public). A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.
+// GetMediaVersion is GET /v1/media/{kind}/{id}/versions/{version} (public). A content version's item, read as GET /{kind}/{id} reads any other kind's item.
 func (c *Client) GetMediaVersion(ctx context.Context, kind string, id string, version string, q GetMediaVersionQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}/versions/{version}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil, &out)

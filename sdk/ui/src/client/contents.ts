@@ -21,7 +21,7 @@ export const IMAGE_SCHEME = "contentkit:";
  * the image's current public file (`Content.images`).
  */
 export const imageRef = (name: string) => IMAGE_SCHEME + name;
-/** A content kind's body kind: the media folder of a content item's body images ({kind}.body, id), opened with the item. */
+/** A content kind's body kind: the media folder of a version's copy of its body's images ({kind}.body, id, version), opened with the version. */
 export const BODY_SUFFIX = ".body";
 
 /** Matches every image reference; the name is group 1. */
@@ -80,13 +80,17 @@ export class ContentsClient {
   restore(id: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/restore", { params: { id } }));
   }
-  /** Sets the cover to an inline image name ("i-{uuid}") of the item's folder; null clears it. */
-  setCover(id: string, image: string | null): Promise<Content> {
-    return this.update(id, { cover: image ?? "" });
+  /** Selects a version's cover by the name ("i-{uuid}") of one of its cover uploads; null returns to its first. */
+  setCover(id: string, vid: string, image: string | null): Promise<Version> {
+    return this.updateVersion(id, vid, { cover: image ?? "" });
   }
-  /** An inline image of the item's folder: the reference to store in a body and a URL that shows it to the editor now (null while none exists). */
-  inlineImage(id: string, image: string, signal?: AbortSignal): Promise<InlineImage> {
-    return call(this.http, "POST", "/contents/{id}/images", { params: { id }, body: { image }, signal });
+  /**
+   * A body image uploaded to version vid's body folder, copied into every
+   * other version's: the reference to store in the body and a URL that shows
+   * it to the editor now (null while none exists).
+   */
+  inlineImage(id: string, vid: string, image: string, signal?: AbortSignal): Promise<InlineImage> {
+    return call(this.http, "POST", "/contents/{id}/images", { params: { id }, body: { image, version: vid }, signal });
   }
   addVersion(id: string, input: VersionInput): Promise<Version> {
     return this.writeVersion(id, call(this.http, "POST", "/contents/{id}/versions", { params: { id }, body: input }));

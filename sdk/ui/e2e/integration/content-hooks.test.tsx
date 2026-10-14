@@ -223,7 +223,7 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => void (url = await result.current.item.uploadImage(png())));
     expect(url).toMatch(/^blob:/); // the file itself until the item's image is served
     await act(async () => void (await result.current.item.setCover(png())));
-    await waitFor(() => expect(result.current.item.content?.cover?.image).toMatch(/^i-/), wait);
+    await waitFor(() => expect(result.current.item.version?.cover?.image).toMatch(/^i-/), wait);
     await act(() => result.current.item.remove());
     await waitFor(() => expect(result.current.all.items).toEqual([]), wait);
     await waitFor(() => expect(result.current.trash.items.map((p) => p.title)).toEqual([`Draft, renamed ${word}`]), wait);
@@ -239,6 +239,7 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => void (await writer.result.current.create({ kind: "blog", text: { en: { title: "With pictures", body: "b" } } })));
     await waitFor(() => expect(writer.result.current.content).not.toBeNull(), wait);
     const id = writer.result.current.content!.id;
+    const vid = writer.result.current.content!.versions[0]!.id;
     // A fresh upload shows from its file; the stored body references it.
     let fresh = "";
     await act(async () => void (fresh = await writer.result.current.uploadImage(png())));
@@ -253,8 +254,8 @@ describe("content hooks against the real ContentKit", () => {
     expect(writer.result.current.imageSrc(name)).toBe(fresh);
     expect(writer.result.current.imageSrc(imageRef(name))).toBe(fresh);
     await act(async () => void (await writer.result.current.setCover(png())));
-    await waitFor(() => expect(writer.result.current.content?.cover?.image).toMatch(/^i-/), wait);
-    expect(writer.result.current.content?.cover?.url).toBeUndefined();
+    await waitFor(() => expect(writer.result.current.version?.cover?.image).toMatch(/^i-/), wait);
+    expect(writer.result.current.version?.cover?.url).toBeUndefined();
     // A draft's body images reach its editors signed, never as public files.
     for (const [n, u] of Object.entries(writer.result.current.content?.images ?? {})) expect([n, u.includes("?t=") && !u.includes("/public/")]).toEqual([name, true]);
     writer.unmount();
@@ -274,7 +275,7 @@ describe("content hooks against the real ContentKit", () => {
 
     // The draft and its folder are its editors'.
     await expect(client("alice").contents.get(id)).rejects.toMatchObject({ code: "not_found" });
-    await expect(client("alice").media.read({ kind: "blog", id }, { editor: true })).rejects.toMatchObject({ code: "not_found" });
+    await expect(client("alice").media.read({ kind: "blog", id, version: vid }, { editor: true })).rejects.toMatchObject({ code: "not_found" });
 
     // Published, every read resolves the reference to the current public file, which serves.
     await act(async () => void (await result.current.publish()));
@@ -283,10 +284,10 @@ describe("content hooks against the real ContentKit", () => {
       await waitFor(async () => {
         const p = await client().contents.get(id, "en");
         url = p.images?.[name] ?? "";
-        expect(url).toMatch(new RegExp(`/blog\\.body/${id}/public/${name}-[0-9a-f-]{36}\\.webp$`));
+        expect(url).toMatch(new RegExp(`/blog\\.body/${id}/${vid}/public/${name}-[0-9a-f-]{36}\\.webp$`));
         expect(url).not.toBe(not);
         expect(p.body).toBe(page(url, " More."));
-        expect(p.cover?.url).toMatch(/\/public\/i-/);
+        expect(p.cover?.url).toMatch(new RegExp(`/blog/${id}/${vid}/public/cover-i-`));
       }, slow);
       expect((await fetch(url)).status).toBe(200);
       return url;

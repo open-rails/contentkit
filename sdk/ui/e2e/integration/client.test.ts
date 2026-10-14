@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { ContentKitError, createContentKitClient, fetchTransport, type CommitBody, type RefBody, type UploadState } from "../../src/client/index.js";
 import { bytes, png as pngBytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, content, fixture, harness, item, recorder, wait, type ClientOptions, type Recorder } from "./setup.js";
+import { Accounts, client, fixture, harness, item, itemFolder, recorder, wait, type ClientOptions, type Recorder } from "./setup.js";
 
 const MiB = 1 << 20;
 const STAGED = /^u-[0-9a-f-]{36}$/;
@@ -78,7 +78,7 @@ describe("single PUT", () => {
   });
 
   it("hashes, presigns the path with the checksum and stages one PUT; a placed identical file is not resent", async () => {
-    const ref = content(await item(h, "gallery", owner));
+    const ref = await item(h, "gallery", owner);
     const rec = recorder();
     const c = media(rec);
     const body = pngBytes(1024, 1024, 2); // about 3 MiB of noise
@@ -362,7 +362,7 @@ describe("reads", () => {
 
   it("waits for an upload by path or stem, and rejects on its failure or absence", async () => {
     const ref = await item(h, "gallery", owner);
-    const cover = content(ref);
+    const cover = ref;
     const rec = recorder();
     const c = media(rec);
     await c.put(image(5, "c.png", 600, 400), { ref: cover, path: "cover" });
@@ -416,14 +416,14 @@ describe("reads", () => {
   });
 
   it("finds the editor view of an upload for re-cropping", async () => {
-    const ref = content(await item(h, "gallery", owner));
+    const ref = await item(h, "gallery", owner);
     const rec = recorder();
     const c = media(rec);
     // 1280×720; a 1200×400 crop is the cover's 3:1.
     const crop = { crop: { x: 40, y: 160, w: 1200, h: 400 } };
     await c.put(fixture("media/img/3.jpg", "image/jpeg", "c.jpg"), { ref, path: "cover", edit: crop });
     expect(await c.editorView(ref, "cover", wait)).toEqual({
-      url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/gallery/${ref.id}/private/sha256-`)),
+      url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/sha256-`)),
       width: 1280,
       height: 720,
       edit: crop,

@@ -69,3 +69,9 @@ it("value and onChange take the choice over", async () => {
   expect(onChange).toHaveBeenCalledWith(versions[0]);
   expect(location.search).toBe("");
 });
+
+it("without ?v= opens the reader's language's first version by position", () => {
+  const sorted = [{ ...versions[0]!, position: 1 }, { ...versions[1]!, position: 0 }, { ...versions[2]!, position: 2 }];
+  render(<VersionPicker versions={sorted} />, { wrapper: wrap({ language: "en" }) });
+  expect(screen.getByRole("radio", { name: /Colored/ })).toHaveAttribute("aria-checked", "true");
+});

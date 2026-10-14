@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
 import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
@@ -7,6 +7,7 @@ import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/groups.js";
 import { useMediaRead } from "../../react/read.js";
+import { usePresets } from "../../react/public.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
@@ -528,8 +529,66 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
       />
       <ErrorLine error={offer.error} />
       {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
+      {media && <VersionCover content={content} version={v} {...p} />}
       {media && <VersionMedia content={content} version={v} model={model} {...p} />}
       {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
+    </div>
+  );
+}
+
+/**
+ * A version's own cover, where its kind has covers: the cover upload its
+ * editors selected, else its first. Versions share no files.
+ */
+export function VersionCover({ content, version: v, ...p }: Common & { content: Content; version: Version }) {
+  const { t } = useMessages();
+  const client = useContentKitClient(p.client);
+  const { presets } = usePresets({ client });
+  const save = useAction("content.save", p.onError);
+  const input = useRef<HTMLInputElement>(null);
+  const [fresh, setFresh] = useState<string | null>(null);
+  useEffect(() => () => void (fresh && URL.revokeObjectURL(fresh)), [fresh]);
+  if (!presets.some((r) => r.kind === content.kind && r.name === "cover")) return null;
+  const src = fresh ?? v.cover?.url;
+  const pick = (file: File | null) =>
+    void save.run(async () => {
+      if (!file) {
+        setFresh(null);
+        return client.contents.setCover(content.id, v.id, null);
+      }
+      const ref = { kind: content.kind, id: content.id, version: v.id };
+      const up = await client.media.uploadNamed(ref, file, { path: await client.media.presetPath(content.kind, "cover", file) });
+      const saved = await client.contents.setCover(content.id, v.id, up.name);
+      if (typeof URL.createObjectURL === "function") setFresh(URL.createObjectURL(file));
+      return saved;
+    });
+  return (
+    <div className="grid gap-1.5" data-ckui="version-cover">
+      <span className="text-sm font-medium">{t("contentManager.cover")}</span>
+      <div className="flex flex-wrap items-center gap-3">
+        {src ? <img src={src} alt="" className="h-20 w-36 rounded-md border border-border object-cover" /> : <span className="text-muted-foreground">{t("contentManager.noCover")}</span>}
+        <Button type="button" size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>
+          {t(src ? "pollEditor.replaceImage" : "contentManager.addCover")}
+        </Button>
+        {v.cover?.image && (
+          <Button type="button" size="sm" variant="ghost" disabled={save.pending} onClick={() => pick(null)}>
+            {t("pollEditor.removeImage")}
+          </Button>
+        )}
+        <input
+          ref={input}
+          type="file"
+          accept="image/*"
+          hidden
+          aria-label={t("contentManager.cover")}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) pick(f);
+          }}
+        />
+      </div>
+      <ErrorLine error={save.error} />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, inject, it, vi } from "vitest";
 import { ItemUploadQueue, createContentKitClient, fetchTransport, type Op, type QueueSnapshot, type RefBody, type Transport, type UploadState } from "../../src/client/index.js";
 import { bytes, png } from "../support/bytes.js";
 import { Harness, type Config, type TestUser } from "../support/harness.js";
-import { content, itemFolder, item as itemOf } from "./setup.js";
+import { itemFolder, item as itemOf } from "./setup.js";
 
 const MiB = 1 << 20;
 const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -76,8 +76,8 @@ describe("uploads and reads against the real ContentKit", () => {
 
     const refused = await c.upload(file(body, "a.gif", "image/gif"), { ref, path: "originals/002.gif" }).catch((e) => e);
     expect([refused.code, refused.status]).toEqual(["type_not_allowed", 415]);
-    expect((await client({ user: reader }).upload(page, { ref: content(ref), path: "cover" }).catch((e) => e)).code).toBe("forbidden");
-    expect((await client({ user: null }).upload(page, { ref: content(ref), path: "cover" }).catch((e) => e)).status).toBe(401);
+    expect((await client({ user: reader }).upload(page, { ref, path: "cover" }).catch((e) => e)).code).toBe("forbidden");
+    expect((await client({ user: null }).upload(page, { ref, path: "cover" }).catch((e) => e)).status).toBe(401);
   });
 
   it("names an inline upload on the server and publishes it", async () => {
@@ -138,7 +138,7 @@ describe("uploads and reads against the real ContentKit", () => {
 
   it("crops a cover: puts it with an edit, re-edits it from its editor view, and removes it with its public files", async () => {
     // 360×240; the cover is 3:1, so a 360-wide crop is 120 high.
-    const ref = content(await item("gallery"));
+    const ref = await item("gallery");
     const puts: string[] = [];
     const counting: Transport = async (req, blob, o) => {
       puts.push(req.url);
@@ -155,7 +155,7 @@ describe("uploads and reads against the real ContentKit", () => {
 
     // The first editor read asks the worker for the view; a later one has it.
     const view = await c.editorView(ref, "cover", wait);
-    expect(view).toMatchObject({ url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/gallery/${ref.id}/private/sha256-`)), width: 360, height: 240 });
+    expect(view).toMatchObject({ url: expect.stringMatching(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/${itemFolder(ref)}/private/sha256-`)), width: 360, height: 240 });
     expect((await fetch(view.url)).status).toBe(200);
 
     // Re-edit the kept upload: nothing is uploaded.

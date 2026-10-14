@@ -91,13 +91,19 @@ export staged there) is copied server-side instead (`POST
 importer. Publication, renditions and version facts (pages, duration) follow
 from the media jobs.
 
+Every file lives in a version; versions share none. A legacy record's one
+cover is ingested into each version's folder (a `Named` cover upload) and
+each `VersionRecord.cover` names that version's copy, sent once the files are
+in. Body images go into each version's body folder (`{kind}.body`, same
+content and version), named as the body references them.
+
 ## Record shapes
 
 | Section | Record | Keys |
 |---|---|---|
 | `groups` | `GroupRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
-| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `view_baseline`, `access`, `restrictions`, `attributes`, `owner_group`, `cover`, `creators`, `text`, `versions`, `code`, times |
-| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `text`, `segments` |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `view_baseline`, `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
+| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text`, `segments` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
 | `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |

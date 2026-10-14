@@ -140,15 +140,13 @@ export function client(h: Harness, cfg: Config, user: TestUser | null, o: Client
 
 /**
  * A content item the host made through the catalog, owned by owner: the
- * item its uploads go to, its version for a kind whose media are versions'.
- * content(ref) is its content-level item (a gallery's cover).
+ * item its uploads go to, its version (every file, its cover included, lives
+ * in a version).
  */
 export async function item(h: Harness, kind: string, owner: TestUser | null, o: { access?: "full" | "none"; hidden?: boolean; title?: string } = {}): Promise<RefBody> {
   return mediaRef(await h.item({ kind, owner: owner?.id, ...o }));
 }
 
-/** The content-level item of a ref: where a content's cover lives. */
-export const content = ({ kind, id }: RefBody): RefBody => ({ kind, id });
 
 /** An item's storage folder as media URLs name it: "{kind}/{id}", a version's "{kind}/{id}/{version}". */
 export const itemFolder = (ref: RefBody) => (ref.version ? `${ref.kind}/${ref.id}/${ref.version}` : `${ref.kind}/${ref.id}`);
