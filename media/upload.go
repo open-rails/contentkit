@@ -177,10 +177,10 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err != nil {
 		return Presigned{}, err
 	}
-	views := u.reg.editorViews(current)
+	views, area := u.reg.editorViews(current), item.Kind().Area(path, "")
 	for _, blob := range current.Blobs() {
 		sum, ok := layout.BlobDigest(blob)
-		if !ok || !bytes.Equal(sum, r.SHA256) || views[blob] {
+		if a, _, _ := layout.SplitBlobRef(blob); !ok || !bytes.Equal(sum, r.SHA256) || views[blob] || a != area {
 			continue
 		}
 		key, _ := item.Blob(blob)
@@ -776,6 +776,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		sources  []source
 		sums     [][]byte
 		srcKeys  []string
+		areas    []string
 		manifest = map[contentref.ContentKey]*Manifest{}
 		names    = map[string]string{} // source key -> allocation in item
 	)
@@ -820,13 +821,31 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 				return nil, nil, fmt.Errorf("media: invalid copy source %q", b)
 			}
 			names[srcKey] = ""
-			sc.todo, sums, srcKeys = append(sc.todo, b), append(sums, sum), append(srcKeys, srcKey)
+			area, _, _ := layout.SplitBlobRef(b)
+			sc.todo, sums, srcKeys, areas = append(sc.todo, b), append(sums, sum), append(srcKeys, srcKey), append(areas, area)
 		}
 		sources = append(sources, sc)
 	}
-	allocated, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), sums)
-	if err != nil {
-		return nil, nil, err
+	// A copy stays in its source's area: both items are of one kind.
+	allocated := make([]string, len(sums))
+	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload} {
+		var at []int
+		var of [][]byte
+		for i, a := range areas {
+			if a == area {
+				at, of = append(at, i), append(of, sums[i])
+			}
+		}
+		if len(at) == 0 {
+			continue
+		}
+		refs, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), area, of)
+		if err != nil {
+			return nil, nil, err
+		}
+		for j, i := range at {
+			allocated[i] = refs[j]
+		}
 	}
 	for i, key := range srcKeys {
 		names[key] = allocated[i]
@@ -839,7 +858,8 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			if len(sc.todo) == 0 {
 				continue
 			}
-			key, _ := item.Blob(names[sc.from.PrivatePrefix()+sc.todo[0]])
+			from, _ := sc.from.Blob(sc.todo[0])
+			key, _ := item.Blob(names[from])
 			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
 				Owner: grant.Owner, Key: key, Size: sc.files[0].Size}); err != nil {
 				return nil, reserved, err
@@ -868,11 +888,13 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		for i := range files {
 			files[i].Editor = nil // editor views belong to their original item's allocation
 			if !files[i].Gone && files[i].Blob != "" {
-				files[i].Blob = names[sc.from.PrivatePrefix()+files[i].Blob]
+				from, _ := sc.from.Blob(files[i].Blob)
+				files[i].Blob = names[from]
 			}
 			if files[i].Track != nil && files[i].Track.Index != "" {
 				track := *files[i].Track
-				track.Index = names[sc.from.PrivatePrefix()+track.Index]
+				from, _ := sc.from.Blob(track.Index)
+				track.Index = names[from]
 				files[i].Track = &track
 			}
 		}

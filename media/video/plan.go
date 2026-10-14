@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
@@ -425,7 +426,7 @@ func (e *Encoder) refreshSubs(ctx context.Context, item media.Item, f media.File
 func (e *Encoder) subsOutputs(ctx context.Context, item media.Item, dir, to, fp string, subs []track) ([]media.File, error) {
 	var out []media.File
 	for i, s := range subs {
-		blob, size, err := e.put(ctx, item, filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", nil)
+		blob, size, err := e.put(ctx, item, layout.AreaPrivate, filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", nil)
 		if err != nil {
 			return nil, err
 		}

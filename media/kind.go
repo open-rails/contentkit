@@ -48,7 +48,10 @@ func (k *Kind) levels() (*Kind, error) {
 			Defaults: k.Defaults}
 		views[i].ns = k.ns
 	}
-	views[1].Versions, views[1].Publish = true, k.Publish
+	views[1].Versions, views[1].Publish, views[1].Download = true, k.Publish, k.Download
+	if err := k.validateDownloads(); err != nil {
+		return nil, err
+	}
 	at := func(content bool) *Kind {
 		if content {
 			return &views[0]
@@ -62,6 +65,14 @@ func (k *Kind) levels() (*Kind, error) {
 	for _, p := range k.Private {
 		v := at(content[p.From])
 		v.Private = append(v.Private, p)
+	}
+	for _, d := range k.Downloads {
+		level := content[d]
+		if p := k.private(d); p != nil {
+			level = content[p.From]
+		}
+		v := at(level)
+		v.Downloads = append(v.Downloads, d)
 	}
 	for _, p := range k.Public {
 		v := at(content[p.From])
@@ -108,8 +119,8 @@ func (k *Kind) published() (*Kind, error) {
 	}
 	for _, name := range p.Renditions {
 		r := k.private(name)
-		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") {
-			return nil, fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp", name)
+		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") || slices.Contains(k.Downloads, name) {
+			return nil, fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp outside Downloads", name)
 		}
 		dir := strings.TrimSuffix(r.To, nameVar+".webp")
 		out.Uploads = append(out.Uploads, Upload{Path: dir + nameVar, Types: []string{"image/webp"}, MaxBytes: maxBytes})
@@ -528,12 +539,53 @@ func (k *Kind) validate() error {
 			return fmt.Errorf("private %q: %w", p.Name, err)
 		}
 	}
+	if err := k.validateDownloads(); err != nil {
+		return err
+	}
 	for i := range k.Public {
 		if err := k.validatePublic(&k.Public[i], names); err != nil {
 			return fmt.Errorf("public %q: %w", k.Public[i].Name, err)
 		}
 	}
 	return nil
+}
+
+// validateDownloads checks Downloads and Download.
+func (k *Kind) validateDownloads() error {
+	for i, d := range k.Downloads {
+		p := k.private(d)
+		switch {
+		case slices.Contains(k.Downloads[:i], d):
+			return fmt.Errorf("downloads repeat %q", d)
+		case p != nil && p.Image == nil && p.MP4 == nil && p.Zip == "":
+			return fmt.Errorf("downloads: %q is no Image, MP4 or Zip preset", d)
+		case p == nil && k.uploadIndex(d) < 0:
+			return fmt.Errorf("downloads: %q is no upload path or private preset", d)
+		}
+	}
+	if d := k.Download; d != "" {
+		p := k.private(d)
+		if i := k.uploadIndex(d); !slices.Contains(k.Downloads, d) || p == nil && (i < 0 || strings.Contains(d, nameVar)) ||
+			p != nil && p.MP4 == nil && (p.Zip == "" || k.Publish == nil || k.Publish.Download != d) {
+			return fmt.Errorf("download %q is no literal upload, MP4 preset or Publish's Zip of Downloads", d)
+		}
+	}
+	return nil
+}
+
+// Area is the area of the allocation of a file at path (an upload's) or of
+// preset (a derived file's): download/ for Downloads, else private/.
+func (k *Kind) Area(path, preset string) string {
+	d := preset
+	if preset == "" {
+		if i, _, _, _, ok := k.upload(path); ok {
+			d = k.Uploads[i].Path
+		}
+	}
+	if d != "" && slices.Contains(k.Downloads, d) {
+		return layout.AreaDownload
+	}
+	return layout.AreaPrivate
 }
 
 func (l *VideoLimits) validate(types []string) error {
@@ -836,4 +888,48 @@ func (k *Kind) Unwritten(m *Manifest) int64 {
 		}
 	}
 	return n
+}
+
+// DownloadState is how far an item's Download file is.
+type DownloadState int
+
+const (
+	DownloadNone    DownloadState = iota // nothing to serve: no source, a failed or dropped one
+	DownloadPending                      // still being placed or produced
+	DownloadReady
+)
+
+// DownloadFile is the file k.Download serves in m: its literal upload, or
+// its MP4 preset's output of the attached source. A Zip's is its own route's.
+func (k *Kind) DownloadFile(m *Manifest) (File, DownloadState) {
+	from, p := k.Download, k.private(k.Download)
+	if p != nil {
+		if p.MP4 == nil {
+			return File{}, DownloadNone
+		}
+		from = p.From
+	}
+	g := k.uploadIndex(from)
+	for _, f := range m.Files {
+		if i, _, _, _, ok := k.upload(f.Path); !f.IsUpload() || f.Unattached || !ok || i != g || g < 0 {
+			continue
+		}
+		switch {
+		case f.Fail() != nil, f.Gone:
+			return f, DownloadNone
+		case f.Blob == "":
+			return f, DownloadPending
+		case p == nil:
+			return f, DownloadReady
+		case slices.Contains(f.Pending, p.Name):
+			return f, DownloadPending
+		}
+		for _, o := range m.Outputs(f.Path, p.Name) {
+			if o.Blob != "" && !o.Gone {
+				return o, DownloadReady
+			}
+		}
+		return f, DownloadNone
+	}
+	return File{}, DownloadNone
 }

@@ -184,18 +184,10 @@ func (c *catalog) wasRefreshed(id string) bool {
 	return slices.Contains(c.refreshed, id)
 }
 
-// marker is a host watermark: it marks who's second page by appending
-// their id.
-type marker struct{ who string }
+// marker is a host watermark: it appends the viewer's id.
+type marker struct{}
 
-func (m *marker) Pages(_ context.Context, a access.Actor, _ versions.Target, _ int) ([]int, error) {
-	if a.ID != m.who {
-		return nil, nil
-	}
-	return []int{1}, nil
-}
-
-func (*marker) Mark(_ context.Context, a access.Actor, _ versions.Target, _ int, page []byte) ([]byte, string, error) {
+func (marker) Mark(_ context.Context, a access.Actor, _ versions.Target, _ int, page []byte) ([]byte, string, error) {
 	return append(slices.Clone(page), []byte("marked:"+a.ID)...), ".png", nil
 }
 
@@ -296,7 +288,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signer}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.svc.Bind(versions.Media{Manifests: s.ms, Uploads: s.uploads, Jobs: s.jobs}); err != nil {
+	if err := s.svc.Bind(versions.Media{Manifests: s.ms, Uploads: s.uploads, Jobs: s.jobs, Reader: s.reader}); err != nil {
 		t.Fatal(err)
 	}
 	client, err := riverhelpers.New(ctx, s.pool, &river.Config{Schema: host, FetchPollInterval: 100 * time.Millisecond,

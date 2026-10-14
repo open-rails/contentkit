@@ -5,8 +5,11 @@
 //	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, the configured immutable default
 //	/v1/{ns}/{kind}/{id}/private/sha256-{hex}-{uuid}  with the item's unexpired token (?t= or an mt cookie);
 //	                                           ?dl={name} serves it as a download under that name
+//	/v1/{ns}/{kind}/{id}/download/sha256-{hex}-{uuid} with that one key's unexpired download token (?t= only);
+//	                                           ?dl= alike
 //
-// A token opens every private file of its item or none. Everything else and
+// An item token opens every private file of its item or none, and never a
+// download; a download token opens only its key. Everything else and
 // every denial is one identical no-store 404; token denials are decided
 // before any bucket access. It keeps no state, reads no manifests and no
 // databases, and knows nothing of apps, presets or originals.
@@ -42,7 +45,7 @@ const (
 // Config configures a Handler.
 type Config struct {
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // a key that can read only */private/* and */public/* of every bucket
+	AccessKeyID, SecretAccessKey string // a key that can read only */private/*, */download/* and */public/* of every bucket
 	Ring                         token.Ring
 	Hosts                        map[string][]string // lower-case host name (no port) -> namespaces served on it; required
 	Buckets                      map[string]string   // namespace -> its app's bucket; required for every served namespace
@@ -143,8 +146,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := o.key()
 	cacheControl := publicCacheControl
 	var dl *string // a private file's unsigned download name
-	if o.area == "private" {
-		if err := h.authorize(r, key); err != nil {
+	if o.area != layout.AreaPublic {
+		if err := h.authorize(r, o.area, key); err != nil {
 			h.cfg.Logger.Debug("media-gateway: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
@@ -201,15 +204,31 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	if strings.HasPrefix(o.id, "_") || !slices.Contains(h.cfg.Hosts[strings.ToLower(host)], o.ns) {
 		return object{}, false
 	}
-	return o, o.area == "public" && layout.ValidPublicName(o.name) || o.area == "private" && layout.ValidBlobName(o.name)
+	switch o.area {
+	case layout.AreaPublic:
+		return o, layout.ValidPublicName(o.name)
+	case layout.AreaPrivate:
+		return o, layout.ValidBlobName(o.name)
+	case layout.AreaDownload:
+		return o, layout.ValidBlobRef(layout.BlobRef(layout.AreaDownload, o.name))
+	}
+	return object{}, false
 }
 
 var errNoToken = errors.New("no token")
 
-// authorize accepts the URL token or any mt cookie (a browser may send
-// several) of key's item.
-func (h *Handler) authorize(r *http.Request, key string) (err error) {
+// authorize accepts, for a private key, the URL token or any mt cookie (a
+// browser may send several) of its item; for a download key only the URL's
+// download token of that key.
+func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	now := time.Now()
+	if area == layout.AreaDownload {
+		t := r.URL.Query().Get("t")
+		if t == "" {
+			return errNoToken
+		}
+		return h.cfg.Ring.VerifyDownload(t, key, now)
+	}
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)

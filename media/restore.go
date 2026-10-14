@@ -1,6 +1,7 @@
 package media
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -65,7 +66,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	versions := make(map[string]ObjectVersion, len(snap.Objects))
 	for _, object := range snap.Objects {
 		key, ok := layout.Parse(object.Key)
-		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaTemp) ||
+		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp) ||
 			object.VersionID == "" || object.VersionID == "null" {
 			return nil, errors.New("media: snapshot contains an invalid object version")
 		}
@@ -171,12 +172,13 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		destinations := make([]string, len(sources))
 		for i, key := range sources {
 			parsed, _ := layout.Parse(key)
-			name := layout.StagedPrefix + uuid.NewString()
-			if parsed.Area == layout.AreaPrivate {
+			from, name, to := parsed.Name, layout.StagedPrefix+uuid.NewString(), ""
+			if parsed.Area != layout.AreaTemp {
 				digest, _ := layout.BlobDigest(parsed.Name)
 				name = layout.BlobName(digest, uuid.NewString())
+				from, to = layout.BlobRef(parsed.Area, parsed.Name), layout.BlobRef(parsed.Area, name)
 			}
-			remap[parsed.Name] = name
+			remap[from] = cmp.Or(to, name)
 			destinations[i] = item.Prefix() + parsed.Area + "/" + name
 		}
 		if err := j.cfg.Journal.allocateRestore(ctx, mutation.commit, next.Incarnation, destinations); err != nil {

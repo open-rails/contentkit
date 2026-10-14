@@ -27,6 +27,7 @@ import (
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // gallery commits n pages and a cover to gallery item id and produces them.
@@ -269,66 +270,78 @@ func TestReadCookieDelivery(t *testing.T) {
 	}
 }
 
-// An item's token opens every private file of the item, in both delivery
-// modes: ServeOriginals and HostOnly decide what a generic read lists, not
-// what the token reaches. A HostOnly file's URL comes from Grant.HostURL,
-// with the item token, and only with access.
-func TestItemTokenIsAllOrNothing(t *testing.T) {
-	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) { c.Kinds[0].Private[2].HostOnly = true })
+// An item's token opens every file in the item's private/, in both delivery
+// modes, and none in download/: the originals, full-resolution pages and zip
+// there open only to a download token of their one key, until it expires.
+// Reads never list them; the web renditions still load.
+func TestDownloadAreaOpensOnlyToDownloadTokens(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds[0].Private[2].HostOnly = true
+		c.Kinds[0].Downloads = []string{"originals/{name}", "high", "zip"}
+	})
 	f.visible(1)
 	ref := f.gallery(1, 1)
 	ctx := context.Background()
 	item, _ := f.reg.Item(ref)
 	m, _, _ := f.ms.Get(ctx, ref)
 	original, _ := m.Get("originals/000.png")
+	high, _ := m.Get("high/000.webp")
 	archive, _ := m.Get("download/pages.zip")
+	for _, file := range []media.File{original, high, archive} {
+		if area, _, _ := layout.SplitBlobRef(file.Blob); area != layout.AreaDownload {
+			t.Fatalf("%s is in %s/", file.Path, area)
+		}
+	}
 	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
 		rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: mode, CookieDomain: "doujins.test", SigningKey: signKey}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.visible(1)
 		read, err := rd.Read(ctx, ref, f.editor, media.ReadOptions{})
-		if err != nil || (read.Cookie != nil) != (mode == media.DeliverCookie) || len(read.Files) != 2 || read.Files[0].URL == "" {
-			t.Fatalf("%s read lists the page's outputs only: %+v %v", mode, read, err)
+		if err != nil || len(read.Files) != 1 || read.Files[0].Path != "thumb/000.webp" || read.Files[0].URL == "" {
+			t.Fatalf("%s read lists the web rendition only: %+v %v", mode, read, err)
 		}
 		var hdr []string
 		if read.Cookie != nil {
 			hdr = []string{"Cookie", media.CookieName + "=" + read.Cookie.Value}
 		}
+		if status, body, _ := f.fetch(read.Files[0].URL, hdr...); status != http.StatusOK || body != string(png(100)) {
+			t.Fatalf("%s: the web rendition: %d", mode, status)
+		}
 		u, _ := url.Parse(read.Files[0].URL)
-		for _, file := range []media.File{original, archive} {
+		for _, file := range []media.File{original, high, archive} {
 			key, _ := item.Blob(file.Blob)
 			u.Path = "/v1/" + key
-			if status, _, _ := f.fetch(u.String(), hdr...); status != http.StatusOK {
-				t.Fatalf("%s: the item token did not open %s: %d", mode, file.Path, status)
+			if status, _, _ := f.fetch(u.String(), hdr...); status != http.StatusNotFound {
+				t.Fatalf("%s: the item token opened %s: %d", mode, file.Path, status)
 			}
 		}
-		g, err := rd.Grant(ctx, ref, f.editor)
-		if err != nil {
-			t.Fatal(err)
+	}
+	dl, exp, err := f.rd.DownloadURL(item, archive, "A Title.zip", time.Minute)
+	if err != nil || time.Until(exp) > time.Minute || !strings.Contains(dl, "t=") {
+		t.Fatalf("download URL %q %v %v", dl, exp, err)
+	}
+	if status, body, hdr := f.fetch(dl); status != http.StatusOK || body != string(png(100)) || hdr.Get("Content-Disposition") != layout.Attachment("A Title.zip") {
+		t.Fatalf("download: %d %v", status, hdr)
+	}
+	u, _ := url.Parse(dl)
+	for _, file := range []media.File{original, high} {
+		key, _ := item.Blob(file.Blob)
+		u.Path = "/v1/" + key
+		if status, _, _ := f.fetch(u.String()); status != http.StatusNotFound {
+			t.Fatalf("the archive's token opened %s: %d", file.Path, status)
 		}
-		if _, err := g.URL(archive, true); !errors.Is(err, media.ErrNotAllowed) {
-			t.Fatalf("%s: a generic read's URL for a HostOnly file: %v", mode, err)
-		}
-		download, err := g.HostURL(archive.Path, true)
-		if err != nil || !strings.Contains(download, "t=") {
-			t.Fatalf("%s host URL %q %v", mode, download, err)
-		}
-		if status, _, hdr := f.fetch(download); status != http.StatusOK || !strings.HasPrefix(hdr.Get("Content-Disposition"), "attachment") {
-			t.Fatalf("%s host archive: %d %v", mode, status, hdr)
-		}
-		if _, err := g.HostURL("high/000.webp", false); !errors.Is(err, media.ErrNotAllowed) {
-			t.Fatalf("%s: HostURL for a listed preset: %v", mode, err)
-		}
-		f.res.set(cid(1), resolve.Resolution{Visible: true})
-		none, err := rd.Grant(ctx, ref, f.editor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := none.HostURL(archive.Path, true); !errors.Is(err, media.ErrNotAllowed) {
-			t.Fatalf("%s host archive without access: %v", mode, err)
-		}
+	}
+	expired, _, err := f.rd.DownloadURL(item, archive, "", -time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _ := f.fetch(expired); status != http.StatusNotFound {
+		t.Fatalf("an expired download: %d", status)
+	}
+	thumb, _ := m.Get("thumb/000.webp")
+	if _, _, err := f.rd.DownloadURL(item, thumb, "", time.Minute); !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("a download URL of a private file: %v", err)
 	}
 }
 

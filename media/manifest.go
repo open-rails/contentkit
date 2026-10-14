@@ -383,7 +383,7 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %d: empty or duplicate path %q", i, f.Path)
 		case f.Staged != "" && (!layout.ValidStagedName(f.Staged) || f.Blob != "" || f.Frame != nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid staged upload %q", f.Path, f.Staged)
-		case f.Blob != "" && !layout.ValidBlobName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
+		case f.Blob != "" && !layout.ValidBlobRef(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
 		case f.Track != nil && f.Track.Index != "" && !layout.ValidBlobName(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)

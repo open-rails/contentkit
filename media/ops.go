@@ -90,8 +90,8 @@ func (op Op) validate() error {
 	}
 	switch op.Op {
 	case OpPut:
-		if !layout.ValidBlobName(op.Blob) && !layout.ValidStagedName(op.Blob) {
-			return bad("blob must be sha256-{hex}-{uuid} or a staged u-{uuid}")
+		if !layout.ValidBlobRef(op.Blob) && !layout.ValidStagedName(op.Blob) {
+			return bad("blob must be a blob reference or a staged u-{uuid}")
 		}
 	case OpMove:
 		if op.Index == nil {
@@ -304,6 +304,8 @@ func (o *opRun) put(op Op) error {
 	f := File{Path: stem + "." + ext, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached, CreateID: op.CreateID}
 	if layout.ValidStagedName(op.Blob) {
 		f.Staged = op.Blob
+	} else if area, _, _ := layout.SplitBlobRef(op.Blob); area != k.Area(op.Path, "") {
+		return uploadErr(CodeInvalid, "upload %q: the blob is in %s/, the path's files in %s/", op.Path, area, k.Area(op.Path, ""))
 	} else {
 		f.Blob = op.Blob
 	}

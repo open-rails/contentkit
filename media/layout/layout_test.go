@@ -23,6 +23,7 @@ func TestParse(t *testing.T) {
 		"d/gallery/1/public/" + public:      {Namespace: "d", Kind: "gallery", ID: "1", Area: layout.AreaPublic, Name: public},
 		"d/gallery/1/v/manifest.json":       {Namespace: "d", Kind: "gallery", ID: "1", Version: "v", Area: layout.AreaManifest},
 		"d/gallery/1/v/private/" + blob:     {Namespace: "d", Kind: "gallery", ID: "1", Version: "v", Area: layout.AreaPrivate, Name: blob},
+		"d/gallery/1/v/download/" + blob:    {Namespace: "d", Kind: "gallery", ID: "1", Version: "v", Area: layout.AreaDownload, Name: blob},
 		"d/gallery/1/v/public/c.webp":       {Namespace: "d", Kind: "gallery", ID: "1", Version: "v", Area: layout.AreaPublic, Name: "c.webp"},
 		"d/gallery/1/v/temp/u-1":            {Namespace: "d", Kind: "gallery", ID: "1", Version: "v", Area: layout.AreaTemp, Name: "u-1"},
 	} {
@@ -35,7 +36,8 @@ func TestParse(t *testing.T) {
 		"d/gallery/1/originals/" + hash, "d/../1/manifest.json", "d/gallery/1/other/x", "d/gallery/1/public/.x",
 		"d/gallery/1/public/a b", "d/gallery/1/private/SHA256-x", "d/gallery/1/public/" + strings.Repeat("c", 166),
 		"d/gallery/1/temp/" + public, "d/gallery/1/private/" + public, "d/gallery/1/v/w/manifest.json", "d/gallery/1/_v/manifest.json",
-		"d/gallery/1/public/private/" + blob, "d/gallery/1/v/private/x", "d/gallery/1/v", "d/gallery/1/v/"} {
+		"d/gallery/1/public/private/" + blob, "d/gallery/1/v/private/x", "d/gallery/1/v", "d/gallery/1/v/",
+		"d/gallery/1/download/" + hash, "d/gallery/1/download/download/" + blob, "d/gallery/1/download/manifest.json"} {
 		if _, ok := layout.Parse(bad); ok {
 			t.Errorf("parsed %q", bad)
 		}
@@ -45,6 +47,16 @@ func TestParse(t *testing.T) {
 		if k, got := layout.ParseFolder(prefix); got != ok || ok && k.Folder() != prefix {
 			t.Errorf("ParseFolder(%q) = %+v %v", prefix, k, got)
 		}
+	}
+	for ref, want := range map[string][2]string{blob: {layout.AreaPrivate, blob}, hash: {layout.AreaPrivate, hash},
+		"download/" + blob: {layout.AreaDownload, blob}, "download/" + hash: {}, "private/" + blob: {}, "download/x": {}} {
+		area, name, ok := layout.SplitBlobRef(ref)
+		if ok != (want[0] != "") || ok && (area != want[0] || name != want[1] || layout.BlobRef(area, name) != ref) {
+			t.Errorf("SplitBlobRef(%q) = %q %q %v", ref, area, name, ok)
+		}
+	}
+	if layout.ValidBlobName("download/" + blob) {
+		t.Error("a reference passed as a name")
 	}
 	if _, ok := layout.ParseSHA256Name(hash[:len(hash)-1] + "A"); ok {
 		t.Error("upper-case hex accepted")

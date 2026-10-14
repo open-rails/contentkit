@@ -45,6 +45,7 @@ var codes = []ErrorCode{
 	{"incomplete", http.StatusConflict, "A multipart upload is missing parts.", "The upload is missing parts."},
 	{"not_joinable", http.StatusConflict, "The group has no free offer to join: it sells its membership, or nothing.", "This group isn't open to join right now."},
 	{CodeLimitReached, http.StatusConflict, "The owner already has as many groups of the kind as the site allows (max_per_owner).", "You already have as many of these as the site allows."},
+	{"no_download", http.StatusConflict, "The version has no file its kind's download serves: nothing uploaded, or its upload failed or was dropped.", "This version has nothing to download."},
 	{"not_uploaded", http.StatusConflict, "A commit names an upload that has not landed; `blobs` lists the ones to upload again.", "A file did not finish uploading; upload it again."},
 	{"too_many_files", http.StatusConflict, "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit.", "Too many files."},
 	{"gone", http.StatusGone, "The content was removed.", "This content was removed."},

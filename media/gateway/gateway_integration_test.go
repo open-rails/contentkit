@@ -83,6 +83,8 @@ func seed(t *testing.T) *fixture {
 		"gallery/456/temp/" + sha("t"):             "temp",
 		"gallery/456/v1/private/" + sha("v"):       "version",
 		"gallery/456/v1/public/page-1.webp":        "version page",
+		"gallery/456/download/" + sha("o"):         "original",
+		"gallery/456/v1/download/" + sha("z"):      "archive",
 	} {
 		if _, err := env.Store.Put(context.Background(), f.ns+"/"+key, strings.NewReader(body), int64(len(body)),
 			media.PutOptions{ContentType: "image/webp"}); err != nil {
@@ -320,6 +322,38 @@ func TestGateway(t *testing.T) {
 			"/" + f.ns + "/gallery/456/private/" + sha("a"),
 		} {
 			t.Run(p, func(t *testing.T) { denied(t, do(t, srv, "GET", withQuery(p, "t", item), cookie(item))) })
+		}
+	})
+
+	// download/ opens only to a URL download token of its one key: never the
+	// item token or cookie, and the token opens nothing else.
+	t.Run("download area", func(t *testing.T) {
+		original, archive := f.path("gallery/456/download/"+sha("o")), f.path("gallery/456/v1/download/"+sha("z"))
+		dlOriginal := cur.Sign(token.DownloadScope(f.key("gallery/456/download/"+sha("o"))), time.Now().Add(5*time.Minute))
+		r := do(t, srv, "GET", withQuery(original, "t", dlOriginal, "dl", "Title [A1].webp"), nil)
+		expect(t, r, 200, "original")
+		if r.header.Get("Content-Disposition") != layout.Attachment("Title [A1].webp") {
+			t.Fatalf("download headers: %v", r.header)
+		}
+		version := cur.Sign(token.ItemScope(f.ns, "gallery", "456", "v1"), exp)
+		for name, r := range map[string]result{
+			"item token":            do(t, srv, "GET", withQuery(original, "t", item), nil),
+			"item cookie":           do(t, srv, "GET", original, cookie(item)),
+			"download cookie":       do(t, srv, "GET", original, cookie(dlOriginal)),
+			"version item token":    do(t, srv, "GET", withQuery(archive, "t", version), cookie(version)),
+			"another key's token":   do(t, srv, "GET", withQuery(archive, "t", dlOriginal), nil),
+			"download on private":   do(t, srv, "GET", withQuery(blobA, "t", dlOriginal), nil),
+			"expired":               do(t, srv, "GET", withQuery(original, "t", cur.Sign(token.DownloadScope(f.key("gallery/456/download/"+sha("o"))), time.Now().Add(-time.Second))), nil),
+			"legacy name":           do(t, srv, "GET", withQuery(f.path("gallery/456/download/sha256-"+strings.Repeat("0", 64)), "t", dlOriginal), nil),
+			"no token":              do(t, srv, "GET", original, nil),
+			"folder download scope": do(t, srv, "GET", withQuery(original, "t", cur.Sign(token.DownloadScope(f.key("gallery/456/download/")), exp)), nil),
+		} {
+			t.Run(name, func(t *testing.T) { denied(t, r) })
+		}
+		dlArchive := cur.Sign(token.DownloadScope(f.key("gallery/456/v1/download/"+sha("z"))), time.Now().Add(5*time.Minute))
+		expect(t, do(t, srv, "GET", withQuery(archive, "t", dlArchive), nil), 200, "archive")
+		for _, p := range []string{f.path("gallery/456/temp/" + sha("t")), f.path("gallery/456/manifest.json")} {
+			denied(t, do(t, srv, "GET", withQuery(p, "t", cur.Sign(token.DownloadScope(f.key(strings.TrimPrefix(p, "/v1/"+f.ns+"/"))), exp)), nil))
 		}
 	})
 

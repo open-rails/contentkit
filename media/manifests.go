@@ -291,12 +291,14 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 			key, _ := item.Blob(b)
 			keep[key] = true
 		}
-		for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
-			if err != nil {
-				return nil, err
-			}
-			if !keep[obj.Key] {
-				keys = append(keys, obj.Key)
+		for _, prefix := range []string{item.PrivatePrefix(), item.DownloadPrefix()} {
+			for obj, err := range m.store.List(ctx, prefix) {
+				if err != nil {
+					return nil, err
+				}
+				if !keep[obj.Key] {
+					keys = append(keys, obj.Key)
+				}
 			}
 		}
 		allocated, err := m.allocationKeys(ctx, item)
@@ -304,7 +306,7 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 			return nil, err
 		}
 		for _, key := range allocated {
-			if strings.HasPrefix(key, item.PrivatePrefix()) && !keep[key] && !slices.Contains(keys, key) {
+			if (strings.HasPrefix(key, item.PrivatePrefix()) || strings.HasPrefix(key, item.DownloadPrefix())) && !keep[key] && !slices.Contains(keys, key) {
 				keys = append(keys, key)
 			}
 		}

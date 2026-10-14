@@ -18,20 +18,24 @@ import (
 var ErrAllocationRetired = errors.New("media: file allocation is missing or retired")
 
 // NewBlobs records ownership, in one journal step, before a writer sends
-// bytes to fresh private names: one per digest, in order. The digest
-// identifies the bytes; the UUID isolates their lifetime. This does not
-// publish the objects: a later manifest edit must adopt them.
-func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, sums [][]byte) ([]string, error) {
+// bytes to fresh allocations in area (private/ or download/, Kind.Area): one
+// blob reference per digest, in order. The digest identifies the bytes; the
+// UUID isolates their lifetime. This does not publish the objects: a later
+// manifest edit must adopt them.
+func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, area string, sums [][]byte) ([]string, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
+	}
+	if area != layout.AreaPrivate && area != layout.AreaDownload {
+		return nil, fmt.Errorf("media: no blobs in area %q", area)
 	}
 	names, keys := make([]string, len(sums)), make([]string, len(sums))
 	for i, sum := range sums {
 		if len(sum) != sha256.Size {
 			return nil, errors.New("media: blob digest must be SHA-256")
 		}
-		names[i] = layout.BlobName(sum, uuid.NewString())
+		names[i] = layout.BlobRef(area, layout.BlobName(sum, uuid.NewString()))
 		keys[i], _ = item.Blob(names[i])
 	}
 	if len(keys) == 0 {

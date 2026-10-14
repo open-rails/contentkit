@@ -115,8 +115,8 @@ type MediaConfig struct {
 	ReadLimit   RateLimitConfig `yaml:"read_limit" json:"read_limit"`
 	// Issuance limits the items each viewer opens per hour.
 	Issuance IssuanceConfig `yaml:"issuance" json:"issuance"`
-	// Downloads are the version download quotas (anonymous, user, tiers);
-	// Deps.Redis shares them.
+	// Downloads are the version download quotas (anonymous, user, tiers)
+	// and how long a file download's URL lasts; Deps.Redis shares them.
 	Downloads versions.Downloads `yaml:"downloads" json:"downloads"`
 }
 
@@ -269,6 +269,9 @@ type Deps struct {
 	// PurgePublic hears of public media URLs overwritten or deleted, for a
 	// CDN purge.
 	PurgePublic func(ctx context.Context, urls []string)
+	// Watermark marks the pages of page downloads that their kind's
+	// download.watermark names; nil marks none.
+	Watermark versions.Watermarker
 
 	// Moderator screens comments and content text; nil publishes everything.
 	Moderator content.ContentModerator

@@ -4,6 +4,7 @@
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
 //	                       /private/sha256-{hex}  a pre-v0.68 item's blob, kept by the upgrade
+//	                       /download/sha256-{hex}-{uuid} originals, full-resolution files and archives: only a download token opens them
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
 //	{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
@@ -23,6 +24,7 @@ import (
 const (
 	AreaManifest = "manifest"
 	AreaPrivate  = "private"
+	AreaDownload = "download"
 	AreaPublic   = "public"
 	AreaTemp     = "temp"
 )
@@ -66,6 +68,7 @@ func Parse(key string) (Key, bool) {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
 	case len(rest) == 2 && rest[0] == AreaPrivate && ValidBlobName(rest[1]),
+		len(rest) == 2 && rest[0] == AreaDownload && ValidBlobRef(BlobRef(AreaDownload, rest[1])),
 		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
 		len(rest) == 2 && rest[0] == AreaTemp && ValidSegment(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
@@ -95,7 +98,7 @@ func ParseFolder(prefix string) (Key, bool) {
 // no area, manifest or reserved "_" name.
 func ValidVersion(s string) bool {
 	switch s {
-	case ManifestName, AreaPrivate, AreaPublic, AreaTemp:
+	case ManifestName, AreaPrivate, AreaDownload, AreaPublic, AreaTemp:
 		return false
 	}
 	return ValidSegment(s) && s[0] != '_'
@@ -149,6 +152,36 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 	return sum, err == nil
 }
 
+// A blob reference (a manifest's File.Blob) names an allocation in its item
+// folder: "sha256-{hex}-{uuid}" in private/, "download/sha256-{hex}-{uuid}"
+// in download/.
+
+// BlobRef is the reference of an allocation named name in area.
+func BlobRef(area, name string) string {
+	if area == AreaDownload {
+		return AreaDownload + "/" + name
+	}
+	return name
+}
+
+// SplitBlobRef is a blob reference's area and allocation name.
+func SplitBlobRef(ref string) (area, name string, ok bool) {
+	area, name = AreaPrivate, ref
+	if n, dl := strings.CutPrefix(ref, AreaDownload+"/"); dl {
+		area, name = AreaDownload, n
+		if len(n) == len(SHA256Prefix)+64 {
+			return "", "", false // download/ holds no pre-v0.68 blobs
+		}
+	}
+	return area, name, ValidBlobName(name)
+}
+
+// ValidBlobRef accepts a blob reference.
+func ValidBlobRef(ref string) bool {
+	_, _, ok := SplitBlobRef(ref)
+	return ok
+}
+
 // BlobName names one physical allocation of SHA-256 bytes. A later write,
 // even of identical bytes, must receive a different allocation UUID.
 func BlobName(sum []byte, allocation string) string { return SHA256Name(sum) + "-" + allocation }
@@ -156,12 +189,19 @@ func BlobName(sum []byte, allocation string) string { return SHA256Name(sum) + "
 // ValidBlobName accepts a private allocation: "sha256-{hex}-{uuid}", or a
 // legacy "sha256-{hex}" the upgrade adopted. New writes always get a UUID.
 func ValidBlobName(name string) bool {
-	_, ok := BlobDigest(name)
+	_, ok := nameDigest(name)
 	return ok
 }
 
-// BlobDigest returns a blob name's content digest.
-func BlobDigest(name string) ([]byte, bool) {
+// BlobDigest returns the content digest of a blob reference.
+func BlobDigest(ref string) ([]byte, bool) {
+	if _, name, ok := SplitBlobRef(ref); ok {
+		return nameDigest(name)
+	}
+	return nil, false
+}
+
+func nameDigest(name string) ([]byte, bool) {
 	const digestEnd = len(SHA256Prefix) + 64
 	if len(name) == digestEnd {
 		return ParseSHA256Name(name)

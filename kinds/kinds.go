@@ -6,6 +6,7 @@ package kinds
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -76,6 +77,89 @@ type Kind struct {
 	// DraftTTL expires drafts that never went live this long after their
 	// creation: they are deleted, media included. Zero keeps them.
 	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
+	// Download is what a version's download serves; nil serves its
+	// presentation's default (Download.Serves).
+	Download *Download `json:"download,omitempty" yaml:"download"`
+}
+
+// Download is what a kind's version download serves. Only entitled viewers
+// download, each download charged to the viewer's download quota.
+type Download struct {
+	// Off: the kind's versions have no download.
+	Off bool `json:"off,omitempty" yaml:"off"`
+	// Serve is DownloadPages, DownloadOriginal or a private MP4 preset of the
+	// kind's media ("mp4-1080"); empty is the presentation's default.
+	Serve string `json:"serve,omitempty" yaml:"serve"`
+	// Watermark marks pages of a page download through the host's
+	// watermarker; nil marks none.
+	Watermark *Watermark `json:"watermark,omitempty" yaml:"watermark"`
+}
+
+// What a download serves.
+const (
+	// DownloadPages is a zip of the version's pages (the media kind's
+	// Publish.Download), the default of readers.
+	DownloadPages = "pages"
+	// DownloadOriginal is the version's video as uploaded (the upload its HLS
+	// ladder encodes), the default of players.
+	DownloadOriginal = "original"
+)
+
+// Serves is what k's download serves: its Serve, else its presentation's
+// default; "" serves none.
+func (k Kind) Serves() string {
+	d := k.Download
+	switch {
+	case d != nil && d.Off:
+		return ""
+	case d != nil && d.Serve != "":
+		return d.Serve
+	case k.Presentation == "reader":
+		return DownloadPages
+	case k.Presentation == "player":
+		return DownloadOriginal
+	}
+	return ""
+}
+
+// Watermark marks Pages of a page download for a version locked behind one
+// of Tiers (any version without Tiers) in one of Groups (any without
+// Groups). Signed-out downloads are never marked.
+type Watermark struct {
+	// Pages are page numbers from 1; pages past the version's end are skipped.
+	Pages  []int      `json:"pages" yaml:"pages"`
+	Tiers  []string   `json:"tiers,omitempty" yaml:"tiers"`
+	Groups []GroupRef `json:"groups,omitempty" yaml:"groups"`
+}
+
+func (d Download) validate(k Kind, tiers []string) error {
+	if d.Off && (d.Serve != "" || d.Watermark != nil) {
+		return errors.New("download is off: it serves nothing and marks nothing")
+	}
+	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal && !routeRE.MatchString(d.Serve) {
+		return fmt.Errorf("download serves %q: pages, original or a preset name", d.Serve)
+	}
+	w := d.Watermark
+	if w == nil {
+		return nil
+	}
+	if k.Presentation == "player" || k.Serves() != DownloadPages {
+		return errors.New("download watermark marks pages: the kind must serve pages, never a video")
+	}
+	if len(w.Pages) == 0 {
+		return errors.New("download watermark needs pages")
+	}
+	for i, p := range w.Pages {
+		if p < 1 || slices.Contains(w.Pages[:i], p) {
+			return fmt.Errorf("download watermark page %d: pages count from 1, each once", p)
+		}
+	}
+	for _, t := range w.Tiers {
+		if !slices.Contains(tiers, t) {
+			return fmt.Errorf("download watermark names unknown tier %q", t)
+		}
+	}
+	return nil
 }
 
 // Locked is what a viewer who does not open content (or a version) still
@@ -327,6 +411,11 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
 			}
 		}
+		if d := k.Download; d != nil {
+			if err := d.validate(k, c.Tiers); err != nil {
+				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
+			}
+		}
 	}
 	for _, r := range c.groupRefs() {
 		if _, ok := c.GroupKinds[r.Kind]; !ok || r.Slug == "" {
@@ -353,6 +442,11 @@ func (c Config) groupRefs() []GroupRef {
 	}
 	for _, f := range c.ContentFilters {
 		out = append(out, f.Group)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Kinds)) {
+		if d := c.Kinds[name].Download; d != nil && d.Watermark != nil {
+			out = append(out, d.Watermark.Groups...)
+		}
 	}
 	return out
 }

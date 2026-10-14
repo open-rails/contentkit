@@ -54,11 +54,14 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.Accepted(Pending{})}},
 		Serve: httpapi.H(handler.fork)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.",
-		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.Accepted(Pending{})},
-		Errors:    []string{httpapi.CodeForbidden, httpapi.CodeRateLimited}},
+		Doc:       "A version's download, as its kind's download serves it: its pages as a zip (marked where the kind's watermark says), or its file (the original or a rendition) as a FileDownload whose short-lived URL the media host serves as an attachment. Every segment released and the version open; each download is charged to the viewer's download quota. 202 while it is prepared; 409 no_download when the version has no file to serve.",
+		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
+		Errors:    []string{httpapi.CodeForbidden, httpapi.CodeRateLimited, CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
 }
+
+// CodeNoDownload is a version without the file its kind's download serves.
+const CodeNoDownload = "no_download"
 
 // Handler serves the versions module's routes, each behind its tier's gate.
 func (s *Service) Handler(a auth.Authenticator, log *slog.Logger) (http.Handler, error) {
@@ -123,11 +126,16 @@ func (h handler) fork(w http.ResponseWriter, r *http.Request) {
 
 func (h handler) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	a, err := h.s.Download(r.Context(), gate.Actor(r.Context()), target(r))
+	d, err := h.s.Download(r.Context(), gate.Actor(r.Context()), target(r))
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
+	if d.File != nil {
+		writeJSON(w, http.StatusOK, d.File)
+		return
+	}
+	a := d.Archive
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
 	if a.Size > 0 {
@@ -160,6 +168,8 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusTooManyRequests, errorReply{Error: "download quota reached", Code: httpapi.CodeRateLimited, RetryAfter: retry})
 	case errors.Is(err, ErrNotFound):
 		writeJSON(w, http.StatusNotFound, errorReply{Error: "not found", Code: httpapi.CodeNotFound})
+	case errors.Is(err, ErrNoDownload):
+		writeJSON(w, http.StatusConflict, errorReply{Error: httpapi.Message(CodeNoDownload), Code: CodeNoDownload})
 	case errors.Is(err, ErrForbidden):
 		writeJSON(w, http.StatusForbidden, errorReply{Error: "not allowed", Code: httpapi.CodeForbidden})
 	case errors.Is(err, ErrInvalid):

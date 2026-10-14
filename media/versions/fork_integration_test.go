@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -116,14 +117,16 @@ func TestReaderMeta(t *testing.T) {
 	}
 }
 
-// Downloads stream the prepared archive, or the host's marked copy, to
-// viewers who open every page, within their bucket's quota.
+// Downloads stream the prepared archive, or a copy with the pages the kind's
+// watermark names marked by the host, to viewers who open every page, within
+// their bucket's quota.
 func TestDownload(t *testing.T) {
-	mark := &marker{}
-	s := newSite(t, siteOptions{watermark: mark, downloads: versions.Downloads{
+	s := newSite(t, siteOptions{watermark: marker{}, downloads: versions.Downloads{
 		User:  []versions.Quota{{Limit: 5, Per: time.Hour}},
-		Tiers: []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}}})
-	mark.who = s.fan.ID
+		Tiers: []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}},
+		gallery: func(k *kinds.Kind) {
+			k.Download = &kinds.Download{Watermark: &kinds.Watermark{Pages: []int{2, 9}, Tiers: []string{"premium"}}}
+		}})
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
 	v := s.version(c)
 	ref := s.ref("gallery", v)
@@ -163,11 +166,14 @@ func TestDownload(t *testing.T) {
 	if resp, _ := s.call(s.fan, "GET", path, nil); resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("a download past the premium quota: %d", resp.StatusCode)
 	}
-	// Without marks, the prepared archive: an editor's, in the user bucket.
-	a, err := s.svc.Download(s.ctx, s.creator, v)
+	// A version no longer locked behind premium is unmarked: the prepared
+	// archive, here an editor's in the user bucket.
+	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"public"}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
+	d, err := s.svc.Download(s.ctx, s.creator, v)
 	if err != nil {
 		t.Fatal(err)
 	}
+	a := d.Archive
 	var buf bytes.Buffer
 	if _, err := a.WriteTo(&buf); err != nil {
 		t.Fatal(err)

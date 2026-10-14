@@ -67,7 +67,7 @@ type Options struct {
 	Gate      *access.Gate
 	Facets    Facets
 	Others    Others      // nil refuses every other kind
-	Watermark Watermarker // nil serves prepared archives
+	Watermark Watermarker // marks the pages kinds.Watermark names; nil marks none
 	Downloads Downloads
 	Logger    *slog.Logger
 	Now       func() time.Time
@@ -78,6 +78,7 @@ type Media struct {
 	Manifests *media.Manifests
 	Uploads   *media.Uploads
 	Jobs      *media.Jobs
+	Reader    *media.Reader // signs file downloads; nil serves none
 }
 
 // Service is media for content versions.
@@ -256,6 +257,9 @@ var (
 	// ErrNotReady is a version whose media is still processing, being
 	// forked or imported, or not yet published.
 	ErrNotReady = errors.New("versions: media not ready")
+	// ErrNoDownload is a version without the file its kind's download
+	// serves: nothing uploaded, or an upload that failed or was dropped.
+	ErrNoDownload = errors.New("versions: no download")
 	// ErrForbidden is what the viewer sees but may not do.
 	ErrForbidden = errors.New("versions: forbidden")
 	// ErrInvalid is a malformed request.

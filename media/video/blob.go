@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Blobs above multipartAbove upload in partSize parts (a 2 h 4K rendition
@@ -39,7 +40,7 @@ func (e *Encoder) checkOutputs(ctx context.Context, item media.Item, blobs ...st
 
 // put hashes a file and writes a fresh private allocation. Already published
 // outputs are reused by their producers, not by sharing an unowned object key.
-func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string, fp *fileProgress) (string, int64, error) {
+func (e *Encoder) put(ctx context.Context, item media.Item, area, path, contentType string, fp *fileProgress) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
@@ -50,7 +51,7 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	if err != nil {
 		return "", 0, err
 	}
-	return e.putBlob(ctx, item, f, size, h.Sum(nil), contentType, fp)
+	return e.putBlob(ctx, item, area, f, size, h.Sum(nil), contentType, fp)
 }
 
 // putJSON stores v as a private JSON blob (a track index).
@@ -60,12 +61,12 @@ func (e *Encoder) putJSON(ctx context.Context, item media.Item, v any) (string, 
 		return "", err
 	}
 	sum := sha256.Sum256(b)
-	name, _, err := e.putBlob(ctx, item, bytes.NewReader(b), int64(len(b)), sum[:], "application/json", nil)
+	name, _, err := e.putBlob(ctx, item, layout.AreaPrivate, bytes.NewReader(b), int64(len(b)), sum[:], "application/json", nil)
 	return name, err
 }
 
-func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
-	names, err := e.ms.NewBlobs(ctx, item.Ref(), [][]byte{sum})
+func (e *Encoder) putBlob(ctx context.Context, item media.Item, area string, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
+	names, err := e.ms.NewBlobs(ctx, item.Ref(), area, [][]byte{sum})
 	if err != nil {
 		return "", 0, err
 	}

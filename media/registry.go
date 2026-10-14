@@ -204,15 +204,29 @@ func (i Item) Kind() *Kind                { return i.kind }
 func (i Item) Prefix() string        { return i.prefix }
 func (i Item) ManifestKey() string   { return i.prefix + layout.ManifestName }
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
-func (i Item) PublicPrefix() string  { return i.prefix + layout.AreaPublic + "/" }
-func (i Item) TempPrefix() string    { return i.prefix + layout.AreaTemp + "/" }
 
-// Blob is the key of a private allocation ("sha256-{hex}-{uuid}").
-func (i Item) Blob(name string) (string, error) {
-	if !layout.ValidBlobName(name) {
-		return "", fmt.Errorf("media: invalid blob name %q", name)
+// DownloadPrefix is the folder's download/: files only a download token opens.
+func (i Item) DownloadPrefix() string { return i.prefix + layout.AreaDownload + "/" }
+func (i Item) PublicPrefix() string   { return i.prefix + layout.AreaPublic + "/" }
+func (i Item) TempPrefix() string     { return i.prefix + layout.AreaTemp + "/" }
+
+// Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
+// in private/, "download/sha256-{hex}-{uuid}" in download/.
+func (i Item) Blob(ref string) (string, error) {
+	area, name, ok := layout.SplitBlobRef(ref)
+	if !ok {
+		return "", fmt.Errorf("media: invalid blob reference %q", ref)
 	}
-	return i.PrivatePrefix() + name, nil
+	return i.prefix + area + "/" + name, nil
+}
+
+// BlobRef is the reference of key, an allocation in the folder.
+func (i Item) BlobRef(key string) (string, bool) {
+	k, ok := layout.Parse(key)
+	if !ok || k.Folder() != i.prefix || k.Area != layout.AreaPrivate && k.Area != layout.AreaDownload {
+		return "", false
+	}
+	return layout.BlobRef(k.Area, k.Name), true
 }
 
 // Staged is the key of a staged upload ("u-{uuid}"), in temp/ until placed.
