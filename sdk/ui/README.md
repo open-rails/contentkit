@@ -247,11 +247,13 @@ useCanonicalContent(video.link, { title: video.title, image: posterURL, location
 ```
 
 Once a content page's link arrives, replaces the address with its canonical
-path (code spelling, merged code, current slug) through the provider's
-`navigate`, else `history.replaceState`, and keeps `<link rel=canonical>`,
+path (language prefix, the reader's when the address has none; code
+spelling, merged code, current slug; the query, `?v=` included, kept) through
+the provider's `navigate`, else `history.replaceState`, and keeps `<link rel=canonical>`,
 `og:url`, `og:title`, `og:image` and hreflang alternates (each language's
-own slug, plus `x-default`) in the head while mounted. As on the server, the
-site's default language (the first of `languages`) is unprefixed. Unmounting removes
+own slug, plus `x-default`, the default language's) in the head while
+mounted. As on the server, every path carries its language, the default
+included, and a version's (`?v=`) canonical URL is its language page. Unmounting removes
 them, server-rendered ones included, so the next page sets its own. Needs the provider's
 `urls`; `/urls` also exports `hreflang()` and `canonicalURL()` (drops
 tracking parameters) for server rendering.

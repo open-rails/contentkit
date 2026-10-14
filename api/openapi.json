@@ -3918,7 +3918,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "One version of a content item as the viewer sees it, with its segments and access decision.",
+        "summary": "One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code.",
         "parameters": [
           {
             "name": "id",
@@ -5991,7 +5991,7 @@
         "tags": [
           "codes"
         ],
-        "summary": "A content code's link and canonical path; any spelling of the code resolves.",
+        "summary": "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.",
         "parameters": [
           {
             "name": "code",
@@ -6004,7 +6004,15 @@
           {
             "name": "lang",
             "in": "query",
-            "description": "the language of the path's prefix and slug",
+            "description": "the language of the path's prefix and slug; the site's default by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "description": "a version code (the page's ?v=)",
             "schema": {
               "type": "string"
             }
@@ -6050,7 +6058,7 @@
           {
             "name": "lang",
             "in": "query",
-            "description": "the language of the paths' prefix and slug",
+            "description": "the language of the paths' prefix and slug; the site's default by default",
             "schema": {
               "type": "string"
             }
@@ -11095,6 +11103,9 @@
           "id": {
             "type": "string"
           },
+          "code": {
+            "type": "string"
+          },
           "languages": {
             "type": "array",
             "items": {
@@ -11119,6 +11130,7 @@
         },
         "required": [
           "id",
+          "code",
           "languages",
           "traits"
         ]
@@ -15493,6 +15505,9 @@
           },
           "path": {
             "type": "string"
+          },
+          "version_id": {
+            "type": "string"
           }
         },
         "required": [
@@ -16048,6 +16063,9 @@
           "id": {
             "type": "string"
           },
+          "code": {
+            "type": "string"
+          },
           "position": {
             "type": "integer"
           },
@@ -16135,6 +16153,7 @@
         },
         "required": [
           "id",
+          "code",
           "position",
           "languages",
           "traits",
@@ -16221,6 +16240,9 @@
             "type": "string"
           },
           "id": {
+            "type": "string"
+          },
+          "code": {
             "type": "string"
           },
           "languages": {

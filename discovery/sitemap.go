@@ -180,7 +180,7 @@ func (s *Service) sitemap(ctx context.Context, o SitemapOptions, route string, q
 		e := SitemapEntry{ID: x.id, Code: x.code, LastMod: x.lastMod.UTC(), Languages: []SitemapAlias{}}
 		for _, l := range langs {
 			if slices.Contains(x.languages, l) {
-				e.Languages = append(e.Languages, SitemapAlias{Language: l, Path: contenturl.Path(contenturl.Prefix(langs, l), route, link.Code, link.SlugFor(l))})
+				e.Languages = append(e.Languages, SitemapAlias{Language: l, Path: contenturl.Path(langs, l, route, link.Code, link.SlugFor(l))})
 			}
 		}
 		if len(e.Languages) == 0 {

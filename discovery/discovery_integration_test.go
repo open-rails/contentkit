@@ -51,7 +51,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		t.Fatalf("newest gallery list = %v, want %v (drafts, unlisted, deleted and default-hidden content left out)", got, want)
 	}
 	alpha := page.Contents[1]
-	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/g/"+f.codes[1]+"/alpha" {
+	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/en/g/"+f.codes[1]+"/alpha" {
 		t.Fatalf("card: %+v", alpha)
 	}
 	if !alpha.Access.Allowed || alpha.Counts.Favorites != 5 || alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
@@ -88,8 +88,8 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			t.Fatalf("ja card: %+v", alpha)
 		}
 		_, page = f.list(host, "", q("/contents", "kind", "gallery", "display_language", "en"))
-		if p := page.Contents[1].Path; p != "/g/"+f.codes[1]+"/alpha" {
-			t.Fatalf("the default language is unprefixed: %s", p)
+		if p := page.Contents[1].Path; p != "/en/g/"+f.codes[1]+"/alpha" {
+			t.Fatalf("the default language is prefixed too: %s", p)
 		}
 	})
 	t.Run("filters", func(t *testing.T) {
@@ -409,7 +409,7 @@ func TestSitemapFeed(t *testing.T) {
 		t.Fatalf("gallery sitemap = %v, want %v", got, want)
 	}
 	alpha, charlie := page.Entries[0], page.Entries[2]
-	if alpha.Code != f.codes[1] || alpha.Path != "/g/"+f.codes[1]+"/alpha" || alpha.LastMod.IsZero() || len(alpha.Languages) != 2 ||
+	if alpha.Code != f.codes[1] || alpha.Path != "/en/g/"+f.codes[1]+"/alpha" || alpha.LastMod.IsZero() || len(alpha.Languages) != 2 ||
 		alpha.Languages[0] != (SitemapAlias{Language: "en", Path: alpha.Path}) || alpha.Languages[1].Language != "ja" ||
 		!strings.HasPrefix(alpha.Languages[1].Path, "/ja/g/"+f.codes[1]) {
 		t.Fatalf("alpha %+v", alpha)
@@ -437,7 +437,7 @@ func TestSitemapFeed(t *testing.T) {
 	for _, e := range tags.Entries {
 		byID[e.ID] = e
 	}
-	if romance := byID[f.ids["romance"]]; romance.Code == "" || romance.Path != "/tags/"+romance.Code+"/romance" || len(romance.Languages) != 2 {
+	if romance := byID[f.ids["romance"]]; romance.Code == "" || romance.Path != "/en/tags/"+romance.Code+"/romance" || len(romance.Languages) != 2 {
 		t.Fatalf("romance %+v", romance)
 	}
 	if yaoi := byID[f.ids["yaoi"]]; len(yaoi.Languages) != 1 || yaoi.Languages[0].Language != "ja" || yaoi.Path != "/ja/tags/"+yaoi.Code+"/yaoi" {
@@ -498,8 +498,8 @@ func TestStats(t *testing.T) {
 		return out.Contents
 	}
 	got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "all"))
-	if want := []RankedContent{{ID: f.cid(2), Title: "Premium", Path: "/g/" + f.codes[2] + "/premium", Value: 3}, {ID: f.cid(1), Title: "Free",
-		Path: "/g/" + f.codes[1] + "/free", Value: 2}}; !reflect.DeepEqual(got, want) {
+	if want := []RankedContent{{ID: f.cid(2), Title: "Premium", Path: "/en/g/" + f.codes[2] + "/premium", Value: 3}, {ID: f.cid(1), Title: "Free",
+		Path: "/en/g/" + f.codes[1] + "/free", Value: 2}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("most commented = %+v, want %+v (unlisted, deleted and held left out)", got, want)
 	}
 	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "30d", "access", "public")); len(got) != 1 || got[0].ID != f.cid(1) || got[0].Value != 1 {

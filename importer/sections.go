@@ -135,7 +135,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		if err != nil {
 			return nil, c.ExternalID, err
 		}
-		in.Versions = append(in.Versions, catalog.ImportVersion{ID: vid, Languages: v.Languages, Traits: v.Traits, Label: v.Label, State: v.State,
+		in.Versions = append(in.Versions, catalog.ImportVersion{ID: vid, Code: v.Code, Languages: v.Languages, Traits: v.Traits, Label: v.Label, State: v.State,
 			PublishAt: v.PublishAt, PublishedAt: v.PublishedAt, DeletedAt: v.DeletedAt, Access: v.Access, Attributes: v.Attributes, Ordinal: v.Ordinal,
 			Text: v.Text, Segments: v.Segments, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}

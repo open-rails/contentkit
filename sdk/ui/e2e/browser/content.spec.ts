@@ -100,9 +100,13 @@ test("content page: version picker, paywall checkout with the tier, the player's
   await expect(picker.locator("[data-ckui=version-option]")).toHaveText(["English", "Colored"]);
   await expect(page.locator("[data-demo=player-menu] li")).toHaveText(["Language: English | Japanese", "Version: English (locked) | Colored"]);
 
+  // The picker writes the version's code to ?v=; the page reads it back.
   await picker.getByRole("radio", { name: "Colored" }).click();
   await expect(page.locator("[data-demo=version]")).toHaveText(colored!.id);
+  expect(new URL(page.url()).searchParams.get("v")).toBe(colored!.code);
   await expect(page.locator("[data-ckui=paywall]")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator("[data-demo=version]")).toHaveText(colored!.id, { timeout: 30_000 });
 
   await picker.getByRole("radio", { name: "English" }).click();
   await expect(page.locator("[data-demo=version]")).toHaveText(plain!.id);
@@ -115,6 +119,7 @@ test("content page: version picker, paywall checkout with the tier, the player's
   await picker.getByRole("combobox", { name: "Language" }).click();
   await page.getByRole("option", { name: "Japanese" }).click();
   await expect(page.locator("[data-demo=version]")).toHaveText(ja!.id);
+  expect(new URL(page.url()).searchParams.get("v")).toBe(ja!.code);
   await expect(page.locator("[data-demo=player-menu] li")).toHaveText(["Language: English | Japanese"]);
 });
 

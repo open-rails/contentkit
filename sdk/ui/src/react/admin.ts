@@ -3,6 +3,7 @@ import { createContentKitClient, type ContentKitClient } from "../client/client.
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { TokenSource } from "../client/http.js";
 import { useContentKitClient } from "./context.js";
+import { MOVED, subscribeHistory } from "./location.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 /** What a flow needs of the host's auth: an authenticating fetch, as auth-ui's AuthClient and IssuerClient have. */
@@ -52,15 +53,6 @@ export interface AdminLocation {
   go: (view: string, query?: AdminQuery, options?: { replace?: boolean }) => void;
 }
 
-const MOVED = "ckui:navigate";
-const subscribeHistory = (cb: () => void) => {
-  addEventListener("popstate", cb);
-  addEventListener(MOVED, cb);
-  return () => {
-    removeEventListener("popstate", cb);
-    removeEventListener(MOVED, cb);
-  };
-};
 const historySnapshot = () => location.pathname + location.search;
 const noHistory = () => "";
 

@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { Content, Decision, Version } from "../client/generated/wire.js";
+import { parseVersionCode } from "../urls/index.js";
+import { useVersionParam } from "./location.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 /** A content's live versions, first first. */
@@ -15,11 +17,18 @@ export function defaultVersion(c: Content | null | undefined, language?: string)
   return (language ? live.find((v) => v.languages.includes(language)) : undefined) ?? live[0] ?? null;
 }
 
+/** The version selected names: its code (any spelling, the page's ?v=) or its id; undefined when none. */
+export function findVersion(versions: readonly Version[], selected: string | null | undefined): Version | undefined {
+  if (!selected) return undefined;
+  const code = parseVersionCode(selected);
+  return versions.find((v) => v.id === selected) ?? (code ? versions.find((v) => v.code === code) : undefined);
+}
+
 export interface UseContentDetail {
   content: Content | null;
   /** Live versions, first first. */
   versions: Version[];
-  /** The version shown: the one asked for when live, else the language's default. */
+  /** The version shown: the one asked for (?v=) when live, else the language's default. */
   version: Version | null;
   /** The shown version's access decision: allowed, what is sold, previews. */
   decision: Decision | null;
@@ -30,19 +39,30 @@ export interface UseContentDetail {
   reload: () => void;
 }
 
+export interface ContentDetailOptions {
+  language?: string;
+  /** The version to show, by code or id; default the page's ?v=. Unknown or not live: the language's default. */
+  version?: string | null;
+  /** The page's location for its ?v=; default window.location. */
+  location?: string;
+  client?: ContentKitClient;
+}
+
 /**
  * A content page's data: text in the reader's language, live versions with
  * their segments and access decisions, groups, attributes and the version to show.
  */
-export function useContentDetail(id: string | null | undefined, o: { language?: string; version?: string | null; client?: ContentKitClient } = {}): UseContentDetail {
+export function useContentDetail(id: string | null | undefined, o: ContentDetailOptions = {}): UseContentDetail {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
+  const [param] = useVersionParam({ location: o.location });
+  const selected = o.version === undefined ? param : o.version;
   const key = id ? keyOf("content-detail", scope, id, language) : null;
   const r = useResource<Content>(store, key, { type: "content-detail", id: id ?? undefined }, (s) => client.contents.get(id!, language, s));
   const content = r.data ?? null;
   return useMemo(() => {
     const versions = liveVersions(content);
-    const version = versions.find((v) => v.id === o.version) ?? defaultVersion(content, language);
+    const version = findVersion(versions, selected) ?? defaultVersion(content, language);
     return {
       content,
       versions,
@@ -53,5 +73,5 @@ export function useContentDetail(id: string | null | undefined, o: { language?: 
       error: r.error,
       reload: r.reload,
     };
-  }, [content, o.version, language, key, r.loading, r.loaded, r.error, r.reload]);
+  }, [content, selected, language, key, r.loading, r.loaded, r.error, r.reload]);
 }

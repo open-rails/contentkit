@@ -44,7 +44,7 @@ describe("content modules against the real ContentKit", () => {
     expect(changes).toContainEqual({ type: "content.saved", content: draft });
     const made = await editor.contents.create(blog("Hello world", "first"));
     const post = await editor.contents.publish(made.id);
-    expect(post).toMatchObject({ state: "published", live: true, title: "Hello world", path: `/blog/${made.code}/hello-world` });
+    expect(post).toMatchObject({ state: "published", live: true, title: "Hello world", path: `/en/blog/${made.code}/hello-world` });
 
     expect(await ck().contents.get(post.id, "en")).toMatchObject({ id: post.id, live: true, editor: false, body: "first" });
     await expect(ck().contents.get(draft.id)).rejects.toEqual(code("not_found"));
@@ -383,7 +383,7 @@ describe("content modules against the real ContentKit", () => {
     await expect(ck("alice").groups.create([{ kind: "tag", slug: `${slug}-x` }])).rejects.toEqual(code("forbidden"));
 
     const post = await ck("editor").contents.publish((await ck("editor").contents.create({ kind: "blog", text: { en: { title: "Coded post", body: "b" } } })).id);
-    expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "blog", content_id: post.id, path: `/blog/${post.code}/coded-post` });
+    expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "blog", content_id: post.id, path: `/en/blog/${post.code}/coded-post` });
     await expect(ck().codes.resolve("ZZZZZZZZ9")).rejects.toEqual(code("not_found"));
   });
 

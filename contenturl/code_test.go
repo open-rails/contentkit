@@ -13,17 +13,23 @@ type vectors struct {
 		In  string  `json:"in"`
 		Out *string `json:"out"`
 	} `json:"codes"`
+	VersionCodes []struct {
+		In  string  `json:"in"`
+		Out *string `json:"out"`
+	} `json:"version_codes"`
 	Paths struct {
 		Routes    Routes   `json:"routes"`
 		Languages []string `json:"languages"`
 		Cases     []struct {
-			Name     string `json:"name"`
-			Path     string `json:"path"`
-			Query    string `json:"query"`
-			Link     *Link  `json:"link"`
-			Matched  bool   `json:"matched"`
-			Redirect bool   `json:"redirect"`
-			Location string `json:"location"`
+			Name  string `json:"name"`
+			Path  string `json:"path"`
+			Query string `json:"query"`
+			// Negotiated is the language an unprefixed request asks for.
+			Negotiated string `json:"negotiated"`
+			Link       *Link  `json:"link"`
+			Matched    bool   `json:"matched"`
+			Redirect   bool   `json:"redirect"`
+			Location   string `json:"location"`
 		} `json:"cases"`
 	} `json:"paths"`
 }
@@ -59,6 +65,27 @@ func TestParseCodeVectors(t *testing.T) {
 	}
 }
 
+func TestParseVersionCodeVectors(t *testing.T) {
+	for _, c := range loadVectors(t).VersionCodes {
+		got, err := ParseVersionCode(c.In)
+		if c.Out == nil {
+			if !errors.Is(err, ErrInvalid) {
+				t.Errorf("ParseVersionCode(%q) = %q, %v; want ErrInvalid", c.In, got, err)
+			}
+			continue
+		}
+		if err != nil || string(got) != *c.Out {
+			t.Errorf("ParseVersionCode(%q) = %q, %v; want %q", c.In, got, err, *c.Out)
+		}
+	}
+	if got := Versioned("/en/g/G4VRQ3ZQ5/a", "K3F9"); got != "/en/g/G4VRQ3ZQ5/a?v=K3F9" {
+		t.Fatal(got)
+	}
+	if got := Versioned("/en/g/G4VRQ3ZQ5/a?p=2", "K3F9"); got != "/en/g/G4VRQ3ZQ5/a?p=2&v=K3F9" {
+		t.Fatal(got)
+	}
+}
+
 func TestParseCodeAlphabet(t *testing.T) {
 	if len(Alphabet) != 32 || strings.ContainsAny(Alphabet, "ILOU") {
 		t.Fatalf("Alphabet %q", Alphabet)
@@ -89,7 +116,11 @@ func TestPathVectors(t *testing.T) {
 			if !ok {
 				t.Fatalf("ParsePath(%q) did not match", c.Path)
 			}
-			path, ok := Canonical(v.Routes, p.Language, *c.Link)
+			language := p.Language
+			if language == "" {
+				language = c.Negotiated
+			}
+			path, ok := Canonical(v.Routes, v.Languages, language, *c.Link)
 			if ok != c.Matched {
 				t.Fatalf("Canonical matched=%v, want %v", ok, c.Matched)
 			}

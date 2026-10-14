@@ -206,6 +206,7 @@ export interface CardAccess {
 
 export interface CardVersion {
   id: string;
+  code: string;
   languages: string[];
   traits: string[];
   label?: string;
@@ -1528,6 +1529,7 @@ export interface Resolved {
   slug: string;
   slugs?: Record<string, string>;
   path: string;
+  version_id?: string;
 }
 
 export interface Restored {
@@ -1695,6 +1697,7 @@ export interface UploadRule {
 
 export interface Version {
   id: string;
+  code: string;
   position: number;
   languages: string[];
   traits: string[];
@@ -1744,6 +1747,7 @@ export interface VersionInput {
 export interface VersionRecord {
   external_id: string;
   id?: string;
+  code?: string;
   languages: string[];
   traits?: string[];
   label?: string;

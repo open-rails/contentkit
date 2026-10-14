@@ -216,10 +216,10 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 	f.want(http.StatusOK, "", "POST", "/codes/aliases?lang=en", lookup, &got)
 	var item catalog.Content
 	f.want(http.StatusOK, "", "GET", "/contents/"+g1, nil, &item)
-	page := "/g/" + item.Code + "/legacy-1" // the default language is unprefixed
+	page := "/en/g/" + item.Code + "/legacy-1"
 	for i, want := range []struct{ status, id, path, locator string }{
 		{contenturl.AliasFound, g1, page, ""}, {contenturl.AliasFound, g1, page, "3"}, {contenturl.AliasNotFound, "", "", ""},
-		{contenturl.AliasGone, "", "", ""}, {contenturl.AliasNotFound, "", "", ""}, {contenturl.AliasFound, string(color.ID), "/tags/" + color.Code + "/color", ""},
+		{contenturl.AliasGone, "", "", ""}, {contenturl.AliasNotFound, "", "", ""}, {contenturl.AliasFound, string(color.ID), "/en/tags/" + color.Code + "/color", ""},
 	} {
 		a := got.Aliases[i]
 		var id, path string

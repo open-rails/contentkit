@@ -54,34 +54,43 @@ func TestRouterCanonicalizes(t *testing.T) {
 		seen, _ = contenturl.FromContext(r.Context())
 		w.WriteHeader(http.StatusTeapot) // the host's page or SPA shell
 	}))
-	canonical := "/watch/" + string(video) + "/night-before-the-counteroffensive"
+	canonical := "/en/watch/" + string(video) + "/night-before-the-counteroffensive"
+	es := "/es/watch/" + string(video) + "/la-noche-antes"
 	lower := strings.ToLower(string(video))
 	for _, c := range []struct {
-		method, target string
-		status         int
-		location       string
+		method, target, accept string
+		status                 int
+		location               string
 	}{
-		{"GET", canonical, http.StatusTeapot, ""},
-		{"HEAD", canonical, http.StatusTeapot, ""},
-		{"GET", "/watch/" + string(video), http.StatusMovedPermanently, canonical},
-		{"GET", "/watch/" + lower + "/stale?t=30&p=2", http.StatusMovedPermanently, canonical + "?t=30&p=2"},
-		{"GET", "/g/" + string(video) + "/night-before-the-counteroffensive/", http.StatusMovedPermanently, canonical},
-		{"GET", "/es/watch/" + string(video), http.StatusMovedPermanently, "/es/watch/" + string(video) + "/la-noche-antes"},
-		{"GET", "/es/watch/" + string(video) + "/la-noche-antes", http.StatusTeapot, ""},
-		{"GET", "/en" + canonical, http.StatusTeapot, ""}, // a host routing /{default}/... keeps its prefix
-		{"GET", "/g/" + string(dup) + "/old-duplicate", http.StatusMovedPermanently, canonical},
-		{"GET", "/g/" + string(hidden) + "/hidden-gallery", http.StatusTeapot, ""},   // invisible: the host's 404
-		{"GET", "/g/" + strings.ToLower(string(removed)), http.StatusGone, ""},       // removed: 410, no redirect
-		{"GET", "/g/" + string(links[3].Code) + "/no-page", http.StatusTeapot, ""},   // kind without a route
-		{"GET", "/watch/00000000A/unknown", http.StatusTeapot, ""},                   // unknown code
-		{"GET", "/watch/346791971", http.StatusTeapot, ""},                           // a legacy numeric id is never a code
-		{"GET", "/movie/" + string(video), http.StatusTeapot, ""},                    // not a content route
-		{"POST", "/watch/" + string(video), http.StatusTeapot, ""},                   // writes pass through
-		{"GET", "/watch/" + string(video) + "/slug/comments", http.StatusTeapot, ""}, // sub-path
+		{"GET", canonical, "", http.StatusTeapot, ""},
+		{"HEAD", canonical, "", http.StatusTeapot, ""},
+		{"GET", canonical + "?v=K3F9", "", http.StatusTeapot, ""}, // a version's page is its language page
+		{"GET", "/en/watch/" + string(video), "", http.StatusMovedPermanently, canonical},
+		{"GET", "/en/watch/" + lower + "/stale?t=30&v=K3F9", "", http.StatusMovedPermanently, canonical + "?t=30&v=K3F9"},
+		{"GET", "/en/g/" + string(video) + "/night-before-the-counteroffensive/", "", http.StatusMovedPermanently, canonical},
+		{"GET", "/es/watch/" + string(video), "", http.StatusMovedPermanently, es},
+		{"GET", es, "", http.StatusTeapot, ""},
+		// Unprefixed links redirect to the language Accept-Language names, else the default.
+		{"GET", "/watch/" + string(video) + "/night-before-the-counteroffensive", "", http.StatusMovedPermanently, canonical},
+		{"GET", "/watch/" + lower + "?v=K3F9", "fr-FR, es;q=0.8", http.StatusMovedPermanently, es + "?v=K3F9"},
+		{"GET", "/g/" + string(dup) + "/old-duplicate", "", http.StatusMovedPermanently, canonical},
+		{"GET", "/en/g/" + string(hidden) + "/hidden-gallery", "", http.StatusTeapot, ""}, // invisible: the host's 404
+		{"GET", "/g/" + string(hidden), "", http.StatusTeapot, ""},                        // nor redirected
+		{"GET", "/g/" + strings.ToLower(string(removed)), "", http.StatusGone, ""},        // removed: 410, no redirect
+		{"GET", "/en/g/" + string(links[3].Code) + "/no-page", "", http.StatusTeapot, ""}, // kind without a route
+		{"GET", "/en/watch/00000000A/unknown", "", http.StatusTeapot, ""},                 // unknown code
+		{"GET", "/watch/346791971", "", http.StatusTeapot, ""},                            // a legacy numeric id is never a code
+		{"GET", "/movie/" + string(video), "", http.StatusTeapot, ""},                     // not a content route
+		{"POST", "/watch/" + string(video), "", http.StatusTeapot, ""},                    // writes pass through
+		{"GET", canonical + "/comments", "", http.StatusTeapot, ""},                       // sub-path
 	} {
 		seen = contenturl.Decision{}
 		rec := httptest.NewRecorder()
-		page.ServeHTTP(rec, httptest.NewRequest(c.method, c.target, nil))
+		req := httptest.NewRequest(c.method, c.target, nil)
+		if c.accept != "" {
+			req.Header.Set("Accept-Language", c.accept)
+		}
+		page.ServeHTTP(rec, req)
 		if rec.Code != c.status || rec.Header().Get("Location") != c.location {
 			t.Errorf("%s %s = %d %q, want %d %q", c.method, c.target, rec.Code, rec.Header().Get("Location"), c.status, c.location)
 		}
@@ -103,12 +112,14 @@ func TestRouterCanonicalizes(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &body)
 		return rec, body
 	}
-	if rec, body := get("/api/content-urls/" + lower + "?lang=es"); rec.Code != 200 || body.Code != video || body.Path != "/es/watch/"+string(video)+"/la-noche-antes" ||
+	if rec, body := get("/api/content-urls/" + lower + "?lang=es"); rec.Code != 200 || body.Code != video || body.Path != es ||
 		body.ContentKind != "video" || body.ContentID != id(1) || body.Slugs["es"] != "la-noche-antes" {
 		t.Fatalf("lookup %d %s", rec.Code, rec.Body.String())
 	}
-	if rec, body := get("/api/content-urls/" + string(video) + "?lang=en"); rec.Code != 200 || body.Path != canonical {
-		t.Fatalf("the default language is unprefixed: %d %s", rec.Code, rec.Body.String())
+	for _, q := range []string{"?lang=en", "", "?v=K3F9"} {
+		if rec, body := get("/api/content-urls/" + string(video) + q); rec.Code != 200 || body.Path != canonical || body.VersionID != "" {
+			t.Fatalf("the default language is prefixed (%q): %d %s", q, rec.Code, rec.Body.String())
+		}
 	}
 	if rec, body := get("/api/content-urls/" + string(dup)); rec.Code != 200 || body.Code != video || body.Path != canonical {
 		t.Fatalf("merged lookup %d %s", rec.Code, rec.Body.String())
@@ -154,7 +165,7 @@ func TestRouterCanonicalizes(t *testing.T) {
 	if rec.Code != 200 || len(got.Aliases) != 5 {
 		t.Fatalf("aliases %d %s", rec.Code, rec.Body)
 	}
-	esPath := "/es/watch/" + string(video) + "/la-noche-antes"
+	esPath := es
 	for i, want := range []struct{ status, path, locator string }{
 		{contenturl.AliasFound, esPath, ""}, {contenturl.AliasFound, esPath, "12"}, {contenturl.AliasGone, "", ""}, {contenturl.AliasNotFound, "", ""}, {contenturl.AliasNotFound, "", ""},
 	} {
@@ -185,7 +196,7 @@ func TestRouterCanonicalizes(t *testing.T) {
 	if rec, got := post("/api/content-urls/aliases", contenturl.AliasLookup{}); rec.Code != 200 || got.Aliases == nil || len(got.Aliases) != 0 {
 		t.Errorf("empty lookup %d %s", rec.Code, rec.Body)
 	}
-	if path, ok := router.Path(contenturl.Link{ContentRef: contentref.New(tenant, "gallery", id(9)), Code: "0000000AB", Slug: "x"}, ""); !ok || path != "/g/0000000AB/x" {
+	if path, ok := router.Path(contenturl.Link{ContentRef: contentref.New(tenant, "gallery", id(9)), Code: "0000000AB", Slug: "x"}, ""); !ok || path != "/en/g/0000000AB/x" {
 		t.Fatalf("Path %q %v", path, ok)
 	}
 }
@@ -194,8 +205,9 @@ func TestNewRouterValidates(t *testing.T) {
 	_, _, _, s := setup(t)
 	for _, opts := range []contenturl.RouterOptions{
 		{},
+		{Routes: contenturl.Routes{"video": "watch"}},
 		{Routes: contenturl.Routes{"video": "watch"}, Languages: []string{"watch"}},
-		{Routes: contenturl.Routes{"video": "watch"}, BaseURL: "hentai0.test"},
+		{Routes: contenturl.Routes{"video": "watch"}, Languages: []string{"en"}, BaseURL: "hentai0.test"},
 	} {
 		if _, err := contenturl.NewRouter(s, opts); !errors.Is(err, contenturl.ErrInvalid) {
 			t.Errorf("NewRouter(%+v) = %v", opts, err)

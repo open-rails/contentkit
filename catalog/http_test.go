@@ -29,7 +29,7 @@ func TestRoutesIntegration(t *testing.T) {
 	in := gallery("Hello World", "en")
 	in.Creators = &[]Creator{{UserID: "alice", Role: "artist"}}
 	f.want(http.StatusCreated, "staff", "POST", "/v1/contents", in, &c)
-	if c.State != StateDraft || !c.Editor || c.Code == "" || c.Path != "/g/"+c.Code+"/hello-world" || c.Creators[0].Role != "artist" || c.Revision < 1 {
+	if c.State != StateDraft || !c.Editor || c.Code == "" || c.Path != "/en/g/"+c.Code+"/hello-world" || c.Creators[0].Role != "artist" || c.Revision < 1 {
 		t.Fatalf("created %+v", c)
 	}
 	id := c.ID
@@ -86,11 +86,11 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id+"/versions/"+id, nil, nil)
 	f.want(http.StatusBadRequest, anon, "GET", "/v1/contents/"+id+"?language=xx", nil, nil)
-	// The site's default language is unprefixed however it is asked for.
+	// The site's default language is prefixed however it is asked for.
 	var en Content
 	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+id+"?language=en", nil, &en)
 	r = f.doWith(anon, "GET", "/v1/contents/"+id, map[string]string{"Accept-Language": "en"})
-	if json.Unmarshal(r.Body.Bytes(), &accept) != nil || en.Path != "/g/"+en.Code+"/hello-world" || accept.Path != en.Path {
+	if json.Unmarshal(r.Body.Bytes(), &accept) != nil || en.Path != "/en/g/"+en.Code+"/hello-world" || accept.Path != en.Path {
 		t.Fatalf("default language paths %q, Accept-Language %q", en.Path, accept.Path)
 	}
 
