@@ -37,6 +37,7 @@ type signalPlane struct {
 	connect func(context.Context) (signal.Conn, error) // migrate, open, check the schema
 	up      func(signal.Conn) error                    // signals on
 	down    func()                                     // signals off
+	afterUp func()                                     // catch-up after publishing recovery
 	log     *slog.Logger
 
 	bootWait, checkEvery, checkWait, retryMin, retryMax time.Duration
@@ -102,14 +103,13 @@ func (p *signalPlane) run(ctx context.Context) {
 // attempt opens the plane; true once it is up.
 func (p *signalPlane) attempt(ctx context.Context) bool {
 	conn, err := p.connect(ctx)
-	if err == nil {
-		err = p.up(conn)
-	}
 	if err != nil && errors.Is(ctx.Err(), context.Canceled) {
 		return false // closing
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if err == nil {
+		err = p.up(conn)
+	}
 	if err != nil {
 		if p.err != nil && p.err.Error() == err.Error() {
 			p.log.Debug("contentkit: the signal plane is still down", "err", err)
@@ -117,12 +117,17 @@ func (p *signalPlane) attempt(ctx context.Context) bool {
 			p.log.Warn("contentkit: the signal plane is down; signals are off while it is retried", "err", err)
 		}
 		p.err = err
+		p.mu.Unlock()
 		return false
 	}
 	if p.conn == nil && p.done != nil {
 		p.log.Info("contentkit: the signal plane is back; signals are on")
 	}
 	p.conn, p.err = conn, nil
+	p.mu.Unlock()
+	if p.afterUp != nil {
+		p.afterUp()
+	}
 	return true
 }
 
@@ -158,17 +163,18 @@ func (e *Engine) newSignals(deps Deps) *signalPlane {
 	if deps.ClickHouse == nil && c.Addr == "" {
 		return nil
 	}
-	return newSignalPlane(e.log, func(ctx context.Context) (signal.Conn, error) { return e.connectSignals(ctx, deps.ClickHouse) },
+	p := newSignalPlane(e.log, func(ctx context.Context) (signal.Conn, error) { return e.connectSignals(ctx, deps.ClickHouse) },
 		func(conn signal.Conn) error {
 			store, err := signal.NewStore(conn, c.Database)
 			if err != nil {
 				return err
 			}
 			e.hub.SetSignals(store)
-			e.signalsBack()
 			return nil
 		},
 		func() { e.hub.SetSignals(nil) })
+	p.afterUp = e.signalsBack
+	return p
 }
 
 // connectSignals applies the signal migrations (with Addr), takes host's
