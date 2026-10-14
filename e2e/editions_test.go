@@ -36,7 +36,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 
 	var c catalog.Content
 	f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: "album",
-		Text: map[string]catalog.Text{"en": {Title: "Editions"}, "zh": {Title: "版本"}},
+		Text:     map[string]catalog.Text{"en": {Title: "Editions"}, "zh": {Title: "版本"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"en"}}, {Languages: []string{"zh"}}}}, &c)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, &c)
 	a, b, z := c.Versions[0], c.Versions[1], c.Versions[2]
