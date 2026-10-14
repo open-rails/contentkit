@@ -20,19 +20,16 @@ func doujins() Config {
 		ContentFilters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}},
 		Kinds: map[string]Kind{
 			"gallery": {Route: "g", Presentation: "reader", Segments: true, Locked: &Locked{Show: []string{ShowCover, ShowGroups}, Preview: &Preview{Pages: 3}},
-				Download:   &Download{Watermark: &Watermark{Pages: []int{3, 5, 7}, Tiers: []string{"premium"}, Groups: []GroupRef{{"translator", "doujins-com"}}}},
 				Versions:   VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Groups:     []string{"tag", "series", "character", "voice_actor"},
 				Attributes: map[string]Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
-			"blog":  {Route: "blog", Presentation: "post", Versions: VersionRules{Languages: "one", Hidden: true}},
-			"movie": {Route: "watch", Presentation: "player", Versions: VersionRules{Languages: "many"}, Download: &Download{Serve: "mp4-1080"}},
+			"blog": {Route: "blog", Presentation: "post", Versions: VersionRules{Languages: "one", Hidden: true}},
 		},
 		GroupKinds: map[string]GroupKind{
 			"tag":         {Route: "tags"},
 			"series":      {Route: "series", Ordered: true, Parent: "series"},
 			"character":   {Route: "characters", ScopedBy: "series"},
 			"voice_actor": {Route: "voice-actors", VersionLevel: true},
-			"translator":  {Route: "translators", VersionLevel: true},
 		},
 	}
 }
@@ -63,18 +60,8 @@ func TestValidate(t *testing.T) {
 			k.Locked = &Locked{Preview: &Preview{Segments: 1}}
 			c.Kinds["blog"] = k
 		},
-		"unknown property":   func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{"body"} },
-		"repeated property":  func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{ShowCover, ShowCover} },
-		"off and serving":    func(c *Config) { c.Kinds["movie"].Download.Off = true },
-		"download tier":      func(c *Config) { c.Kinds["movie"].Download.Tiers = []string{"gold"} },
-		"serve a path":       func(c *Config) { c.Kinds["movie"].Download.Serve = "video/source.mp4" },
-		"watermarked video":  func(c *Config) { c.Kinds["movie"].Download.Watermark = &Watermark{Pages: []int{1}} },
-		"watermark no pages": func(c *Config) { c.Kinds["gallery"].Download.Watermark.Pages = nil },
-		"watermark page 0":   func(c *Config) { c.Kinds["gallery"].Download.Watermark.Pages = []int{0, 3} },
-		"watermark repeats":  func(c *Config) { c.Kinds["gallery"].Download.Watermark.Pages = []int{3, 3} },
-		"watermark tier":     func(c *Config) { c.Kinds["gallery"].Download.Watermark.Tiers = []string{"gold"} },
-		"watermark group":    func(c *Config) { c.Kinds["gallery"].Download.Watermark.Groups = []GroupRef{{"scanlator", "x"}} },
-		"watermark original": func(c *Config) { c.Kinds["gallery"].Download.Serve = DownloadOriginal },
+		"unknown property":  func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{"body"} },
+		"repeated property": func(c *Config) { c.Kinds["gallery"].Locked.Show = []string{ShowCover, ShowCover} },
 	} {
 		c := doujins()
 		mutate(&c)
@@ -84,8 +71,31 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestServes(t *testing.T) {
+// downloads is doujins with a movie kind serving an MP4.
+func downloads() Config {
 	c := doujins()
+	c.Kinds["movie"] = Kind{Route: "watch", Presentation: "player", Versions: VersionRules{Languages: "many"}, Download: &Download{Serve: "mp4-1080"}}
+	return c
+}
+
+func TestValidateDownloads(t *testing.T) {
+	if err := downloads().Validate(); err != nil {
+		t.Fatalf("downloads config: %v", err)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"off and serving": func(c *Config) { c.Kinds["movie"].Download.Off = true },
+		"serve a path":    func(c *Config) { c.Kinds["movie"].Download.Serve = "video/source.mp4" },
+	} {
+		c := downloads()
+		mutate(&c)
+		if err := c.Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: got %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestServes(t *testing.T) {
+	c := downloads()
 	for name, want := range map[string]string{"gallery": DownloadPages, "blog": "", "movie": "mp4-1080"} {
 		if got := c.Kinds[name].Serves(); got != want {
 			t.Errorf("%s serves %q, want %q", name, got, want)

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,14 +25,52 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Watermarker marks one page of a viewer's page download: the host's
-// forensic watermark. Which pages of which versions is the kind's
-// kinds.Watermark; ContentKit asks only for the marking.
-type Watermarker interface {
-	// Mark returns page's (from 1) marked bytes for actor and their extension
-	// (".png").
+// DownloadPolicy is the host's download policy: whether a viewer may download
+// a version now, and which pages of a page download it marks with its own
+// watermark. ContentKit asks; the host decides.
+type DownloadPolicy interface {
+	// Decide rules on a download after the access check, before the quota.
+	Decide(ctx context.Context, r DownloadRequest) (DownloadDecision, error)
+	// Mark returns page's (from 1) marked bytes for actor and their
+	// extension (".png"): a page Decide named.
 	Mark(ctx context.Context, actor access.Actor, v Target, page int, b []byte) ([]byte, string, error)
 }
+
+// DownloadRequest is a download Decide rules on.
+type DownloadRequest struct {
+	Actor  access.Actor
+	Tiers  []string // the tiers Actor holds
+	Editor bool     // Actor edits the version
+	Target
+	Kind string
+	// Groups are the version's groups, its own and its content's.
+	Groups []kinds.GroupRef
+	// Rule is the version's effective access rule.
+	Rule access.Rule
+	// Released is when the version went live; zero while it is not.
+	Released time.Time
+	// Pages are a page download's pages; 0 for a file.
+	Pages int
+}
+
+// DownloadDecision is a policy's ruling.
+type DownloadDecision struct {
+	Allowed bool
+	// A refusal's stable code of the host's ("release_window") and, when it
+	// is a matter of time, when the viewer may download.
+	Reason      string
+	AvailableAt *time.Time
+	// Mark are the pages (from 1) of a page download to mark; files ignore it.
+	Mark []int
+}
+
+// UnavailableError is a download the policy refused.
+type UnavailableError struct {
+	Reason      string
+	AvailableAt *time.Time
+}
+
+func (e *UnavailableError) Error() string { return "versions: download unavailable (" + e.Reason + ")" }
 
 // Downloads are the download quotas: an anonymous viewer's (by address), a
 // signed-in one's, and the first of Tiers a viewer holds, which replaces
@@ -163,9 +202,10 @@ type Archive struct {
 }
 
 // Download grants t's download to actor, what its kind's download serves
-// (kinds.Kind.Download), and charges it to actor's quota: the version open
-// (or actor edits it) with every segment released. ErrNotFound when the kind
-// serves none, ErrNoDownload when the version has nothing to serve,
+// (kinds.Kind.Download), as the host's policy allows, and charges it to
+// actor's quota: the version open (or actor edits it) with every segment
+// released. ErrNotFound when the kind serves none, an UnavailableError when
+// the policy refuses, ErrNoDownload when the version has nothing to serve,
 // ErrNotReady while it is placed or produced, a QuotaError past the quota.
 func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*FileDownload, error) {
 	v, k, err := s.downloadKind(ctx, t)
@@ -176,19 +216,28 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if err != nil {
 		return nil, err
 	}
-	switch d := ds[t]; {
+	d := ds[t]
+	switch {
 	case !d.res.Visible:
 		return nil, ErrNotFound
 	case !d.whole():
 		return nil, ErrForbidden
-	case !d.res.Editor:
-		if ok, err := s.holds(ctx, actor, s.o.Kinds.Kinds[v.Kind].Download); err != nil {
-			return nil, err
-		} else if !ok {
-			return nil, ErrForbidden
-		}
 	}
 	item, m, err := s.downloadItem(ctx, k, t)
+	if err != nil {
+		return nil, err
+	}
+	z := private(k, k.Download)
+	var pages []media.File
+	if z != nil && z.Zip != "" {
+		if pages, err = zipPages(k, z, m); err != nil {
+			return nil, err
+		}
+		if len(pages) == 0 {
+			return nil, ErrNoDownload
+		}
+	}
+	mark, err := s.decide(ctx, actor, v, d.res.Editor, len(pages))
 	if err != nil {
 		return nil, err
 	}
@@ -196,25 +245,15 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	ttl := cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL)
 	var f media.File
 	var name string
-	if z := private(k, k.Download); z != nil && z.Zip != "" {
-		pages, err := zipPages(k, z, m)
-		if err != nil {
-			return nil, err
-		}
-		if len(pages) == 0 {
-			return nil, ErrNoDownload
-		}
+	if z != nil && z.Zip != "" {
 		name = archiveName(title, z)
-		mark, err := s.marked(ctx, actor, v, len(pages))
-		if err != nil {
-			return nil, err
-		}
 		if len(mark) > 0 {
 			if err := s.charge(ctx, actor); err != nil {
 				return nil, err
 			}
 			exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
-			q := url.Values{"for": {actor.ID}, "ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID), exp)}}
+			marks := joinPages(mark)
+			q := url.Values{"for": {actor.ID}, "mark": {marks}, "ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID, marks), exp)}}
 			return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 		}
 		var ok bool
@@ -244,11 +283,13 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
-// Archive opens the marked archive a Download handed viewer for t, by its
-// ticket: the pages zipped as they stream, the kind's watermark on those it
-// marks. A ticket that is expired or not viewer's for t is ErrNotFound.
-func (s *Service) Archive(ctx context.Context, t Target, viewer, ticket string) (*Archive, error) {
-	if s.m.Reader == nil || viewer == "" || s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer)) != nil {
+// Archive opens the marked archive a Download granted viewer for t, by its
+// ticket: the pages zipped as they stream, the policy marking those mark
+// names. A ticket that is expired or not for viewer, t and mark is
+// ErrNotFound.
+func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, ticket string) (*Archive, error) {
+	pages, ok := splitPages(mark)
+	if s.m.Reader == nil || s.o.Policy == nil || viewer == "" || !ok || s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer, mark)) != nil {
 		return nil, ErrNotFound
 	}
 	v, k, err := s.downloadKind(ctx, t)
@@ -263,25 +304,24 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, ticket string) 
 	if z == nil || z.Zip == "" {
 		return nil, ErrNotFound
 	}
-	pages, err := zipPages(k, z, m)
+	files, err := zipPages(k, z, m)
 	if err != nil {
 		return nil, err
 	}
-	title, _ := s.title(ctx, v)
-	who := access.Actor{ID: viewer, Kind: auth.SubjectUser}
-	a := &Archive{Name: archiveName(title, z), ctx: ctx, s: s, v: t, who: who}
-	if a.mark, err = s.marked(ctx, who, v, len(pages)); err != nil {
-		return nil, err
+	if len(files) == 0 {
+		return nil, ErrNoDownload
 	}
-	for _, f := range pages {
+	title, _ := s.title(ctx, v)
+	a := &Archive{Name: archiveName(title, z), ctx: ctx, s: s, v: t, who: access.Actor{ID: viewer, Kind: auth.SubjectUser}}
+	for _, p := range pages {
+		a.mark = append(a.mark, p-1)
+	}
+	for _, f := range files {
 		key, err := item.Blob(f.Blob)
 		if err != nil {
 			return nil, err
 		}
 		a.keys = append(a.keys, key)
-	}
-	if len(a.keys) == 0 {
-		return nil, ErrNoDownload
 	}
 	if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
 		return nil, err
@@ -289,26 +329,89 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, ticket string) 
 	return a, nil
 }
 
-// holds reports whether actor holds one of the download's tiers, or it
-// names none.
-func (s *Service) holds(ctx context.Context, actor access.Actor, d *kinds.Download) (bool, error) {
-	if d == nil || len(d.Tiers) == 0 {
-		return true, nil
+// decide asks the host's policy about actor's download of v, of pages
+// pages (0 for a file), and returns the pages (from 1) to mark: none for a
+// file or a signed-out viewer. An UnavailableError when it refuses.
+func (s *Service) decide(ctx context.Context, actor access.Actor, v version, editor bool, pages int) ([]int, error) {
+	if s.o.Policy == nil {
+		return nil, nil
 	}
-	if actor.Anonymous || actor.ID == "" || s.o.Gate == nil {
-		return false, nil
+	r := DownloadRequest{Actor: actor, Editor: editor, Target: v.Target, Kind: v.Kind, Pages: pages}
+	if !actor.Anonymous && actor.ID != "" && s.o.Gate != nil {
+		f, err := s.o.Gate.Filter(ctx, actor)
+		if err != nil {
+			return nil, err
+		}
+		r.Tiers = slices.DeleteFunc(slices.Clone(s.o.Kinds.Tiers), func(t string) bool { return !f.Tier(t) })
 	}
-	f, err := s.o.Gate.Filter(ctx, actor)
+	var content access.Rule
+	var override *access.Rule
+	var released *time.Time
+	var groupKinds, slugs []string
+	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access, GREATEST(c.published_at, v.published_at),
+COALESCE(array_agg(g.kind ORDER BY g.kind, g.slug) FILTER (WHERE g.id IS NOT NULL), '{}'),
+COALESCE(array_agg(g.slug ORDER BY g.kind, g.slug) FILTER (WHERE g.id IS NOT NULL), '{}')
+FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+LEFT JOIN `+pgxIdent(s.o.Schema, "content_memberships")+` m ON m.tenant_id = v.tenant_id AND m.content_id = v.content_id
+AND (m.version_id IS NULL OR m.version_id = v.id) AND m.state = 'active'
+AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
+LEFT JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
+WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3
+GROUP BY c.access, v.access, c.published_at, v.published_at`, s.o.Tenant, v.Content, v.Version).Scan(&content, &override, &released, &groupKinds, &slugs); err != nil {
+		return nil, err
+	}
+	r.Rule = access.Effective(content, override)
+	if released != nil {
+		r.Released = *released
+	}
+	for i := range groupKinds {
+		if g := (kinds.GroupRef{Kind: groupKinds[i], Slug: slugs[i]}); !slices.Contains(r.Groups, g) {
+			r.Groups = append(r.Groups, g)
+		}
+	}
+	d, err := s.o.Policy.Decide(ctx, r)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return slices.ContainsFunc(d.Tiers, f.Tier), nil
+	if !d.Allowed {
+		return nil, &UnavailableError{Reason: d.Reason, AvailableAt: d.AvailableAt}
+	}
+	var mark []int
+	for _, p := range d.Mark {
+		if p >= 1 && p <= pages && !slices.Contains(mark, p) && !actor.Anonymous && actor.ID != "" {
+			mark = append(mark, p)
+		}
+	}
+	slices.Sort(mark)
+	return mark, nil
 }
 
-// archiveScope is the scope of viewer's ticket to t's marked archive; its
-// ':' keeps it apart from every media item and download scope.
-func archiveScope(tenant string, t Target, viewer string) string {
-	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer
+// archiveScope is the scope of viewer's ticket to t's archive marked at
+// mark; its ':' keeps it apart from every media item and download scope.
+func archiveScope(tenant string, t Target, viewer, mark string) string {
+	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer + "/" + mark
+}
+
+// joinPages is "3,5,7".
+func joinPages(pages []int) string {
+	out := make([]string, len(pages))
+	for i, p := range pages {
+		out[i] = strconv.Itoa(p)
+	}
+	return strings.Join(out, ",")
+}
+
+// splitPages parses joinPages.
+func splitPages(s string) ([]int, bool) {
+	var out []int
+	for _, f := range strings.Split(s, ",") {
+		p, err := strconv.Atoi(f)
+		if err != nil || p < 1 {
+			return nil, false
+		}
+		out = append(out, p)
+	}
+	return out, len(out) > 0
 }
 
 // downloadKind is t's version and its kind's version view, which serves a
@@ -347,45 +450,6 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	return item, m, nil
 }
 
-// marked are the pages (from 0) of v's pages its kind's watermark marks for
-// actor: none signed out, without a Watermarker, or for a version outside the
-// policy's tiers or groups.
-func (s *Service) marked(ctx context.Context, actor access.Actor, v version, pages int) ([]int, error) {
-	d := s.o.Kinds.Kinds[v.Kind].Download
-	if s.o.Watermark == nil || actor.Anonymous || actor.ID == "" || d == nil || d.Watermark == nil {
-		return nil, nil
-	}
-	w := d.Watermark
-	var content access.Rule
-	var override *access.Rule
-	var groupKinds, slugs []string
-	for _, g := range w.Groups {
-		groupKinds, slugs = append(groupKinds, g.Kind), append(slugs, g.Slug)
-	}
-	var in bool
-	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access, cardinality($4::text[]) = 0 OR EXISTS (
-SELECT 1 FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id
-JOIN unnest($4::text[], $5::text[]) AS want(kind, slug) ON want.kind = g.kind AND want.slug = g.slug
-WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active' AND g.state = 'active'
-AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now()))
-FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Content, v.Version, groupKinds, slugs).Scan(&content, &override, &in); err != nil {
-		return nil, err
-	}
-	rule := access.Effective(content, override)
-	if !in || len(w.Tiers) > 0 && (rule.Level != access.TierLevel || rule.Free(s.o.Now()) ||
-		!slices.ContainsFunc(rule.Tiers, func(t string) bool { return slices.Contains(w.Tiers, t) })) {
-		return nil, nil
-	}
-	var out []int
-	for _, p := range w.Pages {
-		if p <= pages {
-			out = append(out, p-1)
-		}
-	}
-	slices.Sort(out)
-	return out, nil
-}
 
 // zipPages are the files the archive zips, in manifest order: each page's
 // output under the zip's prefix. ErrNotReady while one is missing.
@@ -446,8 +510,8 @@ func (a *Archive) WriteTo(w io.Writer) (int64, error) {
 	return 0, a.s.streamMarked(a.ctx, w, a)
 }
 
-// streamMarked zips the pages one at a time, marking those the kind's
-// watermark names; the archive closes only once every mark succeeded.
+// streamMarked zips the pages one at a time, the policy marking those its
+// ticket names; the archive closes only once every mark succeeded.
 func (s *Service) streamMarked(ctx context.Context, w io.Writer, a *Archive) error {
 	zw := zip.NewWriter(w)
 	now := time.Now()
@@ -463,7 +527,7 @@ func (s *Service) streamMarked(ctx context.Context, w io.Writer, a *Archive) err
 		}
 		name := fmt.Sprintf("%03d.webp", i+1)
 		if slices.Contains(a.mark, i) {
-			marked, ext, err := s.o.Watermark.Mark(ctx, a.who, a.v, i+1, body)
+			marked, ext, err := s.o.Policy.Mark(ctx, a.who, a.v, i+1, body)
 			if err != nil {
 				return fmt.Errorf("versions: mark page %d: %w", i, err)
 			}

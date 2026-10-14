@@ -7755,7 +7755,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.",
+        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the kind's watermark marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -7778,9 +7778,9 @@
           "200": {
             "description": "OK",
             "content": {
-              "application/zip": {
+              "application/json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/FileDownload"
                 }
               }
             }
@@ -7809,8 +7809,80 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "rate_limited"
+          "rate_limited",
+          "no_download"
         ],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/archive": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Streams the marked zip a download granted: the version's pages, those its kind's watermark names marked for the viewer the ticket is for. 404 for an expired or foreign ticket.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "for",
+            "in": "query",
+            "description": "the viewer the ticket is for",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket",
+            "in": "query",
+            "description": "the download's ticket",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:versions",
           "auth",
@@ -12289,6 +12361,26 @@
           }
         }
       },
+      "Download": {
+        "type": "object",
+        "properties": {
+          "off": {
+            "type": "boolean"
+          },
+          "serve": {
+            "type": "string"
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "watermark": {
+            "$ref": "#/components/schemas/Watermark"
+          }
+        }
+      },
       "Edge": {
         "type": "object",
         "properties": {
@@ -12738,6 +12830,33 @@
           "tenant_id",
           "content_kind",
           "content_id"
+        ]
+      },
+      "FileDownload": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "url",
+          "name",
+          "type",
+          "expires_at"
         ]
       },
       "FileInfo": {
@@ -13840,6 +13959,9 @@
           },
           "draft_ttl": {
             "type": "integer"
+          },
+          "download": {
+            "$ref": "#/components/schemas/Download"
           }
         },
         "required": [
@@ -16548,6 +16670,32 @@
           }
         }
       },
+      "Watermark": {
+        "type": "object",
+        "properties": {
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupRef"
+            }
+          }
+        },
+        "required": [
+          "pages"
+        ]
+      },
       "Written": {
         "type": "object",
         "properties": {
@@ -16581,6 +16729,7 @@
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
+          "no_download",
           "not_configured",
           "not_found",
           "not_joinable",
@@ -16859,6 +17008,10 @@
     "moderation_rejected": {
       "status": 422,
       "meaning": "The moderator refused the text; `error` says why."
+    },
+    "no_download": {
+      "status": 409,
+      "meaning": "The version has no file its kind's download serves: nothing uploaded, or its upload failed or was dropped."
     },
     "not_configured": {
       "status": 501,

@@ -47,12 +47,47 @@ type downloads struct {
 	premium string // holds premium through OpenRails
 	user    string
 	another string
+	// translators are doujins-com and embargo.
+	translators []groups.Group
 }
 
-// mark is a host watermark: it appends who and which page.
-type mark struct{}
+// join puts c's version in the translator group of slug.
+func (d *downloads) join(c catalog.Content, slug string) {
+	d.w.t.Helper()
+	i := slices.IndexFunc(d.translators, func(g groups.Group) bool { return g.Slug == slug })
+	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
+		{GroupID: d.translators[i].ID, VersionID: c.Versions[0].ID}}}, nil)
+}
 
-func (mark) Mark(_ context.Context, a access.Actor, _ versions.Target, page int, b []byte) ([]byte, string, error) {
+// policy is a host's download policy, as Doujins' legacy rules go: a
+// version embargoed (translator:embargo) waits three days after its release
+// for viewers without premium; a premium version translated by the site
+// (translator:doujins-com) has pages 3, 5 and 7 marked. It names marks for
+// files too, which ContentKit ignores.
+type policy struct{}
+
+func inGroup(gs []kinds.GroupRef, kind, slug string) bool {
+	return slices.Contains(gs, kinds.GroupRef{Kind: kind, Slug: slug})
+}
+
+func (policy) Decide(_ context.Context, r versions.DownloadRequest) (versions.DownloadDecision, error) {
+	if inGroup(r.Groups, "translator", "embargo") && !slices.Contains(r.Tiers, "premium") && !r.Editor {
+		if at := r.Released.Add(72 * time.Hour); time.Now().Before(at) {
+			return versions.DownloadDecision{Reason: "release_window", AvailableAt: &at}, nil
+		}
+	}
+	d := versions.DownloadDecision{Allowed: true}
+	if inGroup(r.Groups, "translator", "doujins-com") && r.Rule.Level == access.TierLevel && slices.Contains(r.Rule.Tiers, "premium") {
+		d.Mark = []int{3, 5, 7}
+	}
+	if r.Pages == 0 {
+		d.Mark = []int{1, 2}
+	}
+	return d, nil
+}
+
+// Mark appends who and which page.
+func (policy) Mark(_ context.Context, a access.Actor, _ versions.Target, page int, b []byte) ([]byte, string, error) {
 	return append(bytes.Clone(b), fmt.Sprintf("|marked %s p%d", a.ID, page)...), ".webp", nil
 }
 
@@ -79,24 +114,22 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 		t.Fatal(err)
 	}
 	e := w.engine(func(c *contentkit.Config, deps *contentkit.Deps) {
-		c.Content.Kinds["movie"] = kinds.Kind{Route: "movies", Presentation: "player", Versions: kinds.VersionRules{Languages: "one"}}
-		c.Content.Kinds["episode"] = kinds.Kind{Route: "episodes", Presentation: "player", Versions: kinds.VersionRules{Languages: "one"},
-			Download: &kinds.Download{Tiers: []string{"premium"}}}
+		c.Content.Kinds["movie"] = kinds.Kind{Route: "movies", Presentation: "player", Versions: kinds.VersionRules{Languages: "one"},
+			Groups: []string{"translator"}}
 		c.Content.GroupKinds["translator"] = kinds.GroupKind{Route: "translators", VersionLevel: true}
 		book := c.Content.Kinds["book"]
 		book.Groups = []string{"translator"}
-		book.Download = &kinds.Download{Watermark: &kinds.Watermark{Pages: []int{3, 5, 7}, Tiers: []string{"premium"},
-			Groups: []kinds.GroupRef{{Kind: "translator", Slug: "doujins-com"}}}}
 		c.Content.Kinds["book"] = book
-		for _, name := range []string{"movie", "episode"} {
-			c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: name, KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 1 << 20}},
-				Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{}}}})
-		}
+		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "movie", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 1 << 20}},
+			Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{}}}})
 		c.Media.Downloads = quotas
-		deps.Billing, deps.Watermark = ckopenrails.Billing(merchant), mark{}
+		deps.Billing, deps.Downloads = ckopenrails.Billing(merchant), policy{}
 	})
 	d.f = serve(t, e)
+	d.f.want(http.StatusCreated, d.staff, "POST", "/groups", []groups.GroupInput{
+		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"}}},
+		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}}}, &d.translators)
 	key, err := token.ParseKey(w.config().Media.Delivery.SigningKey)
 	if err != nil {
 		t.Fatal(err)

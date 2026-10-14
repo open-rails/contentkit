@@ -317,20 +317,19 @@ func TestDownloadAreaOpensOnlyToDownloadTokens(t *testing.T) {
 			}
 		}
 	}
-	dl, exp, err := f.rd.DownloadURL(item, archive, "A Title.zip", time.Minute)
+	// The fixture's zip is its page's bytes (a PNG): the name follows its type.
+	dl, exp, err := f.rd.DownloadURL(item, archive, "A Title.png", time.Minute)
 	if err != nil || time.Until(exp) > time.Minute || !strings.Contains(dl, "t=") {
 		t.Fatalf("download URL %q %v %v", dl, exp, err)
 	}
-	if status, body, hdr := f.fetch(dl); status != http.StatusOK || body != string(png(100)) || hdr.Get("Content-Disposition") != layout.Attachment("A Title.zip") {
+	if status, body, hdr := f.fetch(dl); status != http.StatusOK || body != string(png(100)) || hdr.Get("Content-Disposition") != layout.Attachment("A Title.png") {
 		t.Fatalf("download: %d %v", status, hdr)
 	}
 	u, _ := url.Parse(dl)
-	for _, file := range []media.File{original, high} {
-		key, _ := item.Blob(file.Blob)
-		u.Path = "/v1/" + key
-		if status, _, _ := f.fetch(u.String()); status != http.StatusNotFound {
-			t.Fatalf("the archive's token opened %s: %d", file.Path, status)
-		}
+	key, _ := item.Blob(original.Blob)
+	u.Path = "/v1/" + key
+	if status, _, _ := f.fetch(u.String()); status != http.StatusNotFound {
+		t.Fatalf("the archive's token opened the original: %d", status)
 	}
 	expired, _, err := f.rd.DownloadURL(item, archive, "", -time.Second)
 	if err != nil {

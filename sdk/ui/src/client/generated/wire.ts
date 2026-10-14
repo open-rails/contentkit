@@ -542,6 +542,13 @@ export interface DeleteRecord {
   external_id: string;
 }
 
+export interface Download {
+  off?: boolean;
+  serve?: string;
+  tiers?: string[];
+  watermark?: Watermark;
+}
+
 export interface Edge {
   from: string;
   relation: string;
@@ -688,6 +695,14 @@ export interface FeedItem {
   content_kind: string;
   content_id: string;
   content_version_id?: string;
+}
+
+export interface FileDownload {
+  url: string;
+  name: string;
+  type: string;
+  size?: number;
+  expires_at: string;
 }
 
 export interface FileInfo {
@@ -1014,6 +1029,7 @@ export interface Kind {
   sort?: string;
   locked?: Locked;
   draft_ttl?: number;
+  download?: Download;
 }
 
 export interface LanguageTotal {
@@ -1831,6 +1847,12 @@ export interface VoteRecord {
   user_id?: string;
   ip?: string;
   created_at?: string;
+}
+
+export interface Watermark {
+  pages: number[];
+  tiers?: string[];
+  groups?: GroupRef[];
 }
 
 export interface Written {

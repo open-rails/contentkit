@@ -6,7 +6,6 @@ package kinds
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -82,20 +81,14 @@ type Kind struct {
 	Download *Download `json:"download,omitempty" yaml:"download"`
 }
 
-// Download is what a kind's version download serves. Only entitled viewers
-// download, each download charged to the viewer's download quota.
+// Download is what a kind's version download serves. Whether a viewer may
+// download, and which pages are marked, is the host's DownloadPolicy.
 type Download struct {
 	// Off: the kind's versions have no download.
 	Off bool `json:"off,omitempty" yaml:"off"`
 	// Serve is DownloadPages, DownloadOriginal or a private MP4 preset of the
 	// kind's media ("mp4-1080"); empty is the presentation's default.
 	Serve string `json:"serve,omitempty" yaml:"serve"`
-	// Tiers, when set, keep downloads to holders of one of them (editors
-	// always), even of versions anyone opens.
-	Tiers []string `json:"tiers,omitempty" yaml:"tiers"`
-	// Watermark marks pages of a page download through the host's
-	// watermarker; nil marks none.
-	Watermark *Watermark `json:"watermark,omitempty" yaml:"watermark"`
 }
 
 // What a download serves.
@@ -125,47 +118,12 @@ func (k Kind) Serves() string {
 	return ""
 }
 
-// Watermark marks Pages of a page download for a version locked behind one
-// of Tiers (any version without Tiers) in one of Groups (any without
-// Groups). Signed-out downloads are never marked.
-type Watermark struct {
-	// Pages are page numbers from 1; pages past the version's end are skipped.
-	Pages  []int      `json:"pages" yaml:"pages"`
-	Tiers  []string   `json:"tiers,omitempty" yaml:"tiers"`
-	Groups []GroupRef `json:"groups,omitempty" yaml:"groups"`
-}
-
-func (d Download) validate(k Kind, tiers []string) error {
-	if d.Off && (d.Serve != "" || d.Watermark != nil || len(d.Tiers) > 0) {
-		return errors.New("download is off: it serves nothing to no one and marks nothing")
-	}
-	for _, t := range d.Tiers {
-		if !slices.Contains(tiers, t) {
-			return fmt.Errorf("download names unknown tier %q", t)
-		}
+func (d Download) validate() error {
+	if d.Off && d.Serve != "" {
+		return errors.New("download is off: it serves nothing")
 	}
 	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal && !routeRE.MatchString(d.Serve) {
 		return fmt.Errorf("download serves %q: pages, original or a preset name", d.Serve)
-	}
-	w := d.Watermark
-	if w == nil {
-		return nil
-	}
-	if k.Presentation == "player" || k.Serves() != DownloadPages {
-		return errors.New("download watermark marks pages: the kind must serve pages, never a video")
-	}
-	if len(w.Pages) == 0 {
-		return errors.New("download watermark needs pages")
-	}
-	for i, p := range w.Pages {
-		if p < 1 || slices.Contains(w.Pages[:i], p) {
-			return fmt.Errorf("download watermark page %d: pages count from 1, each once", p)
-		}
-	}
-	for _, t := range w.Tiers {
-		if !slices.Contains(tiers, t) {
-			return fmt.Errorf("download watermark names unknown tier %q", t)
-		}
 	}
 	return nil
 }
@@ -420,7 +378,7 @@ func (c Config) Validate() error {
 			}
 		}
 		if d := k.Download; d != nil {
-			if err := d.validate(k, c.Tiers); err != nil {
+			if err := d.validate(); err != nil {
 				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
 			}
 		}
@@ -450,11 +408,6 @@ func (c Config) groupRefs() []GroupRef {
 	}
 	for _, f := range c.ContentFilters {
 		out = append(out, f.Group)
-	}
-	for _, name := range slices.Sorted(maps.Keys(c.Kinds)) {
-		if d := c.Kinds[name].Download; d != nil && d.Watermark != nil {
-			out = append(out, d.Watermark.Groups...)
-		}
 	}
 	return out
 }

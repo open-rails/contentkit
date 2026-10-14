@@ -184,8 +184,16 @@ func (c *catalog) wasRefreshed(id string) bool {
 	return slices.Contains(c.refreshed, id)
 }
 
-// marker is a host watermark: it appends the viewer's id.
+// marker is a host download policy: it marks page 2 (and 9, past the end)
+// of premium versions by appending the viewer's id.
 type marker struct{}
+
+func (marker) Decide(_ context.Context, r versions.DownloadRequest) (versions.DownloadDecision, error) {
+	if r.Rule.Level != access.TierLevel {
+		return versions.DownloadDecision{Allowed: true}, nil
+	}
+	return versions.DownloadDecision{Allowed: true, Mark: []int{2, 9}}, nil
+}
 
 func (marker) Mark(_ context.Context, a access.Actor, _ versions.Target, _ int, page []byte) ([]byte, string, error) {
 	return append(slices.Clone(page), []byte("marked:"+a.ID)...), ".png", nil
@@ -216,7 +224,7 @@ type site struct {
 }
 
 type siteOptions struct {
-	watermark versions.Watermarker
+	policy    versions.DownloadPolicy
 	downloads versions.Downloads
 	// gallery edits the site's gallery kind.
 	gallery func(*kinds.Kind)
@@ -248,7 +256,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 		t.Fatal(err)
 	}
 	s.svc, err = versions.New(versions.Options{Tenant: s.tenant, Schema: s.schema, Pool: s.pool, Kinds: siteKinds, Auth: authn,
-		Resolver: s.cat, Gate: gate, Facets: s.cat, Watermark: o.watermark, Downloads: o.downloads})
+		Resolver: s.cat, Gate: gate, Facets: s.cat, Policy: o.policy, Downloads: o.downloads})
 	if err != nil {
 		t.Fatal(err)
 	}

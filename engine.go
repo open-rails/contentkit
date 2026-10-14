@@ -317,7 +317,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
-		Watermark: deps.Watermark, Logger: e.log, Now: now}); err != nil {
+		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	reg.Hooks = m.versions.Hooks()

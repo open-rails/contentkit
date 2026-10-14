@@ -36,6 +36,7 @@ var codes = []ErrorCode{
 	{CodeInvalidRequest, http.StatusBadRequest, "The request is malformed: its body, a query parameter or a path value.", "The request is invalid."},
 	{CodeUnauthorized, http.StatusUnauthorized, "The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which.", "Sign in to do this."},
 	{CodeForbidden, http.StatusForbidden, "The actor may not do this.", "You may not do this."},
+	{"download_unavailable", http.StatusForbidden, "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged.", "This isn't available to download right now."},
 	{"comment_banned", http.StatusForbidden, "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends.", "You are banned from commenting here."},
 	{"comments_closed", http.StatusForbidden, "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused.", "Comments are closed here."},
 	{"comments_locked", http.StatusForbidden, "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them.", "Open the content to see and write its comments."},

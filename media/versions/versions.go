@@ -67,7 +67,7 @@ type Options struct {
 	Gate      *access.Gate
 	Facets    Facets
 	Others    Others      // nil refuses every other kind
-	Watermark Watermarker // marks the pages kinds.Watermark names; nil marks none
+	Policy    DownloadPolicy // the host's download policy; nil allows every download and marks none
 	Downloads Downloads
 	Logger    *slog.Logger
 	Now       func() time.Time

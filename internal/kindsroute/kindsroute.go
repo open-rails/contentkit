@@ -1,7 +1,6 @@
 // Package kindsroute serves the site's public content model: the part of
 // kinds.Config clients render kinds, groups and content filters with.
-// Restrictions, sites, token claims and download watermarks stay on the
-// server.
+// Restrictions, sites and token claims stay on the server.
 package kindsroute
 
 import (
@@ -42,11 +41,6 @@ func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentMode
 			l.Show = []string{}
 		}
 		k.Locked = &l
-		if d := k.Download; d != nil {
-			public := *d
-			public.Watermark = nil // which pages carry a forensic mark stays on the server
-			k.Download = &public
-		}
 		m.Kinds[name] = k
 	}
 	if m.Languages == nil {

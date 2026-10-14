@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -118,16 +117,13 @@ func TestReaderMeta(t *testing.T) {
 	}
 }
 
-// Downloads stream the prepared archive, or a copy with the pages the kind's
-// watermark names marked by the host, to viewers who open every page, within
-// their bucket's quota.
+// Downloads serve the prepared archive, or stream a copy with the pages the
+// host's policy names marked, to viewers who open every page, within their
+// bucket's quota.
 func TestDownload(t *testing.T) {
-	s := newSite(t, siteOptions{watermark: marker{}, downloads: versions.Downloads{
+	s := newSite(t, siteOptions{policy: marker{}, downloads: versions.Downloads{
 		User:  []versions.Quota{{Limit: 5, Per: time.Hour}},
-		Tiers: []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}},
-		gallery: func(k *kinds.Kind) {
-			k.Download = &kinds.Download{Watermark: &kinds.Watermark{Pages: []int{2, 9}, Tiers: []string{"premium"}}}
-		}})
+		Tiers: []versions.TierQuota{{Tier: "premium", Quotas: []versions.Quota{{Limit: 1, Per: time.Hour}}}}}})
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
 	v := s.version(c)
 	ref := s.ref("gallery", v)
@@ -156,8 +152,8 @@ func TestDownload(t *testing.T) {
 		}
 		return out
 	}
-	// The watermark applies: the download's URL is the archive route,
-	// streaming the pages with page 2 marked (9 is past the end).
+	// The policy marks: the download's URL is the archive route, streaming
+	// the pages with page 2 marked (9 is past the end).
 	resp, b := s.call(s.fan, "GET", path, nil)
 	var granted versions.FileDownload
 	if err := json.Unmarshal(b, &granted); resp.StatusCode != 200 || err != nil || !strings.HasPrefix(granted.URL, "archive?") || granted.Name != "A Title.zip" {

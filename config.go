@@ -269,9 +269,11 @@ type Deps struct {
 	// PurgePublic hears of public media URLs overwritten or deleted, for a
 	// CDN purge.
 	PurgePublic func(ctx context.Context, urls []string)
-	// Watermark marks the pages of page downloads that their kind's
-	// download.watermark names; nil marks none.
-	Watermark versions.Watermarker
+	// Downloads is the host's download policy: whether a viewer may
+	// download a version now, and the pages of a page download it marks.
+	// Nil allows every download the access gate and quotas let through and
+	// marks none.
+	Downloads versions.DownloadPolicy
 
 	// Moderator screens comments and content text; nil publishes everything.
 	Moderator content.ContentModerator

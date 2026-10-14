@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (160). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (161). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, groups `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -178,7 +178,8 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/contents/{id}/versions/{version}/reader` | public | — | 200 `ReaderPlan`<br>202 `Pending` | A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication. |
 | PUT | `/v1/contents/{id}/versions/{version}/reader` | user | `ReaderMeta` | 204 — | Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads. |
 | POST | `/v1/contents/{id}/versions/{version}/fork` | user | `ForkBody` | 202 `Pending` | Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job. |
-| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `application/zip`<br>202 `Pending` | A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared. |
+| GET | `/v1/contents/{id}/versions/{version}/download` | public | — | 200 `FileDownload`<br>202 `Pending` | Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the kind's watermark marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 409 no_download when the version has nothing to serve. |
+| GET | `/v1/contents/{id}/versions/{version}/archive` | public | — | 200 `application/zip` | Streams the marked zip a download granted: the version's pages, those its kind's watermark names marked for the viewer the ticket is for. 404 for an expired or foreign ticket. Query: `for`, `ticket`. |
 
 ## Offers, free group joins and the library (`/v1`)
 
@@ -253,6 +254,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `invalid_request` | 400 | The request is malformed: its body, a query parameter or a path value. |
 | `limit_reached` | 409 | The owner already has as many groups of the kind as the site allows (max_per_owner). |
 | `moderation_rejected` | 422 | The moderator refused the text; `error` says why. |
+| `no_download` | 409 | The version has no file its kind's download serves: nothing uploaded, or its upload failed or was dropped. |
 | `not_configured` | 501 | The capability needs a port the host did not configure; retrying does not help. |
 | `not_found` | 404 | Nothing by that name, or nothing the actor may see. |
 | `not_joinable` | 409 | The group has no free offer to join: it sells its membership, or nothing. |
