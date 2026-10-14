@@ -78,7 +78,7 @@ describe("failures without a ContentKit answer", () => {
     await new Promise<void>((done) => closed.listen(0, "127.0.0.1", done));
     const port = (closed.address() as AddressInfo).port;
     await new Promise((done) => closed.close(done));
-    const err = await new Http({ baseUrl: "" }).request(`http://127.0.0.1:${port}/v1/x`).catch((e: ContentKitError) => e);
+    const err = await new Http({ baseUrl: "" }).request<never>(`http://127.0.0.1:${port}/v1/x`).catch((e: ContentKitError) => e);
     expect([err.code, err.status, err.transient]).toEqual(["network", 0, true]);
     expect(say(err)).toBe("Couldn't reach the server. Check your connection and try again.");
     for (const message of ["Failed to fetch", "NetworkError when attempting to fetch resource.", "Load failed"])
@@ -99,7 +99,7 @@ describe("failures without a ContentKit answer", () => {
     const canceled = get("/slow", ctl.signal);
     ctl.abort();
     expect((await canceled).code).toBe("aborted");
-    expect(createTranslator(resolveMessages(ja)).error(await get("/gateway-503"))).toBe(ja.errors.server_unavailable);
+    expect(createTranslator(resolveMessages(ja)).error(await get("/gateway-503"))).toBe(ja.errors!.server_unavailable);
   });
 
   it("keeps a coded 503 as the server sent it", async () => {
