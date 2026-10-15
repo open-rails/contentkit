@@ -58,10 +58,12 @@ type DownloadRequest struct {
 }
 
 // DownloadGroup is a group of a download's version, named in its language,
-// else the site's default, else another, else by its slug.
+// else the site's default, else another, else by its slug, with its
+// attributes.
 type DownloadGroup struct {
 	kinds.GroupRef
-	Name string
+	Name       string
+	Attributes map[string]any
 }
 
 // In reports whether the version is in group g.
@@ -406,10 +408,11 @@ WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Conte
 
 // downloadGroups are v's active groups, its own and its content's, each
 // named in v's language, else the site's default, else another, else by its
-// slug.
+// slug, with its attributes.
 func (s *Service) downloadGroups(ctx context.Context, v version) ([]DownloadGroup, error) {
 	rows, err := s.o.Pool.Query(ctx, `SELECT DISTINCT g.kind, g.slug, COALESCE((SELECT n.name FROM `+pgxIdent(s.o.Schema, "content_group_names")+` n
- WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug)
+ WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug),
+ g.attributes
 FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
 WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active'
 AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
@@ -419,7 +422,7 @@ ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kind
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DownloadGroup, error) {
 		var g DownloadGroup
-		return g, row.Scan(&g.Kind, &g.Slug, &g.Name)
+		return g, row.Scan(&g.Kind, &g.Slug, &g.Name, &g.Attributes)
 	})
 }
 
