@@ -8,6 +8,11 @@
 @source "./components";
 @source "./editor";
 
+@keyframes search-expand {
+  from { clip-path: inset(0 0 100% 0); opacity: 0; }
+  to { clip-path: inset(0); opacity: 1; }
+}
+
 /* The build scopes every rule under `.ckui` (tooling/css). Components read only
    `--ckui-*` tokens; `data-ckui-theme` picks the palette and appearance
    variables land as inline custom properties that win over the blocks below. */
