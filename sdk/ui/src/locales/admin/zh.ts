@@ -1,6 +1,16 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  contentAdmin: {
+    groups: "群组",
+    modelFailed: "无法加载内容模型。",
+    title: "内容管理",
+    navigation: "管理栏目",
+    kind: "内容类型",
+    empty: "尚未配置管理栏目。",
+    unavailable: "此管理工作台不提供此视图。",
+    back: "返回管理",
+  },
   admin: {
     noAccessTitle: "无权访问",
     noAccess: "你没有使用此功能的权限。",

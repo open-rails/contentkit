@@ -1,5 +1,15 @@
 // The drop-in admin flows: shared states, and each flow's own words.
 export const admin = {
+  contentAdmin: {
+    groups: "Groups",
+    modelFailed: "The content model could not be loaded.",
+    title: "Content administration",
+    navigation: "Administration sections",
+    kind: "Content kind",
+    empty: "No administration sections are configured.",
+    unavailable: "This view is not available in this workbench.",
+    back: "Back to administration",
+  },
   admin: {
     noAccessTitle: "No access",
     noAccess: "You don't have permission to use this.",

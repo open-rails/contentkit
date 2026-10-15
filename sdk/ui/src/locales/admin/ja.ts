@@ -1,6 +1,16 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  contentAdmin: {
+    groups: "グループ",
+    modelFailed: "コンテンツモデルを読み込めませんでした。",
+    title: "コンテンツ管理",
+    navigation: "管理セクション",
+    kind: "コンテンツの種類",
+    empty: "管理セクションが設定されていません。",
+    unavailable: "この管理画面ではこのビューを利用できません。",
+    back: "管理画面に戻る",
+  },
   admin: {
     noAccessTitle: "アクセス権がありません",
     noAccess: "この機能を使う権限がありません。",

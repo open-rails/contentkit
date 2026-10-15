@@ -294,7 +294,7 @@ export function SearchBox(p: SearchBoxProps) {
       {open && (header ? createPortal(
         <ContentKitUiRoot appearance={p.appearance} className="fixed inset-x-0 bottom-0 z-[70] text-sm" style={{ top }} data-ckui="search-layer">
           <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" data-ckui="search-backdrop" aria-hidden />
-          <div ref={panel} className="relative w-full bg-background pt-1.5 text-foreground shadow-lg" data-ckui="search-panel" onKeyDown={panelKeyDown}>
+          <div ref={panel} className="relative w-full origin-top animate-in fade-in-0 slide-in-from-top-2 bg-background pt-1.5 text-foreground shadow-lg duration-200 ease-out motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
             <div className="mx-auto w-full max-w-[71rem] px-4 pt-5 md:px-[10%]">
               <div className="[--search-max-height:70vh] overflow-y-auto pb-7 md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>
                 <div className={empty ? "px-4 py-4" : "px-4"}>{results}</div>

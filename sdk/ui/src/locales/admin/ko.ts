@@ -1,6 +1,16 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  contentAdmin: {
+    groups: "그룹",
+    modelFailed: "콘텐츠 모델을 불러올 수 없습니다.",
+    title: "콘텐츠 관리",
+    navigation: "관리 섹션",
+    kind: "콘텐츠 종류",
+    empty: "설정된 관리 섹션이 없습니다.",
+    unavailable: "이 관리 화면에서는 해당 보기를 사용할 수 없습니다.",
+    back: "관리 화면으로 돌아가기",
+  },
   admin: {
     noAccessTitle: "접근 권한 없음",
     noAccess: "이 기능을 사용할 권한이 없습니다.",

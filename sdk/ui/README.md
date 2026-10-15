@@ -473,6 +473,61 @@ const content = useContentGroups(contentId); // content.set(memberships, kinds)
   show humanized. Covers render `cover.renditions`; `renderCover` stands in
   until group reads carry them.
 
+## Reference administration workbench
+
+`ContentAdmin` is an optional library component composing the existing content,
+group, moderation, poll and statistics managers. It is not a standalone server
+portal, a sign-in page or a SaaS control plane. A host can continue to compose
+any individual manager in its own administration area.
+
+```tsx
+import { ContentAdmin } from "@openrails/contentkit-ui";
+import { richTextEditor } from "@openrails/contentkit-ui/editor";
+import "@openrails/contentkit-ui/styles.css";
+
+<ContentAdmin
+  client={contentkit}
+  basePath="/admin/content"
+  navigation={{ pathname, search, navigate }}
+  appearance={{ theme: "inherit" }}
+  sections={["contents", "groups", "moderation", "polls", "statistics"]}
+  contentKinds={["article", "video"]}
+  labels={{ article: "Articles", video: "Videos" }}
+  content={{ renderEditor: richTextEditor }}
+/>;
+```
+
+The client is an existing ContentKit client, or pass `baseUrl` and the host's
+`auth` transport. `guard`, `language`, `messages` and `onError` follow the
+individual managers' contracts below. Without `navigation`, the workbench uses
+browser history; without `basePath` as well, navigation stays in memory.
+
+`GET /kinds` supplies languages and configured content and group kinds. Omit
+`contentKinds` to offer all content kinds; omit `groupKinds` to offer the
+site-owned group kinds. Explicit lists restrict and order those choices, and
+unknown kinds are omitted. The routes beneath `basePath` are
+`contents/<kind>[/new|/<id>]`, `groups/<kind>[/new|/<id>]`, `moderation`,
+`polls[/new|/<id>]` and `statistics`; each manager retains its own filters and
+subviews. Unknown or excluded routes show an unavailable view and do not load
+a manager. Only the selected manager mounts. Navigation entries describe
+configured sections, not permission grants: a selected manager can show its
+normal no-access state. Statistics uses its own read permission, independently
+of content editing.
+
+The optional `content` props are `renderEditor` and `contentHref`; `groups`
+accepts `renderContent`; `moderation` accepts `itemHref`, `userHref` and
+`sections`; `polls` accepts `freeText` and `maxOptions`. These are the existing
+managers' extension points. Without `renderEditor`, body editing uses the
+manager's HTML field; the rich text editor is an optional peer dependency.
+Changing the client or the provider's viewer/access/language scope resets the
+workbench's local navigation and unsaved forms. A URL already selected by the
+host stays selected and is checked again under the new scope. When reusing
+a transport across sign-ins, keep `ContentKitProvider`'s `viewer` and
+`accessRevision` current, or remount the workbench. Media and
+version editing remain in the content editor. Site-specific import,
+review and publishing workflows can use the individual managers and media
+components without adopting this workbench.
+
 ## Admin flows
 
 Drop-in staff screens for a host's own admin area: each makes its own reads

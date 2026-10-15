@@ -1,6 +1,16 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  contentAdmin: {
+    groups: "Grupos",
+    modelFailed: "No se pudo cargar el modelo de contenido.",
+    title: "Administración de contenido",
+    navigation: "Secciones de administración",
+    kind: "Tipo de contenido",
+    empty: "No hay secciones de administración configuradas.",
+    unavailable: "Esta vista no está disponible en este panel.",
+    back: "Volver a la administración",
+  },
   admin: {
     noAccessTitle: "Sin acceso",
     noAccess: "No tienes permiso para usar esto.",
