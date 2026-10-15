@@ -315,19 +315,22 @@ media:
 - **Policy** is the host's `Deps.Downloads` (`versions.DownloadPolicy`):
   `Decide(ctx, DownloadRequest) (DownloadDecision, error)` runs after the
   access check, before the quota, for files and zips. The request carries
-  the actor, the tiers it holds, `Editor`, the version, its kind, its groups
-  (`{kind, slug}`, its own and its content's), its effective `access.Rule`,
-  `Released` (when it went live) and `Pages` (0 for a file). The decision
-  allows it, or refuses with the host's `Reason` and `AvailableAt` (403
-  `download_unavailable`, nothing charged), and names pages (from 1) to
-  `Mark`; files ignore marks. `Mark(ctx, actor, version, page, bytes)`
-  marks them. Nil allows everything and marks nothing.
+  the actor, the tiers it holds, `Editor`, the version, its kind, its
+  `Language` and `Title` (in that language when it has one there), its
+  groups (`{kind, slug, name}`, its own and its content's, named in its
+  language), its effective `access.Rule`, `Released` (when it went live) and
+  `Pages` (0 for a file). The decision allows it, or refuses with the host's
+  `Reason` and `AvailableAt` (403 `download_unavailable`, nothing charged),
+  names pages (from 1) to `Mark` (files ignore marks) and may `Name` the
+  file (no extension; ContentKit cleans and bounds it and adds the
+  extension). `Mark(ctx, actor, version, page, bytes)` marks them. Nil
+  allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
   `VersionDownloadButton` do). Files and unmarked zips are the media host's,
   with a download token of that one `download/` key, so bytes never pass the
-  app; files are named `{title} [{version code}].{ext}`, zips by the zip
-  preset's `Download` template. A zip with marks is `archive?for=&mark=&ticket=`,
+  app; without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
+  zips by the zip preset's `Download` template. A zip with marks is `archive?for=&mark=&name=&ticket=`,
   relative to the download route: `GET .../versions/{vid}/archive` streams
   it, marking the ticket's pages.
 - `202 Pending` while the file is placed or produced, `403` locked or

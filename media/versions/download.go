@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 	"github.com/redis/go-redis/v9"
 
@@ -43,14 +44,29 @@ type DownloadRequest struct {
 	Editor bool     // Actor edits the version
 	Target
 	Kind string
+	// Language is the version's language; Title is its title, in Language
+	// when it has one there (its content's id when it has none).
+	Language, Title string
 	// Groups are the version's groups, its own and its content's.
-	Groups []kinds.GroupRef
+	Groups []DownloadGroup
 	// Rule is the version's effective access rule.
 	Rule access.Rule
 	// Released is when the version went live; zero while it is not.
 	Released time.Time
 	// Pages are a page download's pages; 0 for a file.
 	Pages int
+}
+
+// DownloadGroup is a group of a download's version, named in its language,
+// else the site's default, else another, else by its slug.
+type DownloadGroup struct {
+	kinds.GroupRef
+	Name string
+}
+
+// In reports whether the version is in group g.
+func (r DownloadRequest) In(g kinds.GroupRef) bool {
+	return slices.ContainsFunc(r.Groups, func(d DownloadGroup) bool { return d.GroupRef == g })
 }
 
 // DownloadDecision is a policy's ruling.
@@ -62,6 +78,9 @@ type DownloadDecision struct {
 	AvailableAt *time.Time
 	// Mark are the pages (from 1) of a page download to mark; files ignore it.
 	Mark []int
+	// Name is the download's file name without its extension; "" keeps
+	// ContentKit's. ContentKit cleans and bounds it.
+	Name string
 }
 
 // UnavailableError is a download the policy refused.
@@ -237,23 +256,24 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 			return nil, ErrNoDownload
 		}
 	}
-	mark, err := s.ask(ctx, actor, v, d.res.Editor, len(pages))
+	title, code := s.title(ctx, v)
+	g, err := s.ask(ctx, actor, v, title, d.res.Editor, len(pages))
 	if err != nil {
 		return nil, err
 	}
-	title, code := s.title(ctx, v)
 	ttl := cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL)
 	var f media.File
 	var name string
 	if z != nil && z.Zip != "" {
-		name = archiveName(title, z)
-		if len(mark) > 0 {
+		name = fileName(".zip", g.name, archiveStem(title, z), v.Content)
+		if len(g.mark) > 0 {
 			if err := s.charge(ctx, actor); err != nil {
 				return nil, err
 			}
 			exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
-			marks := joinPages(mark)
-			q := url.Values{"for": {actor.ID}, "mark": {marks}, "ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID, marks), exp)}}
+			marks := joinPages(g.mark)
+			q := url.Values{"for": {actor.ID}, "mark": {marks}, "name": {name},
+				"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID, marks, name), exp)}}
 			return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 		}
 		var ok bool
@@ -268,7 +288,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 		case media.DownloadPending:
 			return nil, ErrNotReady
 		}
-		name = media.CleanName(title + " [" + code + "]" + cmp.Or(layout.DownloadExt(f.Type), path.Ext(f.Path)))
+		name = fileName(cmp.Or(layout.DownloadExt(f.Type), path.Ext(f.Path)), g.name, title+" ["+code+"]", v.Content)
 	}
 	if area, _, _ := layout.SplitBlobRef(f.Blob); area != layout.AreaDownload {
 		return nil, ErrNoDownload // stored before its kind put it in download/
@@ -283,16 +303,17 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
-// Archive opens the marked archive a Download granted viewer for t, by its
-// ticket: the pages zipped as they stream, the policy marking those mark
-// names. A ticket that is expired or not for viewer, t and mark is
+// Archive opens the marked archive named name a Download granted viewer for
+// t, by its ticket: the pages zipped as they stream, the policy marking those
+// mark names. A ticket that is expired or not for viewer, t, mark and name is
 // ErrNotFound.
-func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, ticket string) (*Archive, error) {
+func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, ticket string) (*Archive, error) {
 	pages, ok := splitPages(mark)
-	if s.m.Reader == nil || s.o.Policy == nil || viewer == "" || !ok || s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer, mark)) != nil {
+	if s.m.Reader == nil || s.o.Policy == nil || viewer == "" || name == "" || !ok ||
+		s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer, mark, name)) != nil {
 		return nil, ErrNotFound
 	}
-	v, k, err := s.downloadKind(ctx, t)
+	_, k, err := s.downloadKind(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -311,8 +332,7 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, ticket st
 	if len(files) == 0 {
 		return nil, ErrNoDownload
 	}
-	title, _ := s.title(ctx, v)
-	a := &Archive{Name: archiveName(title, z), ctx: ctx, s: s, v: t, who: access.Actor{ID: viewer, Kind: auth.SubjectUser}}
+	a := &Archive{Name: name, ctx: ctx, s: s, v: t, who: access.Actor{ID: viewer, Kind: auth.SubjectUser}}
 	for _, p := range pages {
 		a.mark = append(a.mark, p-1)
 	}
@@ -329,67 +349,85 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, ticket st
 	return a, nil
 }
 
-// ask asks the host's policy about actor's download of v, of pages
-// pages (0 for a file), and returns the pages (from 1) to mark: none for a
-// file or a signed-out viewer. An UnavailableError when it refuses.
-func (s *Service) ask(ctx context.Context, actor access.Actor, v version, editor bool, pages int) ([]int, error) {
+// grant is a policy's grant of a download: the pages (from 1) to mark and
+// the file name without its extension ("" for ContentKit's).
+type grant struct {
+	mark []int
+	name string
+}
+
+// ask asks the host's policy about actor's download of v, titled title, of
+// pages pages (0 for a file): no marks for a file or a signed-out viewer. An
+// UnavailableError when it refuses.
+func (s *Service) ask(ctx context.Context, actor access.Actor, v version, title string, editor bool, pages int) (grant, error) {
 	if s.o.Policy == nil {
-		return nil, nil
+		return grant{}, nil
 	}
-	r := DownloadRequest{Actor: actor, Editor: editor, Target: v.Target, Kind: v.Kind, Pages: pages}
+	r := DownloadRequest{Actor: actor, Editor: editor, Target: v.Target, Kind: v.Kind, Language: v.Language, Title: title, Pages: pages}
 	if !actor.Anonymous && actor.ID != "" && s.o.Gate != nil {
 		f, err := s.o.Gate.Filter(ctx, actor)
 		if err != nil {
-			return nil, err
+			return grant{}, err
 		}
 		r.Tiers = slices.DeleteFunc(slices.Clone(s.o.Kinds.Tiers), func(t string) bool { return !f.Tier(t) })
 	}
 	var content access.Rule
 	var override *access.Rule
 	var released *time.Time
-	var groupKinds, slugs []string
-	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access, GREATEST(c.published_at, v.published_at),
-COALESCE(array_agg(g.kind ORDER BY g.kind, g.slug) FILTER (WHERE g.id IS NOT NULL), '{}'),
-COALESCE(array_agg(g.slug ORDER BY g.kind, g.slug) FILTER (WHERE g.id IS NOT NULL), '{}')
+	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access, GREATEST(c.published_at, v.published_at)
 FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-LEFT JOIN `+pgxIdent(s.o.Schema, "content_memberships")+` m ON m.tenant_id = v.tenant_id AND m.content_id = v.content_id
-AND (m.version_id IS NULL OR m.version_id = v.id) AND m.state = 'active'
-AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
-LEFT JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
-WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3
-GROUP BY c.access, v.access, c.published_at, v.published_at`, s.o.Tenant, v.Content, v.Version).Scan(&content, &override, &released, &groupKinds, &slugs); err != nil {
-		return nil, err
+WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Content, v.Version).Scan(&content, &override, &released); err != nil {
+		return grant{}, err
 	}
 	r.Rule = access.Effective(content, override)
 	if released != nil {
 		r.Released = *released
 	}
-	for i := range groupKinds {
-		if g := (kinds.GroupRef{Kind: groupKinds[i], Slug: slugs[i]}); !slices.Contains(r.Groups, g) {
-			r.Groups = append(r.Groups, g)
-		}
+	var err error
+	if r.Groups, err = s.downloadGroups(ctx, v); err != nil {
+		return grant{}, err
 	}
 	d, err := s.o.Policy.Decide(ctx, r)
 	if err != nil {
-		return nil, err
+		return grant{}, err
 	}
 	if !d.Allowed {
-		return nil, &UnavailableError{Reason: d.Reason, AvailableAt: d.AvailableAt}
+		return grant{}, &UnavailableError{Reason: d.Reason, AvailableAt: d.AvailableAt}
 	}
-	var mark []int
+	g := grant{name: d.Name}
 	for _, p := range d.Mark {
-		if p >= 1 && p <= pages && !slices.Contains(mark, p) && !actor.Anonymous && actor.ID != "" {
-			mark = append(mark, p)
+		if p >= 1 && p <= pages && !slices.Contains(g.mark, p) && !actor.Anonymous && actor.ID != "" {
+			g.mark = append(g.mark, p)
 		}
 	}
-	slices.Sort(mark)
-	return mark, nil
+	slices.Sort(g.mark)
+	return g, nil
+}
+
+// downloadGroups are v's active groups, its own and its content's, each
+// named in v's language, else the site's default, else another, else by its
+// slug.
+func (s *Service) downloadGroups(ctx context.Context, v version) ([]DownloadGroup, error) {
+	rows, err := s.o.Pool.Query(ctx, `SELECT DISTINCT g.kind, g.slug, COALESCE((SELECT n.name FROM `+pgxIdent(s.o.Schema, "content_group_names")+` n
+ WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug)
+FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
+WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active'
+AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
+ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kinds.Languages[0])
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DownloadGroup, error) {
+		var g DownloadGroup
+		return g, row.Scan(&g.Kind, &g.Slug, &g.Name)
+	})
 }
 
 // archiveScope is the scope of viewer's ticket to t's archive marked at
-// mark; its ':' keeps it apart from every media item and download scope.
-func archiveScope(tenant string, t Target, viewer, mark string) string {
-	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer + "/" + mark
+// mark and named name; its ':' keeps it apart from every media item and
+// download scope.
+func archiveScope(tenant string, t Target, viewer, mark, name string) string {
+	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer + "/" + mark + "/" + name
 }
 
 // joinPages is "3,5,7".
@@ -482,26 +520,34 @@ func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File,
 	return out, nil
 }
 
-// title is v's title (its own, else its content's in its language) and its
-// version code.
+// title is v's title (its own, else its content's in its language, else in
+// another), else its content's id, and its version code.
 func (s *Service) title(ctx context.Context, v version) (title, code string) {
 	_ = s.o.Pool.QueryRow(ctx, `SELECT COALESCE(NULLIF(vt.title, ''), ct.title, ''), cv.code FROM `+s.t.items+` c
 JOIN `+s.t.versions+` cv ON cv.tenant_id = c.tenant_id AND cv.id = $3
 LEFT JOIN `+pgxIdent(s.o.Schema, "content_text")+` ct ON ct.tenant_id = c.tenant_id AND ct.content_id = c.id
 LEFT JOIN `+pgxIdent(s.o.Schema, "content_version_text")+` vt ON vt.tenant_id = c.tenant_id AND vt.version_id = $3 AND vt.language = ct.language
 WHERE c.tenant_id = $1 AND c.id = $2 ORDER BY ct.language = $4 DESC, ct.language LIMIT 1`, s.o.Tenant, v.Content, v.Version, v.Language).Scan(&title, &code)
-	if title = media.CleanName(title); title == "" {
+	if strings.TrimSpace(title) == "" {
 		title = v.Content
 	}
 	return title, code
 }
 
-// archiveName is the zip's Download template with title, else title.zip.
-func archiveName(title string, z *media.Private) string {
-	if z.Download != "" {
-		return strings.ReplaceAll(z.Download, "{title}", title)
+// archiveStem is the zip's Download template with title, less ".zip".
+func archiveStem(title string, z *media.Private) string {
+	return strings.TrimSuffix(strings.ReplaceAll(cmp.Or(z.Download, "{title}.zip"), "{title}", title), ".zip")
+}
+
+// fileName is the first of names something is left of once cleaned and cut
+// to fit ext, with ext.
+func fileName(ext string, names ...string) string {
+	for _, n := range names {
+		if out := layout.DownloadName(media.CleanName(n), ext); out != "" {
+			return out
+		}
 	}
-	return title + ".zip"
+	return ""
 }
 
 // WriteTo streams the archive within its request's context.
