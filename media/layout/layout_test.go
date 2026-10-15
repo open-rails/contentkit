@@ -107,3 +107,23 @@ func TestDisposition(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadName(t *testing.T) {
+	long := strings.Repeat("日", layout.MaxDownloadName)
+	for _, c := range []struct{ name, ext, want string }{
+		{"[A (B)] Title (Naruto) (English)", ".zip", "[A (B)] Title (Naruto) (English).zip"},
+		{" ..\u202e.hidden/ name\r\n ", ".zip", "hidden name.zip"},
+		{"a\xffb", ".mp4", "ab.mp4"},
+		{"...", ".zip", ""},
+		{"", ".zip", ""},
+		{long, ".zip", strings.Repeat("日", (layout.MaxDownloadName-4)/3) + ".zip"},
+	} {
+		got := layout.DownloadName(c.name, c.ext)
+		if got != c.want {
+			t.Errorf("DownloadName(%q, %q) = %q, want %q", c.name, c.ext, got, c.want)
+		}
+		if got != "" && layout.Disposition(got, "application/zip") == "attachment" && c.ext == ".zip" {
+			t.Errorf("Disposition refuses %q", got)
+		}
+	}
+}

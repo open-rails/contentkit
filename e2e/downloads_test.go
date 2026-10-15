@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -63,25 +64,31 @@ func (d *downloads) join(c catalog.Content, slug string) {
 // version embargoed (translator:embargo) waits three days after its release
 // for viewers without premium; a premium version translated by the site
 // (translator:doujins-com) has pages 3, 5 and 7 marked. It names marks for
-// files too, which ContentKit ignores.
+// files too, which ContentKit ignores. A translated version's download is
+// named "[Translators] Title (language)".
 type policy struct{}
 
-func inGroup(gs []kinds.GroupRef, kind, slug string) bool {
-	return slices.Contains(gs, kinds.GroupRef{Kind: kind, Slug: slug})
-}
-
 func (policy) Decide(_ context.Context, r versions.DownloadRequest) (versions.DownloadDecision, error) {
-	if inGroup(r.Groups, "translator", "embargo") && !slices.Contains(r.Tiers, "premium") && !r.Editor {
+	if r.In(kinds.GroupRef{Kind: "translator", Slug: "embargo"}) && !slices.Contains(r.Tiers, "premium") && !r.Editor {
 		if at := r.Released.Add(72 * time.Hour); time.Now().Before(at) {
 			return versions.DownloadDecision{Reason: "release_window", AvailableAt: &at}, nil
 		}
 	}
 	d := versions.DownloadDecision{Allowed: true}
-	if inGroup(r.Groups, "translator", "doujins-com") && r.Rule.Level == access.TierLevel && slices.Contains(r.Rule.Tiers, "premium") {
+	if r.In(kinds.GroupRef{Kind: "translator", Slug: "doujins-com"}) && r.Rule.Level == access.TierLevel && slices.Contains(r.Rule.Tiers, "premium") {
 		d.Mark = []int{3, 5, 7}
 	}
 	if r.Pages == 0 {
 		d.Mark = []int{1, 2}
+	}
+	var by []string
+	for _, g := range r.Groups {
+		if g.Kind == "translator" {
+			by = append(by, g.Name)
+		}
+	}
+	if len(by) > 0 {
+		d.Name = "[" + strings.Join(by, ", ") + "] " + r.Title + " (" + r.Language + ")"
 	}
 	return d, nil
 }
@@ -128,7 +135,8 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 	})
 	d.f = serve(t, e)
 	d.f.want(http.StatusCreated, d.staff, "POST", "/groups", []groups.GroupInput{
-		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"}}},
+		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"},
+			{Language: "ja", Kind: groups.NameCanonical, Name: "ドウジンズ"}}},
 		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}}}, &d.translators)
 	key, err := token.ParseKey(w.config().Media.Delivery.SigningKey)
 	if err != nil {
@@ -165,10 +173,15 @@ func (d *downloads) fetch(u string) (int, []byte, http.Header) {
 // content creates and publishes a content of kind under rule, titled title,
 // and returns it.
 func (d *downloads) content(kind, title string, rule access.Rule) catalog.Content {
+	return d.contentIn(kind, rule, "en", map[string]catalog.Text{"en": {Title: title}})
+}
+
+// contentIn is content with a version in language, titled by text.
+func (d *downloads) contentIn(kind string, rule access.Rule, language string, text map[string]catalog.Text) catalog.Content {
 	d.w.t.Helper()
 	var c catalog.Content
 	d.f.want(http.StatusCreated, d.staff, "POST", "/contents", catalog.ContentInput{Kind: kind, Access: &rule,
-		Text: map[string]catalog.Text{"en": {Title: title}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &c)
+		Text: text, Versions: []catalog.VersionInput{{Languages: []string{language}}}}, &c)
 	d.f.want(http.StatusOK, d.staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, &c)
 	return c
 }
@@ -321,8 +334,13 @@ func TestMovieDownloadsServeTheOriginal(t *testing.T) {
 	for range 3 {
 		d.file(d.premium, free)
 	}
-	if f := d.file(d.premium, embargoed); f.Size != int64(len("embargoed original")) {
+	// The policy names a translated movie's download, from the facts it is given.
+	f := d.file(d.premium, embargoed)
+	if f.Size != int64(len("embargoed original")) || f.Name != "[Embargo] Just Out (en).mp4" {
 		t.Fatalf("premium embargoed download %+v", f)
+	}
+	if status, _, hdr := d.fetch(f.URL); status != http.StatusOK || hdr.Get("Content-Disposition") != layout.Attachment(f.Name) {
+		t.Fatalf("the media host served the embargoed movie %d %q", status, hdr.Get("Content-Disposition"))
 	}
 	if f := d.file(d.premium, premium); f.Type != "video/mp4" || !strings.HasSuffix(f.Name, "].mp4") {
 		t.Fatalf("premium download %+v", f)
@@ -467,13 +485,15 @@ func entries(t *testing.T, b []byte) [][]byte {
 // marks exactly pages 3, 5 and 7 of a premium version the site translated,
 // streamed through the archive route; every other page, and every page of a
 // premium version outside the group or a free one in it, is byte-identical
-// to the prepared archive the media host serves. The originals and
-// full-resolution pages never open to the viewing token; the web rendition
-// does.
+// to the prepared archive the media host serves. The policy names a
+// translated version's zip from its title and groups' names in its language;
+// the archive route serves only the name its ticket was granted. The
+// originals and full-resolution pages never open to the viewing token; the
+// web rendition does.
 func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 	d := newDownloads(t, versions.Downloads{})
 	premium := access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
-	ours := d.content("book", "Ours", premium)
+	ours := d.contentIn("book", premium, "ja", map[string]catalog.Text{"en": {Title: "Ours"}, "ja": {Title: "私たちの本"}})
 	d.join(ours, "doujins-com")
 	theirs := d.content("book", "Theirs", premium)
 	free := d.content("book", "Free", access.Rule{Level: access.Public})
@@ -483,15 +503,23 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 		prepared[c.ID] = d.pages(c, 8)
 	}
 
-	// Ours, to a premium viewer: the archive route, marking as it streams.
+	// Ours (in Japanese), to a premium viewer: the archive route, marking as
+	// it streams, named in Japanese.
 	granted := d.file(d.premium, ours)
-	if !strings.HasPrefix(granted.URL, "archive?") || granted.Name != "Ours.zip" || granted.Type != "application/zip" {
+	const oursName = "[ドウジンズ] 私たちの本 (ja).zip"
+	if !strings.HasPrefix(granted.URL, "archive?") || granted.Name != oursName || granted.Type != "application/zip" {
 		t.Fatalf("marked download %+v", granted)
 	}
-	rec := d.f.want(http.StatusOK, "", "GET", "/contents/"+ours.ID+"/versions/"+ours.Versions[0].ID+"/"+granted.URL, nil, nil)
-	if rec.Header().Get("Content-Type") != "application/zip" || rec.Header().Get("Content-Disposition") != layout.Attachment("Ours.zip") {
+	archive := "/contents/" + ours.ID + "/versions/" + ours.Versions[0].ID + "/" + granted.URL
+	rec := d.f.want(http.StatusOK, "", "GET", archive, nil, nil)
+	if rec.Header().Get("Content-Type") != "application/zip" || rec.Header().Get("Content-Disposition") != layout.Attachment(oursName) {
 		t.Fatalf("archive headers %v", rec.Header())
 	}
+	u, _ := url.Parse(archive)
+	q := u.Query()
+	q.Set("name", "Renamed.zip")
+	u.RawQuery = q.Encode()
+	d.f.want(http.StatusNotFound, "", "GET", u.String(), nil, nil)
 	got, want := entries(t, rec.Body.Bytes()), entries(t, prepared[ours.ID])
 	if len(got) != 8 || len(want) != 8 {
 		t.Fatalf("%d pages, prepared %d", len(got), len(want))
@@ -506,13 +534,14 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 			t.Fatalf("page %d differs from the prepared archive", page)
 		}
 	}
-	// Theirs (not in the group) and the free one (in it): the prepared
-	// archive at the media host, by a download token.
-	for _, c := range []catalog.Content{theirs, free} {
-		granted := d.file(d.premium, c)
+	// Theirs (not in the group, ContentKit's name) and the free one (in it,
+	// the policy's): the prepared archive at the media host, by a download
+	// token.
+	for c, name := range map[*catalog.Content]string{&theirs: "Theirs.zip", &free: "[Doujins.com] Free (en).zip"} {
+		granted := d.file(d.premium, *c)
 		status, body, hdr := d.fetch(granted.URL)
 		if status != http.StatusOK || !bytes.Equal(body, prepared[c.ID]) || granted.Size != int64(len(body)) ||
-			hdr.Get("Content-Disposition") != layout.Attachment(granted.Name) {
+			granted.Name != name || hdr.Get("Content-Disposition") != layout.Attachment(name) {
 			t.Fatalf("%s: not the prepared archive: %d %+v", c.ID, status, granted)
 		}
 	}

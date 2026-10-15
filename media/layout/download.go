@@ -6,6 +6,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // MaxDownloadName bounds a download name in bytes.
@@ -51,14 +53,37 @@ func DownloadExt(contentType string) string {
 // link cannot rename a file into another type, or make it read as one.
 func Disposition(name, contentType string) string {
 	typ, _, _ := mime.ParseMediaType(contentType)
-	plain := name != "" && len(name) <= MaxDownloadName && !strings.HasPrefix(name, ".") && !strings.ContainsFunc(name, func(c rune) bool {
-		return c < 0x20 || c == 0x7f || c == '/' || c == '\\' || c == 0xfffd ||
-			c == 0x200e || c == 0x200f || c >= 0x202a && c <= 0x202e || c >= 0x2066 && c <= 0x2069
-	})
+	plain := name != "" && len(name) <= MaxDownloadName && !strings.HasPrefix(name, ".") && !strings.ContainsFunc(name, refused)
 	if !plain || !slices.Contains(downloadExts[typ], strings.ToLower(path.Ext(name))) {
 		return "attachment"
 	}
 	return Attachment(name)
+}
+
+// refused is a character no download name holds.
+func refused(c rune) bool {
+	return c < 0x20 || c == 0x7f || c == '/' || c == '\\' || c == 0xfffd ||
+		c == 0x200e || c == 0x200f || c >= 0x202a && c <= 0x202e || c >= 0x2066 && c <= 0x2069
+}
+
+// DownloadName is name as a download name Disposition keeps when ext is its
+// object's: without the characters it refuses and leading dots, cut to fit
+// MaxDownloadName with ext, then ext. "" when nothing of name is left.
+func DownloadName(name, ext string) string {
+	name = strings.TrimLeftFunc(strings.Map(func(c rune) rune {
+		if refused(c) {
+			return -1
+		}
+		return c
+	}, strings.ToValidUTF8(name, "")), func(c rune) bool { return c == '.' || unicode.IsSpace(c) })
+	for name != "" && len(name)+len(ext) > MaxDownloadName {
+		_, n := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-n]
+	}
+	if name = strings.TrimRightFunc(name, unicode.IsSpace); name == "" {
+		return ""
+	}
+	return name + ext
 }
 
 // Attachment is the Content-Disposition for a download name: an ASCII
