@@ -7634,7 +7634,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads.",
+        "summary": "Sets a version's reader metadata (editors and staff): anchors and audio cues on its pages and audio uploads.",
         "parameters": [
           {
             "name": "id",
@@ -7677,7 +7677,8 @@
           }
         ],
         "x-contentkit-module": "versions",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:versions",
