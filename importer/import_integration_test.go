@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -34,6 +35,7 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -617,7 +619,8 @@ func TestImportGroupScopes(t *testing.T) {
 }
 
 // Media is not imported: an importer fills an imported version's folder
-// through the upload routes, here as the host's in-process client.
+// through the upload routes and sets its reader metadata, here as the host's
+// in-process client.
 func TestImportThenIngestMedia(t *testing.T) {
 	env := mediatest.Open(t)
 	f := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
@@ -625,11 +628,18 @@ func TestImportThenIngestMedia(t *testing.T) {
 		pngs := []string{"image/png"}
 		cfg.Media = &contentkit.MediaConfig{
 			Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20}}}}},
+				Publish: &media.Publish{Pages: "originals/{name}", Renditions: []string{"low"}, Playback: "listen"},
+				Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20},
+					{Path: "audio/{name}", Types: []string{"audio/mpeg"}, MaxBytes: 10 << 20}},
+				Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 64, Quality: 80}},
+					{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{}}}}}},
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
 		deps.Store = env.Store
 	})
+	if err := f.e.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	b := catalogBatch()
 	res := f.importBatch(t, importer.Batch{Source: b.Source, Groups: b.Groups, Contents: b.Contents[:1]})
 	if len(res.Failed) > 0 {
@@ -671,6 +681,24 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if _, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
 		[]contentkit.MediaFile{{Path: "originals/0004.png", Type: "image/png", From: env.Tenant + "/gallery/" + id("gallery", 1) + "/x.png"}}); err == nil {
 		t.Fatal("a source inside ContentKit's namespace was copied")
+	}
+	// A page's audio plays when it opens: the importer sets the cue, and
+	// setting it again is a no-op; a cue naming audio the version lacks is
+	// refused.
+	if _, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
+		[]contentkit.MediaFile{{Path: "audio/0001.mp3", Type: "audio/mpeg", Body: bytes.NewReader([]byte("ID3 page one"))}}); err != nil {
+		t.Fatal(err)
+	}
+	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("0001")}}}
+	for range 2 {
+		if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); err != nil {
+			t.Fatalf("set reader metadata: %v", err)
+		}
+	}
+	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("0002")})
+	var ce *contentkit.Error
+	if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); !errors.As(err, &ce) || ce.Status != http.StatusBadRequest {
+		t.Fatalf("a cue on missing audio: %v", err)
 	}
 }
 

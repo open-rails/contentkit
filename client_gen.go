@@ -1748,7 +1748,7 @@ func (c *Client) GetContentVersionReader(ctx context.Context, id string, version
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
 
-// PutContentVersionReader is PUT /v1/contents/{id}/versions/{version}/reader (user). Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads.
+// PutContentVersionReader is PUT /v1/contents/{id}/versions/{version}/reader (editor). Sets a version's reader metadata (editors and staff): anchors and audio cues on its pages and audio uploads.
 func (c *Client) PutContentVersionReader(ctx context.Context, id string, version string, body versions.ReaderMeta) error {
 	return c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, nil)
 }
