@@ -69,12 +69,14 @@ type CardVersion struct {
 	HLS string `json:"hls,omitempty"`
 }
 
-// Chip names one group on a card.
+// Chip names one group on a card. Position is the content's sort key in an
+// ordered group: auto-filled from 1, but a host may set any value of 0 or more.
 type Chip struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-	Path string `json:"path,omitempty"`
+	ID       string `json:"id"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Path     string `json:"path,omitempty"`
+	Position *int   `json:"position,omitempty"`
 }
 
 // Counts are a content item's interaction counts; Views counts its distinct
@@ -397,10 +399,18 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 			byID[string(g.ID)] = g
 		}
 	}
+	positions, err := s.positions(ctx, rows, byID)
+	if err != nil {
+		return err
+	}
 	for i := range rows {
 		for _, id := range rows[i].groupIDs {
 			if g, ok := byID[id]; ok {
-				rows[i].Groups[g.Kind] = append(rows[i].Groups[g.Kind], Chip{ID: id, Slug: g.Slug, Name: g.Name, Path: g.Path})
+				chip := Chip{ID: id, Slug: g.Slug, Name: g.Name, Path: g.Path}
+				if p, ok := positions[[2]string{rows[i].ID, id}]; ok {
+					chip.Position = &p
+				}
+				rows[i].Groups[g.Kind] = append(rows[i].Groups[g.Kind], chip)
 			}
 		}
 		for _, cs := range rows[i].Groups {
@@ -408,6 +418,42 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 		}
 	}
 	return nil
+}
+
+// positions reads each card's place in the ordered groups it shows, keyed by
+// content and group: the membership of its content or of its shown version
+// that is active now, as the card's own groups count it.
+func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[string]groups.GroupCard) (map[[2]string]int, error) {
+	var ordered []string
+	for id, g := range shown {
+		if s.o.Kinds.GroupKinds[g.Kind].Ordered {
+			ordered = append(ordered, id)
+		}
+	}
+	out := map[[2]string]int{}
+	if len(ordered) == 0 {
+		return out, nil
+	}
+	contents, versions := make([]string, len(rows)), make([]string, len(rows))
+	for i, c := range rows {
+		contents[i], versions[i] = c.ID, c.Version.ID
+	}
+	r, err := s.o.Pool.Query(ctx, `SELECT m.content_id, m.group_id, min(m.position)
+ FROM unnest($3::text[], $4::text[]) AS v(content_id, version_id)
+ JOIN `+s.t.memberships+` m ON m.tenant_id = $1 AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.version_id)
+ WHERE m.group_id = ANY($2) AND m.state = 'active' AND m.position IS NOT NULL
+  AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
+ GROUP BY m.content_id, m.group_id`, s.o.Tenant, ordered, contents, versions)
+	if err != nil {
+		return nil, err
+	}
+	var content, group string
+	var position int
+	_, err = pgx.ForEachRow(r, []any{&content, &group, &position}, func() error {
+		out[[2]string{content, group}] = position
+		return nil
+	})
+	return out, err
 }
 
 // owners fills the cards' owner groups, avatars and covers resolved, in one

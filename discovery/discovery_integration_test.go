@@ -74,6 +74,15 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if len(alpha.Groups["tag"]) != 1 || alpha.Groups["tag"][0].Name != "Romance" || alpha.Groups["artist"][0].Slug != "alice" || len(alpha.Groups["series"]) != 1 {
 		t.Fatalf("card groups: %+v", alpha.Groups)
 	}
+	if p := alpha.Groups["series"][0].Position; p == nil || *p != 2 {
+		t.Fatalf("Alpha's series chip carries position %v, want its place 2 in the saga", p)
+	}
+	if p := page.Contents[0].Groups["series"][0].Position; p == nil || *p != 1 {
+		t.Fatalf("Charlie's series chip carries position %v, want its place 1 in the saga", p)
+	}
+	if p := alpha.Groups["tag"][0].Position; p != nil {
+		t.Fatalf("a tag chip carries position %d; tags have no order", *p)
+	}
 	if _, rail := alpha.Groups["rail"]; rail {
 		t.Fatal("a group kind without pages is named on cards")
 	}
