@@ -25,9 +25,14 @@ type GroupResolver func(context.Context, contentkit.Scope, string) (auth.Scope, 
 // AuthKit permission group. These values come from trusted provisioning, never
 // request headers. It creates no groups, accounts or role assignments.
 type AuthorizationConfig struct {
-	Scope    contentkit.Scope
-	Issuer   string
-	AppScope auth.Scope
+	Scope contentkit.Scope
+	// Issuer identifies the trusted tenant account directory. For a resource
+	// server it can differ from the authority that owns the permission groups.
+	Issuer string
+	// PermissionAuthority owns AppScope, TenantAdminScope and content group
+	// scopes. Empty preserves the same-issuer behavior by using Issuer.
+	PermissionAuthority string
+	AppScope            auth.Scope
 	// TenantAdminScope is optional, explicit tenant administration. AuthKit's
 	// deployment-wide root role is never consulted implicitly.
 	TenantAdminScope auth.Scope
@@ -53,14 +58,17 @@ func NewAuthorization(ctx context.Context, groups AuthorizationGroups, cfg Autho
 	if err := cfg.Scope.Validate(); err != nil {
 		return nil, err
 	}
-	if cfg.Issuer == "" || strings.TrimSpace(cfg.Issuer) != cfg.Issuer || cfg.AppScope.Authority != cfg.Issuer || cfg.AppScope.ID == "" {
-		return nil, errors.New("contentkit/authkit: issuer and app authorization scope are required")
+	if cfg.PermissionAuthority == "" {
+		cfg.PermissionAuthority = cfg.Issuer
+	}
+	if cfg.Issuer == "" || strings.TrimSpace(cfg.Issuer) != cfg.Issuer || cfg.PermissionAuthority == "" || strings.TrimSpace(cfg.PermissionAuthority) != cfg.PermissionAuthority || cfg.AppScope.Authority != cfg.PermissionAuthority || cfg.AppScope.ID == "" {
+		return nil, errors.New("contentkit/authkit: identity issuer and matching app permission authority are required")
 	}
 	if cfg.Accounts == nil {
 		return nil, errors.New("contentkit/authkit: verified tenant account resolver is required")
 	}
-	if cfg.TenantAdminScope != (auth.Scope{}) && (cfg.TenantAdminScope.Authority != cfg.Issuer || cfg.TenantAdminScope.ID == "" || cfg.TenantAdminScope == cfg.AppScope) {
-		return nil, errors.New("contentkit/authkit: tenant administration requires a distinct scope of the configured issuer")
+	if cfg.TenantAdminScope != (auth.Scope{}) && (cfg.TenantAdminScope.Authority != cfg.PermissionAuthority || cfg.TenantAdminScope.ID == "" || cfg.TenantAdminScope == cfg.AppScope) {
+		return nil, errors.New("contentkit/authkit: tenant administration requires a distinct scope of the configured permission authority")
 	}
 	if groups == nil {
 		return nil, errors.New("contentkit/authkit: authorization group reader is required")
@@ -177,12 +185,12 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 			group, err = a.cfg.Groups(ctx, scope, target.GroupID)
 		} else {
 			group.ID, err = GroupScopeID(scope, target.GroupID)
-			group.Authority = a.cfg.Issuer
+			group.Authority = a.cfg.PermissionAuthority
 		}
 		if err != nil {
 			return false, err
 		}
-		if group.ID == "" || group.Authority != a.cfg.Issuer {
+		if group.ID == "" || group.Authority != a.cfg.PermissionAuthority {
 			return false, auth.ErrForbidden
 		}
 		return checker.CanDirect(ctx, group, target.Permission)

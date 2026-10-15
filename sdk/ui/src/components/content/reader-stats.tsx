@@ -43,9 +43,8 @@ export function ReaderStats({ labels, completedLabels, kinds, tiers, showDislike
   const monthSeconds = 30 * daySeconds;
   const tenure = (seconds: number | undefined) => {
     if (seconds === undefined) return "—";
-    if (seconds > 0 && seconds < daySeconds) return t("myStats.lessThanDay");
     const unit = seconds < monthSeconds ? "day" : "month";
-    const count = Math.floor(seconds / (unit === "day" ? daySeconds : monthSeconds));
+    const count = Math.max(seconds > 0 ? 1 : 0, Math.floor(seconds / (unit === "day" ? daySeconds : monthSeconds)));
     return new Intl.NumberFormat(m.language, { style: "unit", unit, unitDisplay: "long" }).format(count);
   };
   const showKinds = kinds ?? Object.keys(data.completed);

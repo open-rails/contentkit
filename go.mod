@@ -18,8 +18,8 @@ require (
 	github.com/davidbyttow/govips/v2 v2.19.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.24.0
-	github.com/open-rails/helpers v1.12.0
+	github.com/open-rails/authkit v1.29.0
+	github.com/open-rails/helpers v1.13.0
 	github.com/open-rails/migratekit v1.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0

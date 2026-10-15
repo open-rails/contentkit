@@ -23,10 +23,14 @@ mapped tenant account ID and app-owned content records.
 
 `adapters/authkit.NewAuthorization(ctx, client, config)` accepts a trusted
 `AuthorizationConfig` and checks that the live AuthKit groups have the expected
-app/tenant personas and issuer, refusing the deployment root as an app group:
+app/tenant personas and permission authority, refusing the deployment root as
+an app group:
 
 - `Scope`: the exact ContentKit tenant/app pair this adapter serves.
 - `Issuer`: the verified account issuer.
+- `PermissionAuthority`: the authority of the local AuthKit permission groups;
+  it defaults to `Issuer`. A resource server with an upstream account issuer
+  sets both explicitly instead of conflating identity and permission ownership.
 - `AppScope`: the existing AuthKit permission group bound to this app.
 - `TenantAdminScope`: an optional, distinct group explicitly administering the
   tenant; this is never inferred from AuthKit's deployment root.
@@ -38,6 +42,11 @@ app/tenant personas and issuer, refusing the deployment root as an app group:
 belongs to one tenant and whose subject IDs are the existing account IDs.
 It is inappropriate when one issuer holds accounts for several tenants or IDs
 need translation; those deployments supply an explicit resolver.
+
+Separating the two authorities does not relax either check: the verified
+identity must still match `Issuer`, while app, tenant and content-group scopes
+must belong to `PermissionAuthority`. The original credential's live grants,
+ceilings and bound scope continue to be enforced.
 
 The adapter checks exact grants using AuthKit's additive
 `auth.DirectPermissionChecker.CanDirect` capability. Existing `Can` deliberately

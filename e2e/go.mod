@@ -5,12 +5,12 @@ go 1.26.9
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.24.0
-	github.com/open-rails/contentkit v0.81.0
-	github.com/open-rails/contentkit/adapters/authkit v0.0.0
-	github.com/open-rails/contentkit/adapters/openrails v0.0.0
-	github.com/open-rails/helpers v1.12.0
-	github.com/open-rails/openrails v0.256.0
+	github.com/open-rails/authkit v1.29.0
+	github.com/open-rails/contentkit v0.89.0
+	github.com/open-rails/contentkit/adapters/authkit v0.7.0
+	github.com/open-rails/contentkit/adapters/openrails v0.5.0
+	github.com/open-rails/helpers v1.13.0
+	github.com/open-rails/openrails v0.258.0
 )
 
 require (
@@ -35,6 +35,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/davidbyttow/govips/v2 v2.19.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
@@ -125,6 +126,7 @@ require (
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect

@@ -36,8 +36,11 @@ it("distinguishes missing statistics from real zero values", async () => {
 
 it.each<[number, string]>([
   [0, "0 days"],
-  [3600, "Less than 1 day"],
+  [1, "1 day"],
+  [3600, "1 day"],
+  [86399, "1 day"],
   [86400, "1 day"],
+  [25 * 86400, "25 days"],
   [29 * 86400, "29 days"],
   [30 * 86400, "1 month"],
   [60 * 86400, "2 months"],

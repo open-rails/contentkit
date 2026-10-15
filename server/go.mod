@@ -6,11 +6,11 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.24.0
-	github.com/open-rails/contentkit v0.81.0
-	github.com/open-rails/contentkit/adapters/openrails v0.3.0
-	github.com/open-rails/helpers v1.12.0
-	github.com/open-rails/openrails v0.256.0
+	github.com/open-rails/authkit v1.29.0
+	github.com/open-rails/contentkit v0.89.0
+	github.com/open-rails/contentkit/adapters/openrails v0.5.0
+	github.com/open-rails/helpers v1.13.0
+	github.com/open-rails/openrails v0.258.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.49.0
 )
@@ -55,7 +55,7 @@ require (
 	github.com/go-webauthn/webauthn v0.18.2 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -92,6 +92,7 @@ require (
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
+	github.com/open-rails/contentkit/adapters/authkit v0.7.0
 	github.com/open-rails/migratekit v1.11.1 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -139,3 +140,5 @@ replace (
 	github.com/open-rails/contentkit => ../
 	github.com/open-rails/contentkit/adapters/openrails => ../adapters/openrails
 )
+
+replace github.com/open-rails/contentkit/adapters/authkit => ../adapters/authkit

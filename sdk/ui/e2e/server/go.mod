@@ -7,9 +7,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/open-rails/authkit v1.24.0
-	github.com/open-rails/contentkit v0.70.0
-	github.com/open-rails/helpers v1.12.0
+	github.com/open-rails/authkit v1.29.0
+	github.com/open-rails/contentkit v0.89.0
+	github.com/open-rails/helpers v1.13.0
 	github.com/riverqueue/river v0.49.0
 )
 

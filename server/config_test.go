@@ -61,3 +61,22 @@ func TestLoad(t *testing.T) {
 		t.Fatal("an unknown field was accepted")
 	}
 }
+
+func TestLoadScopedAuthorization(t *testing.T) {
+	c, err := Load([]byte(`
+engine:
+  scope:
+    tenant_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
+    app_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
+authorization:
+  issuer: https://accounts.example.test
+  app_group_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
+  tenant_group_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
+`), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Authorization == nil || c.Authorization.Issuer != "https://accounts.example.test" || c.Authorization.AppGroupID != c.Engine.Scope.AppID.String() || c.Authorization.TenantGroupID != c.Engine.Scope.TenantID.String() {
+		t.Fatalf("scoped authorization was not decoded: %+v", c.Authorization)
+	}
+}

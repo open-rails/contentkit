@@ -27,14 +27,12 @@ import (
 	"github.com/riverqueue/river"
 
 	contentkit "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/access"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// StaffRole is the root role holding ContentKit's permissions: a trusted
-// issuer's tokens reach staff routes through it (RemoteApplicationConfig.Role
-// and RoleMap name it "root:staff").
+// StaffRole names the declared ContentKit staff role. Legacy deployments use
+// root:staff; scoped deployments use explicitly granted contentkit:staff.
 const StaffRole = "staff"
 
 // Config is a standalone deployment: plain data. Secrets are read from the
@@ -47,8 +45,12 @@ type Config struct {
 	// issuer in RemoteApplications. It mints nothing unless Keys says so;
 	// its tables live in Database.Schema (default "contentkit_auth").
 	Auth authkit.Config `yaml:"auth"`
-	// UsersIssuer is the trusted issuer whose directory names authors; empty
-	// is the only one RemoteApplications declares.
+	// Authorization binds a scoped engine to explicitly provisioned AuthKit
+	// groups and a dedicated tenant identity directory. Required with Scope.
+	Authorization *AuthorizationConfig `yaml:"authorization"`
+	// UsersIssuer is the trusted issuer whose directory names authors. Legacy
+	// mode can infer the only RemoteApplication; scoped mode uses Authorization
+	// and refuses a conflicting UsersIssuer.
 	UsersIssuer string `yaml:"users_issuer"`
 	// OpenRails is where entitlements are read; an empty BaseURL runs
 	// without billing.
@@ -152,20 +154,23 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if !ak.Keys.AllowEphemeralDevKeys && ak.Keys.Path == "" {
 		ak.Keys.VerifyOnly = true // a resource server verifies; it mints nothing
 	}
-	rbac := authkit.NewRoles(authkit.RemoteApplications)
-	var grants []iam.Grant
-	for _, p := range rbac.Root.Declare(access.Names(access.Permissions()...)...) {
-		grants = append(grants, p)
+	if err := validateAuthorizationConfig(cfg, ak); err != nil {
+		return nil, err
 	}
-	rbac.Root.Role(StaffRole, grants...)
-	ak.Roles = rbac
+	ak.Roles = serverRoles(cfg.Engine)
 	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis}); err != nil {
 		return nil, fmt.Errorf("server: AuthKit: %w", err)
 	}
 
 	engineDeps := contentkit.Deps{Postgres: d.Postgres, Redis: d.Redis, Auth: s.auth.Authenticator(), Logger: s.log}
-	if engineDeps.Users, err = s.users(ak); err != nil {
-		return nil, err
+	if cfg.Engine.Scope != nil {
+		if err := s.scopedAuthorization(ctx, cfg, ak, &engineDeps); err != nil {
+			return nil, err
+		}
+	} else {
+		if engineDeps.Users, err = s.users(ak); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.OpenRails.BaseURL != "" {
 		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})

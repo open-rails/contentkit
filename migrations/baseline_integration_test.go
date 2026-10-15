@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5/stdlib"
@@ -38,7 +39,8 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	if err := rows.Err(); err != nil || len(applied) != 4 || applied[0] != "0001_baseline.up.sql" || applied[1] != "0002_app_bindings.up.sql" || applied[2] != "0003_prepare_version_covers.up.sql" || applied[3] != "0004_finish_version_covers.up.sql" {
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql"}
+	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}
 

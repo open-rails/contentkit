@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net"
 	"slices"
 	"strings"
 	"time"
@@ -79,11 +78,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 			return nil, err
 		}
 	}
-	host := o.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	v.site, _ = s.cfg.SiteFor(strings.ToLower(host))
+	v.site, _ = s.cfg.SiteFor(o.Host)
 	v.exclude = append([]string{}, v.site.ExcludeRestrictions...)
 	rights, err := s.staffRights(ctx, o.Actor)
 	if err != nil {
@@ -115,7 +110,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	}
 	hidden := map[string]bool{}
 	for _, f := range s.cfg.ContentFilters {
-		if id, ok := ids[f.Group]; ok && !f.DefaultVisible {
+		if id, ok := ids[f.Group]; ok && !v.site.DefaultVisible(f) {
 			hidden[id] = true
 		}
 	}

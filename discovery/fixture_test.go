@@ -87,13 +87,16 @@ type fixture struct {
 // newFixture serves discovery over a fresh schema; ch is the signal plane
 // (nil runs without one).
 func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
+	return newFixtureConfig(t, ch, chDB, siteConfig())
+}
+
+func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Config) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
 	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool), now: time.Now().UTC().Truncate(time.Second), ids: map[string]string{},
 		cids: map[int]string{}, vids: map[[2]int]string{}, codes: map[int]string{}}
 	f.clock = f.now
-	cfg := siteConfig()
 	var err error
 	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg,
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {

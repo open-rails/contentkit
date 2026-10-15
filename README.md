@@ -454,6 +454,11 @@ shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 language; a sibling deployment reads it with
 `catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
 
+[Content filters](docs/content-filters.md) have app defaults and optional
+site-entrypoint defaults. Saved reader choices override both; resetting restores
+the current site defaults. These affect discovery listings, while direct links
+retain their existing access and site restrictions.
+
 ## Signal plane and discovery
 
 The signal plane runs inside the engine over `Config.ClickHouse`; its public

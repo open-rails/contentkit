@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -40,6 +42,9 @@ type Site struct {
 	Hosts               []string   `json:"hosts" yaml:"hosts"`
 	ExcludeRestrictions []string   `json:"exclude_restrictions,omitempty" yaml:"exclude_restrictions"`
 	RequireGroups       []GroupRef `json:"require_groups,omitempty" yaml:"require_groups"`
+	// ContentFilterDefaults override app defaults for this entrypoint. A
+	// reader's explicit saved preference still wins; these are not access rules.
+	ContentFilterDefaults []ContentFilterDefault `json:"content_filter_defaults,omitempty" yaml:"content_filter_defaults"`
 }
 
 // GroupRef names a group by kind and slug.
@@ -54,6 +59,24 @@ type ContentFilter struct {
 	Group          GroupRef          `json:"group" yaml:"group"`
 	DefaultVisible bool              `json:"default_visible" yaml:"default_visible"`
 	Labels         map[string]string `json:"labels,omitempty" yaml:"labels"`
+}
+
+// ContentFilterDefault sets the visibility of one declared ContentFilter on
+// a site. Unspecified filters retain their app-wide default.
+type ContentFilterDefault struct {
+	Group   GroupRef `json:"group" yaml:"group"`
+	Visible bool     `json:"visible" yaml:"visible"`
+}
+
+// DefaultVisible resolves a filter's default for this site before any saved
+// reader override. It does not change RequireGroups or other access rules.
+func (s Site) DefaultVisible(filter ContentFilter) bool {
+	for _, d := range s.ContentFilterDefaults {
+		if d.Group == filter.Group {
+			return d.Visible
+		}
+	}
+	return filter.DefaultVisible
 }
 
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
@@ -388,9 +411,31 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%w: group %s/%s names an unknown group kind or no slug", ErrInvalid, r.Kind, r.Slug)
 		}
 	}
+	filters := map[GroupRef]bool{}
+	for _, f := range c.ContentFilters {
+		if filters[f.Group] {
+			return fmt.Errorf("%w: content filter %s/%s is repeated", ErrInvalid, f.Group.Kind, f.Group.Slug)
+		}
+		filters[f.Group] = true
+	}
+	sites := map[string]bool{}
 	for i, s := range c.Sites {
 		if s.Name == "" || (len(s.Hosts) == 0 && i > 0) {
 			return fmt.Errorf("%w: site %d needs a name and hosts", ErrInvalid, i)
+		}
+		if sites[s.Name] {
+			return fmt.Errorf("%w: site name %q is repeated", ErrInvalid, s.Name)
+		}
+		sites[s.Name] = true
+		defaults := map[GroupRef]bool{}
+		for _, d := range s.ContentFilterDefaults {
+			if !filters[d.Group] {
+				return fmt.Errorf("%w: site %s default names undeclared content filter %s/%s", ErrInvalid, s.Name, d.Group.Kind, d.Group.Slug)
+			}
+			if defaults[d.Group] {
+				return fmt.Errorf("%w: site %s default repeats content filter %s/%s", ErrInvalid, s.Name, d.Group.Kind, d.Group.Slug)
+			}
+			defaults[d.Group] = true
 		}
 		for _, r := range s.ExcludeRestrictions {
 			if !slices.Contains(c.Restrictions, r) {
@@ -502,15 +547,26 @@ func (c Config) Routes() map[string]string {
 	return out
 }
 
-// SiteFor returns the site serving host; the first site when none matches.
+// SiteFor returns the site serving host, ignoring case and port; the first
+// site when none matches. Host is the request host, not an authority selector.
 func (c Config) SiteFor(host string) (Site, bool) {
+	host = siteHost(host)
 	for _, s := range c.Sites {
-		if slices.Contains(s.Hosts, host) {
-			return s, true
+		for _, h := range s.Hosts {
+			if siteHost(h) == host {
+				return s, true
+			}
 		}
 	}
 	if len(c.Sites) > 0 {
 		return c.Sites[0], true
 	}
 	return Site{}, false
+}
+
+func siteHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.ToLower(host)
 }

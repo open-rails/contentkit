@@ -188,7 +188,7 @@ func (s *Store) loadTotals(ctx context.Context, keys []totalsKey) (map[totalsKey
 func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []string) (map[string]Total, error) {
 	refs := append([]kinds.GroupRef{}, site.RequireGroups...)
 	for _, f := range s.cfg.ContentFilters {
-		if !f.DefaultVisible {
+		if !site.DefaultVisible(f) {
 			refs = append(refs, f.Group)
 		}
 	}
@@ -209,7 +209,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []st
 		require = append(require, id)
 	}
 	for _, f := range s.cfg.ContentFilters {
-		if id, ok := ids[f.Group]; ok && !f.DefaultVisible {
+		if id, ok := ids[f.Group]; ok && !site.DefaultVisible(f) {
 			hidden = append(hidden, id)
 		}
 	}

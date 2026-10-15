@@ -137,6 +137,63 @@ func TestSiteFor(t *testing.T) {
 	}
 }
 
+func TestSiteContentFilterDefaults(t *testing.T) {
+	c := doujins()
+	filter := c.ContentFilters[0]
+	c.Sites[1].ContentFilterDefaults = []ContentFilterDefault{{Group: filter.Group, Visible: true}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"doujins.com", false},
+		{"DOUJINS.GAY:443", true},
+		{"doujins.gay", true},
+		{"unknown.test:8080", false},
+		{"", false},
+	} {
+		site, _ := c.SiteFor(tc.host)
+		if got := site.DefaultVisible(filter); got != tc.want {
+			t.Errorf("host %q default %t, want %t", tc.host, got, tc.want)
+		}
+	}
+	if c.ContentFilters[0].DefaultVisible {
+		t.Fatal("site resolution changed the app default")
+	}
+	c.Sites[1].ContentFilterDefaults[0].Visible = false
+	filter.DefaultVisible = true
+	if c.Sites[1].DefaultVisible(filter) {
+		t.Fatal("an explicit false site default was lost")
+	}
+	if !(Site{}).DefaultVisible(filter) {
+		t.Fatal("a site without an override did not retain the app default")
+	}
+}
+
+func TestRejectInvalidContentFilterDefaults(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"undeclared filter": func(c *Config) {
+			c.Sites[0].ContentFilterDefaults = []ContentFilterDefault{{Group: GroupRef{"tag", "missing"}}}
+		},
+		"repeated default": func(c *Config) {
+			d := ContentFilterDefault{Group: c.ContentFilters[0].Group}
+			c.Sites[0].ContentFilterDefaults = []ContentFilterDefault{d, d}
+		},
+		"repeated filter":    func(c *Config) { c.ContentFilters = append(c.ContentFilters, c.ContentFilters[0]) },
+		"repeated site name": func(c *Config) { c.Sites[1].Name = c.Sites[0].Name },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := doujins()
+			mutate(&c)
+			if err := c.Validate(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("got %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
 func TestValidateAttributes(t *testing.T) {
 	declared := map[string]Attribute{
 		"format": {Type: "enum", Values: []string{"doujin", "manga"}},

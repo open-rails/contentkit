@@ -163,10 +163,10 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/nyaruka/phonenumbers v1.8.1 h1:2K9YMQuv1dCGqjjzB1DwmdCe89khT4KPBQb2CxAMMlU=
 github.com/nyaruka/phonenumbers v1.8.1/go.mod h1:fsKPJ70O9JetEA4ggnJadYTFWwtGPvu/lETTXNXq6Cs=
-github.com/open-rails/authkit v1.24.0 h1:u3T/tiO1QXeGviLAxdQPgaTbez+UWWYdsqsBSUXkFtE=
-github.com/open-rails/authkit v1.24.0/go.mod h1:Wjuwi9zv9fTSabArvdCrpJwdF2PQu/Ovh1X4IqT2Epo=
-github.com/open-rails/helpers v1.12.0 h1:/Lb6PWslc80wdtxfzL+0hhvDk5BryAGMV5y9U2vYznE=
-github.com/open-rails/helpers v1.12.0/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
+github.com/open-rails/authkit v1.29.0 h1:92QIuBiLQOhRibUbTFwd163298SzfCwESfwVp1NMtFk=
+github.com/open-rails/authkit v1.29.0/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
+github.com/open-rails/helpers v1.13.0 h1:D5HwPo+kYBMdR+QQtgzjqzWHzRN9t1GpWH8sUHdBKpA=
+github.com/open-rails/helpers v1.13.0/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
 github.com/open-rails/migratekit v1.11.0 h1:kcpTyoiqDNUVDHc0lnBQ/q6USpjYRpi95tV1PiAGS5c=
 github.com/open-rails/migratekit v1.11.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=

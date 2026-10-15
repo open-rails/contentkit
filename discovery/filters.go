@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -100,7 +101,8 @@ func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, 
 }
 
 // ContentFilters is the signed-in reader's content filters: every
-// configured filter whose group exists, labeled in language.
+// configured filter whose group exists, labeled in language. Defaults come
+// from the request's site; outside a request the first site's defaults apply.
 func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, language string) (ContentFilters, error) {
 	out := ContentFilters{Filters: []ContentFilterState{}}
 	if !actor.Person() {
@@ -133,6 +135,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 		byID[string(c.ID)] = c
 	}
 	lang, _ := s.displayLanguage(language)
+	site, _ := s.o.Kinds.SiteFor(gate.Site(ctx))
 	for _, f := range s.o.Kinds.ContentFilters {
 		id := fgs[f.Group]
 		g, ok := byID[id]
@@ -144,11 +147,12 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 			label = g.Name
 		}
 		o, overridden := overrides[id]
-		visible := f.DefaultVisible
+		defaultVisible := site.DefaultVisible(f)
+		visible := defaultVisible
 		if overridden {
 			visible = o != hide
 		}
-		out.Filters = append(out.Filters, ContentFilterState{Group: g, Label: label, DefaultVisible: f.DefaultVisible, Visible: visible, Overridden: overridden})
+		out.Filters = append(out.Filters, ContentFilterState{Group: g, Label: label, DefaultVisible: defaultVisible, Visible: visible, Overridden: overridden})
 	}
 	return out, nil
 }
