@@ -117,6 +117,11 @@ jobs:
         pkgs=$(go list ./... | grep -vE '/media/(image|video|worker|versions)$|/cmd/media-worker$' | awk -v s=${{ matrix.shard }} 'NR % 3 == s')
         go vet $pkgs
         go test $pkgs -count=1 -race -p 2
+    - name: Install libvips (e2e renders avatars)
+      if: matrix.shard == 'e2e'
+      run: |
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libvips-dev
     - name: e2e with a real AuthKit (its own module), vet, test
       if: matrix.shard == 'e2e'
       working-directory: e2e
