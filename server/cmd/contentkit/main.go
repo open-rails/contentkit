@@ -56,6 +56,9 @@ func run(log *slog.Logger, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("contentkit "+cmd, flag.ContinueOnError)
 	path := flags.String("config", "contentkit.yaml", "config file (server.Config as YAML)")
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	raw, err := os.ReadFile(*path)
