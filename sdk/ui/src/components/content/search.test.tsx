@@ -133,29 +133,32 @@ it("refreshes account recents when the actual search panel reopens", async () =>
   expect(input).toHaveAttribute("aria-expanded", "false");
 });
 
-it("anchors the full-width header presentation below the header and follows resize and scroll", async () => {
+it("anchors the header dropdown to the field width and follows resize and scroll", async () => {
   const client = createContentKitClient({ baseUrl: "https://content.test/header-geometry", fetch: async () => Response.json({ searches: [] }) });
   const { container } = render(<ContentKitProvider client={client} viewer={null}><header><SearchBox presentation="header" appearance={{ theme: "dark" }} onSearch={() => {}} /></header></ContentKitProvider>);
   const header = container.querySelector("header")!;
-  let bottom = 84;
-  vi.spyOn(header, "getBoundingClientRect").mockImplementation(() => ({ bottom } as DOMRect));
+  let bottom = 84, left = 120, width = 400;
+  vi.spyOn(screen.getByRole("combobox", { name: "Search" }), "getBoundingClientRect").mockImplementation(() => ({ bottom, left, width } as DOMRect));
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Search" }));
   const layer = document.querySelector('[data-ckui="search-layer"]')!;
   const panel = document.querySelector<HTMLDivElement>('[data-ckui="search-panel"]')!;
   expect(header.contains(panel)).toBe(false);
-  expect(layer).toHaveStyle({ top: "84px" });
+  expect(layer).toHaveStyle({ top: "88px" });
+  expect(panel).toHaveStyle({ marginLeft: "120px", width: "400px" });
   expect(layer).toHaveAttribute("data-ckui-theme", "dark");
   expect(layer).toHaveClass("fixed", "inset-x-0");
   expect(document.querySelector('[data-ckui="search-backdrop"]')).toHaveClass("bg-black/30", "backdrop-blur-sm");
-  expect(panel.querySelector(".max-w-\\[71rem\\]")).not.toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
   bottom = 116;
+  left = 160;
+  width = 480;
   fireEvent.resize(window);
-  expect(layer).toHaveStyle({ top: "116px" });
+  expect(layer).toHaveStyle({ top: "120px" });
+  expect(panel).toHaveStyle({ marginLeft: "160px", width: "480px" });
   bottom = 62;
   fireEvent.scroll(window);
-  expect(layer).toHaveStyle({ top: "62px" });
+  expect(layer).toHaveStyle({ top: "66px" });
   await user.click(document.querySelector('[data-ckui="search-backdrop"]')!);
   expect(document.querySelector('[data-ckui="search-layer"]')).toBeNull();
 });
@@ -165,10 +168,10 @@ it("uses the input as a header fallback and offers the archived clear/close cont
   const client = createContentKitClient({ baseUrl: "https://content.test/header-input", fetch: async () => Response.json({ contents: [], groups: [] }) });
   render(<ContentKitProvider client={client} viewer={null}><SearchBox presentation="header" onSearch={onSearch} /></ContentKitProvider>);
   const input = screen.getByRole("combobox", { name: "Search" });
-  vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ bottom: 48 } as DOMRect);
+  vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ bottom: 48, left: 20, width: 320 } as DOMRect);
   const user = userEvent.setup();
   await user.type(input, "cats");
-  expect(document.querySelector('[data-ckui="search-layer"]')).toHaveStyle({ top: "48px" });
+  expect(document.querySelector('[data-ckui="search-layer"]')).toHaveStyle({ top: "52px" });
   expect(input).toHaveClass("rounded-full");
   await user.click(screen.getByRole("button", { name: "Search" }));
   expect(onSearch).toHaveBeenCalledExactlyOnceWith("cats");
@@ -233,9 +236,15 @@ it("shows recent dates and keeps portaled history controls working without navig
   render(<ContentKitProvider client={client} viewer="alice"><SearchBox presentation="header" onSearch={onSearch} /></ContentKitProvider>);
   const user = userEvent.setup();
   const input = screen.getByRole("combobox", { name: "Search" });
+  let width = 400;
+  vi.spyOn(input, "getBoundingClientRect").mockImplementation(() => ({ bottom: 48, left: 20, width } as DOMRect));
   await user.click(input);
   await screen.findByRole("option", { name: /older/ });
   expect(document.querySelector('time[datetime="2026-04-15T12:00:00Z"]')).toHaveTextContent(new Intl.DateTimeFormat(undefined, { dateStyle: "short" }).format(new Date("2026-04-15T12:00:00Z")));
+  width = 240;
+  fireEvent.resize(window);
+  expect(document.querySelector("time")).toBeNull();
+  expect(screen.getByRole("option", { name: /older/ })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Remove “older”" }));
   await waitFor(() => expect(screen.queryByRole("option", { name: /older/ })).toBeNull());
   expect(input).toHaveAttribute("aria-expanded", "true");

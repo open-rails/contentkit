@@ -738,10 +738,12 @@ access revision current; signed-out viewers do not fetch an inbox.
 ### Reader header controls
 
 `SearchBox` is an inline input with a downward suggestions/recent-search panel,
-including loading and empty states. Set `presentation="header"` for a full-width
-panel below the nearest semantic header (or the input): a dimmed backdrop, a
-centered text list with colored type icons and recent-search dates, and no
-thumbnails. Its mobile/desktop scroll limit is 70vh/60vh. The default inline
+including loading and empty states. Set `presentation="header"` for a portal
+panel directly below the input, matching its width and following it on resize
+or scroll: a dimmed backdrop, text rows with colored type icons, and no
+thumbnails. Recent-search dates appear when the panel is wide enough. The panel
+slides downward when opened and honors reduced motion. Its mobile/desktop
+scroll limit is 70vh/60vh. The default inline
 presentation is unchanged. Both presentations keep the provider's result order;
 the host owns search-page navigation.
 `ReaderSettings` combines language selection and content filters in one dialog:

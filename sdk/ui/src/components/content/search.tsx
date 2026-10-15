@@ -28,7 +28,7 @@ export interface SearchBoxProps {
   labels?: Labels;
   /** The reader's recent searches while the box is empty. Default true. */
   recent?: boolean;
-  /** Header-wide dropdown under the nearest header/banner; default stays inline. */
+  /** A portal dropdown anchored to the header field; default stays inline. */
   presentation?: "inline" | "header";
   client?: ContentKitClient;
   className?: string;
@@ -48,14 +48,17 @@ const TYPE_ICONS: Record<string, { icon: IconSvgElement; color: string }> = {
   tag: { icon: TagsIcon, color: "text-orange-500 dark:text-orange-400" },
 };
 
-function useHeaderTop(open: boolean, enabled: boolean, root: RefObject<HTMLDivElement | null>, input: RefObject<HTMLInputElement | null>): number {
-  const [top, setTop] = useState(0);
+function useHeaderAnchor(open: boolean, enabled: boolean, root: RefObject<HTMLDivElement | null>, input: RefObject<HTMLInputElement | null>) {
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 0 });
   useLayoutEffect(() => {
     if (!open || !enabled || !root.current) return;
-    const anchor = root.current.closest('header, [role="banner"]') ?? input.current ?? root.current;
+    const anchor = input.current ?? root.current;
     const view = root.current.ownerDocument.defaultView;
     if (!view) return;
-    const measure = () => setTop(Math.max(0, Math.min(view.innerHeight, anchor.getBoundingClientRect().bottom)));
+    const measure = () => {
+      const rect = anchor.getBoundingClientRect();
+      setPosition({ top: Math.max(0, Math.min(view.innerHeight, rect.bottom + 4)), left: rect.left, width: rect.width });
+    };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
     observer?.observe(anchor);
@@ -71,7 +74,7 @@ function useHeaderTop(open: boolean, enabled: boolean, root: RefObject<HTMLDivEl
       view.visualViewport?.removeEventListener("scroll", measure);
     };
   }, [open, enabled, root, input]);
-  return top;
+  return position;
 }
 
 function SearchTypeIcon({ kind }: { kind: string }) {
@@ -99,7 +102,8 @@ export function SearchBox(p: SearchBoxProps) {
   const panel = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const header = p.presentation === "header";
-  const top = useHeaderTop(open, header, root, input);
+  const anchor = useHeaderAnchor(open, header, root, input);
+  const { top } = anchor;
   const dates = useMemo(() => new Intl.DateTimeFormat(language, { dateStyle: "short" }), [language]);
   const empty = !text.trim();
   const found = useTypeahead(text, { kind: p.kind, group_kinds: p.groupKinds, client: p.client });
@@ -204,7 +208,7 @@ export function SearchBox(p: SearchBoxProps) {
             <>
               <HugeiconsIcon icon={header ? Search01Icon : Clock01Icon} strokeWidth={2} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate">{s.query}</span>
-              {header && <SearchDate value={s.searchedAt} formatter={dates} />}
+              {header && anchor.width >= 320 && <SearchDate value={s.searchedAt} formatter={dates} />}
               <button
                 type="button"
                 className="rounded p-0.5 text-muted-foreground hover:text-foreground"
@@ -294,10 +298,10 @@ export function SearchBox(p: SearchBoxProps) {
       {open && (header ? createPortal(
         <ContentKitUiRoot appearance={p.appearance} className="fixed inset-x-0 bottom-0 z-[70] text-sm" style={{ top }} data-ckui="search-layer">
           <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" data-ckui="search-backdrop" aria-hidden />
-          <div ref={panel} className="relative w-full origin-top animate-in fade-in-0 slide-in-from-top-2 bg-background pt-1.5 text-foreground shadow-lg duration-200 ease-out motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
-            <div className="mx-auto w-full max-w-[71rem] px-4 pt-5 md:px-[10%]">
+          <div ref={panel} style={{ width: anchor.width, marginLeft: anchor.left }} className="relative origin-top animate-in fade-in-0 slide-in-from-top-2 rounded-lg border border-border bg-background text-foreground shadow-lg duration-200 ease-out motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
+            <div className="w-full px-3 pt-3">
               <div className="[--search-max-height:70vh] overflow-y-auto pb-7 md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>
-                <div className={empty ? "px-4 py-4" : "px-4"}>{results}</div>
+                <div>{results}</div>
               </div>
             </div>
           </div>
