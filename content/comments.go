@@ -86,6 +86,9 @@ type Comment struct {
 // same reference; replies are one level deep. A held comment is stored
 // author-only and counted only once a reviewer approves it.
 func (c *comments) create(ctx context.Context, actor access.Actor, target contentref.ContentRef, in CommentInput) (Comment, error) {
+	if actor.Account != nil && !actor.Member() {
+		return Comment{}, errForbidden
+	}
 	ref, res, err := c.rt.resolveTarget(ctx, target, actor, false)
 	if err == nil {
 		err = c.rt.commentsLocked(ref, res)
@@ -104,13 +107,13 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		return Comment{}, err
 	}
 
-	loggedIn := actor.ID != "" && !actor.Anonymous
+	loggedIn := actor.Member()
 	var userID, anonName any
 	if loggedIn {
-		if err := c.rt.checkCommentBan(ctx, actor.ID, res); err != nil {
+		if err := c.rt.checkCommentBan(ctx, actor.AccountID(), res); err != nil {
 			return Comment{}, err
 		}
-		userID = actor.ID
+		userID = actor.AccountID()
 	} else {
 		name := strings.TrimSpace(in.AnonName)
 		if name == "" {
@@ -193,7 +196,7 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		return Comment{}, err
 	}
 	if loggedIn {
-		out.UserID = actor.ID
+		out.UserID = actor.AccountID()
 	} else {
 		out.AnonName, _ = anonName.(string)
 	}
@@ -706,7 +709,7 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 	if err != nil {
 		return t, err
 	}
-	if t.ownerID != nil && actor.ID != "" && !actor.Anonymous && actor.ID == *t.ownerID {
+	if t.ownerID != nil && actor.Member() && actor.AccountID() == *t.ownerID {
 		return t, nil
 	}
 	err = c.rt.requirePerm(ctx, actor, access.CommentsModerate)

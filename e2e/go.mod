@@ -5,12 +5,12 @@ go 1.26.9
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.29.1
-	github.com/open-rails/contentkit v0.89.0
-	github.com/open-rails/contentkit/adapters/authkit v0.7.0
-	github.com/open-rails/contentkit/adapters/openrails v0.5.0
+	github.com/open-rails/authkit v1.30.0
+	github.com/open-rails/contentkit v0.92.0
+	github.com/open-rails/contentkit/adapters/authkit v0.8.0
+	github.com/open-rails/contentkit/adapters/openrails v0.5.1
 	github.com/open-rails/helpers v1.13.0
-	github.com/open-rails/openrails v0.258.0
+	github.com/open-rails/openrails v0.259.0
 )
 
 require (

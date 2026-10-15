@@ -256,8 +256,8 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		switch {
 		case c.Creators != nil:
 			p.creators, err = s.checkCreators(*c.Creators)
-		case actor.Person():
-			p.creators = []Creator{{UserID: actor.ID, Role: "author"}}
+		case actor.Member():
+			p.creators = []Creator{{UserID: actor.AccountID(), Role: "author"}}
 		}
 		if err != nil {
 			return nil, err

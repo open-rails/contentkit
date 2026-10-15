@@ -105,7 +105,7 @@ func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, 
 // from the request's site; outside a request the first site's defaults apply.
 func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, language string) (ContentFilters, error) {
 	out := ContentFilters{Filters: []ContentFilterState{}}
-	if !actor.Person() {
+	if !actor.Member() {
 		return out, fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
 	if language != "" {
@@ -117,7 +117,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 	if err != nil {
 		return out, err
 	}
-	overrides, includeDeleted, err := s.prefs(ctx, actor.ID)
+	overrides, includeDeleted, err := s.prefs(ctx, actor.AccountID())
 	if err != nil {
 		return out, err
 	}
@@ -160,7 +160,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 // SetContentFilters replaces the signed-in reader's settings; each names a
 // configured filter's group.
 func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersUpdate) error {
-	if !actor.Person() {
+	if !actor.Member() {
 		return fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
 	fgs, err := s.filterGroups(ctx)
@@ -190,6 +190,6 @@ func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u C
 	}
 	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` (tenant_id, user_id, overrides, include_deleted, updated_at) VALUES ($1, $2, $3, $4, now())
  ON CONFLICT (tenant_id, user_id) DO UPDATE SET overrides = EXCLUDED.overrides, include_deleted = EXCLUDED.include_deleted, updated_at = now()`,
-		s.o.Tenant, actor.ID, raw, u.IncludeDeleted)
+		s.o.Tenant, actor.AccountID(), raw, u.IncludeDeleted)
 	return err
 }

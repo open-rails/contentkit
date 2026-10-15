@@ -115,7 +115,7 @@ func (g *Gate) Filter(ctx context.Context, actor Actor) (*Filter, error) {
 	if anonymous(actor) {
 		return g.anon, nil
 	}
-	e := memoFor(ctx, g, actor.ID)
+	e := memoFor(ctx, g, accountSubject(actor))
 	if f := e.loadFilter(); f != nil {
 		return f, f.err
 	}
@@ -142,7 +142,7 @@ func (g *Gate) read(ctx context.Context, actor Actor) *Filter {
 		}
 		return f
 	}
-	ans, err := g.billing.Held(ctx, actor.ID, q)
+	ans, err := g.billing.Held(ctx, accountSubject(actor), q)
 	if err == nil {
 		err = f.load(ans, q)
 	}
@@ -187,7 +187,7 @@ func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, erro
 	if anonymous(actor) {
 		return out, nil
 	}
-	kn := &knowledge{claimed: g.claimed(actor), memo: memoFor(ctx, g, actor.ID)}
+	kn := &knowledge{claimed: g.claimed(actor), memo: memoFor(ctx, g, accountSubject(actor))}
 	kn.filter = kn.memo.loadFilter()
 	need := map[string]bool{}
 	for i, k := range keys {
@@ -204,7 +204,7 @@ func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, erro
 	var ans Answer
 	var err error
 	if g.billing != nil {
-		ans, err = g.billing.Held(ctx, actor.ID, Query{Keys: ask})
+		ans, err = g.billing.Held(ctx, accountSubject(actor), Query{Keys: ask})
 	}
 	if err != nil {
 		g.log.ErrorContext(ctx, "access: entitlements read failed; failing closed", "subject", actor.ID, "err", err)
@@ -355,7 +355,7 @@ func (g *Gate) decide(ctx context.Context, actor Actor, f *Filter, plans []itemP
 	kn := &knowledge{anonymous: anonymous(actor)}
 	if !kn.anonymous {
 		kn.claimed = g.claimed(actor)
-		kn.memo = memoFor(ctx, g, actor.ID)
+		kn.memo = memoFor(ctx, g, accountSubject(actor))
 		kn.filter = f
 		if kn.filter == nil {
 			kn.filter = kn.memo.loadFilter()
@@ -382,7 +382,7 @@ func (g *Gate) decide(ctx context.Context, actor Actor, f *Filter, plans []itemP
 	var ans Answer
 	var err error
 	if g.billing != nil {
-		ans, err = g.billing.Held(ctx, actor.ID, Query{Keys: keys})
+		ans, err = g.billing.Held(ctx, accountSubject(actor), Query{Keys: keys})
 	}
 	if err != nil {
 		g.log.ErrorContext(ctx, "access: entitlements read failed; failing closed", "subject", actor.ID, "err", err)
@@ -454,4 +454,15 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	return d, nil
 }
 
-func anonymous(a Actor) bool { return a.Anonymous || a.ID == "" }
+func anonymous(a Actor) bool {
+	return a.Anonymous || a.ID == "" || a.Account != nil && a.Account.ID == ""
+}
+
+// accountSubject retains legacy application behavior while using the verified
+// tenant membership for scoped audience entitlements.
+func accountSubject(a Actor) string {
+	if a.Account != nil {
+		return a.Account.ID
+	}
+	return a.ID
+}

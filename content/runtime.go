@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/userinfo"
@@ -100,6 +101,11 @@ type Options struct {
 	Notifications *notification.Config
 	// NotificationAppID is the immutable owning app supplied by the engine.
 	NotificationAppID string
+	// AccountExists must use a directory fixed to this account tenant. Scoped
+	// notifications cannot publish to user recipients without this proof.
+	AccountExists func(context.Context, string) (bool, error)
+	// AccountExistsTx joins notification publication's transaction.
+	AccountExistsTx func(context.Context, pgx.Tx, string) (bool, error)
 
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
@@ -199,7 +205,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		limiters:       limiters,
 		held:           map[string]HeldSource{},
 	}
-	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log, Shared: opts.Notifications, AppID: opts.NotificationAppID})
+	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log, Shared: opts.Notifications, AppID: opts.NotificationAppID, AccountExists: opts.AccountExists, AccountExistsTx: opts.AccountExistsTx})
 	if err != nil {
 		return nil, err
 	}

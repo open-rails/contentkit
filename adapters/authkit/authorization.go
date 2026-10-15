@@ -3,6 +3,7 @@ package authkit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,10 +13,22 @@ import (
 	"github.com/open-rails/contentkit/access"
 )
 
-// AccountResolver maps a provider-verified identity to an existing account in
-// the requested tenant. It must reject unrelated issuers and tenants; matching
-// email or subject text alone does not establish an association.
+// AccountResolver is the legacy dedicated-issuer mapping to an existing
+// account in the requested tenant. Shared multi-tenant issuers use
+// TenantActorResolver instead. Matching email or subject text alone does not
+// establish an association.
 type AccountResolver func(context.Context, contentkit.TenantID, auth.Identity) (string, error)
+
+// TenantActorResolver returns live source-account ownership from a verified
+// credential. AuthKit's Client implements it; it never grants target access.
+type TenantActorResolver interface {
+	ResolveTenantActor(context.Context, auth.Verified) (iam.TenantActor, error)
+}
+
+// ErrScopeMigrationRequired means persisted authorization groups still use
+// the retired library-specific personas. Migrate them explicitly through
+// AuthKit before adopting this adapter; startup never rewrites grants or keys.
+var ErrScopeMigrationRequired = errors.New("contentkit/authkit: explicit authorization-scope migration required")
 
 // GroupResolver resolves only a group's authorization scope owned by this app.
 // Return auth.ErrForbidden for a missing group or one belonging to another app.
@@ -33,16 +46,25 @@ type AuthorizationConfig struct {
 	// scopes. Empty preserves the same-issuer behavior by using Issuer.
 	PermissionAuthority string
 	AppScope            auth.Scope
-	// TenantAdminScope is optional, explicit tenant administration. AuthKit's
-	// deployment-wide root role is never consulted implicitly.
+	// TenantAdminScope is optional, explicit tenant administration. Native
+	// effective root authority also applies, within the credential's limits.
 	TenantAdminScope auth.Scope
-	Accounts         AccountResolver
+	// TenantActors defaults to groups when it implements TenantActorResolver.
+	// New multi-tenant hosts use this verified, live ownership boundary.
+	TenantActors TenantActorResolver
+	// Accounts is the legacy dedicated-issuer contract. Do not use it when
+	// one issuer contains accounts from more than one tenant.
+	Accounts AccountResolver
 	// Groups overrides deterministic GroupScopeID resolution only for an
 	// explicitly verified legacy binding. New apps use AppScopes and omit it.
 	Groups GroupResolver
 }
 
-type authorization struct{ cfg AuthorizationConfig }
+type authorization struct {
+	cfg    AuthorizationConfig
+	root   auth.Scope
+	groups AuthorizationGroups
+}
 
 // AuthorizationGroups reads the AuthKit groups used by the binding. A
 // *authkit.Client satisfies it; no credential or role mutation is needed.
@@ -52,8 +74,8 @@ type AuthorizationGroups interface {
 }
 
 // NewAuthorization returns an app-bound ContentKit policy. The authenticator
-// must produce DirectPermissionChecker credentials (AuthKit CanDirect) so app
-// grants cannot be inherited from a deployment-wide root role.
+// must produce PermissionChecker credentials. AuthKit's native effective Can
+// preserves global root grants, live membership and credential restrictions.
 func NewAuthorization(ctx context.Context, groups AuthorizationGroups, cfg AuthorizationConfig) (contentkit.Authorization, error) {
 	if err := cfg.Scope.Validate(); err != nil {
 		return nil, err
@@ -64,7 +86,13 @@ func NewAuthorization(ctx context.Context, groups AuthorizationGroups, cfg Autho
 	if cfg.Issuer == "" || strings.TrimSpace(cfg.Issuer) != cfg.Issuer || cfg.PermissionAuthority == "" || strings.TrimSpace(cfg.PermissionAuthority) != cfg.PermissionAuthority || cfg.AppScope.Authority != cfg.PermissionAuthority || cfg.AppScope.ID == "" {
 		return nil, errors.New("contentkit/authkit: identity issuer and matching app permission authority are required")
 	}
-	if cfg.Accounts == nil {
+	if cfg.Accounts != nil && cfg.TenantActors != nil {
+		return nil, errors.New("contentkit/authkit: configure native tenant actors or legacy accounts, not both")
+	}
+	if cfg.Accounts == nil && cfg.TenantActors == nil {
+		cfg.TenantActors, _ = groups.(TenantActorResolver)
+	}
+	if cfg.Accounts == nil && cfg.TenantActors == nil {
 		return nil, errors.New("contentkit/authkit: verified tenant account resolver is required")
 	}
 	if cfg.TenantAdminScope != (auth.Scope{}) && (cfg.TenantAdminScope.Authority != cfg.PermissionAuthority || cfg.TenantAdminScope.ID == "" || cfg.TenantAdminScope == cfg.AppScope) {
@@ -73,28 +101,61 @@ func NewAuthorization(ctx context.Context, groups AuthorizationGroups, cfg Autho
 	if groups == nil {
 		return nil, errors.New("contentkit/authkit: authorization group reader is required")
 	}
-	if err := validateAuthorizationGroup(ctx, groups, cfg.AppScope, "contentkit"); err != nil {
+	if cfg.AppScope.ID != cfg.Scope.AppID.String() {
+		return nil, errors.New("contentkit/authkit: app group ID must equal the canonical ContentKit app ID")
+	}
+	if err := validateAuthorizationGroup(ctx, groups, cfg.AppScope, "app", cfg.Scope.TenantID); err != nil {
 		return nil, err
 	}
 	if cfg.TenantAdminScope != (auth.Scope{}) {
-		if err := validateAuthorizationGroup(ctx, groups, cfg.TenantAdminScope, "contentkit-tenant"); err != nil {
+		if cfg.TenantAdminScope.ID != cfg.Scope.TenantID.String() {
+			return nil, errors.New("contentkit/authkit: tenant group ID must equal the canonical ContentKit tenant ID")
+		}
+		if err := validateAuthorizationGroup(ctx, groups, cfg.TenantAdminScope, "tenant", cfg.Scope.TenantID); err != nil {
 			return nil, err
 		}
 	}
-	return authorization{cfg}, nil
+	root, err := groups.Scope(ctx, iam.RootGroup())
+	if err != nil {
+		return nil, err
+	}
+	if root.ID == "" || root.Authority != cfg.PermissionAuthority {
+		return nil, errors.New("contentkit/authkit: root scope belongs to another permission authority")
+	}
+	return authorization{cfg: cfg, root: root, groups: groups}, nil
 }
 
-func validateAuthorizationGroup(ctx context.Context, groups AuthorizationGroups, scope auth.Scope, persona string) error {
+// currentGroup prevents a deleted/purged UUID reused by another tenant from
+// retargeting a running ContentKit engine. Reads are live, never cross-request
+// cached. An outage is unavailable, not a reason to discard a valid login.
+func (a authorization) currentGroup(ctx context.Context, scope auth.Scope, persona string) error {
+	g, err := a.groups.Group(ctx, iam.GroupByID(scope.ID))
+	if errors.Is(err, iam.ErrGroupNotFound) {
+		return auth.ErrForbidden
+	}
+	if err != nil {
+		return errors.Join(auth.ErrUnavailable, err)
+	}
+	if g.ID != scope.ID || g.DeletedAt != nil || g.TenantID.String() != a.cfg.Scope.TenantID.String() || persona != "" && g.Persona.String() != persona {
+		return auth.ErrForbidden
+	}
+	return nil
+}
+
+func validateAuthorizationGroup(ctx context.Context, groups AuthorizationGroups, scope auth.Scope, persona string, tenant contentkit.TenantID) error {
 	ref := iam.GroupByID(scope.ID)
 	g, err := groups.Group(ctx, ref)
 	if err != nil {
 		return err
 	}
+	if g.Persona.String() == "contentkit" || g.Persona.String() == "contentkit-tenant" {
+		return fmt.Errorf("%w: migrate group %s from persona %s before startup", ErrScopeMigrationRequired, g.ID, g.Persona)
+	}
 	resolved, err := groups.Scope(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if g.ID != scope.ID || g.DeletedAt != nil || g.Persona.String() != persona || resolved != scope {
+	if g.ID != scope.ID || g.DeletedAt != nil || g.Persona.String() != persona || resolved != scope || g.TenantID.String() != tenant.String() {
 		return errors.New("contentkit/authkit: authorization group does not match the expected live persona and issuer")
 	}
 	return nil
@@ -112,12 +173,19 @@ func IssuerAccounts(tenant contentkit.TenantID, issuer string) AccountResolver {
 	}
 }
 
-// AppPermission and TenantPermission are the AuthKit persona permissions for
-// a ContentKit staff operation. Declare the returned names in the respective
-// app and tenant personas, not in AuthKit's root persona.
-func AppPermission(p access.Permission) string { return staffPermission("contentkit", p.String()) }
+// AppPermission is the AuthKit app permission for a ContentKit staff operation.
+// A limited tenant role may include that same permission; AuthKit scopes its
+// inheritance to the tenant's apps.
+func AppPermission(p access.Permission) string { return staffPermission("app", p.String()) }
+
+// TenantPermission names shared account operations. It is empty for app-only
+// operations: tenant roles include AppPermission grants instead of defining a
+// duplicate tenant permission. Currently only avatar administration is shared.
 func TenantPermission(p access.Permission) string {
-	return staffPermission("contentkit-tenant", p.String())
+	if p != access.AvatarsWrite {
+		return ""
+	}
+	return staffPermission("tenant", p.String())
 }
 func staffPermission(persona, permission string) string {
 	for _, known := range access.Permissions() {
@@ -132,9 +200,16 @@ func (a authorization) ResolveActor(ctx context.Context, scope contentkit.Scope,
 	if err := a.admit(scope, v); err != nil {
 		return "", err
 	}
+	if err := a.currentGroup(ctx, a.cfg.AppScope, "app"); err != nil {
+		return "", err
+	}
 	id := v.Identity()
 	if id.SubjectKind == auth.SubjectApplication {
 		return id.Subject, nil
+	}
+	if a.cfg.TenantActors != nil {
+		actor, err := a.tenantActor(ctx, v)
+		return actor.AccountID, err
 	}
 	account, err := a.cfg.Accounts(ctx, scope.TenantID, id)
 	if err != nil {
@@ -146,6 +221,45 @@ func (a authorization) ResolveActor(ctx context.Context, scope contentkit.Scope,
 	return account, nil
 }
 
+// ResolveTenantAccount identifies a real audience account in this target
+// tenant. A foreign source actor remains attributable without becoming a
+// member; its staff rights are checked separately by Authorize.
+func (a authorization) ResolveTenantAccount(ctx context.Context, scope contentkit.Scope, v auth.Verified) (string, bool, error) {
+	if err := a.admit(scope, v); err != nil {
+		return "", false, err
+	}
+	if err := a.currentGroup(ctx, a.cfg.AppScope, "app"); err != nil {
+		return "", false, err
+	}
+	if v.Identity().SubjectKind != auth.SubjectUser {
+		return "", false, nil
+	}
+	if a.cfg.TenantActors != nil {
+		actor, err := a.tenantActor(ctx, v)
+		if err != nil || actor.TenantID.String() != scope.TenantID.String() {
+			return "", false, err
+		}
+		return actor.AccountID, true, nil
+	}
+	account, err := a.ResolveActor(ctx, scope, v)
+	return account, err == nil && account != "", err
+}
+
+func (a authorization) tenantActor(ctx context.Context, v auth.Verified) (iam.TenantActor, error) {
+	actor, err := a.cfg.TenantActors.ResolveTenantActor(ctx, v)
+	if err != nil {
+		if errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) || errors.Is(err, auth.ErrUnavailable) {
+			return actor, err
+		}
+		return actor, errors.Join(auth.ErrUnavailable, err)
+	}
+	id := v.Identity()
+	if actor.AccountID == "" || actor.AccountID != id.Subject || actor.TenantID.IsZero() || id.TenantID != "" && id.TenantID != actor.TenantID.String() {
+		return iam.TenantActor{}, auth.ErrForbidden
+	}
+	return actor, nil
+}
+
 func (a authorization) admit(scope contentkit.Scope, v auth.Verified) error {
 	if scope != a.cfg.Scope || v == nil {
 		return auth.ErrForbidden
@@ -154,14 +268,19 @@ func (a authorization) admit(scope contentkit.Scope, v auth.Verified) error {
 	if id.Issuer != a.cfg.Issuer || id.Subject == "" {
 		return auth.ErrForbidden
 	}
+	// A legacy dedicated-issuer mapping cannot override an explicit verified
+	// tenant claim. Cross-tenant operators use the live TenantActors resolver.
+	if a.cfg.TenantActors == nil && id.SubjectKind == auth.SubjectUser && id.TenantID != "" && id.TenantID != scope.TenantID.String() {
+		return auth.ErrForbidden
+	}
 	bound := auth.Scope{}
 	if b, ok := v.(auth.Bound); ok {
 		bound = b.BoundScope()
 	}
-	if bound != (auth.Scope{}) && bound != a.cfg.AppScope && bound != a.cfg.TenantAdminScope {
+	if bound != (auth.Scope{}) && bound != a.cfg.AppScope && bound != a.cfg.TenantAdminScope && bound != a.root {
 		return auth.ErrForbidden
 	}
-	if id.SubjectKind == auth.SubjectApplication && (bound == (auth.Scope{}) || bound != a.cfg.AppScope && bound != a.cfg.TenantAdminScope) {
+	if id.SubjectKind == auth.SubjectApplication && bound == (auth.Scope{}) {
 		return auth.ErrForbidden
 	}
 	if id.SubjectKind != auth.SubjectUser && id.SubjectKind != auth.SubjectApplication {
@@ -174,7 +293,7 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 	if _, err := a.ResolveActor(ctx, scope, v); err != nil {
 		return false, err
 	}
-	checker, ok := v.(auth.DirectPermissionChecker)
+	checker, ok := v.(auth.PermissionChecker)
 	if !ok {
 		return false, nil
 	}
@@ -193,23 +312,27 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 		if group.ID == "" || group.Authority != a.cfg.PermissionAuthority {
 			return false, auth.ErrForbidden
 		}
-		return checker.CanDirect(ctx, group, target.Permission)
+		if err := a.currentGroup(ctx, group, ""); err != nil {
+			return false, err
+		}
+		return checker.Can(ctx, group, target.Permission)
 	}
-	permission := staffPermission("contentkit", target.Permission)
+	// Avatars belong to the tenant account directory. App moderation grants
+	// must not become permission to edit shared profiles in every app.
+	if target.Permission == access.AvatarsWrite.String() {
+		if a.cfg.TenantAdminScope == (auth.Scope{}) {
+			return false, nil
+		}
+		if err := a.currentGroup(ctx, a.cfg.TenantAdminScope, "tenant"); err != nil {
+			return false, err
+		}
+		return checker.Can(ctx, a.cfg.TenantAdminScope, TenantPermission(access.AvatarsWrite))
+	}
+	permission := staffPermission("app", target.Permission)
 	if permission == "" {
 		return false, nil
 	}
-	var allowed bool
-	var err error
-	// Avatars belong to the tenant account directory. App moderation grants
-	// must not become permission to edit shared profiles in every app.
-	if target.Permission != access.AvatarsWrite.String() {
-		allowed, err = checker.CanDirect(ctx, a.cfg.AppScope, permission)
-	}
-	if err != nil || allowed || a.cfg.TenantAdminScope == (auth.Scope{}) {
-		return allowed, err
-	}
-	return checker.CanDirect(ctx, a.cfg.TenantAdminScope, staffPermission("contentkit-tenant", target.Permission))
+	return checker.Can(ctx, a.cfg.AppScope, permission)
 }
 
 // GroupScopeID is a deterministic AuthKit group identity for a ContentKit

@@ -346,6 +346,8 @@ func (h handler) done(w http.ResponseWriter, r *http.Request, err error) {
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	code, msg, failed := httpapi.CodeInternal, "", true
 	switch {
+	case errors.Is(err, auth.ErrForbidden):
+		code, failed = httpapi.CodeForbidden, false
 	case errors.Is(err, ErrInvalid):
 		code, msg, failed = httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest), false
 	case errors.Is(err, ErrNotFound):

@@ -44,19 +44,29 @@ func (e *Engine) validateGroupScopes(provider groups.Scopes) error {
 // (or the host's identity provider) remains responsible for credentials and
 // live sessions. This interface never receives an unverified request identity.
 //
-// Implementations must reject foreign issuers, unrelated tenant accounts and
-// credentials bound to another app. ResolveActor returns the stable tenant
-// account ID for a person, or the scoped service identity for an application.
+// Implementations must reject foreign issuers and credentials bound to another
+// app. ResolveActor returns the stable source actor for audit. Implementations
+// admitting cross-tenant operators must also implement TenantAccountAuthorization
+// so a source actor never becomes an implicit target-tenant audience account.
 // Ordinary accounts need no app registration or membership record.
 //
-// Authorize checks an explicit app grant, or an explicitly configured tenant
-// administrator grant covering that app. A group grant must belong to this
-// app. Preserve the verified credential's ceilings, revocation and binding;
-// a broad identity-provider root role is not an implicit tenant administrator.
+// Authorize checks effective authority for the explicit target tenant/app,
+// including the provider's registered root grants. A group grant must belong
+// to this app. Preserve credential ceilings, revocation and binding.
 // Errors never authorize an operation. Implementations must be concurrent-safe.
 type Authorization interface {
 	ResolveActor(ctx context.Context, scope Scope, verified auth.Verified) (string, error)
 	Authorize(ctx context.Context, scope Scope, verified auth.Verified, target PermissionTarget) (bool, error)
+}
+
+// TenantAccountAuthorization separates audience membership from administrative
+// authority. A nonmember returns ("", false, nil); it may still hold a root
+// permission to administer the target. The account must already exist and be
+// owned by scope.TenantID. Errors fail closed. Existing custom Authorization
+// implementations retain their trusted ResolveActor-as-account contract until
+// they opt into cross-tenant actors through this interface.
+type TenantAccountAuthorization interface {
+	ResolveTenantAccount(context.Context, Scope, auth.Verified) (accountID string, member bool, err error)
 }
 
 // scopeAuthenticator installs app policy without changing the original
@@ -101,6 +111,13 @@ func nilAuthorization(v Authorization) bool {
 
 func (a scopeAuthenticator) ResolveActor(ctx context.Context, v auth.Verified) (string, error) {
 	return a.policy.ResolveActor(ctx, a.scope, v)
+}
+
+func (a scopeAuthenticator) ResolveTenantAccount(ctx context.Context, v auth.Verified, actorID string) (string, bool, error) {
+	if policy, ok := a.policy.(TenantAccountAuthorization); ok {
+		return policy.ResolveTenantAccount(ctx, a.scope, v)
+	}
+	return actorID, actorID != "", nil
 }
 
 func (a scopeAuthenticator) Authorize(ctx context.Context, v auth.Verified, group, permission string) (bool, error) {

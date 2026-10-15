@@ -438,15 +438,15 @@ func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
 
 // person is a signed-in person's id, else "".
 func person(a access.Actor) string {
-	if a.Person() {
-		return a.ID
+	if a.Member() {
+		return a.AccountID()
 	}
 	return ""
 }
 
 // viewerState fills a signed-in reader's standing with the cards' items.
 func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []cardRow) error {
-	if !actor.Person() || len(rows) == 0 {
+	if !actor.Member() || len(rows) == 0 {
 		return nil
 	}
 	refs := make([]contentref.ContentRef, len(rows))
@@ -468,7 +468,7 @@ func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []ca
 // A failed signal read leaves progress out.
 func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]catalog.ViewerState, error) {
 	out := make([]catalog.ViewerState, len(refs))
-	if !actor.Person() || len(refs) == 0 {
+	if !actor.Member() || len(refs) == 0 {
 		return out, nil
 	}
 	kinds, ids, versions := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
@@ -477,7 +477,7 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	}
 	fav, err := s.o.Pool.Query(ctx, `SELECT r.n FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
  WHERE EXISTS (SELECT 1 FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_kind = r.kind AND f.content_id = r.id
-  AND f.content_version_id IS NOT DISTINCT FROM nullif(r.version, '') AND f.value = 1)`, s.o.Tenant, actor.ID, kinds, ids, versions)
+  AND f.content_version_id IS NOT DISTINCT FROM nullif(r.version, '') AND f.value = 1)`, s.o.Tenant, actor.AccountID(), kinds, ids, versions)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +491,7 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
-	states, err := s.o.Hub.States(ctx, signal.Subject{UserID: actor.ID}, refs)
+	states, err := s.o.Hub.States(ctx, signal.Subject{UserID: actor.AccountID()}, refs)
 	if err != nil {
 		s.o.Logger.WarnContext(ctx, "discovery: viewer progress unavailable", "err", err)
 		return out, nil

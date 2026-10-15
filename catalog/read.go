@@ -144,7 +144,11 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	for id, c := range built {
 		// Body images are the opened version's private files, signed for its openers.
 		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
-			urls, err := s.media.Reader.NamedURLs(ctx, s.Ref(c.Kind, id).WithVersion(bodies[id]), v.actor, names)
+			ref, err := s.mediaRef(c.Kind, id, bodies[id])
+			var urls map[string]string
+			if err == nil {
+				urls, err = s.media.Reader.NamedURLs(ctx, ref, v.actor, names)
+			}
 			if err != nil {
 				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
 			}

@@ -96,9 +96,13 @@ const (
 	// one the credential proves (401 unauthorized for one that fails); the
 	// host's resolver decides what it sees.
 	Public Tier = "public"
-	// User: a signed-in person; 401 unauthorized without a credential, 403
-	// forbidden for an application.
+	// User: a signed-in tenant account; 401 unauthorized without a credential, 403
+	// forbidden for an application or a person without a target-tenant account.
 	User Tier = "user"
+	// Person permits an authenticated human actor without requiring an
+	// audience account in this tenant. The handler still checks its target
+	// permissions; applications and anonymous requests are refused.
+	Person Tier = "person"
 	// Staff: a person or an application holding Perm in the root scope of
 	// the host's auth; 401 unauthorized without a credential, 403 forbidden
 	// without the permission.
@@ -244,7 +248,7 @@ func (s Spec) check() error {
 		return fmt.Errorf("a Staff or Editor route, and only one, names a Perm")
 	case s.Perm != "" && (!strings.HasPrefix(s.Perm, "root:") || strings.Count(s.Perm, ":") != 2):
 		return fmt.Errorf("Perm %q is not root:<resource>:<action>", s.Perm)
-	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Staff && s.Auth != Editor:
+	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Person && s.Auth != Staff && s.Auth != Editor:
 		return fmt.Errorf("unknown tier %q", s.Auth)
 	}
 	for _, code := range s.Errors {

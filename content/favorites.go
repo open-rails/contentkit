@@ -47,6 +47,9 @@ func (f *favorites) remove(ctx context.Context, actor access.Actor, target conte
 }
 
 func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.ContentRef, value int16) error {
+	if !actor.Member() {
+		return errForbidden
+	}
 	tx, err := f.s.beginMutation(ctx)
 	if err != nil {
 		return err
@@ -55,7 +58,7 @@ func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.
 	if err := f.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return err
 	}
-	changed, err := f.setTx(ctx, tx, actor.ID, ref.Key(), value, true)
+	changed, err := f.setTx(ctx, tx, actor.AccountID(), ref.Key(), value, true)
 	if err != nil {
 		return err
 	}
@@ -156,7 +159,7 @@ func (f *favorites) handleSet(typ TargetType, on bool) http.HandlerFunc {
 		} else if err == nil {
 			ref, res, err = f.remove(req.Context(), actor, ref)
 		}
-		f.writeState(w, req, actor.ID, ref, res, err)
+		f.writeState(w, req, actor.AccountID(), ref, res, err)
 	}
 }
 

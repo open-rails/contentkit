@@ -148,6 +148,59 @@ func TestScopedAuthorizationOrdinaryAccountNeedsNoAppRole(t *testing.T) {
 	}
 }
 
+type externalOperatorPolicy struct{ member bool }
+
+func (externalOperatorPolicy) ResolveActor(context.Context, Scope, auth.Verified) (string, error) {
+	return "source-operator", nil
+}
+func (externalOperatorPolicy) Authorize(context.Context, Scope, auth.Verified, PermissionTarget) (bool, error) {
+	return true, nil
+}
+func (p externalOperatorPolicy) ResolveTenantAccount(context.Context, Scope, auth.Verified) (string, bool, error) {
+	if p.member {
+		return "target-account", true, nil
+	}
+	return "", false, nil
+}
+
+func TestScopedOperatorHasNoImplicitTenantAccount(t *testing.T) {
+	scope := Scope{NewTenantID(), NewAppID()}
+	for _, member := range []bool{false, true} {
+		e := Engine{scope: &scope}
+		a, err := e.authorization(authorizationAuthenticator{"https://accounts.test"}, externalOperatorPolicy{member: member})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g := gate.Gate{Auth: a}
+		for _, tier := range []httpapi.Tier{httpapi.Staff, httpapi.Person, httpapi.User} {
+			called := false
+			w := httptest.NewRecorder()
+			spec := httpapi.Spec{Auth: tier}
+			if tier == httpapi.Staff {
+				spec.Perm = access.CommentsModerate.String()
+			}
+			g.Guard(spec, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				actor := gate.Actor(r.Context())
+				if actor.ID != "source-operator" || !actor.Person() || actor.Member() != member {
+					t.Fatalf("lost source operator or fabricated membership: %+v", actor)
+				}
+				if member && actor.AccountID() != "target-account" || !member && actor.AccountID() != "" {
+					t.Fatalf("wrong target account: %q", actor.AccountID())
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			want := http.StatusNoContent
+			if tier == httpapi.User && !member {
+				want = http.StatusForbidden
+			}
+			if w.Code != want || called != (want == http.StatusNoContent) {
+				t.Fatalf("member=%v tier=%s status=%d called=%v", member, tier, w.Code, called)
+			}
+		}
+	}
+}
+
 func TestScopedAuthorizationRequiresExplicitBinding(t *testing.T) {
 	scope := Scope{NewTenantID(), NewAppID()}
 	e := Engine{scope: &scope}

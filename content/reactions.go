@@ -127,6 +127,9 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 // returns. The actor must see the target's reactions: content they open, or
 // whose kind's locked view shows reactions.
 func (r *reactions) react(ctx context.Context, actor access.Actor, target contentref.ContentRef, value int16) (contentref.ContentRef, error) {
+	if actor.Account != nil && !actor.Member() {
+		return contentref.ContentRef{}, errForbidden
+	}
 	ref, res, err := r.rt.resolveTarget(ctx, target, actor, false)
 	if err == nil && !r.rt.shows(ref, res, kinds.ShowReactions) {
 		err = ErrForbidden
@@ -260,10 +263,10 @@ func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request, target c
 // reactionKey returns the dedup identity: a user id when present, else the IP.
 // ok=false when the actor is fully unidentifiable.
 func reactionKey(a access.Actor) (userID, ip string, ok bool) {
-	if a.ID != "" && !a.Anonymous {
-		return a.ID, a.IP, true
+	if a.Member() {
+		return a.AccountID(), a.IP, true
 	}
-	if a.IP != "" {
+	if a.Anonymous && a.IP != "" {
 		return "", a.IP, true
 	}
 	return "", "", false

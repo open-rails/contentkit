@@ -39,6 +39,12 @@ type ScopedAuthorization interface {
 	Authorize(context.Context, auth.Verified, string, string) (bool, error)
 }
 
+// ScopedAccounts is the optional tenant-membership part of app authorization.
+// It never substitutes an operator's source account for a target-tenant member.
+type ScopedAccounts interface {
+	ResolveTenantAccount(context.Context, auth.Verified, string) (string, bool, error)
+}
+
 // Check refuses a missing Authenticator, typed nil pointers included. A
 // module with staff routes passes their permissions: the Authenticator must
 // name its root scope (auth.Root), where they are held, and know each one
@@ -97,7 +103,7 @@ func GroupEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, 
 	switch {
 	case actor.Anonymous:
 		return false, nil
-	case owner != "" && actor.Person() && owner == actor.ID:
+	case owner != "" && actor.Member() && owner == actor.AccountID():
 		return true, nil
 	case scope == "":
 		return false, nil
@@ -215,13 +221,18 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		if (s.Auth == httpapi.User || s.Auth == httpapi.Staff || s.Auth == httpapi.Editor) && a.Anonymous {
+		if (s.Auth == httpapi.User || s.Auth == httpapi.Person || s.Auth == httpapi.Staff || s.Auth == httpapi.Editor) && a.Anonymous {
 			g.refuse(w, r, s, auth.ErrUnauthenticated)
 			return
 		}
 		switch s.Auth {
-		case httpapi.User:
+		case httpapi.Person:
 			if !a.Person() {
+				g.refuse(w, r, s, auth.ErrForbidden)
+				return
+			}
+		case httpapi.User:
+			if !a.Member() {
 				g.refuse(w, r, s, auth.ErrForbidden)
 				return
 			}
@@ -296,11 +307,33 @@ func (g *Gate) actor(r *http.Request) (access.Actor, error) {
 		if strings.TrimSpace(a.ID) == "" {
 			return access.Actor{}, errors.Join(auth.ErrUnavailable, fault("app authorization returned an empty actor ID"))
 		}
+		if accounts, ok := g.Auth.(ScopedAccounts); ok {
+			account, member, err := resolveTenantAccount(r.Context(), accounts, v, a.ID)
+			if err != nil {
+				return access.Actor{}, err
+			}
+			a.Account = &access.AccountMembership{}
+			if member {
+				if strings.TrimSpace(account) == "" {
+					return access.Actor{}, errors.Join(auth.ErrUnavailable, fault("tenant membership returned an empty account ID"))
+				}
+				a.Account.ID = account
+			}
+		}
 	}
 	if id.Invoker != (auth.Invoker{}) && !id.SelfInvoked() {
 		a.Invoker = id.Invoker
 	}
 	return a, nil
+}
+
+func resolveTenantAccount(ctx context.Context, a ScopedAccounts, v auth.Verified, actorID string) (id string, member bool, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			id, member, err = "", false, errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("app authorization ResolveTenantAccount panicked: %v", p)))
+		}
+	}()
+	return a.ResolveTenantAccount(ctx, v, actorID)
 }
 
 func resolveActor(ctx context.Context, a ScopedAuthorization, v auth.Verified) (id string, err error) {

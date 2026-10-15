@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/helpers/notify"
 )
 
@@ -73,7 +74,7 @@ func (s *Source) Consume(ctx context.Context, destination notify.Publisher, mapp
 			continue
 		}
 		_, err = destination.Publish(ctx, notify.Input{Recipient: target, Origin: notify.Origin{System: s.name, Scope: event.MerchantID, ID: event.ID, Subject: event.CustomerID}, Kind: event.EventType, Data: event.Data, CreatedAt: event.CreatedAt, Visibility: notify.VisibilityTenant, ActionRequested: event.ActionRequested})
-		if errors.Is(err, notify.ErrRecipientErased) {
+		if errors.Is(err, notify.ErrRecipientErased) || errors.Is(err, notification.ErrRecipientNotFound) {
 			ids = append(ids, event.ID)
 			result.Skipped++
 			continue

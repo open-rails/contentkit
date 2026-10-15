@@ -32,7 +32,7 @@ import (
 )
 
 // StaffRole names the declared ContentKit staff role. Legacy deployments use
-// root:staff; scoped deployments use explicitly granted contentkit:staff.
+// root:staff; scoped deployments use app:staff and native inherited authority.
 const StaffRole = "staff"
 
 // Config is a standalone deployment: plain data. Secrets are read from the
@@ -46,7 +46,7 @@ type Config struct {
 	// its tables live in Database.Schema (default "contentkit_auth").
 	Auth authkit.Config `yaml:"auth"`
 	// Authorization binds a scoped engine to explicitly provisioned AuthKit
-	// groups and a dedicated tenant identity directory. Required with Scope.
+	// groups and a verified tenant identity directory. Required with Scope.
 	Authorization *AuthorizationConfig `yaml:"authorization"`
 	// UsersIssuer is the trusted issuer whose directory names authors. Legacy
 	// mode can infer the only RemoteApplication; scoped mode uses Authorization
@@ -147,6 +147,12 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	cfg.Engine.Database.RiverSchema = riverSchema
 
 	ak := cfg.Auth
+	if cfg.Engine.Scope != nil && ak.DefaultTenantID.IsZero() {
+		ak.DefaultTenantID, err = iam.ParseTenantID(cfg.Engine.Scope.TenantID.String())
+		if err != nil {
+			return nil, err
+		}
+	}
 	if ak.Database.Schema == "" {
 		ak.Database.Schema = "contentkit_auth"
 	}

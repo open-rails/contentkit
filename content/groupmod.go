@@ -105,11 +105,11 @@ func (c *comments) release(ctx context.Context, actor access.Actor, cid string) 
 const groupModeratorsDoc = " For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope)."
 
 var commentModerationRoutes = []httpapi.Route[*comments]{
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/hold", Resource: "comments", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/hold", Resource: "comments", Auth: httpapi.Person,
 		Doc:       "Holds a published comment for review: out of its thread, shown to its author only, until released or deleted." + groupModeratorsDoc,
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeConflict, CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleHold)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/release", Resource: "comments", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/release", Resource: "comments", Auth: httpapi.Person,
 		Doc:       "Publishes a held comment, as a reviewer's approval does." + groupModeratorsDoc,
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleRelease)},
@@ -132,20 +132,20 @@ func (c *comments) handleRelease(w http.ResponseWriter, req *http.Request) {
 }
 
 var groupModerationRoutes = []httpapi.Route[*Runtime]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/held-comments", Resource: "moderation", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/held-comments", Resource: "moderation", Auth: httpapi.Person,
 		Doc:       "Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.",
 		Query:     []httpapi.Param{httpapi.Text("cursor", "the previous page's next"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleGroupHeld)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/comment-bans", Resource: "bans", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}/comment-bans", Resource: "bans", Auth: httpapi.Person,
 		Doc:   "The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleGroupBans)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/groups/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/groups/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
 		Doc:     "Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.",
 		Request: BanInput{}, Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleGroupBan)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/groups/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.User,
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/groups/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
 		Doc:       "Lifts a user's ban on a user-owned group and its content.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleGroupUnban)},

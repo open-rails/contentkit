@@ -50,7 +50,7 @@ func (rt *Runtime) handleConfig(w http.ResponseWriter, _ *http.Request) {
 // application. Interactions are a person's.
 func participant(actor access.Actor, allowed bool) error {
 	switch {
-	case actor.Person():
+	case actor.Member():
 		return nil
 	case actor.Anonymous || actor.ID == "":
 		if allowed {

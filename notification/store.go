@@ -5,16 +5,18 @@ package notification
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/helpers/notify"
 	"github.com/open-rails/helpers/notify/postgres"
 )
 
@@ -26,6 +28,11 @@ type Config struct {
 	SharedOrigins []notify.OriginScope `json:"shared_origins,omitempty" yaml:"shared_origins,omitempty"`
 }
 
+// ErrRecipientNotFound means the requested user is not a live account in this
+// tenant. Consumers may skip the notice; a directory outage is a different,
+// retryable error. No account or erasure tombstone is created by this result.
+var ErrRecipientNotFound = errors.New("notification: recipient is not a live account in this tenant")
+
 // Options selects the pool, ContentKit's schema and its tenant.
 type Options struct {
 	Pool           *pgxpool.Pool
@@ -34,6 +41,13 @@ type Options struct {
 	Shared         *Config
 	// AppID comes from the engine immutable Scope, never from an HTTP selector.
 	AppID string
+	// AccountExists proves a user recipient belongs to this store's account
+	// tenant. Scoped user publication fails closed without this lookup. The
+	// directory must be fixed to the target tenant, not the request actor's.
+	AccountExists func(context.Context, string) (bool, error)
+	// AccountExistsTx provides the same proof on the caller's transaction.
+	// PublishTx and batch publication never acquire a second pool connection.
+	AccountExistsTx func(context.Context, pgx.Tx, string) (bool, error)
 }
 
 // Store mounts a shared notification store as one ContentKit tenant's inbox.
@@ -44,6 +58,8 @@ type Store struct {
 	log               *slog.Logger
 	schema, namespace string
 	appID             string
+	accountExists     func(context.Context, string) (bool, error)
+	accountExistsTx   func(context.Context, pgx.Tx, string) (bool, error)
 	origins           []notify.OriginScope
 	nativeOrigin      notify.OriginScope
 	mu                sync.Mutex
@@ -81,7 +97,7 @@ func New(opts Options) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Store{Store: store, pool: opts.Pool, log: log, schema: schema, namespace: namespace, origins: origins, appID: opts.AppID, nativeOrigin: notify.OriginScope{System: "contentkit", Scope: opts.Tenant}}
+	s := &Store{Store: store, pool: opts.Pool, log: log, schema: schema, namespace: namespace, origins: origins, appID: opts.AppID, accountExists: opts.AccountExists, accountExistsTx: opts.AccountExistsTx, nativeOrigin: notify.OriginScope{System: "contentkit", Scope: opts.Tenant}}
 	if err := s.setView(); err != nil {
 		return nil, err
 	}
@@ -149,6 +165,29 @@ func (s *Store) publication(in notify.Input) (notify.Input, error) {
 	return in, nil
 }
 
+func (s *Store) checkRecipient(ctx context.Context, tx pgx.Tx, recipient notify.Recipient) error {
+	if s.appID == "" || recipient.Audience != notify.AudienceUser {
+		return nil
+	}
+	if tx != nil && s.accountExistsTx == nil || tx == nil && s.accountExists == nil {
+		return fmt.Errorf("notification: scoped account lookup missing: %w", auth.ErrUnavailable)
+	}
+	var exists bool
+	var err error
+	if tx != nil {
+		exists, err = s.accountExistsTx(ctx, tx, recipient.ID)
+	} else {
+		exists, err = s.accountExists(ctx, recipient.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("notification: recipient lookup: %w", errors.Join(auth.ErrUnavailable, err))
+	}
+	if !exists {
+		return errors.Join(ErrRecipientNotFound, notify.ErrInvalid)
+	}
+	return nil
+}
+
 // Publish defaults native/host authored notices to this app. Tenant-wide
 // publication is reserved for trusted in-process integrations; the HTTP route
 // does not accept that authority from an app client.
@@ -157,11 +196,17 @@ func (s *Store) Publish(ctx context.Context, in notify.Input) (notify.Item, erro
 	if err != nil {
 		return notify.Item{}, err
 	}
+	if err := s.checkRecipient(ctx, nil, in.Recipient); err != nil {
+		return notify.Item{}, err
+	}
 	return s.view.Load().Publish(ctx, in)
 }
 func (s *Store) PublishTx(ctx context.Context, tx pgx.Tx, in notify.Input) (notify.Item, error) {
 	in, err := s.publication(in)
 	if err != nil {
+		return notify.Item{}, err
+	}
+	if err := s.checkRecipient(ctx, tx, in.Recipient); err != nil {
 		return notify.Item{}, err
 	}
 	return s.view.Load().PublishTx(ctx, tx, in)

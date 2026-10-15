@@ -23,10 +23,11 @@ export type ContentKitRoute = {
   module: ContentKitModule;
   // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the host's prefix.
   path: string;
-  // open: never authenticates; public: the actor is optional; user: a signed-in person;
+  // open: never authenticates; public: the actor is optional; user: a tenant member;
+  // person: an authenticated human, with permissions checked by the handler;
   // staff: a person or an application holding the host permission; editor: staff holding the
   // permission, or the target's own editors (its creators, a user-owned group's owner and scope holders).
-  auth: "open" | "public" | "user" | "staff" | "editor";
+  auth: "open" | "public" | "user" | "person" | "staff" | "editor";
   // A staff or editor route's staff permission: root:<resource>:<action>.
   permission: string | null;
   query: readonly string[];
@@ -54,8 +55,8 @@ export const CONTENTKIT_ROUTES = [
   { method: "POST", module: "content", path: "/comments/{cid}/like", auth: "public", permission: null, query: [], request: null, responses: { 200: "ReactionCounts" }, errors: ["comments_locked", "forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "POST", module: "content", path: "/comments/{cid}/dislike", auth: "public", permission: null, query: [], request: null, responses: { 200: "ReactionCounts" }, errors: ["comments_locked", "forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "DELETE", module: "content", path: "/comments/{cid}/reaction", auth: "public", permission: null, query: [], request: null, responses: { 200: "ReactionCounts" }, errors: ["comments_locked", "forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
-  { method: "POST", module: "content", path: "/comments/{cid}/hold", auth: "user", permission: null, query: [], request: null, responses: { 204: null }, errors: ["conflict", "forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
-  { method: "POST", module: "content", path: "/comments/{cid}/release", auth: "user", permission: null, query: [], request: null, responses: { 204: null }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "POST", module: "content", path: "/comments/{cid}/hold", auth: "person", permission: null, query: [], request: null, responses: { 204: null }, errors: ["conflict", "forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "POST", module: "content", path: "/comments/{cid}/release", auth: "person", permission: null, query: [], request: null, responses: { 204: null }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
   { method: "POST", module: "content", path: "/contents/{id}/like", auth: "public", permission: null, query: ["version"], request: null, responses: { 200: "ReactionCounts" }, errors: ["forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "POST", module: "content", path: "/contents/{id}/dislike", auth: "public", permission: null, query: ["version"], request: null, responses: { 200: "ReactionCounts" }, errors: ["forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "DELETE", module: "content", path: "/contents/{id}/reaction", auth: "public", permission: null, query: ["version"], request: null, responses: { 200: "ReactionCounts" }, errors: ["forbidden", "invalid_request", "not_found", "rate_limited", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
@@ -90,10 +91,10 @@ export const CONTENTKIT_ROUTES = [
   { method: "GET", module: "content", path: "/global-comment-bans/{user}", auth: "staff", permission: "root:comments:ban", query: [], request: null, responses: { 200: "CommentBan" }, errors: ["not_found", "unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "PUT", module: "content", path: "/global-comment-bans/{user}", auth: "staff", permission: "root:comments:ban", query: [], request: "BanInput", responses: { 200: "CommentBan" }, errors: ["unauthorized"], errorSets: ["module:content", "auth", "request"] },
   { method: "DELETE", module: "content", path: "/global-comment-bans/{user}", auth: "staff", permission: "root:comments:ban", query: [], request: null, responses: { 204: null }, errors: ["unauthorized"], errorSets: ["module:content", "auth", "request"] },
-  { method: "GET", module: "content", path: "/groups/{id}/held-comments", auth: "user", permission: null, query: ["cursor", "limit"], request: null, responses: { 200: "HeldPage" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
-  { method: "GET", module: "content", path: "/groups/{id}/comment-bans", auth: "user", permission: null, query: ["limit", "offset"], request: null, responses: { 200: "CommentBan[]" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
-  { method: "PUT", module: "content", path: "/groups/{id}/comment-bans/{user}", auth: "user", permission: null, query: [], request: "BanInput", responses: { 200: "CommentBan" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
-  { method: "DELETE", module: "content", path: "/groups/{id}/comment-bans/{user}", auth: "user", permission: null, query: [], request: null, responses: { 204: null }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "GET", module: "content", path: "/groups/{id}/held-comments", auth: "person", permission: null, query: ["cursor", "limit"], request: null, responses: { 200: "HeldPage" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "GET", module: "content", path: "/groups/{id}/comment-bans", auth: "person", permission: null, query: ["limit", "offset"], request: null, responses: { 200: "CommentBan[]" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "PUT", module: "content", path: "/groups/{id}/comment-bans/{user}", auth: "person", permission: null, query: [], request: "BanInput", responses: { 200: "CommentBan" }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
+  { method: "DELETE", module: "content", path: "/groups/{id}/comment-bans/{user}", auth: "person", permission: null, query: [], request: null, responses: { 204: null }, errors: ["forbidden", "not_found"], errorSets: ["module:content", "auth", "request"] },
   { method: "GET", module: "content", path: "/contents/{id}/can-comment", auth: "public", permission: null, query: ["version"], request: null, responses: { 200: "CommentStanding" }, errors: ["not_found"], errorSets: ["module:content", "auth", "request"] },
   { method: "GET", module: "content", path: "/groups/{id}/can-comment", auth: "public", permission: null, query: [], request: null, responses: { 200: "CommentStanding" }, errors: ["not_found"], errorSets: ["module:content", "auth", "request"] },
   { method: "GET", module: "content", path: "/moderation/held", auth: "staff", permission: "root:moderation:review", query: ["kind", "cursor", "limit"], request: null, responses: { 200: "HeldPage" }, errors: [], errorSets: ["module:content", "auth", "request"] },

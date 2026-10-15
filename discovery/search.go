@@ -111,8 +111,8 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	}
 	base.Limit, base.Offset = limit, offset
 	opts := hub.HubSearchOptions{SearchOptions: base}
-	if a := o.Actor; a.Person() && !o.Unpersonalized {
-		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.ID}, DemoteSeen: true,
+	if a := o.Actor; a.Member() && !o.Unpersonalized {
+		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
 			PopularityWindow: signal.LastDays(30, s.o.Now())}
 	}
 	res, err := s.o.Hub.Search(ctx, text, opts)

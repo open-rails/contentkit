@@ -30,6 +30,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -178,7 +179,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		if e.avatars, err = e.newAvatars(deps); err != nil {
 			return nil, err
 		}
-		if err := e.catalog.BindMedia(catalog.Media{Reader: e.media.reader, Versions: e.media.versions}); err != nil {
+		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: e.media.versions}); err != nil {
 			return nil, err
 		}
 	}
@@ -386,7 +387,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth,
+	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
 		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
@@ -535,6 +536,8 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	if e.scope != nil {
 		o.NotificationAppID = e.scope.AppID.String()
+		o.AccountExists = e.accountExists(deps)
+		o.AccountExistsTx = e.accountExistsTx(deps)
 	}
 	if e.media != nil {
 		o.Media = &content.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
@@ -543,6 +546,47 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		o.Avatars = e.avatars.urls
 	}
 	return o
+}
+
+type transactionalUserInfo interface {
+	GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
+}
+
+func (e *Engine) accountExistsTx(deps Deps) func(context.Context, pgx.Tx, string) (bool, error) {
+	if e.scope == nil {
+		return nil
+	}
+	return func(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+		directory, ok := deps.Users.(transactionalUserInfo)
+		if !ok {
+			return false, auth.ErrUnavailable
+		}
+		users, err := directory.GetTx(ctx, tx, []string{id})
+		if err != nil {
+			return false, err
+		}
+		user, found := users[id]
+		return found && user.ID == id, nil
+	}
+}
+
+// accountExists uses only the host's target-tenant directory. Source actor
+// identity is not proof of target membership, including for global staff.
+func (e *Engine) accountExists(deps Deps) func(context.Context, string) (bool, error) {
+	if e.scope == nil {
+		return nil
+	}
+	return func(ctx context.Context, id string) (bool, error) {
+		if deps.Users == nil {
+			return false, auth.ErrUnavailable
+		}
+		users, err := deps.Users.Get(ctx, []string{id})
+		if err != nil {
+			return false, err
+		}
+		user, found := users[id]
+		return found && user.ID == id, nil
+	}
 }
 
 // mount builds each configured module's handler and the in-process mux.

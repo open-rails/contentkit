@@ -158,12 +158,12 @@ func (f *avatarForward) match(module httpapi.Module, r *http.Request) (forwarded
 func (f *avatarForward) serve(w http.ResponseWriter, r *http.Request) {
 	fw := r.Context().Value(forwardKey{}).(forwarded)
 	actor := gate.Actor(r.Context())
-	if actor.ID != fw.person {
+	if actor.AccountID() != fw.person {
 		fail(w, http.StatusForbidden, httpapi.CodeForbidden, "a person edits only their own avatar", 0)
 		return
 	}
 	if strings.HasSuffix(fw.path, "/commit") {
-		if ok, wait := f.commits.Allow(r.Context(), actor.ID); !ok {
+		if ok, wait := f.commits.Allow(r.Context(), actor.AccountID()); !ok {
 			fail(w, http.StatusTooManyRequests, httpapi.CodeRateLimited, httpapi.Message(httpapi.CodeRateLimited), wait)
 			return
 		}

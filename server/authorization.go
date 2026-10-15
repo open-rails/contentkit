@@ -14,8 +14,9 @@ import (
 )
 
 // AuthorizationConfig selects existing grants; startup never creates groups
-// or assigns their roles. Issuer must identify one dedicated tenant account
-// directory, not an issuer shared by unrelated tenants.
+// or assigns their roles. Local identity uses AuthKit's verified tenant account
+// ownership. An explicitly remote issuer retains the legacy dedicated-directory
+// contract until its tenant-aware identity integration is configured.
 type AuthorizationConfig struct {
 	Issuer        string `yaml:"issuer"`
 	AppGroupID    string `yaml:"app_group_id"`
@@ -42,6 +43,12 @@ func validateAuthorizationConfig(cfg Config, ak authkit.Config) error {
 	if cfg.UsersIssuer != "" && cfg.UsersIssuer != a.Issuer {
 		return errors.New("server: users_issuer must match authorization.issuer in scoped mode")
 	}
+	if a.AppGroupID != cfg.Engine.Scope.AppID.String() || a.TenantGroupID != "" && a.TenantGroupID != cfg.Engine.Scope.TenantID.String() {
+		return errors.New("server: authorization group IDs must match the canonical engine tenant and app IDs")
+	}
+	if ak.DefaultTenantID.String() != cfg.Engine.Scope.TenantID.String() {
+		return errors.New("server: AuthKit and ContentKit must use the same canonical tenant ID")
+	}
 	if strings.TrimSpace(a.TenantGroupID) != a.TenantGroupID {
 		return errors.New("server: authorization.tenant_group_id must be an exact group ID")
 	}
@@ -53,10 +60,10 @@ func validateAuthorizationConfig(cfg Config, ak authkit.Config) error {
 	return nil
 }
 
-// serverRoles declares the permission catalog only. A pre-existing root role
-// is never copied into either scoped persona.
+// serverRoles declares the permission catalog only. Native root ownership and
+// deliberately declared global grants inherit across its scoped personas.
 func serverRoles(engine contentkit.Config) *authkit.Roles {
-	r := authkit.NewRoles(authkit.RemoteApplications)
+	r := authkit.NewRoles(authkit.RemoteApplications, authkit.APIKeys)
 	// The engine's permission catalog still uses these stable operation names;
 	// scoped policy maps them to app/tenant permissions instead of granting root.
 	rootPermissions := r.Root.Declare(access.Names(access.Permissions()...)...)
@@ -68,12 +75,17 @@ func serverRoles(engine contentkit.Config) *authkit.Roles {
 		r.Root.Role(StaffRole, grants...)
 		return r
 	}
-	app := r.Persona("contentkit", authkit.RemoteApplications, authkit.APIKeys)
-	tenant := r.Persona("contentkit-tenant", authkit.RemoteApplications, authkit.APIKeys)
+	app := r.Persona("app", authkit.RemoteApplications, authkit.APIKeys)
+	tenant := r.Tenant
 	var appGrants, tenantGrants []iam.Grant
 	for _, p := range access.Permissions() {
-		appGrants = append(appGrants, app.Declare(ckauthkit.AppPermission(p))[0])
-		tenantGrants = append(tenantGrants, tenant.Declare(ckauthkit.TenantPermission(p))[0])
+		if shared := ckauthkit.TenantPermission(p); shared != "" {
+			tenantGrants = append(tenantGrants, tenant.Declare(shared)[0])
+			continue
+		}
+		grant := app.Declare(ckauthkit.AppPermission(p))[0]
+		appGrants = append(appGrants, grant)
+		tenantGrants = append(tenantGrants, grant)
 	}
 	app.Role(StaffRole, appGrants...)
 	tenant.Role(StaffRole, tenantGrants...)
@@ -93,7 +105,7 @@ func (s *Server) scopedAuthorization(ctx context.Context, cfg Config, ak authkit
 	}
 	policy := ckauthkit.AuthorizationConfig{
 		Scope: *cfg.Engine.Scope, Issuer: a.Issuer, PermissionAuthority: ak.Token.Issuer,
-		AppScope: app, Accounts: ckauthkit.IssuerAccounts(cfg.Engine.Scope.TenantID, a.Issuer),
+		AppScope: app,
 	}
 	if a.TenantGroupID != "" {
 		if policy.TenantAdminScope, err = s.auth.Scope(ctx, iam.GroupByID(a.TenantGroupID)); err != nil {
@@ -101,8 +113,17 @@ func (s *Server) scopedAuthorization(ctx context.Context, cfg Config, ak authkit
 		}
 	}
 	if a.Issuer == ak.Token.Issuer {
-		deps.Users = s.auth.UserInfo()
+		tenantID, err := iam.ParseTenantID(cfg.Engine.Scope.TenantID.String())
+		if err != nil {
+			return err
+		}
+		accounts, err := s.auth.ForTenant(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		deps.Users = accounts.UserInfo()
 	} else {
+		policy.Accounts = ckauthkit.IssuerAccounts(cfg.Engine.Scope.TenantID, a.Issuer)
 		remote, err := s.auth.RemoteApplication(ctx, iam.AppByIssuer(a.Issuer))
 		if err != nil || !remote.Enabled || remote.GroupID != a.AppGroupID {
 			return fmt.Errorf("server: identity issuer must have a live remote application in authorization.app_group_id: %w", errors.Join(err, errors.New("missing or mismatched remote application binding")))

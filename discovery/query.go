@@ -312,13 +312,13 @@ func releasedOn(v string, loc *time.Location) (time.Time, time.Time, error) {
 // viewStatus keeps the reader's in-progress or completed contents, or drops
 // those they have seen, read from the signal plane.
 func (s *Service) viewStatus(ctx context.Context, q *sel, actor access.Actor, kind, status string) error {
-	if !actor.Person() {
+	if !actor.Member() {
 		return fmt.Errorf("%w: view_status needs a signed-in reader", ErrInvalid)
 	}
 	if err := s.signals(); err != nil {
 		return err
 	}
-	subject := signal.Subject{UserID: actor.ID}
+	subject := signal.Subject{UserID: actor.AccountID()}
 	var ids []string
 	switch status {
 	case InProgress, Completed:

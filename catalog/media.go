@@ -22,6 +22,9 @@ import (
 // item (kind, content, version) holds its cover and, in private/, its copy of
 // the body's images, which only the version's openers read.
 type Media struct {
+	// Registry constructs media references in each kind's effective namespace.
+	// Nil retains the legacy standalone binding to the catalog key.
+	Registry *media.Registry
 	// Reader signs opened versions' body images and gives editors previews.
 	Reader   Reader
 	Versions VersionMedia // *versions.Service
@@ -138,7 +141,11 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 	if err := tx.Commit(ctx); err != nil {
 		return InlineImage{}, err
 	}
-	url, err := s.previewURL(ctx, actor, s.Ref(got[contentID].kind, contentID).WithVersion(in.Version), *in.Image)
+	ref, err := s.mediaRef(got[contentID].kind, contentID, in.Version)
+	if err != nil {
+		return InlineImage{}, err
+	}
+	url, err := s.previewURL(ctx, actor, ref, *in.Image)
 	if err != nil {
 		return InlineImage{}, err
 	}
@@ -147,6 +154,14 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 		out.URL = &url
 	}
 	return out, nil
+}
+
+// mediaRef keeps media partitions separate from catalog and signal refs.
+func (s *Store) mediaRef(kind, id, version string) (contentref.ContentRef, error) {
+	if s.media != nil && s.media.Registry != nil {
+		return s.media.Registry.VersionRef(kind, id, version)
+	}
+	return s.Ref(kind, id).WithVersion(version), nil
 }
 
 // previewURL shows an editor an upload of an item now, its editor view once

@@ -60,6 +60,9 @@ type Options struct {
 	Pool   *pgxpool.Pool
 	Kinds  kinds.Config       // the site's content and group kinds
 	Auth   auth.Authenticator // the host's: staff and group scope checks
+	// AccountExists verifies avatar targets in this tenant's account directory.
+	// Scoped engines install it; nil preserves the legacy host contract.
+	AccountExists func(context.Context, string) (bool, error)
 	// Resolver decides versions ({kind, content, version}) for a viewer:
 	// Visible (live, or edited by them), Accessible (opened by them) and
 	// Editor.

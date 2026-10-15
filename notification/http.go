@@ -167,6 +167,8 @@ func writeItem(w http.ResponseWriter, item notify.Item) {
 func (s *Store) fail(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, msg := http.StatusInternalServerError, httpapi.CodeInternal, "notifications unavailable"
 	switch {
+	case errors.Is(err, auth.ErrUnavailable):
+		status, code, msg = http.StatusServiceUnavailable, httpapi.CodeUnavailable, "notifications unavailable"
 	case errors.Is(err, notify.ErrInvalid):
 		status, code, msg = http.StatusBadRequest, httpapi.CodeInvalidRequest, "invalid request"
 	case errors.Is(err, notify.ErrConflict):
@@ -182,5 +184,5 @@ func (s *Store) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func recipient(r *http.Request) notify.Recipient {
-	return notify.Recipient{Audience: notify.AudienceUser, ID: gate.Actor(r.Context()).ID}
+	return notify.Recipient{Audience: notify.AudienceUser, ID: gate.Actor(r.Context()).AccountID()}
 }

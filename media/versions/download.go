@@ -175,8 +175,8 @@ func (e *QuotaError) Error() string { return "versions: download quota reached (
 // charge takes one download from actor's bucket.
 func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 	bucket, key, l := "anonymous", "ip:"+actor.IP, s.dl.anonymous
-	if !actor.Anonymous && actor.ID != "" {
-		bucket, key, l = "user", "user:"+actor.ID, s.dl.user
+	if actor.Member() {
+		bucket, key, l = "user", "user:"+actor.AccountID(), s.dl.user
 		if len(s.dl.tiers) > 0 && s.o.Gate != nil {
 			f, err := s.o.Gate.Filter(ctx, actor)
 			if err != nil {
@@ -274,8 +274,8 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 			}
 			exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
 			marks := joinPages(g.mark)
-			q := url.Values{"for": {actor.ID}, "mark": {marks}, "name": {name},
-				"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.ID, marks, name), exp)}}
+			q := url.Values{"for": {actor.AccountID()}, "mark": {marks}, "name": {name},
+				"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.AccountID(), marks, name), exp)}}
 			return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 		}
 		var ok bool
@@ -398,7 +398,7 @@ WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Conte
 	}
 	g := grant{name: d.Name}
 	for _, p := range d.Mark {
-		if p >= 1 && p <= pages && !slices.Contains(g.mark, p) && !actor.Anonymous && actor.ID != "" {
+		if p >= 1 && p <= pages && !slices.Contains(g.mark, p) && actor.Member() {
 			g.mark = append(g.mark, p)
 		}
 	}

@@ -47,8 +47,8 @@ func AppScopes(c Client, scope contentkit.Scope) (groups.Scopes, error) {
 	if c == nil {
 		return nil, errors.New("contentkit/authkit: scope client is required")
 	}
-	if _, ok := c.(directScopeClient); !ok {
-		return nil, errors.New("contentkit/authkit: app scopes require CanDirect")
+	if _, ok := c.(effectiveScopeClient); !ok {
+		return nil, errors.New("contentkit/authkit: app scopes require effective Can")
 	}
 	return scopes{c: c, app: &scope}, nil
 }
@@ -67,8 +67,8 @@ func (s scopes) ContentKitScope() (string, string) {
 	return s.app.TenantID.String(), s.app.AppID.String()
 }
 
-type directScopeClient interface {
-	CanDirect(context.Context, auth.Identity, iam.GroupRef, iam.Perm) (bool, error)
+type effectiveScopeClient interface {
+	Can(context.Context, auth.Identity, iam.GroupRef, iam.Perm) (bool, error)
 }
 
 func (s scopes) providerID(id string) (string, error) {
@@ -93,6 +93,12 @@ func (s scopes) Provision(ctx context.Context, list []groups.Scope) error {
 			return fmt.Errorf("authkit: persona of group kind %s: %w", sc.Kind, err)
 		}
 		g := iam.NewGroup{ID: id, Persona: persona}
+		if s.app != nil {
+			g.TenantID, err = iam.ParseTenantID(s.app.TenantID.String())
+			if err != nil {
+				return err
+			}
+		}
 		if sc.Owner != "" {
 			owner := iam.UserSubject(sc.Owner)
 			g.Owner = &owner
@@ -101,7 +107,7 @@ func (s scopes) Provision(ctx context.Context, list []groups.Scope) error {
 		if errors.Is(err, iam.ErrGroupConflict) {
 			ref := iam.GroupByID(id)
 			old, gerr := s.c.Group(ctx, ref)
-			if gerr != nil || old.DeletedAt == nil || old.Persona != persona {
+			if gerr != nil || old.DeletedAt == nil || old.Persona != persona || s.app != nil && old.TenantID != g.TenantID {
 				return errors.Join(fmt.Errorf("authkit: scope %s is another group", sc.ID), err, gerr)
 			}
 			if err = s.c.PurgeGroup(ctx, ref); err == nil {
@@ -121,6 +127,18 @@ func (s scopes) Retire(ctx context.Context, ids []string) error {
 		id, err := s.providerID(id)
 		if err != nil {
 			return err
+		}
+		if s.app != nil {
+			group, err := s.c.Group(ctx, iam.GroupByID(id))
+			if errors.Is(err, iam.ErrGroupNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if group.TenantID.String() != s.app.TenantID.String() {
+				return auth.ErrForbidden
+			}
 		}
 		if err := s.c.DeleteGroup(ctx, iam.GroupByID(id)); err != nil && !errors.Is(err, iam.ErrGroupNotFound) {
 			return fmt.Errorf("authkit: retire scope %s: %w", id, err)
@@ -202,7 +220,7 @@ func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []str
 		if err != nil {
 			return nil, err
 		}
-		if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) {
+		if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) || group.TenantID.String() != s.app.TenantID.String() {
 			continue
 		}
 		for _, name := range access.GroupPermissions(group.Persona.String()) {
@@ -210,7 +228,7 @@ func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []str
 			if err != nil {
 				return nil, err
 			}
-			allowed, err := s.c.(directScopeClient).CanDirect(ctx, iam.UserIdentity(user), iam.GroupByID(providerID), perm)
+			allowed, err := s.c.(effectiveScopeClient).Can(ctx, iam.UserIdentity(user), iam.GroupByID(providerID), perm)
 			if err != nil {
 				return nil, err
 			}

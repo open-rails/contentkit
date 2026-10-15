@@ -311,7 +311,12 @@ type Deps struct {
 	// Required with Config.Scope; legacy-only engines do not use it.
 	Authorization Authorization
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
-	// authors' names. Nil shows authors by id.
+	// authors' names. In scoped mode it must be restricted to Scope.TenantID
+	// (AuthKit's ForTenant client); it also verifies privileged avatar and
+	// notification recipients. Nil shows authors by id and refuses scoped
+	// avatar edits and user notification publication.
+	// Transactional notification publication additionally needs GetTx so this
+	// lookup uses the domain transaction, never another pool connection.
 	Users userinfo.Lookup
 	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
 	// over an embedded engine or the remote client): held keys, offers' products

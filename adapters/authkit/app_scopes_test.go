@@ -21,21 +21,35 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 	permissions := channel.Declare(access.GroupPermissions("channel")...)
 	editorRole := channel.Role("editor", permissions[1])
 	r.Root.Role("global-editor", permissions[1])
-	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = r }))
+	tenants := []contentkit.TenantID{contentkit.NewTenantID(), contentkit.NewTenantID()}
+	firstTenant, _ := iam.ParseTenantID(tenants[0].String())
+	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles, c.DefaultTenantID = r, firstTenant }))
 	owner, editor := authtest.NewUser(t, ak), authtest.NewUser(t, ak)
 	bare := uuid.NewString()
-	tenants := []contentkit.TenantID{contentkit.NewTenantID(), contentkit.NewTenantID()}
 	backends := []groups.Scopes{}
 	providerIDs := map[string]bool{}
+	providerClients := map[string]*authkit.Client{}
 	var firstID string
 	for _, tenant := range tenants {
+		tenantID, _ := iam.ParseTenantID(tenant.String())
+		if err := ak.CreateTenant(ctx, iam.Tenant{ID: tenantID}); err != nil {
+			t.Fatal(err)
+		}
+		client, err := ak.ForTenant(ctx, tenantID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		localOwner := owner
+		if tenant != tenants[0] {
+			localOwner = authtest.NewUser(t, client)
+		}
 		for range 2 {
 			scope := contentkit.Scope{TenantID: tenant, AppID: contentkit.NewAppID()}
-			backend, err := ckauthkit.AppScopes(ak, scope)
+			backend, err := ckauthkit.AppScopes(client, scope)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := backend.Provision(ctx, []groups.Scope{{ID: bare, Kind: "channel", Owner: owner.ID}}); err != nil {
+			if err := backend.Provision(ctx, []groups.Scope{{ID: bare, Kind: "channel", Owner: localOwner.ID}}); err != nil {
 				t.Fatal(err)
 			}
 			id, err := ckauthkit.GroupScopeID(scope, bare)
@@ -43,6 +57,7 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 				t.Fatalf("scope ID collision: %s %v", id, err)
 			}
 			providerIDs[id] = true
+			providerClients[id] = client
 			if firstID == "" {
 				firstID = id
 			}
@@ -52,7 +67,6 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 	if _, err := ak.Group(ctx, iam.GroupByID(bare)); !errors.Is(err, iam.ErrGroupNotFound) {
 		t.Fatalf("bare provider scope created: %v", err)
 	}
-	authtest.GrantRole(t, ak, iam.RootGroup(), iam.UserSubject(editor.ID), mustRole(t, ak, "root:global-editor"))
 	authtest.GrantRole(t, ak, iam.GroupByID(firstID), iam.UserSubject(editor.ID), editorRole)
 	check := func(index int, want bool) {
 		t.Helper()
@@ -77,7 +91,7 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 		check(i, false)
 	}
 	for id := range providerIDs {
-		g, err := ak.Group(ctx, iam.GroupByID(id))
+		g, err := providerClients[id].Group(ctx, iam.GroupByID(id))
 		if err != nil || (g.DeletedAt != nil) != (id == firstID) {
 			t.Fatalf("retirement crossed scopes: %+v %v", g, err)
 		}
@@ -86,4 +100,8 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(0, false) // restoring a group does not restore the retired team's grants.
+	authtest.GrantRole(t, ak, iam.RootGroup(), iam.UserSubject(editor.ID), mustRole(t, ak, "root:global-editor"))
+	for i := range backends {
+		check(i, true) // deliberately global grants inherit in every live group.
+	}
 }

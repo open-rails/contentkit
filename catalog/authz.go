@@ -167,10 +167,7 @@ func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Act
 }
 
 func viewerID(a access.Actor) string {
-	if a.Anonymous {
-		return ""
-	}
-	return a.ID
+	return a.AccountID()
 }
 
 func isAuthErr(err error) bool {

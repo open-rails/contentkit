@@ -16,15 +16,18 @@ import (
 
 func TestAuthorizationAppIsolation(t *testing.T) {
 	ctx := context.Background()
+	tenantID := contentkit.NewTenantID()
+	accountTenant, _ := iam.ParseTenantID(tenantID.String())
 	r := authkit.NewRoles()
-	app := r.Persona("contentkit")
+	app := r.Persona("app")
 	moderate := app.Declare(ckauthkit.AppPermission(access.CommentsModerate))[0]
 	appRole := app.Role("moderator", moderate)
 	r.Root.Role("global", moderate)
-	tenantPersona := r.Persona("contentkit-tenant")
-	tenantPermission := tenantPersona.Declare(ckauthkit.TenantPermission(access.CommentsModerate))[0]
-	tenantRole := tenantPersona.Role("moderator", tenantPermission)
-	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = r }))
+	tenantPersona := r.Tenant
+	tenantRole := tenantPersona.Role("moderator", moderate)
+	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) {
+		c.Roles, c.DefaultTenantID = r, accountTenant
+	}))
 	person := authtest.NewUser(t, ak)
 	token := authtest.SignIn(t, ak, person).AccessToken
 	request := httptest.NewRequest("GET", "https://example.com/contentkit", nil)
@@ -33,24 +36,24 @@ func TestAuthorizationAppIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenantID := contentkit.NewTenantID()
-	appPersona, err := ak.Persona("contentkit")
+	appPersona, err := ak.Persona("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenantKind, err := ak.Persona("contentkit-tenant")
+	tenantKind, err := ak.Persona("tenant")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var policies []contentkit.Authorization
 	var scopes []contentkit.Scope
 	var groups []iam.GroupRef
-	tenantGroup, err := ak.CreateGroup(ctx, iam.NewGroup{Persona: tenantKind})
+	tenantGroup, err := ak.CreateGroup(ctx, iam.NewGroup{ID: tenantID.String(), TenantID: accountTenant, Persona: tenantKind})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		group, err := ak.CreateGroup(ctx, iam.NewGroup{Persona: appPersona})
+		appID := contentkit.NewAppID()
+		group, err := ak.CreateGroup(ctx, iam.NewGroup{ID: appID.String(), TenantID: accountTenant, Persona: appPersona})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,8 +65,8 @@ func TestAuthorizationAppIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		scope := contentkit.Scope{TenantID: tenantID, AppID: contentkit.NewAppID()}
-		policy, err := ckauthkit.NewAuthorization(ctx, ak, ckauthkit.AuthorizationConfig{Scope: scope, Issuer: authtest.Issuer, AppScope: groupScope, TenantAdminScope: tenantScope, Accounts: ckauthkit.IssuerAccounts(tenantID, authtest.Issuer)})
+		scope := contentkit.Scope{TenantID: tenantID, AppID: appID}
+		policy, err := ckauthkit.NewAuthorization(ctx, ak, ckauthkit.AuthorizationConfig{Scope: scope, Issuer: authtest.Issuer, AppScope: groupScope, TenantAdminScope: tenantScope})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,9 +80,12 @@ func TestAuthorizationAppIsolation(t *testing.T) {
 			t.Fatalf("ordinary account in app %d: %q %v", i, account, err)
 		}
 		allowed, err := policy.Authorize(ctx, scopes[i], v, target)
-		if err != nil || allowed {
-			t.Fatalf("inherited root role admitted app %d: %v %v", i, allowed, err)
+		if err != nil || !allowed {
+			t.Fatalf("native global root grant missing in app %d: %v %v", i, allowed, err)
 		}
+	}
+	if err := ak.RemoveGroupMember(ctx, iam.SystemIdentity(), iam.RootGroup(), iam.UserSubject(person.ID)); err != nil {
+		t.Fatal(err)
 	}
 	authtest.GrantRole(t, ak, groups[0], iam.UserSubject(person.ID), appRole)
 	for i, policy := range policies {
@@ -124,26 +130,34 @@ type bindingCredential struct {
 func (v bindingCredential) Identity() auth.Identity { return v.id }
 func (v bindingCredential) BoundScope() auth.Scope  { return v.bound }
 
-type authorizationGroups struct{ scope auth.Scope }
-
-func (g authorizationGroups) Group(context.Context, iam.GroupRef) (iam.Group, error) {
-	var p iam.Persona
-	_ = p.UnmarshalText([]byte("contentkit"))
-	return iam.Group{ID: g.scope.ID, Persona: p}, nil
+type authorizationGroups struct {
+	scope  auth.Scope
+	tenant contentkit.TenantID
 }
-func (g authorizationGroups) Scope(context.Context, iam.GroupRef) (auth.Scope, error) {
+
+func (g authorizationGroups) Group(_ context.Context, ref iam.GroupRef) (iam.Group, error) {
+	var p iam.Persona
+	_ = p.UnmarshalText([]byte("app"))
+	tenant, _ := iam.ParseTenantID(g.tenant.String())
+	return iam.Group{ID: ref.ID(), Persona: p, TenantID: tenant}, nil
+}
+func (g authorizationGroups) Scope(_ context.Context, ref iam.GroupRef) (auth.Scope, error) {
+	if ref == iam.RootGroup() {
+		return auth.Scope{Authority: g.scope.Authority, ID: "root"}, nil
+	}
 	return g.scope, nil
 }
 
 func TestAuthorizationRejectsForeignIdentityAndBinding(t *testing.T) {
 	scope := contentkit.Scope{TenantID: contentkit.NewTenantID(), AppID: contentkit.NewAppID()}
-	app := auth.Scope{Authority: "https://id.test", ID: "app"}
-	policy, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app}, ckauthkit.AuthorizationConfig{Scope: scope, Issuer: app.Authority, AppScope: app, Accounts: ckauthkit.IssuerAccounts(scope.TenantID, app.Authority)})
+	app := auth.Scope{Authority: "https://id.test", ID: scope.AppID.String()}
+	policy, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, ckauthkit.AuthorizationConfig{Scope: scope, Issuer: app.Authority, AppScope: app, Accounts: ckauthkit.IssuerAccounts(scope.TenantID, app.Authority)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range []bindingCredential{
 		{id: auth.Identity{Issuer: "https://foreign.test", Subject: "same", SubjectKind: auth.SubjectUser}},
+		{id: auth.Identity{Issuer: app.Authority, Subject: "same", SubjectKind: auth.SubjectUser, TenantID: iam.NewTenantID().String()}},
 		{id: auth.Identity{Issuer: app.Authority, Subject: "same", SubjectKind: auth.SubjectUser}, bound: auth.Scope{Authority: app.Authority, ID: "another-app"}},
 		{id: auth.Identity{Issuer: app.Authority, Subject: "service", SubjectKind: auth.SubjectApplication}},
 	} {
@@ -154,6 +168,6 @@ func TestAuthorizationRejectsForeignIdentityAndBinding(t *testing.T) {
 	v := bindingCredential{id: auth.Identity{Issuer: app.Authority, Subject: "same", SubjectKind: auth.SubjectUser}}
 	allowed, err := policy.Authorize(t.Context(), scope, v, contentkit.PermissionTarget{Permission: access.CommentsModerate.String()})
 	if err != nil || allowed {
-		t.Fatalf("missing direct capability did not fail closed: %v %v", allowed, err)
+		t.Fatalf("missing permission capability did not fail closed: %v %v", allowed, err)
 	}
 }

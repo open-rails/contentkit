@@ -117,10 +117,7 @@ func ptrTo[T any](v T) *T { return &v }
 // viewerID is the user id bound to reader predicates: an author sees their
 // own held and rejected items; anonymous actors see approved items only.
 func viewerID(a access.Actor) string {
-	if a.Anonymous {
-		return ""
-	}
-	return a.ID
+	return a.AccountID()
 }
 
 // visiblePred renders the moderation predicate for a reader; n is the

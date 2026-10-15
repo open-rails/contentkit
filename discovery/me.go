@@ -80,7 +80,7 @@ func (s *Service) Reactions(ctx context.Context, o MineOptions) (InteractionPage
 
 func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at string) (InteractionPage, error) {
 	out := InteractionPage{Items: []Interaction{}}
-	if !o.Actor.Person() {
+	if !o.Actor.Member() {
 		return out, fmt.Errorf("%w: favorites and reactions belong to a signed-in reader", ErrInvalid)
 	}
 	var kinds []string
@@ -111,7 +111,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 		return out, err
 	}
 	limit := pageLimit(o.Limit, 24)
-	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.ID, "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
+	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
 	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active')`, s.t.groups)
 	if o.Target == TargetContents {

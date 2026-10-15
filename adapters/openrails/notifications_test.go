@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/userinfo"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
+	"github.com/open-rails/contentkit/notification"
 	notice "github.com/open-rails/contentkit/notification/openrails"
 	"github.com/open-rails/helpers/notify"
-	"github.com/open-rails/helpers/notify/postgres"
 	"github.com/open-rails/openrails"
 	"github.com/open-rails/openrails/billing"
 )
@@ -62,19 +66,82 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 	var schema string
 	w := newWorld(t, func(c *openrails.Config) { schema = c.Database.Schema })
 	ctx := t.Context()
-	viewer := w.customer()
+	var tenant iam.TenantID
+	accounts, _ := authtest.New(t,
+		authtest.WithConfig(func(c *authkit.Config) { tenant = c.DefaultTenantID }),
+		authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
+	account := authtest.NewUser(t, accounts)
+	bound, err := accounts.ForTenant(ctx, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := bound.UserInfo()
+	viewer := account.ID
+	customer, err := billing.ParseCustomerID(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.bill.UpdateCustomer(ctx, customer, billing.UpdateCustomerParams{}); err != nil {
+		t.Fatal(err)
+	}
 	id := billing.NotificationID(uuid.New())
-	_, err := w.pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "notification_events"}.Sanitize()+`
+	_, err = w.pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "notification_events"}.Sanitize()+`
 		(merchant_id,id,customer_id,event_type,data) VALUES ($1,$2,$3,'payment_method_failed','{"retry_status":"stopped","recovery_action":"update_payment_method"}')`,
-		w.bill.MerchantID().UUID(), id.UUID(), viewer.ID)
+		w.bill.MerchantID().UUID(), id.UUID(), viewer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destination, err := postgres.New(w.pool, postgres.Config{Schema: w.schema, Scope: "contentkit:shared-accounts"})
+	var recipientLookupError error
+	destination, err := notification.New(notification.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant.String(), AppID: uuid.NewString(),
+		AccountExists: func(ctx context.Context, id string) (bool, error) {
+			if recipientLookupError != nil {
+				return false, recipientLookupError
+			}
+			users, err := directory.Get(ctx, []string{id})
+			user, exists := users[id]
+			return exists && user.ID == id, err
+		},
+		AccountExistsTx: func(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+			reader, ok := directory.(interface {
+				GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
+			})
+			if !ok {
+				return false, errors.New("native directory lacks transactional lookup")
+			}
+			users, err := reader.GetTx(ctx, tx, []string{id})
+			user, exists := users[id]
+			return exists && user.ID == id, err
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapper := ckopenrails.SameAccounts(accountDirectory{users: map[string]userinfo.User{viewer.ID: {ID: viewer.ID}}})
+	// A caller-owned transaction uses the same membership
+	// check without borrowing another connection, and rolls back as one unit.
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.PublishTx(ctx, tx, notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: viewer}, Origin: notify.Origin{System: "openrails", Scope: w.bill.MerchantID().String(), ID: "rolled-back"}, Kind: "payment_method_failed", CreatedAt: time.Now(), Visibility: notify.VisibilityTenant}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mapper := ckopenrails.SameAccounts(directory)
+	failedSource, err := ckopenrails.NewNotificationSource(w.bill, "openrails", "shared-accounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failedSource.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recipientLookupError = errors.New("temporary recipient lookup outage")
+	failedResult, err := failedSource.Consume(ctx, destination, mapper, notice.ConsumeOptions{Filter: notice.BillingLifecycle})
+	if !errors.Is(err, recipientLookupError) || failedResult.Fetched != 1 || failedResult.Acknowledged != 0 || failedResult.Delivered != 0 {
+		t.Fatalf("lookup failure changed source acknowledgement: %+v %v", failedResult, err)
+	}
+	recipientLookupError = nil
 	for i, consumer := range []string{"shared-accounts", "shared-accounts", "independent-replay"} {
 		source, err := ckopenrails.NewNotificationSource(w.bill, "openrails", consumer)
 		if err != nil {
@@ -94,12 +161,12 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 		if result.Fetched != want || result.Delivered != want || result.Acknowledged != want {
 			t.Fatalf("consumer %d delivered %+v, want %d", i, result, want)
 		}
-		page, err := destination.List(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: viewer.ID}, notify.ListOptions{})
+		page, err := destination.List(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: viewer}, notify.ListOptions{})
 		if err != nil || len(page.Items) != 1 {
 			t.Fatalf("destination after consumer %d = %+v, %v", i, page, err)
 		}
 		item := page.Items[0]
-		if item.Origin.ID != id.String() || item.Origin.Scope != w.bill.MerchantID().String() || item.Origin.Subject != viewer.ID {
+		if item.Origin.ID != id.String() || item.Origin.Scope != w.bill.MerchantID().String() || item.Origin.Subject != viewer {
 			t.Fatalf("typed source lost provenance: %+v", item.Origin)
 		}
 		if i == 0 {

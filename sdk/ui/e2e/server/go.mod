@@ -1,14 +1,14 @@
 module github.com/open-rails/contentkit/sdk/ui/e2e/server
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/open-rails/authkit v1.29.1
-	github.com/open-rails/contentkit v0.89.0
+	github.com/open-rails/authkit v1.30.0
+	github.com/open-rails/contentkit v0.92.0
 	github.com/open-rails/helpers v1.13.0
 	github.com/riverqueue/river v0.49.0
 )

@@ -145,7 +145,7 @@ func (s *Store) contentEditors(ctx context.Context, ids []string) map[string]boo
 	var scoped []group
 	err := s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, kind, coalesce(owner_user_id, '') = $3, coalesce(auth_scope, '') FROM %s
- WHERE tenant_id = $1 AND id = ANY($2::text[]) AND state = 'active'`, s.table("content_groups")), s.tenant, ids, v.ID)
+ WHERE tenant_id = $1 AND id = ANY($2::text[]) AND state = 'active'`, s.table("content_groups")), s.tenant, ids, v.AccountID())
 		if err != nil {
 			return err
 		}
@@ -162,9 +162,9 @@ func (s *Store) contentEditors(ctx context.Context, ids []string) map[string]boo
 		}
 		return rows.Err()
 	})
-	if err == nil && len(scoped) > 0 && s.scopes != nil {
+	if err == nil && len(scoped) > 0 && s.scopes != nil && v.Member() {
 		var held map[string][]string
-		if held, err = s.heldScopes(ctx, v.ID, ""); err == nil {
+		if held, err = s.heldScopes(ctx, v, ""); err == nil {
 			for _, g := range scoped {
 				out[g.id] = slices.Contains(held[g.scope], access.GroupContentWrite(g.kind))
 			}

@@ -281,11 +281,11 @@ WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.o.Tenant, ids, language, s.languag
 // a signal plane.
 func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, error) {
 	out := MyStats{Completed: map[string]int64{}}
-	if !actor.Person() {
+	if !actor.Member() {
 		return out, fmt.Errorf("%w: account statistics need a signed-in person", ErrInvalid)
 	}
 	if s.o.Tenure != nil && len(s.o.Kinds.Tiers) > 0 {
-		seconds, err := s.o.Tenure.Tenure(ctx, actor.ID, s.o.Kinds.Tiers, s.o.Now())
+		seconds, err := s.o.Tenure.Tenure(ctx, actor.AccountID(), s.o.Kinds.Tiers, s.o.Now())
 		if err != nil {
 			s.o.Logger.WarnContext(ctx, "discovery: access tenure unavailable", "err", err)
 		} else {
@@ -293,14 +293,14 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 		}
 	}
 	if err := s.o.Pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(likes), 0), coalesce(sum(dislikes), 0) FROM `+s.t.comments+`
- WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL AND moderation = 'approved'`, s.o.Tenant, actor.ID).Scan(
+ WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL AND moderation = 'approved'`, s.o.Tenant, actor.AccountID()).Scan(
 		&out.Comments, &out.CommentLikes, &out.CommentDislikes); err != nil {
 		return out, err
 	}
 	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
-	subject := signal.Subject{UserID: actor.ID}
+	subject := signal.Subject{UserID: actor.AccountID()}
 	for _, kind := range s.kindNames() {
 		n, err := s.o.Hub.HistoryCount(ctx, subject, signal.HistoryOptions{ContentKind: kind, Status: signal.HistoryCompleted})
 		if err != nil {

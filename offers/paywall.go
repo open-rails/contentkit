@@ -172,7 +172,7 @@ func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor acces
 		JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id
 		LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
 		WHERE r.version_id = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = r.version_id)`,
-		contentAt, s.tenant, contents, versions, actor.ID); err != nil {
+		contentAt, s.tenant, contents, versions, actor.AccountID()); err != nil {
 		return nil, err
 	}
 	if err := scan(`SELECT r.n, false, g.kind, coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
@@ -184,7 +184,7 @@ func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor acces
 		if !f.found {
 			return nil, fmt.Errorf("%w: %s %s", ErrNotFound, targets[i].Kind, targets[i].ID)
 		}
-		if out[i] = f.creator && actor.Person(); out[i] || s.kinds.GroupKinds[f.kind].Owner != "user" {
+		if out[i] = f.creator && actor.Member(); out[i] || s.kinds.GroupKinds[f.kind].Owner != "user" {
 			continue
 		}
 		g := facts{kind: f.kind, owner: f.owner, scope: f.scope}

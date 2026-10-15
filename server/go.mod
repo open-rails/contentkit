@@ -6,11 +6,11 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.29.1
-	github.com/open-rails/contentkit v0.89.0
-	github.com/open-rails/contentkit/adapters/openrails v0.5.0
+	github.com/open-rails/authkit v1.30.0
+	github.com/open-rails/contentkit v0.92.0
+	github.com/open-rails/contentkit/adapters/openrails v0.5.1
 	github.com/open-rails/helpers v1.13.0
-	github.com/open-rails/openrails v0.258.0
+	github.com/open-rails/openrails v0.259.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.49.0
 )
@@ -92,7 +92,7 @@ require (
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
-	github.com/open-rails/contentkit/adapters/authkit v0.7.0
+	github.com/open-rails/contentkit/adapters/authkit v0.8.0
 	github.com/open-rails/migratekit v1.11.1 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect

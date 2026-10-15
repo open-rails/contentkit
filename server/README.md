@@ -12,8 +12,8 @@ authorization to existing AuthKit groups. For example:
 ```yaml
 engine:
   scope:
-    tenant_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
-    app_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
+    tenant_id: 11111111-1111-4111-8111-111111111111
+    app_id: 22222222-2222-4222-8222-222222222222
   database:
     schema: example_catalog
   accounts:
@@ -32,37 +32,36 @@ auth:
     id: https://contentkit.example.test
 authorization:
   issuer: https://accounts.example.test
-  app_group_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
-  tenant_group_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
+  app_group_id: 22222222-2222-4222-8222-222222222222
+  tenant_group_id: 11111111-1111-4111-8111-111111111111
 ```
 
-The IDs are examples. Generate deployment IDs once, persist them, and use the
-same values for every restart. `app_group_id` must name a live AuthKit group
-with the `contentkit` persona. The optional `tenant_group_id` must name a
-different live group with the `contentkit-tenant` persona. Omitting it gives
-the app no tenant administration fallback. Declared `contentkit:staff` and
-`contentkit-tenant:staff` roles are available for explicit provisioning;
-startup does not create groups, assign roles, or copy root grants.
+The IDs are examples. Generate them once and use the same canonical tenant
+UUID in AuthKit and ContentKit. The server derives AuthKit's default tenant
+from `engine.scope.tenant_id` when absent and rejects a conflicting explicit
+value. Provision the tenant before startup. `app_group_id` must equal the app
+UUID and name a live `app` group owned by that tenant. The optional
+`tenant_group_id` must equal the tenant UUID and name its built-in `tenant`
+group. Startup does not create groups or assign roles.
 
-`authorization.issuer` is the verified identity issuer for one dedicated
-tenant account directory. The built-in account resolver preserves that
-issuer's subject IDs. It is unsuitable when the same issuer serves unrelated
-tenants without a trusted account-to-tenant mapping. `auth.token.issuer` is the
-local permission authority; it may differ from the identity issuer.
+Local accounts use AuthKit's live tenant ownership. Root operators may
+administer other tenants with native effective permissions while retaining
+their source identity; this does not create an audience account there.
+`app:staff` grants apply to the app, and `tenant:staff` uses the same app
+permission objects across that tenant's apps. Shared avatar administration is
+`tenant:avatars:write`. A tenant-bound user directory validates avatar targets.
 
-For an external identity issuer, provision its enabled remote application in
-`app_group_id` using AuthKit's group-scoped application API, and explicitly
-grant the intended application role there. Register its public keys or JWKS
-URL and restrict the token's permissions/scopes. `auth.remote_applications`
-declares root applications and must not declare this scoped identity issuer.
-The server refuses missing, disabled, root-only, or other-app registrations.
-Remote user information is read from that same app group. Tokens from other
-issuers, sibling app bindings, and root-only grants do not gain app authority.
+`authorization.issuer` is the verified identity issuer;
+`auth.token.issuer` is the local permission authority. For an external identity
+issuer, provision its enabled remote application in `app_group_id`, with
+explicitly restricted permissions and public verification keys. This remote
+compatibility path requires a dedicated one-tenant issuer; it cannot attest
+ownership for a shared multi-tenant account directory. Local shared AuthKit
+setups use the native verified tenant resolver instead.
 
-When AuthKit also owns the local account directory, set
-`authorization.issuer` equal to `auth.token.issuer`; no remote registration is
-needed. Content group kinds with `auth_scope: true` use deterministic
-tenant/app-specific AuthKit group IDs through `AppScopes`.
+Existing `contentkit` and `contentkit-tenant` personas require an explicit
+AuthKit migration preserving IDs, assignments and credential bounds before
+startup; see [the authorization contract](../docs/architecture/app-authorization.md).
 
 Legacy configurations without `engine.scope` retain the existing root
 `staff` policy and trusted-root directory behavior. They must omit the

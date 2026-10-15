@@ -114,9 +114,9 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 			hidden[id] = true
 		}
 	}
-	if o.Actor.Person() {
+	if o.Actor.Member() {
 		var raw []byte
-		err := s.pool.QueryRow(ctx, `SELECT overrides, include_deleted FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`, s.tenant, o.Actor.ID).Scan(&raw, &v.includeDeleted)
+		err := s.pool.QueryRow(ctx, `SELECT overrides, include_deleted FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}

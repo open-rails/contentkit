@@ -37,12 +37,9 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		case s.isGroupKind(k.Name):
 			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
-			editor := actor.Person() && actor.ID == ref.ContentID
-			if !editor {
-				var err error
-				if editor, err = s.avatarsWriter(ctx, actor); err != nil {
-					return nil, err
-				}
+			editor, err := s.avatarEditor(ctx, actor, ref.ContentID)
+			if err != nil {
+				return nil, err
 			}
 			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: editor}
 		default:
@@ -241,11 +238,9 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case s.isGroupKind(k.Name):
 		return s.canEditGroup(ctx, actor, t)
 	case k.Name == s.reg.Config().Avatars.Kind:
-		if actor.Person() && actor.ID == t.Ref.ContentID {
-			return media.UploadGrant{Allowed: true, Owner: actor.ID}, nil
-		}
-		writer, err := s.avatarsWriter(ctx, actor)
-		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer}, err
+		writer, err := s.avatarEditor(ctx, actor, t.Ref.ContentID)
+		self := actor.Member() && actor.AccountID() == t.Ref.ContentID
+		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self}, err
 	case s.o.Others != nil:
 		return s.o.Others.CanUpload(ctx, actor, t)
 	}
@@ -281,10 +276,10 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 		}
 	}
 	owner := ""
-	if actor.Person() {
-		owner = actor.ID
+	if actor.Member() {
+		owner = actor.AccountID()
 	}
-	return media.UploadGrant{Allowed: true, Owner: owner, Exempt: !actor.Person()}, nil
+	return media.UploadGrant{Allowed: true, Owner: owner, Exempt: !actor.Member()}, nil
 }
 
 // itemReady records a settled version's facts and moves its media on: an
@@ -357,4 +352,17 @@ func (s *Service) failed(ctx context.Context, ref contentref.ContentRef, path st
 // forwarding its people's avatars.
 func (s *Service) avatarsWriter(ctx context.Context, actor access.Actor) (bool, error) {
 	return gate.Can(ctx, s.o.Auth, actor, string(access.AvatarsWrite))
+}
+
+func (s *Service) avatarEditor(ctx context.Context, actor access.Actor, account string) (bool, error) {
+	if s.o.AccountExists != nil {
+		exists, err := s.o.AccountExists(ctx, account)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	if actor.Member() && actor.AccountID() == account {
+		return true, nil
+	}
+	return s.avatarsWriter(ctx, actor)
 }

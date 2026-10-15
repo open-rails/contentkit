@@ -38,10 +38,10 @@ type MyGroupPage struct {
 func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error) {
 	out := MyGroupPage{Groups: []MyGroup{}}
 	v := s.viewer()
-	if !v.Person() {
+	if !v.Member() {
 		return out, fmt.Errorf("%w: only a signed-in person has groups", ErrForbidden)
 	}
-	scopes, err := s.heldScopes(ctx, v.ID, opts.Kind)
+	scopes, err := s.heldScopes(ctx, v, opts.Kind)
 	if err != nil {
 		return out, err
 	}
@@ -56,7 +56,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error)
 	err = s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, kind, coalesce(auth_scope, ''), coalesce(owner_user_id, '') = $2, coalesce(id = ANY($4::text[]), false)
  FROM %s WHERE tenant_id = $1 AND state = 'active' AND (owner_user_id = $2 OR auth_scope = ANY($3::text[]) OR id = ANY($4::text[]))`,
-			s.table("content_groups")), s.tenant, v.ID, slices.Collect(maps.Keys(scopes)), joined)
+			s.table("content_groups")), s.tenant, v.AccountID(), slices.Collect(maps.Keys(scopes)), joined)
 		if err != nil {
 			return err
 		}

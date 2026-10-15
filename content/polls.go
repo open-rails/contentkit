@@ -468,11 +468,11 @@ func (p *polls) answersFor(ctx context.Context, actor access.Actor, ids []string
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	if actor.Anonymous || actor.ID == "" {
+	if !actor.Member() {
 		return counts, mine, nil
 	}
 	own, err := p.s.pool.Query(ctx, `SELECT question_id::text, id::text, text, classified_at IS NOT NULL, updated_at FROM `+p.s.t.pollAnswers+`
-		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND actor_id = $3`, p.s.tenant, ids, actor.ID)
+		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND actor_id = $3`, p.s.tenant, ids, actor.AccountID())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -534,6 +534,9 @@ func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids
 // vote records one vote and bumps the option's counter — but only the winning
 // insert (RowsAffected==1) counts, so concurrent duplicates never double-count.
 func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID string) (Poll, error) {
+	if actor.Account != nil && !actor.Member() {
+		return Poll{}, errForbidden
+	}
 	if optionID == "" {
 		return Poll{}, badRequest("option_id is required")
 	}
@@ -624,7 +627,7 @@ const maxAnswerLen = 2000
 // poll is open, then classifies it. A classifier failure keeps the answer
 // unclassified for ReclassifyPending.
 func (p *polls) answer(ctx context.Context, actor access.Actor, pollID, text string) (Poll, error) {
-	if actor.Anonymous || actor.ID == "" {
+	if !actor.Member() {
 		return Poll{}, errUnauthorized
 	}
 	text = strings.TrimSpace(text)
@@ -646,23 +649,23 @@ func (p *polls) answer(ctx context.Context, actor access.Actor, pollID, text str
 		return Poll{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardErasedSubject(ctx, tx, actor.ID); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, actor.AccountID()); err != nil {
 		return Poll{}, err
 	}
 	if err := p.open(ctx, tx, pollID, PollFreeText); err != nil {
 		return Poll{}, err
 	}
-	a := Answer{Tenant: p.s.tenant, QuestionID: pollID, SubjectID: actor.ID, Text: text}
+	a := Answer{Tenant: p.s.tenant, QuestionID: pollID, SubjectID: actor.AccountID(), Text: text}
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollAnswers+` AS current (tenant_id, question_id, actor_id, text)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (tenant_id, question_id, actor_id) DO UPDATE
 		SET text = EXCLUDED.text, revision = current.revision + 1, group_id = NULL, group_label = NULL, classified_at = NULL, updated_at = clock_timestamp()
 		WHERE current.text <> EXCLUDED.text
-		RETURNING id::text, revision`, p.s.tenant, pollID, actor.ID, text).Scan(&a.AnswerID, &a.Revision)
+		RETURNING id::text, revision`, p.s.tenant, pollID, actor.AccountID(), text).Scan(&a.AnswerID, &a.Revision)
 	pending := true
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `SELECT id::text, revision, classified_at IS NULL FROM `+p.s.t.pollAnswers+`
-			WHERE tenant_id=$1 AND question_id=$2 AND actor_id=$3`, p.s.tenant, pollID, actor.ID).Scan(&a.AnswerID, &a.Revision, &pending)
+			WHERE tenant_id=$1 AND question_id=$2 AND actor_id=$3`, p.s.tenant, pollID, actor.AccountID()).Scan(&a.AnswerID, &a.Revision, &pending)
 	}
 	if err != nil {
 		return Poll{}, err

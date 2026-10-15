@@ -9,6 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/gate"
 )
 
 // Scopes keeps the AuthKit groups (scopes) of auth_scope group kinds:
@@ -314,8 +317,9 @@ func (s *Store) Reconcile(ctx context.Context) error {
 }
 
 // heldScopes is, per live scope of user-owned auth_scope kinds (of kind,
-// when set) user belongs to, the group permissions user holds there.
-func (s *Store) heldScopes(ctx context.Context, user, kind string) (map[string][]string, error) {
+// when set), the group permissions the actor can exercise. Directory grants
+// are candidates; scoped requests also retain their credential's ceilings.
+func (s *Store) heldScopes(ctx context.Context, actor access.Actor, kind string) (map[string][]string, error) {
 	if s.scopes == nil {
 		return nil, nil
 	}
@@ -349,7 +353,39 @@ func (s *Store) heldScopes(ctx context.Context, user, kind string) (map[string][
 		if err != nil {
 			return nil, err
 		}
-		return local.HoldingScopes(ctx, user, kinds, scopeIDs)
+		held, err := local.HoldingScopes(ctx, actor.AccountID(), kinds, scopeIDs)
+		if err != nil {
+			return nil, err
+		}
+		return s.credentialScopes(ctx, actor, held)
 	}
-	return s.scopes.Holding(ctx, user, kinds)
+	held, err := s.scopes.Holding(ctx, actor.AccountID(), kinds)
+	if err != nil {
+		return nil, err
+	}
+	return s.credentialScopes(ctx, actor, held)
+}
+
+// credentialScopes preserves the trusted legacy directory contract while
+// intersecting scoped metadata with the actual request's verified authority.
+func (s *Store) credentialScopes(ctx context.Context, actor access.Actor, candidates map[string][]string) (map[string][]string, error) {
+	if s.as == nil {
+		return candidates, nil
+	}
+	if _, scoped := s.as.auth.(gate.ScopedAuthorization); !scoped {
+		return candidates, nil
+	}
+	held := make(map[string][]string)
+	for scope, permissions := range candidates {
+		for _, permission := range permissions {
+			allowed, err := gate.GroupEditor(ctx, s.as.auth, actor, "", scope, permission)
+			if err != nil {
+				return nil, err
+			}
+			if allowed {
+				held[scope] = append(held[scope], permission)
+			}
+		}
+	}
+	return held, nil
 }

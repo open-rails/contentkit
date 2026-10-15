@@ -64,6 +64,7 @@ engine:
     group_kinds:
       team: {route: team, auth_scope: true}
 auth:
+  default_tenant_id: %[3]s
   database: {schema: %[1]s_auth, river_schema: %[1]s_river}
   token: {issuer: https://contentkit.test, issued_audiences: [contentkit], expected_audiences: [contentkit]}
   resource: {id: https://contentkit.test}
@@ -85,12 +86,12 @@ prefix: /api/contentkit
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bootstrap.Close(context.Background()) })
-	for id, name := range map[string]string{app: "contentkit", tenant: "contentkit-tenant"} {
+	for id, name := range map[string]string{app: "app", tenant: "tenant"} {
 		persona, err := bootstrap.Persona(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := bootstrap.CreateGroup(t.Context(), iam.NewGroup{ID: id, Persona: persona}); err != nil {
+		if _, err := bootstrap.CreateGroup(t.Context(), iam.NewGroup{ID: id, Persona: persona, TenantID: cfg.Auth.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -115,20 +116,27 @@ func TestScopedServerLocalAuthorization(t *testing.T) {
 	staff := authtest.NewUser(t, bootstrap)
 	sibling := authtest.NewUser(t, bootstrap)
 	rootRole, _ := bootstrap.Role("root:owner")
-	staffRole, _ := bootstrap.Role("contentkit:staff")
+	staffRole, _ := bootstrap.Role("app:staff")
 	authtest.GrantRole(t, bootstrap, iam.RootGroup(), iam.UserSubject(rootOnly.ID), rootRole)
 	authtest.GrantRole(t, bootstrap, iam.GroupByID(cfg.Authorization.AppGroupID), iam.UserSubject(staff.ID), staffRole)
-	persona, _ := bootstrap.Persona("contentkit")
+	persona, _ := bootstrap.Persona("app")
 	other, err := bootstrap.CreateGroup(t.Context(), iam.NewGroup{Persona: persona})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authtest.GrantRole(t, bootstrap, iam.GroupByID(other.ID), iam.UserSubject(sibling.ID), staffRole)
+	// Runtime must derive this from the configured ContentKit scope, rather
+	// than accidentally relying on the bootstrap fixture's AuthKit default.
+	cfg.Auth.DefaultTenantID = iam.TenantID{}
 	s, err := New(t.Context(), cfg, Deps{Postgres: pool})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
+	native, err := s.auth.CreateUser(t.Context(), iam.NewUser{Email: "scoped-default@example.test", Username: "scopeddefault"})
+	if err != nil || native.TenantID.String() != cfg.Engine.Scope.TenantID.String() {
+		t.Fatalf("standalone runtime did not bind the canonical tenant: %v", err)
+	}
 	if got := scopedStatus(s, "/contents", ""); got != 200 {
 		t.Fatalf("public contents: %d", got)
 	}
@@ -136,7 +144,7 @@ func TestScopedServerLocalAuthorization(t *testing.T) {
 		name string
 		user authtest.User
 		want int
-	}{{"ordinary", ordinary, 403}, {"root only", rootOnly, 403}, {"app staff", staff, 200}, {"sibling staff", sibling, 403}} {
+	}{{"ordinary", ordinary, 403}, {"root owner", rootOnly, 200}, {"app staff", staff, 200}, {"sibling staff", sibling, 403}} {
 		t.Run(tc.name, func(t *testing.T) {
 			token := authtest.SignIn(t, bootstrap, tc.user).AccessToken
 			if got := scopedStatus(s, "/me/stats", token); got != 200 {
@@ -160,7 +168,7 @@ func TestScopedServerRemoteAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	role, err := bootstrap.Role("contentkit:staff")
+	role, err := bootstrap.Role("app:staff")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,6 +229,11 @@ func TestScopedServerRequiresProvisionedBindings(t *testing.T) {
 	}
 	cfg.Authorization.Issuer = cfg.Auth.Token.Issuer
 	cfg.Authorization.AppGroupID = uuid.NewString()
+	missing := *cfg.Engine.Scope
+	if err := missing.AppID.UnmarshalText([]byte(cfg.Authorization.AppGroupID)); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Engine.Scope = &missing
 	if _, err := New(t.Context(), cfg, Deps{Postgres: pool}); err == nil || !strings.Contains(err.Error(), "must be provisioned") {
 		t.Fatalf("missing app group accepted: %v", err)
 	}

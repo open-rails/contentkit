@@ -87,7 +87,7 @@ func (s *Store) creator(ctx context.Context, inputs []GroupInput) (string, error
 		return "", err
 	}
 	a := s.as.actor
-	if !a.Person() {
+	if !a.Member() {
 		return "", fmt.Errorf("%w: only a signed-in person creates groups", ErrForbidden)
 	}
 	for _, in := range inputs {
@@ -99,11 +99,11 @@ func (s *Store) creator(ctx context.Context, inputs []GroupInput) (string, error
 			return "", fmt.Errorf("%w: %s groups are the site's", ErrForbidden, kind)
 		case in.ID != "" || in.AuthScope != "":
 			return "", fmt.Errorf("%w: only staff choose a group's id or auth scope", ErrForbidden)
-		case in.OwnerUserID != "" && in.OwnerUserID != a.ID:
+		case in.OwnerUserID != "" && in.OwnerUserID != a.AccountID():
 			return "", fmt.Errorf("%w: a person creates only groups of their own", ErrForbidden)
 		}
 	}
-	return a.ID, nil
+	return a.AccountID(), nil
 }
 
 // mayLink refuses a non-staff writer's parent or scope it does not edit.

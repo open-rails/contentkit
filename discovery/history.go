@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/popularity"
@@ -35,7 +36,7 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 	if err := s.signals(); err != nil {
 		return empty, err
 	}
-	if !o.Actor.Person() {
+	if !o.Actor.Member() {
 		return empty, fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
 	}
 	status := signal.HistoryStatus(o.Status)
@@ -58,7 +59,7 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 		offset = n
 	}
 	limit := pageLimit(o.Limit, 24)
-	rows, err := s.o.Hub.History(ctx, signal.Subject{UserID: o.Actor.ID}, signal.HistoryOptions{ContentKind: o.Kind, Status: status, Limit: limit + 1, Offset: offset})
+	rows, err := s.o.Hub.History(ctx, signal.Subject{UserID: o.Actor.AccountID()}, signal.HistoryOptions{ContentKind: o.Kind, Status: status, Limit: limit + 1, Offset: offset})
 	if err != nil {
 		return empty, err
 	}
@@ -90,10 +91,10 @@ func (s *Service) ForgetHistory(ctx context.Context, actor access.Actor, kind, c
 	if err := s.signals(); err != nil {
 		return err
 	}
-	if !actor.Person() {
+	if !actor.Member() {
 		return fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
 	}
-	subject := signal.Subject{UserID: actor.ID}
+	subject := signal.Subject{UserID: actor.AccountID()}
 	if contentID != "" {
 		kinds, err := s.kindsOf(ctx, []string{contentID})
 		if err != nil {
@@ -180,8 +181,11 @@ type SignalInput struct {
 // subject is the actor's signal subject: the person, else a hash of the
 // session id, never stored raw.
 func (s *Service) subject(actor access.Actor, session string) (signal.Subject, error) {
-	if actor.Person() {
-		return signal.Subject{UserID: actor.ID}, nil
+	if actor.Member() {
+		return signal.Subject{UserID: actor.AccountID()}, nil
+	}
+	if !actor.Anonymous {
+		return signal.Subject{}, auth.ErrForbidden
 	}
 	session = strings.TrimSpace(session)
 	if session == "" || len(session) > 128 {
@@ -373,6 +377,9 @@ type Placement struct {
 
 // RecordExposures records result lists for click attribution.
 func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Exposures) error {
+	if !actor.Anonymous && !actor.Member() {
+		return auth.ErrForbidden
+	}
 	if err := s.signals(); err != nil {
 		return err
 	}
@@ -380,7 +387,7 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 		return fmt.Errorf("%w: 1-%d exposures", ErrInvalid, signal.MaxExposuresPerBatch)
 	}
 	var subject signal.Subject
-	if actor.Person() || in.Session != "" {
+	if actor.Member() || in.Session != "" {
 		var err error
 		if subject, err = s.subject(actor, in.Session); err != nil {
 			return err

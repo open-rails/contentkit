@@ -17,7 +17,7 @@ type permissionCredential struct {
 	checked        []auth.Scope
 }
 
-func (v *permissionCredential) CanDirect(_ context.Context, scope auth.Scope, permission string) (bool, error) {
+func (v *permissionCredential) Can(_ context.Context, scope auth.Scope, permission string) (bool, error) {
 	v.checked = append(v.checked, scope)
 	return scope == v.wantScope && permission == v.wantPermission, nil
 }
@@ -26,12 +26,12 @@ func TestAuthorizationSeparatesIdentityIssuerFromPermissionAuthority(t *testing.
 	const identityIssuer = "https://accounts.example"
 	const permissionAuthority = "https://content.example"
 	scope := contentkit.Scope{TenantID: contentkit.NewTenantID(), AppID: contentkit.NewAppID()}
-	app := auth.Scope{Authority: permissionAuthority, ID: "app"}
+	app := auth.Scope{Authority: permissionAuthority, ID: scope.AppID.String()}
 	cfg := ckauthkit.AuthorizationConfig{
 		Scope: scope, Issuer: identityIssuer, PermissionAuthority: permissionAuthority,
 		AppScope: app, Accounts: ckauthkit.IssuerAccounts(scope.TenantID, identityIssuer),
 	}
-	policy, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app}, cfg)
+	policy, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,18 +73,18 @@ func TestAuthorizationSeparatesIdentityIssuerFromPermissionAuthority(t *testing.
 	// The separate authority must be explicit; it is never inferred from a
 	// credential, app scope, request header, or upstream account identifier.
 	cfg.PermissionAuthority = ""
-	if _, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app}, cfg); err == nil {
+	if _, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, cfg); err == nil {
 		t.Fatal("inferred a different permission authority without configuration")
 	}
 	cfg.PermissionAuthority = " https://content.example"
-	if _, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app}, cfg); err == nil {
+	if _, err := ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, cfg); err == nil {
 		t.Fatal("accepted malformed permission authority")
 	}
 	cfg.PermissionAuthority = permissionAuthority
 	cfg.Groups = func(context.Context, contentkit.Scope, string) (auth.Scope, error) {
 		return auth.Scope{Authority: identityIssuer, ID: groupID}, nil
 	}
-	policy, err = ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app}, cfg)
+	policy, err = ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

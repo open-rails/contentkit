@@ -32,8 +32,8 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/v1/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
 | DELETE | `/v1/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
-| POST | `/v1/comments/{cid}/hold` | user | — | 204 — | Holds a published comment for review: out of its thread, shown to its author only, until released or deleted. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
-| POST | `/v1/comments/{cid}/release` | user | — | 204 — | Publishes a held comment, as a reviewer's approval does. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
+| POST | `/v1/comments/{cid}/hold` | person | — | 204 — | Holds a published comment for review: out of its thread, shown to its author only, until released or deleted. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
+| POST | `/v1/comments/{cid}/release` | person | — | 204 — | Publishes a held comment, as a reviewer's approval does. For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope). |
 | POST | `/v1/contents/{id}/like` | public | — | 200 `ReactionCounts` | Likes a content item or one of its versions. Query: `version`. |
 | POST | `/v1/contents/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a content item or one of its versions. Query: `version`. |
 | DELETE | `/v1/contents/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a content item or one of its versions. Query: `version`. |
@@ -68,10 +68,10 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 200 `CommentBan` | A user's tenant-wide comment ban, expired or not; 404 when they have none. |
 | PUT | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
 | DELETE | `/v1/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
-| GET | `/v1/groups/{id}/held-comments` | user | — | 200 `HeldPage` | Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators. Query: `cursor`, `limit`. |
-| GET | `/v1/groups/{id}/comment-bans` | user | — | 200 `CommentBan[]` | The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators. Query: `limit`, `offset`. |
-| PUT | `/v1/groups/{id}/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators. |
-| DELETE | `/v1/groups/{id}/comment-bans/{user}` | user | — | 204 — | Lifts a user's ban on a user-owned group and its content. |
+| GET | `/v1/groups/{id}/held-comments` | person | — | 200 `HeldPage` | Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators. Query: `cursor`, `limit`. |
+| GET | `/v1/groups/{id}/comment-bans` | person | — | 200 `CommentBan[]` | The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators. Query: `limit`, `offset`. |
+| PUT | `/v1/groups/{id}/comment-bans/{user}` | person | `BanInput` | 200 `CommentBan` | Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators. |
+| DELETE | `/v1/groups/{id}/comment-bans/{user}` | person | — | 204 — | Lifts a user's ban on a user-owned group and its content. |
 | GET | `/v1/contents/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a content item or one of its versions, and the ban that stops it. Query: `version`. |
 | GET | `/v1/groups/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a group, and the ban that stops it. |
 | GET | `/v1/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or content items awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |

@@ -24,6 +24,10 @@ import (
 // AuthKit's JSON API is served at {authAPIPath}/v1.
 const authAPIPath = "/api/auth"
 
+// This legacy, unscoped ContentKit fixture uses one explicit AuthKit directory.
+// Keep its owner stable across harness restarts; scoped app policy is tested elsewhere.
+const accountTenantID = "00000000-0000-4000-8000-000000000201"
+
 var (
 	rbac = authkit.NewRoles()
 	// perm is ContentKit's staff permissions as AuthKit's: the host declares
@@ -45,6 +49,11 @@ var (
 )
 
 func newAuth(ctx context.Context, origin string, pool *pgxpool.Pool) (*authkit.Client, *authtest.Outbox, error) {
+	return newAuthInDatabase(ctx, origin, pool, authkit.DatabaseConfig{Schema: authSchema, RiverSchema: riverSchema})
+}
+
+// The runtime and its isolated-schema smoke test share the same native setup.
+func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, database authkit.DatabaseConfig) (*authkit.Client, *authtest.Outbox, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -62,10 +71,15 @@ func newAuth(ctx context.Context, origin string, pool *pgxpool.Pool) (*authkit.C
 		limits[bucket] = authkit.RateLimit{Limit: 100000, Window: time.Minute}
 	}
 	outbox := &authtest.Outbox{}
+	tenantID, err := iam.ParseTenantID(accountTenantID)
+	if err != nil {
+		return nil, nil, err
+	}
 	auth, err := authkit.New(ctx, authkit.Config{
-		HTTP:     &authkit.HTTPConfig{DirectPeerIP: true, APIPath: authAPIPath, RefreshCookie: true, RateLimits: limits},
-		Database: authkit.DatabaseConfig{Schema: authSchema, RiverSchema: riverSchema},
-		Roles:    rbac,
+		DefaultTenantID: tenantID,
+		HTTP:            &authkit.HTTPConfig{DirectPeerIP: true, APIPath: authAPIPath, RefreshCookie: true, RateLimits: limits},
+		Database:        database,
+		Roles:           rbac,
 		// Shared test accounts sign in from many pages at once: no session cap.
 		Token:     authkit.TokenConfig{Issuer: origin, IssuedAudiences: []string{"contentkit-e2e"}, SessionMaxPerUser: -1},
 		SignIn:    authkit.SignInConfig{AccountsPerDevice: -1, AccountsPerAddress: -1, NewDevicesPerAccount: -1},

@@ -66,12 +66,12 @@ func TestLoadScopedAuthorization(t *testing.T) {
 	c, err := Load([]byte(`
 engine:
   scope:
-    tenant_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
-    app_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
+    tenant_id: 11111111-1111-4111-8111-111111111111
+    app_id: 22222222-2222-4222-8222-222222222222
 authorization:
   issuer: https://accounts.example.test
-  app_group_id: 2b8cbe6e-eb89-48e9-98d9-d298a82e2b20
-  tenant_group_id: a7f636e8-6303-40ee-a323-4d66e0f8f59e
+  app_group_id: 22222222-2222-4222-8222-222222222222
+  tenant_group_id: 11111111-1111-4111-8111-111111111111
 `), func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)

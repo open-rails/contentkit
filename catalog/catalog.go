@@ -213,7 +213,7 @@ func (s *Store) BindStanding(st Standing) { s.standing = st }
 // fillStanding attaches a signed-in person's standing with each item and
 // its versions, in one read.
 func (s *Store) fillStanding(ctx context.Context, actor access.Actor, items []*Content) error {
-	if s.standing == nil || !actor.Person() {
+	if s.standing == nil || !actor.Member() {
 		return nil
 	}
 	var refs []contentref.ContentRef

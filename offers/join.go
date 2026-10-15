@@ -60,7 +60,7 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 	for i, o := range offers {
 		out[i] = GroupJoin{GroupID: o.Target.ID, Key: o.Key, Member: true}
 		if !held[o.Target.ID] {
-			grants = append(grants, access.Grant{Subject: actor.ID, ProductID: o.ProductID})
+			grants = append(grants, access.Grant{Subject: actor.AccountID(), ProductID: o.ProductID})
 		}
 	}
 	if len(grants) == 0 {
@@ -92,7 +92,7 @@ func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string
 	var grants []access.Grant
 	for _, k := range keys {
 		if p, ok := products[k]; ok {
-			grants = append(grants, access.Grant{Subject: actor.ID, ProductID: p.ID})
+			grants = append(grants, access.Grant{Subject: actor.AccountID(), ProductID: p.ID})
 		}
 	}
 	if len(grants) == 0 {
@@ -102,7 +102,7 @@ func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string
 }
 
 func (s *Service) groupTargets(ctx context.Context, actor access.Actor, groups []string) ([]Target, error) {
-	if !actor.Person() {
+	if !actor.Member() {
 		return nil, ErrForbidden
 	}
 	targets := make([]Target, len(groups))

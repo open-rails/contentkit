@@ -118,7 +118,7 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 	if err != nil {
 		return empty, err
 	}
-	if !o.Actor.Person() {
+	if !o.Actor.Member() {
 		return empty, fmt.Errorf("%w: recommendations need a signed-in reader", ErrInvalid)
 	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
@@ -126,7 +126,7 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 		return empty, err
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
-	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.ID}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
+	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.AccountID()}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Backfill: s.newest(q), Admit: a.admit})
 	if err != nil {
 		return empty, err

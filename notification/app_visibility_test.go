@@ -2,6 +2,7 @@ package notification_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/notification"
@@ -22,7 +24,9 @@ func TestAppVisibilityThroughInboxAndReceiptRoutes(t *testing.T) {
 	shared := &notification.Config{Schema: schema, Namespace: "accounts"}
 	makeApp := func(key string) *notification.Store {
 		t.Helper()
-		s, err := notification.New(notification.Options{Pool: pool, Schema: schema, Tenant: key, AppID: uuid.NewString(), Shared: shared})
+		s, err := notification.New(notification.Options{Pool: pool, Schema: schema, Tenant: key, AppID: uuid.NewString(), Shared: shared,
+			AccountExists:   func(context.Context, string) (bool, error) { return true, nil },
+			AccountExistsTx: func(context.Context, pgx.Tx, string) (bool, error) { return true, nil }})
 		if err != nil {
 			t.Fatal(err)
 		}

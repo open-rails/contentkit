@@ -282,7 +282,10 @@ func (rt *Runtime) banScope(ctx context.Context, global bool) (access.Actor, str
 		return access.Actor{}, "", err
 	}
 	if !global {
-		return actor, OwnerScope(actor.ID), nil
+		if !actor.Member() {
+			return access.Actor{}, "", errForbidden
+		}
+		return actor, OwnerScope(actor.AccountID()), nil
 	}
 	if err := rt.requirePerm(ctx, actor, access.CommentsBan); err != nil {
 		return access.Actor{}, "", err

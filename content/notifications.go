@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/notification"
 )
 
 // commentNotice carries references, never copied comment bodies, private
@@ -50,7 +51,7 @@ func (c *comments) notifyReply(ctx context.Context, tx pgx.Tx, replyID string) e
 // notifyLike runs only after a real transition to +1. The durable reaction
 // revision identifies that transition; concurrent duplicate likes emit once.
 func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor, cid string, ref contentref.ContentRef) error {
-	if actor.Anonymous || actor.ID == "" {
+	if !actor.Member() {
 		return nil
 	}
 	var recipient string
@@ -58,14 +59,14 @@ func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor
 	if err != nil {
 		return fmt.Errorf("content: resolve like recipient: %w", err)
 	}
-	if recipient == "" || recipient == actor.ID {
+	if recipient == "" || recipient == actor.AccountID() {
 		return nil
 	}
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND content_kind='comment' AND content_id=$2 AND content_version_id IS NULL AND user_id=$3`, c.s.tenant, cid, actor.ID).Scan(&revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT revision FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND content_kind='comment' AND content_id=$2 AND content_version_id IS NULL AND user_id=$3`, c.s.tenant, cid, actor.AccountID()).Scan(&revision); err != nil {
 		return fmt.Errorf("content: resolve like revision: %w", err)
 	}
-	return c.publishNotice(ctx, tx, recipient, "comment.liked", fmt.Sprintf("comment.liked:%d", revision), commentNotice{ContentRef: ref, ActorID: actor.ID, CommentID: cid})
+	return c.publishNotice(ctx, tx, recipient, "comment.liked", fmt.Sprintf("comment.liked:%d", revision), commentNotice{ContentRef: ref, ActorID: actor.AccountID(), CommentID: cid})
 }
 
 func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind, eventID string, payload commentNotice) error {
@@ -76,7 +77,7 @@ func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind
 	_, err = c.rt.Notifications.PublishTx(ctx, tx, notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: recipient}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant, ID: eventID}, Kind: kind, Data: data, CreatedAt: time.Now().UTC()})
 	// Erased recipients cannot receive new notices; their old published comments
 	// can remain under host policy without blocking someone else's interaction.
-	if errors.Is(err, notify.ErrRecipientErased) {
+	if errors.Is(err, notify.ErrRecipientErased) || errors.Is(err, notification.ErrRecipientNotFound) {
 		return nil
 	}
 	if err != nil {

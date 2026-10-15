@@ -1,101 +1,123 @@
 # Authorization for tenant accounts and app content
 
-`Config.Scope` selects a tenant and app; it does not prove that the caller may
-use either. A scoped engine therefore requires `Deps.Authorization`. Legacy
-engines keep their existing root permission behavior until explicitly migrated.
+`Config.Scope` fixes one canonical tenant and app. The same tenant UUID owns
+its AuthKit accounts and ContentKit shared avatars and inbox; it is not an
+issuer, schema name or billing merchant ID. Catalogs remain separate per app.
+Scoped engines require `Deps.Authorization`; legacy engines retain their
+existing host authorization contract until explicitly migrated.
 
-The host still supplies `Deps.Auth`, which verifies the request once, including
-the identity provider's live account and session checks. ContentKit then calls
-`Authorization.ResolveActor` with the fixed scope and original verified
-credential. The returned actor ID is the tenant account ID for a person or the
-scoped service identity for an application. The signed issuer and subject stay
-unchanged in `Actor.Verified.Identity()`; contact details never establish an
-account association.
+The host supplies `Deps.Auth` to verify the original credential, including
+issuer, audience, signature and live credential checks. `ResolveActor` returns
+the source actor used for administration and audit. The optional
+`TenantAccountAuthorization.ResolveTenantAccount` independently establishes an
+existing audience account in the target tenant. A global operator acting in a
+different tenant retains its source actor and has no implicit audience account.
+It cannot acquire preferences, history, favorites or a self avatar there merely
+by opening the administration UI. Existing custom policies without the new
+interface retain their prior trusted actor-as-account contract; policies that
+admit cross-tenant actors must implement it.
 
-Ordinary signed-in use requires an account in the tenant, not a membership or
-role in every app. Staff and group-editor checks call `Authorization.Authorize`
-with a `PermissionTarget`. An empty `GroupID` means an app staff operation; a
-nonempty value identifies a stored content-group authorization scope. The
-provider must verify that group belongs to this app. Ownership checks use the
-mapped tenant account ID and app-owned content records.
+`access.Actor.ID` and `Verified.Identity()` retain the actor. `AccountID()` and
+`Member()` answer audience membership; a nonnil empty `AccountMembership`
+explicitly marks a nonmember. Nil membership preserves the legacy contract.
+User routes require a tenant member. The internal Person tier permits a human
+operator on permission-checked moderation routes without allowing application
+credentials. Staff and Editor routes retain their own permission checks.
 
 ## AuthKit adapter
 
-`adapters/authkit.NewAuthorization(ctx, client, config)` accepts a trusted
-`AuthorizationConfig` and checks that the live AuthKit groups have the expected
-app/tenant personas and permission authority, refusing the deployment root as
-an app group:
+`adapters/authkit.NewAuthorization(ctx, client, config)` reads existing groups
+and validates their ownership; it creates no tenant, group, account or grant.
 
-- `Scope`: the exact ContentKit tenant/app pair this adapter serves.
-- `Issuer`: the verified account issuer.
-- `PermissionAuthority`: the authority of the local AuthKit permission groups;
-  it defaults to `Issuer`. A resource server with an upstream account issuer
-  sets both explicitly instead of conflating identity and permission ownership.
-- `AppScope`: the existing AuthKit permission group bound to this app.
-- `TenantAdminScope`: an optional, distinct group explicitly administering the
-  tenant; this is never inferred from AuthKit's deployment root.
-- `Accounts`: verified issuer/subject-to-tenant-account mapping.
-- `Groups`: an optional override for an explicitly verified legacy group
-  binding. New apps omit it and use deterministic app-scoped group IDs.
+- `Scope` is the exact canonical tenant/app pair.
+- `Issuer` is the verified identity issuer.
+- `PermissionAuthority` owns the permission groups and defaults to `Issuer`.
+- `AppScope.ID` must equal `Scope.AppID`, with persona `app` and group ownership
+  equal to `Scope.TenantID`.
+- `TenantAdminScope`, when supplied, is the `tenant` group with that same
+  canonical tenant UUID and ownership.
+- `TenantActors` reads verified live source-account ownership, defaulting to
+  the AuthKit client. It compares that ownership with the target for membership,
+  without creating or looking up a target account by matching contact details.
+- `Groups` optionally resolves an explicitly verified legacy content-group
+  binding. New applications use deterministic `AppScopes` IDs.
 
-`IssuerAccounts` is a convenience for an issuer whose whole account directory
-belongs to one tenant and whose subject IDs are the existing account IDs.
-It is inappropriate when one issuer holds accounts for several tenants or IDs
-need translation; those deployments supply an explicit resolver.
+A dedicated legacy identity issuer may still supply `Accounts` with
+`IssuerAccounts`. This explicitly trusts its entire account directory to one
+tenant and must not be used with an issuer shared by unrelated tenants.
+`Accounts` and `TenantActors` are mutually exclusive.
 
-Separating the two authorities does not relax either check: the verified
-identity must still match `Issuer`, while app, tenant and content-group scopes
-must belong to `PermissionAuthority`. The original credential's live grants,
-ceilings and bound scope continue to be enforced.
+The adapter rechecks live group ownership during authenticated admission and
+before group permission checks. Deleting a binding or recreating its ID under
+another tenant does not retarget a running engine. Directory read failures
+return an unavailable error; they do not invalidate the user's login.
 
-The adapter checks exact grants using AuthKit's additive
-`auth.DirectPermissionChecker.CanDirect` capability. Existing `Can` deliberately
-inherits root grants and retains that behavior. `CanDirect` retains live
-account/session, credential ceiling and bound-scope checks, while requiring a
-grant in the requested group itself. A credential without the new capability
-cannot obtain privileged access through this adapter.
+The adapter uses ordinary `auth.PermissionChecker.Can`. A root owner inherits
+all registered permissions within that authority. Other root roles grant only
+what their definitions contain. AuthKit's tenant owner and explicit tenant
+role grants inherit into groups belonging to that tenant only. App-bound and
+tenant-bound credentials keep their native scope limits and permission
+ceilings. A credential bound to the authority's verified root scope may carry
+global operator permissions; arbitrary or foreign bindings are rejected.
+An unbound application credential is never treated as a global operator.
 
-Declare `AppPermission(access.CommentsModerate)`, for example, in the
-`contentkit` persona and assign its role only to the relevant app group.
-`TenantPermission` uses the `contentkit-tenant` persona and is assigned only in
-the explicitly configured tenant administration group. Shared avatar
-administration (`AvatarsWrite`) requires this tenant scope; an app moderator
-cannot edit shared account avatars merely by holding an app role. Self avatar
-editing uses the mapped account ID, as before.
+Declare app operations once with `AppPermission`, such as
+`app:comments:moderate`. A limited tenant role includes those same `iam.Perm`
+objects; it does not define a duplicate `tenant:comments:moderate` permission.
+`TenantPermission` returns a name only for shared account operations (currently
+`tenant:avatars:write`), and an empty string for app-only operations. Declare
+shared permissions through AuthKit's built-in `Roles.Tenant`; do not create a
+second tenant persona. App permission checks use the app group, allowing
+AuthKit to apply its own root/tenant inheritance. Avatar administration checks
+the tenant group instead.
 
-An unbound user session can use the account across the tenant's apps. An app
-service credential must be bound to the configured app or explicit tenant
-administration scope. Credentials bound to other scopes, including a content
-group, are currently refused at app admission; creator-group roles work with
-an ordinary user session. Supporting group-bound credentials later requires
-an explicit admission contract, not a permissive fallback.
+`Deps.Users` must be a tenant-bound directory, such as
+`client.ForTenant(ctx, tenantID).UserInfo()`. Scoped privileged avatar edits
+and user notification publications verify that their target exists there. A directory error remains an error;
+it does not turn an unknown target into a member. Self editing requires the
+resolved target-tenant account. Missing directory support fails closed for
+scoped avatar edits and user notification publication. A publisher's own
+administrative authority does not prove that a requested recipient is a member
+of the target tenant. Native `Publish`, `PublishTx`, batch and HTTP publication
+use the same recipient check before writing; accepted writes retain the durable
+recipient-erasure fence.
 
-The adapter does not provision groups, assign roles, merge accounts, implement
-cross-origin SSO or infer app ownership from an arbitrary UUID. Provisioning
-must register and verify the mapping before constructing the engine.
+For `auth_scope` content groups, `AppScopes(client, scope)` keeps the existing
+deterministic UUID based on tenant, app and content-group ID. It checks the
+provider group's tenant ownership and uses effective Can. The engine still
+checks that every requested scope belongs to an active local content group.
+Group listings intersect directory grant candidates with the request's
+verified permissions, so their editor flags also retain credential ceilings.
+The app UI should request the ordinary effective permission view for its app
+group; `direct=true` remains useful only for questions specifically about
+direct assignments.
 
-For content kinds that enable `auth_scope`, configure `AppScopes(client, scope)`
-as the engine's group-scope provider. It derives the AuthKit group UUID from
-the tenant, app and stored content-group scope ID. Equal content-group IDs in
-different apps or tenants therefore have different authority. The engine
-checks the provider's binding at startup, verifies that a requested scope is
-an active local content group, and supplies only local group IDs to grant
-lookups. Legacy unscoped engines retain `Scopes(client)`; switching existing
-group grants requires explicit adoption, never root-role promotion.
+## Explicit migration
 
-An app UI requests `/me/permissions?group_id=...&direct=true` (or
-`getPermissions({groupId, direct:true})` / `usePermissions({groupId, direct:true})`)
-to receive the same direct-grant view. The older default remains the identity
-provider's inherited view and must not drive app administration controls.
+Existing `contentkit` and `contentkit-tenant` group personas are not silently
+renamed at startup. The adapter returns `ErrScopeMigrationRequired`. Stop
+incompatible writers and use an explicit AuthKit migration that preserves
+group IDs, memberships, role definitions and credential scope/ceilings.
+`Client.MigrateGroupPersona` accepts `iam.GroupPersonaMigration`: review its
+read-only dry-run, then apply the same explicit role and concrete-permission
+maps with `ExpectedFingerprint`. It takes a short maintenance table lock;
+normal startup never performs this transition.
+The required mappings are `contentkit` to `app`, and `contentkit-tenant` to
+`tenant`; app-operation grants formerly prefixed `contentkit-tenant:` map to
+`app:`, while its shared avatar grant maps to `tenant:avatars:write`.
+Unknown/custom grants require an explicit mapping or refusal, not a guessed
+expansion. Catalog, media, inbox and erasure IDs do not change.
 
-Host migration must explicitly assign the intended app roles and tenant
-administration roles, then issue service credentials bound to those groups.
-In particular, an existing avatar forwarding key holding
-`root:avatars:write` does not automatically become a tenant avatar key: issue
-an equivalent key in the tenant administration group with
-`contentkit-tenant:avatars:write`. Retain the old configuration until both
-forwarding and primary services can use the new binding together. Do not make
-the old root role a silent fallback when switching on `Config.Scope`.
+In particular, old `contentkit-tenant:owner` is not automatically equivalent
+to `tenant:owner`: the latter also administers tenant accounts and may cover
+merchant operations. Preserve the translated old grant set in an explicit
+limited compatibility role, and refuse any proposed mapping that adds grants.
+
+Existing single-directory accounts are adopted into the explicitly chosen
+canonical tenant through AuthKit's migration option, preserving account IDs.
+A missing or mismatched ownership binding fails closed. Do not create a second
+account directory, copy roles to real users, recreate groups or invent an
+AuthKit-to-ContentKit tenant crosswalk as an adoption shortcut.
 
 ## Erasure and restore
 
@@ -133,9 +155,9 @@ AuthKit's durable purge fanout remains the ordinary retry coordinator.
 
 ## Evidence and remaining work
 
-Source tests exercise a shared ordinary account, app-specific moderation,
-explicit tenant administration, foreign issuers, foreign credential bindings,
-root-inheritance denial, ceilings and session revocation. These tests do not
+Source tests exercise ordinary accounts, app-specific moderation, same-tenant
+administration, global root grants, foreign issuers and bindings, credential
+ceilings, live group ownership and revocation. These tests do not
 establish that either existing host has migrated its live configuration or
 that a released AuthKit/ContentKit cohort contains this interface.
 
