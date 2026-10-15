@@ -17,13 +17,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	mediaimage "github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/layout"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/token"
@@ -48,6 +51,24 @@ func testAvatars(t *testing.T, scoped bool) {
 		_, _ = doujins.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{accountSchema}.Sanitize()+" CASCADE")
 	})
 	tenantID := contentkit.NewTenantID()
+	var alice authtest.User
+	var aliceToken string
+	var accounts *authkit.Client
+	if scoped {
+		// Scoped apps share one actual native tenant directory, not merely
+		// matching subject strings across unrelated account stores.
+		alice, aliceToken = doujins.person(iam.Role{})
+		var err error
+		tenantID, err = contentkit.ParseTenantID(alice.TenantID.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		accounts, err = doujins.ak.ForTenant(ctx, alice.TenantID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// accounts borrows doujins.ak; only that original owner closes it.
+	}
 	var replicaConfig contentkit.Config
 	var replicaDeps contentkit.Deps
 	primary := doujins.engine(func(c *contentkit.Config, deps *contentkit.Deps) {
@@ -58,6 +79,7 @@ func testAvatars(t *testing.T, scoped bool) {
 			c.LegacyCatalogKey, c.Tenant = c.Tenant, ""
 			c.Accounts.Namespace = ""
 			deps.Authorization = avatarAuthorization{doujins.scope}
+			deps.Users = accounts.UserInfo()
 			replicaConfig, replicaDeps = *c, *deps
 		}
 	})
@@ -71,7 +93,8 @@ func testAvatars(t *testing.T, scoped bool) {
 			t.Fatal(err)
 		}
 	}
-	api := httptest.NewServer(serve(t, primary).h)
+	primarySite := serve(t, primary)
+	api := httptest.NewServer(primarySite.h)
 	t.Cleanup(api.Close)
 	key, err := doujins.ak.CreateAPIKey(ctx, iam.SystemIdentity(), iam.RootGroup(), iam.NewAPIKey{Name: "hentai0", Role: doujins.avatars})
 	if err != nil {
@@ -79,6 +102,11 @@ func testAvatars(t *testing.T, scoped bool) {
 	}
 
 	hentai0 := newWorld(t)
+	if scoped {
+		// Both engines borrow the same fixed-tenant native directory. The
+		// unused secondary fixture owner retains its own registered cleanup.
+		hentai0.ak, hentai0.scope = accounts, doujins.scope
+	}
 	const mediaHost = "media.hentai0.test"
 	engine := hentai0.engine(func(c *contentkit.Config, deps *contentkit.Deps) {
 		c.Media.Config.BaseURL = "https://" + mediaHost
@@ -93,7 +121,9 @@ func testAvatars(t *testing.T, scoped bool) {
 		}
 	})
 	site := serve(t, engine)
-	alice, aliceToken := hentai0.person(iam.Role{})
+	if !scoped {
+		alice, aliceToken = hentai0.person(iam.Role{})
+	}
 	_, bobToken := hentai0.person(iam.Role{})
 
 	ns, root := "accounts", "accounts/"
@@ -113,6 +143,11 @@ func testAvatars(t *testing.T, scoped bool) {
 	sum := sha256.Sum256(body)
 	presign := media.PresignBody{Ref: media.RefBody{Kind: "user", ID: alice.ID}, Path: "avatar", Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
 	site.want(http.StatusForbidden, bobToken, "POST", "/media/upload/presign", presign, nil)
+	if scoped {
+		unknown := presign
+		unknown.Ref.ID = contentref.NewID()
+		primarySite.want(http.StatusForbidden, key.Secret, "POST", "/media/upload/presign", unknown, nil)
+	}
 	var plan media.PresignReply
 	upload := func() {
 		site.want(http.StatusOK, aliceToken, "POST", "/media/upload/presign", presign, &plan)
