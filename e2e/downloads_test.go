@@ -48,16 +48,19 @@ type downloads struct {
 	premium string // holds premium through OpenRails
 	user    string
 	another string
-	// translators are doujins-com and embargo.
+	// translators are doujins-com, embargo and anonymous (categorical).
 	translators []groups.Group
 }
 
-// join puts c's version in the translator group of slug.
-func (d *downloads) join(c catalog.Content, slug string) {
+// join puts c's version in the translator groups of slugs.
+func (d *downloads) join(c catalog.Content, slugs ...string) {
 	d.w.t.Helper()
-	i := slices.IndexFunc(d.translators, func(g groups.Group) bool { return g.Slug == slug })
-	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
-		{GroupID: d.translators[i].ID, VersionID: c.Versions[0].ID}}}, nil)
+	var ms []groups.Membership
+	for _, slug := range slugs {
+		i := slices.IndexFunc(d.translators, func(g groups.Group) bool { return g.Slug == slug })
+		ms = append(ms, groups.Membership{GroupID: d.translators[i].ID, VersionID: c.Versions[0].ID})
+	}
+	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: ms}, nil)
 }
 
 // policy is a host's download policy, as Doujins' legacy rules go: a
@@ -65,7 +68,7 @@ func (d *downloads) join(c catalog.Content, slug string) {
 // for viewers without premium; a premium version translated by the site
 // (translator:doujins-com) has pages 3, 5 and 7 marked. It names marks for
 // files too, which ContentKit ignores. A translated version's download is
-// named "[Translators] Title (language)".
+// named "[Translators] Title (language)", leaving out categorical ones.
 type policy struct{}
 
 func (policy) Decide(_ context.Context, r versions.DownloadRequest) (versions.DownloadDecision, error) {
@@ -83,7 +86,7 @@ func (policy) Decide(_ context.Context, r versions.DownloadRequest) (versions.Do
 	}
 	var by []string
 	for _, g := range r.Groups {
-		if g.Kind == "translator" {
+		if g.Kind == "translator" && g.Attributes["categorical"] != true {
 			by = append(by, g.Name)
 		}
 	}
@@ -123,7 +126,8 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 	e := w.engine(func(c *contentkit.Config, deps *contentkit.Deps) {
 		c.Content.Kinds["movie"] = kinds.Kind{Route: "movies", Presentation: "player", Versions: kinds.VersionRules{Languages: "one"},
 			Groups: []string{"translator"}}
-		c.Content.GroupKinds["translator"] = kinds.GroupKind{Route: "translators", VersionLevel: true}
+		c.Content.GroupKinds["translator"] = kinds.GroupKind{Route: "translators", VersionLevel: true,
+			Attributes: map[string]kinds.Attribute{"categorical": {Type: "bool"}}}
 		book := c.Content.Kinds["book"]
 		book.Groups = []string{"translator"}
 		c.Content.Kinds["book"] = book
@@ -137,7 +141,9 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 	d.f.want(http.StatusCreated, d.staff, "POST", "/groups", []groups.GroupInput{
 		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"},
 			{Language: "ja", Kind: groups.NameCanonical, Name: "ドウジンズ"}}},
-		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}}}, &d.translators)
+		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}},
+		{Kind: "translator", Slug: "anonymous", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Anonymous"}},
+			Attributes: map[string]any{"categorical": true}}}, &d.translators)
 	key, err := token.ParseKey(w.config().Media.Delivery.SigningKey)
 	if err != nil {
 		t.Fatal(err)
@@ -486,8 +492,9 @@ func entries(t *testing.T, b []byte) [][]byte {
 // streamed through the archive route; every other page, and every page of a
 // premium version outside the group or a free one in it, is byte-identical
 // to the prepared archive the media host serves. The policy names a
-// translated version's zip from its title and groups' names in its language;
-// the archive route serves only the name its ticket was granted. The
+// translated version's zip from its title and groups' names in its language,
+// leaving out a group by its attributes; the archive route serves only the
+// name its ticket was granted. The
 // originals and full-resolution pages never open to the viewing token; the
 // web rendition does.
 func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
@@ -497,7 +504,7 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 	d.join(ours, "doujins-com")
 	theirs := d.content("book", "Theirs", premium)
 	free := d.content("book", "Free", access.Rule{Level: access.Public})
-	d.join(free, "doujins-com")
+	d.join(free, "doujins-com", "anonymous")
 	prepared := map[string][]byte{}
 	for _, c := range []catalog.Content{ours, theirs, free} {
 		prepared[c.ID] = d.pages(c, 8)

@@ -317,7 +317,7 @@ media:
   access check, before the quota, for files and zips. The request carries
   the actor, the tiers it holds, `Editor`, the version, its kind, its
   `Language` and `Title` (in that language when it has one there), its
-  groups (`{kind, slug, name}`, its own and its content's, named in its
+  groups (`{kind, slug, name, attributes}`, its own and its content's, named in its
   language), its effective `access.Rule`, `Released` (when it went live) and
   `Pages` (0 for a file). The decision allows it, or refuses with the host's
   `Reason` and `AvailableAt` (403 `download_unavailable`, nothing charged),
