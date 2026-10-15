@@ -11294,6 +11294,9 @@
           },
           "has_audio": {
             "type": "boolean"
+          },
+          "hls": {
+            "type": "string"
           }
         },
         "required": [

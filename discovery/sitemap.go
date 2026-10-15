@@ -121,7 +121,7 @@ JOIN %[3]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.
 WHERE c.tenant_id = @d_tenant AND c.kind = @d_kind AND c.id > @d_after AND l.languages IS NOT NULL
 ORDER BY c.id LIMIT @d_limit`, s.t.items, s.t.facets, s.t.codes, pred)
 	})
-	if err != nil || s.o.Covers == nil || !k.LockedView().Shows(kinds.ShowCover) {
+	if err != nil || s.o.Media == nil || !k.LockedView().Shows(kinds.ShowCover) {
 		return page, err
 	}
 	var asked []versions.CoverOf
@@ -135,7 +135,7 @@ ORDER BY c.id LIMIT @d_limit`, s.t.items, s.t.facets, s.t.codes, pred)
 	if len(asked) == 0 {
 		return page, nil
 	}
-	got, err := s.o.Covers.Covers(ctx, asked)
+	got, err := s.o.Media.Covers(ctx, asked)
 	if err != nil {
 		return page, err
 	}

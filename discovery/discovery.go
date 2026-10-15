@@ -57,8 +57,8 @@ type Options struct {
 	Gate *access.Gate
 	// Groups names the groups on cards and in typeahead.
 	Groups *groups.Store
-	// Covers resolves cards' covers; nil leaves them out.
-	Covers Covers
+	// Media resolves cards' covers and ladders; nil leaves them out.
+	Media Media
 	// Sales fills cards' paywall offers; nil leaves them out.
 	Sales Sales
 	// Hub is the keyword search client and the signal plane. Without a

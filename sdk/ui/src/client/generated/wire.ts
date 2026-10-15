@@ -220,6 +220,7 @@ export interface CardVersion {
   pages?: number;
   duration_ms?: number;
   has_audio: boolean;
+  hls?: string;
 }
 
 export interface CatalogCover {
