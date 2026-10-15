@@ -46,8 +46,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.12.0(jiti@2.7.0))
       '@openrails/auth-ui':
-        specifier: 1.29.0
-        version: 1.29.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.29.1
+        version: 1.29.1(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@playwright/test':
         specifier: 1.60.0
         version: 1.60.0
@@ -448,8 +448,8 @@ packages:
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
-  '@openrails/auth-ui@1.29.0':
-    resolution: {integrity: sha512-N8zttyRTEUHkVSHv27niMqFHbhiffoYpqDJgEM0UbeJ+pSl0UtRsvXblhGmyHlovvrfP3leiGpPfDNFqYfyf3w==}
+  '@openrails/auth-ui@1.29.1':
+    resolution: {integrity: sha512-xkKRVuv/fkB71viAVDHrU1EwF31qE5BhzefOb5io27OpJfOpAVDCM+cM9WX8Dlb8+xSeffRGJUdctpo8ehGbcA==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       '@solana/wallet-adapter-react': '>=0.15 <1'
@@ -2435,7 +2435,7 @@ snapshots:
 
   '@noble/hashes@2.4.0': {}
 
-  '@openrails/auth-ui@1.29.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@openrails/auth-ui@1.29.1(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@base-ui/react': 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@hugeicons/core-free-icons': 4.3.5
