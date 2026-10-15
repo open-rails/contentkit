@@ -1,5 +1,10 @@
 // Discovery: cards, grids, rails, search, content filters, history, release dates.
 export const discovery = {
+  readerSettings: {
+    title: "Reader settings",
+    description: "Choose your language and the content you see.",
+    filters: "Show Content:",
+  },
   contents: {
     unknownAccess: "Unavailable right now",
     members: "Members",
@@ -27,6 +32,7 @@ export const discovery = {
     removeFromHistory: "Remove from history",
     search: "Search",
     searchPlaceholder: "Search…",
+    clearSearch: "Clear search",
     suggestions: "Suggestions",
     filtersSignedOut: "Sign in to choose what you see.",
     shown: "Shown",
@@ -40,7 +46,10 @@ export const discovery = {
     free_one: "{count} free",
     free_other: "{count} free",
     recentSearches: "Recent searches",
+    noRecentSearches: "No recent searches yet.",
+    searchHint: "Start typing to search.",
     clearRecent: "Clear",
+    clearAllRecent: "Clear all",
     removeRecent: "Remove “{q}”",
   },
   listing: {

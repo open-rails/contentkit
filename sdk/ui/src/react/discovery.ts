@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
@@ -7,8 +7,21 @@ import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
+import { recentSearchLimit } from "../client/browser-search-history.js";
 
 const page = (p: ContentPage) => ({ items: p.contents, next: p.next_cursor ?? null });
+const NO_SEARCHES: RecentSearch[] = [];
+
+// A new identity even after A → B → A, so late requests cannot write into the new visit.
+function useCurrentDiscoveryScope(client: ContentKitClient, scope: string): () => boolean {
+  const owner = useMemo(() => ({ client, scope }), [client, scope]);
+  const current = useRef<typeof owner | null>(owner);
+  useLayoutEffect(() => {
+    current.current = owner;
+    return () => { current.current = null; };
+  }, [owner]);
+  return useCallback(() => current.current === owner, [owner]);
+}
 
 /** Titles, names and paths in the provider's language unless the query says otherwise. */
 function useDisplay<T extends { display_language?: string }>(q: T | null): T | null {
@@ -49,11 +62,14 @@ export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitC
 
 /** Keyword search results as cards; nothing while q.q is empty. */
 export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseList<Card> {
-  const { client, store, scope } = useContentScope(o.client);
+  const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
-  return useList(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) =>
-    page(await client.discovery.search({ ...query!, cursor: cursor as string | undefined }, signal)),
-  );
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  return useList(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
+    const out = await client.discovery.search({ ...query!, cursor: cursor as string | undefined }, signal);
+    if (!cursor && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
+    return page(out);
+  });
 }
 
 export interface UseRail {
@@ -124,14 +140,41 @@ export interface UseRecentSearches {
   clear: (query?: string) => Promise<void>;
 }
 
-/** The reader's recent searches, newest first (signed out, of this tab's session); enabled false reads nothing yet. */
+/** Guest history stays in this browser; account history comes only from the server. enabled false reads nothing yet. */
 export function useRecentSearches(o: { limit?: number; enabled?: boolean; client?: ContentKitClient } = {}): UseRecentSearches {
-  const { client, store, scope } = useContentScope(o.client);
+  const { client, store, scope, viewer } = useContentScope(o.client);
   const guarded = useGuarded();
-  const key = o.enabled === false ? null : keyOf("searches", scope, o.limit ?? 10);
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  const guest = viewer === null;
+  const enabled = o.enabled !== false;
+  const browser = client.discovery.browserSearches;
+  const subscribe = useCallback((listener: () => void) => guest && enabled ? browser.subscribe(listener) : () => {}, [browser, guest, enabled]);
+  const snapshot = useCallback(() => guest && enabled ? browser.snapshot() : NO_SEARCHES, [browser, guest, enabled]);
+  const local = useSyncExternalStore(subscribe, snapshot, () => NO_SEARCHES);
+  const searches = useMemo(() => local.slice(0, recentSearchLimit(o.limit)), [local, o.limit]);
+  const key = !enabled || guest ? null : keyOf("searches", scope, o.limit ?? 10);
   const r = useResource<RecentSearch[]>(store, key, { type: "searches" }, async (s) => (await client.discovery.recentSearches({ limit: o.limit }, s)).searches);
-  const clear = useCallback((query?: string) => guarded(() => client.discovery.clearSearches(query ? { query } : {})), [client, guarded]);
-  return { searches: r.data ?? [], loading: !!key && (r.loading || !r.loaded), error: r.error, clear };
+  useEffect(() => {
+    if (!key) return;
+    const reload = () => { if (!store.snapshot(key).loading) store.load(key, true); };
+    // Reopening a panel must not leave an already-cached account list stale.
+    if (store.snapshot(key).loaded) reload();
+    const visible = () => { if (document.visibilityState === "visible") reload(); };
+    if (typeof window !== "undefined") window.addEventListener("focus", reload);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", visible);
+    return () => {
+      if (typeof window !== "undefined") window.removeEventListener("focus", reload);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", visible);
+    };
+  }, [key, store]);
+  const clear = useCallback(async (query?: string) => {
+    if (!isCurrent()) return;
+    if (guest) { browser.clear(query); return; }
+    await guarded(() => isCurrent() ? client.discovery.clearSearches(query ? { query } : {}) : Promise.resolve());
+  }, [browser, client, guest, guarded, isCurrent]);
+  return guest
+    ? { searches: enabled ? searches : NO_SEARCHES, loading: false, clear }
+    : { searches: r.data ?? NO_SEARCHES, loading: !!key && (r.loading || !r.loaded), error: r.error, clear };
 }
 
 /** A favorite or reaction with its content's or group's id. */

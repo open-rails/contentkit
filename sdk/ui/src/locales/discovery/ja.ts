@@ -1,6 +1,11 @@
 import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
+  readerSettings: {
+    title: "閲覧設定",
+    description: "言語と表示するコンテンツを選択します。",
+    filters: "表示するコンテンツ：",
+  },
   contents: {
     unknownAccess: "現在利用できません",
     members: "メンバー限定",
@@ -28,6 +33,7 @@ export const discovery: typeof en = {
     removeFromHistory: "履歴から削除",
     search: "検索",
     searchPlaceholder: "検索…",
+    clearSearch: "検索をクリア",
     suggestions: "候補",
     filtersSignedOut: "表示する内容を選ぶにはサインインしてください。",
     shown: "表示",
@@ -41,7 +47,10 @@ export const discovery: typeof en = {
     free_one: "無料 {count} 件",
     free_other: "無料 {count} 件",
     recentSearches: "最近の検索",
+    noRecentSearches: "最近の検索はまだありません。",
+    searchHint: "キーワードを入力して検索します。",
     clearRecent: "消去",
+    clearAllRecent: "すべて消去",
     removeRecent: "「{q}」を削除",
   },
   listing: {

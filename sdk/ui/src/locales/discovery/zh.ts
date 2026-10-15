@@ -1,6 +1,11 @@
 import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
+  readerSettings: {
+    title: "阅读设置",
+    description: "选择语言和要显示的内容。",
+    filters: "显示内容：",
+  },
   contents: {
     unknownAccess: "暂时无法访问",
     members: "会员专享",
@@ -28,6 +33,7 @@ export const discovery: typeof en = {
     removeFromHistory: "从历史记录中移除",
     search: "搜索",
     searchPlaceholder: "搜索…",
+    clearSearch: "清除搜索",
     suggestions: "建议",
     filtersSignedOut: "登录后选择你想看的内容。",
     shown: "显示",
@@ -41,7 +47,10 @@ export const discovery: typeof en = {
     free_one: "{count} 项免费",
     free_other: "{count} 项免费",
     recentSearches: "最近搜索",
+    noRecentSearches: "还没有最近搜索。",
+    searchHint: "输入关键词开始搜索。",
     clearRecent: "清除",
+    clearAllRecent: "全部清除",
     removeRecent: "移除“{q}”",
   },
   listing: {

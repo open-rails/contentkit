@@ -1,6 +1,11 @@
 import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
+  readerSettings: {
+    title: "열람 설정",
+    description: "언어와 표시할 콘텐츠를 선택하세요.",
+    filters: "표시할 콘텐츠:",
+  },
   contents: {
     unknownAccess: "지금은 이용할 수 없음",
     members: "멤버 전용",
@@ -28,6 +33,7 @@ export const discovery: typeof en = {
     removeFromHistory: "기록에서 삭제",
     search: "검색",
     searchPlaceholder: "검색…",
+    clearSearch: "검색 지우기",
     suggestions: "추천 검색어",
     filtersSignedOut: "볼 콘텐츠를 선택하려면 로그인하세요.",
     shown: "표시",
@@ -41,7 +47,10 @@ export const discovery: typeof en = {
     free_one: "무료 {count}개",
     free_other: "무료 {count}개",
     recentSearches: "최근 검색",
+    noRecentSearches: "최근 검색이 아직 없습니다.",
+    searchHint: "검색어를 입력하세요.",
     clearRecent: "지우기",
+    clearAllRecent: "모두 지우기",
     removeRecent: "“{q}” 삭제",
   },
   listing: {

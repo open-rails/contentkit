@@ -1,6 +1,11 @@
 import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
+  readerSettings: {
+    title: "Leseeinstellungen",
+    description: "Wähle deine Sprache und die angezeigten Inhalte.",
+    filters: "Inhalte anzeigen:",
+  },
   contents: {
     unknownAccess: "Gerade nicht verfügbar",
     members: "Mitglieder",
@@ -28,6 +33,7 @@ export const discovery: typeof en = {
     removeFromHistory: "Aus dem Verlauf entfernen",
     search: "Suche",
     searchPlaceholder: "Suchen…",
+    clearSearch: "Suche löschen",
     suggestions: "Vorschläge",
     filtersSignedOut: "Melde dich an, um zu wählen, was du siehst.",
     shown: "Angezeigt",
@@ -41,7 +47,10 @@ export const discovery: typeof en = {
     free_one: "{count} kostenlos",
     free_other: "{count} kostenlos",
     recentSearches: "Letzte Suchen",
+    noRecentSearches: "Noch keine letzten Suchanfragen.",
+    searchHint: "Tippe, um zu suchen.",
     clearRecent: "Löschen",
+    clearAllRecent: "Alle löschen",
     removeRecent: "„{q}“ entfernen",
   },
   listing: {

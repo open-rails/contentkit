@@ -117,28 +117,26 @@ describe("discovery against the real ContentKit", () => {
     expect(ta.current.query).toBe(word.slice(0, 6));
   });
 
-  it("useRecentSearches: what a reader searched, newest first, one or all cleared; signed out, by session", async () => {
+  it("useRecentSearches: account history is server-owned; explicit legacy guest sessions remain supported", async () => {
     const r = run();
-    for (const [who, c] of [
-      ["signed in", client(h, cfg, await h.user())],
-      ["signed out", client(h, cfg, null)],
-    ] as const) {
-      // This file's other searches share the tab's session.
-      await c.discovery.clearSearches();
-      await c.discovery.search({ q: `first ${r}` });
-      await c.discovery.search({ q: `second ${r}` });
-      const { result } = renderHook(() => useRecentSearches({ limit: 5 }), { wrapper: wrap(c) });
-      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`second ${r}`, `first ${r}`]), wait);
-      await act(() => result.current.clear(`second ${r}`));
-      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`first ${r}`]), wait);
-      // A search made through the client shows at once.
-      await act(async () => {
-        await c.discovery.search({ q: `third ${r}` });
-      });
-      await waitFor(() => expect(result.current.searches.map((x) => x.query), who).toEqual([`third ${r}`, `first ${r}`]), wait);
-      await act(() => result.current.clear());
-      await waitFor(() => expect(result.current.searches, who).toEqual([]), wait);
-    }
+    const user = await h.user();
+    const c = client(h, cfg, user);
+    await c.discovery.clearSearches();
+    await c.discovery.search({ q: `first ${r}` });
+    await c.discovery.search({ q: `second ${r}` });
+    const { result } = renderHook(() => useRecentSearches({ limit: 5 }), { wrapper: wrap(c, { viewer: user.id }) });
+    await waitFor(() => expect(result.current.searches.map((x) => x.query)).toEqual([`second ${r}`, `first ${r}`]), wait);
+    await act(() => result.current.clear(`second ${r}`));
+    await waitFor(() => expect(result.current.searches.map((x) => x.query)).toEqual([`first ${r}`]), wait);
+    await act(async () => { await c.discovery.search({ q: `third ${r}` }); });
+    await waitFor(() => expect(result.current.searches.map((x) => x.query)).toEqual([`third ${r}`, `first ${r}`]), wait);
+    await act(() => result.current.clear());
+    await waitFor(() => expect(result.current.searches).toEqual([]), wait);
+    const legacy = client(h, cfg, null), session = `legacy-${r}`;
+    await legacy.discovery.search({ q: `explicit ${r}`, session });
+    expect((await legacy.discovery.recentSearches({ session })).searches.map((x) => x.query)).toEqual([`explicit ${r}`]);
+    await legacy.discovery.clearSearches({ session });
+    expect((await legacy.discovery.recentSearches({ session })).searches).toEqual([]);
     // Another session keeps its own.
     expect((await client(h, cfg, null).discovery.recentSearches({ session: `other-${r}` })).searches).toEqual([]);
   });

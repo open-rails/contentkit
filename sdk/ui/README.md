@@ -679,3 +679,28 @@ poll by default. Call `client.notifications.refresh()` when your application's
 event channel announces new data. `useNotifications` and `useNotificationUnread`
 are available from `/react` for a custom presentation. Keep provider viewer and
 access revision current; signed-out viewers do not fetch an inbox.
+
+### Reader header controls
+
+`SearchBox` is an inline input with a downward suggestions/recent-search panel,
+including loading and empty states. Set `presentation="header"` for a full-width
+panel below the nearest semantic header (or the input): a dimmed backdrop, a
+centered text list with colored type icons and recent-search dates, and no
+thumbnails. Its mobile/desktop scroll limit is 70vh/60vh. The default inline
+presentation is unchanged. Both presentations keep the provider's result order;
+the host owns search-page navigation.
+`ReaderSettings` combines language selection and content filters in one dialog:
+
+```tsx
+<SearchBox presentation="header" onSearch={(query) => navigate(`/search?q=${encodeURIComponent(query)}`)} />
+<ReaderSettings
+  languages={[{ value: "en", label: "English" }, { value: "es", label: "Español" }]}
+  language={language}
+  onLanguageChange={changeLanguage}
+/>
+```
+
+Render these under `ContentKitProvider`. Keep its `viewer` current: guests can
+change language, while signed-in readers also see the site's configured content
+filters. Filter toggles save through ContentKit immediately. The language callback
+belongs to the host so it can update its route and stored preference together.

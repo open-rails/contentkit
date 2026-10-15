@@ -10,9 +10,9 @@ import type {
   Signals,
   Typeahead,
 } from "./generated/wire.js";
-import { readerSession } from "./beacons.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
+import { browserSearchHistory, type BrowserSearchHistory } from "./browser-search-history.js";
 
 /** A popularity period. */
 export type Period = "7d" | "30d" | "90d" | "365d" | "all";
@@ -75,11 +75,11 @@ export type SearchQuery = ContentFilterQuery &
     q: string;
     sort?: "relevance" | ListSort;
     personalize?: boolean;
-    /** A signed-out reader's session, which keeps its recent searches; default readerSession(). */
+    /** Explicit legacy server-side anonymous history. Omit for public search without server history. */
     session?: string;
   };
 export interface RecentSearchesQuery {
-  /** A signed-out reader's session; default readerSession(). */
+  /** Explicit legacy server-side anonymous history; no anonymous session is created by default. */
   session?: string;
   /** 10 by default, at most 100. */
   limit?: number;
@@ -112,7 +112,12 @@ export function query(q: object): Record<string, string | number | boolean | rea
  * release dates, the reader's content filters and history, signals and exposures.
  */
 export class DiscoveryClient {
-  constructor(private readonly http: Http) {}
+  /** Local anonymous history, isolated from authenticated server history. */
+  readonly browserSearches: BrowserSearchHistory;
+
+  constructor(private readonly http: Http) {
+    this.browserSearches = browserSearchHistory(http.mount("discovery"));
+  }
 
   /** Contents as cards, one per content item with the version that fits the reader. */
   list(q: ContentQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
@@ -121,18 +126,18 @@ export class DiscoveryClient {
   /** A first page is kept among the reader's recent searches. */
   async search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {
     const emit = q.cursor ? null : this.http.captureChanges();
-    const out: ContentPage = await call(this.http, "GET", "/search", { query: query({ session: readerSession(), ...q }) as never, signal });
+    const out: ContentPage = await call(this.http, "GET", "/search", { query: query(q) as never, signal });
     emit?.({ type: "searches.changed" });
     return out;
   }
   /** The reader's recent searches, newest first, since they last cleared them. */
   recentSearches(q: RecentSearchesQuery = {}, signal?: AbortSignal): Promise<RecentSearches> {
-    return call(this.http, "GET", "/me/searches", { query: { session: readerSession(), ...q }, signal });
+    return call(this.http, "GET", "/me/searches", { query: q, signal });
   }
   /** Clears one recent search, or all of them. */
   async clearSearches(o: { query?: string; session?: string } = {}): Promise<void> {
     const emit = this.http.captureChanges();
-    await call(this.http, "DELETE", "/me/searches", { query: { session: readerSession(), ...o } });
+    await call(this.http, "DELETE", "/me/searches", { query: o });
     emit({ type: "searches.changed" });
   }
   /** Contents and groups while the reader types. */
