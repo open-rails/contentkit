@@ -117,7 +117,7 @@ func (j *Jobs) Upgrade(ctx context.Context, limit int) (UpgradeStatus, error) {
 
 // upgradeKind continues k's pass and returns the folders it visited.
 func (j *Jobs) upgradeKind(ctx context.Context, k *Kind, limit int) (int, error) {
-	jr := j.cfg.Journal
+	jr := j.cfg.Journal.forTenant(k.ns)
 	var after string
 	var finished *time.Time
 	err := jr.pool.QueryRow(ctx, `WITH ins AS (INSERT INTO `+jr.upgrades+` (tenant_id, content_kind) VALUES ($1, $2)
@@ -139,7 +139,7 @@ finished_at = CASE WHEN $7 THEN now() END, updated_at = now() WHERE tenant_id = 
 			k.ns, k.Name, after, last, visited, upgraded, finished)
 		return err
 	}
-	for id, err := range j.folders(ctx, k.ns+"/"+k.Name+"/", after) {
+	for id, err := range j.folders(ctx, k.root()+k.Name+"/", after) {
 		if err != nil {
 			return visited, errors.Join(err, advance(false))
 		}
@@ -191,7 +191,7 @@ func (j *Jobs) folders(ctx context.Context, root, after string) iter.Seq2[string
 
 // recordUpgradeFailure logs a failure once, not on every retry that repeats it.
 func (j *Jobs) recordUpgradeFailure(ctx context.Context, ref contentref.ContentRef, cause error) error {
-	jr := j.cfg.Journal
+	jr := j.cfg.Journal.forTenant(ref.TenantID)
 	var prior *string
 	err := jr.pool.QueryRow(ctx, `WITH prior AS (SELECT error FROM `+jr.upgradeFails+`
 WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3),
@@ -206,7 +206,14 @@ SELECT (SELECT error FROM prior)`, ref.TenantID, ref.ContentKind, ref.ContentID,
 
 // retryUpgradeFailures retries the oldest failures once their kind's pass ended.
 func (j *Jobs) retryUpgradeFailures(ctx context.Context, limit int) error {
-	jr := j.cfg.Journal
+	for _, jr := range j.cfg.Journal.all() {
+		if err := j.retryJournalFailures(ctx, jr, limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (j *Jobs) retryJournalFailures(ctx context.Context, jr *PGJournal, limit int) error {
 	rows, err := jr.pool.Query(ctx, `SELECT f.tenant_id, f.content_kind, f.content_id FROM `+jr.upgradeFails+` f
 JOIN `+jr.upgrades+` u USING (tenant_id, content_kind) WHERE u.finished_at IS NOT NULL
 AND f.tenant_id = ANY($1) ORDER BY f.failed_at LIMIT $2`, j.cfg.Registry.Namespaces(), limit)
@@ -240,9 +247,9 @@ AND f.tenant_id = ANY($1) ORDER BY f.failed_at LIMIT $2`, j.cfg.Registry.Namespa
 
 // UpgradeStatus reports the media upgrade's progress over the registry's kinds.
 func (j *Jobs) UpgradeStatus(ctx context.Context) (UpgradeStatus, error) {
-	jr := j.cfg.Journal
 	st := UpgradeStatus{Done: true}
 	for _, k := range j.cfg.Registry.cfg.Kinds {
+		jr := j.cfg.Journal.forTenant(k.ns)
 		ku := KindUpgrade{Namespace: k.ns, Kind: k.Name}
 		err := jr.pool.QueryRow(ctx, `SELECT u.after_id, u.visited, u.upgraded, u.finished_at,
 (SELECT count(*) FROM `+jr.upgradeFails+` f WHERE f.tenant_id = u.tenant_id AND f.content_kind = u.content_kind)
@@ -254,16 +261,22 @@ FROM `+jr.upgrades+` u WHERE u.tenant_id = $1 AND u.content_kind = $2`, k.ns, k.
 		st.Done = st.Done && ku.Finished != nil && ku.Failed == 0
 		st.Kinds = append(st.Kinds, ku)
 	}
-	rows, err := jr.pool.Query(ctx, `SELECT tenant_id, content_kind, content_id, error, failed_at FROM `+jr.upgradeFails+`
+	for _, jr := range j.cfg.Journal.all() {
+		rows, err := jr.pool.Query(ctx, `SELECT tenant_id, content_kind, content_id, error, failed_at FROM `+jr.upgradeFails+`
 WHERE tenant_id = ANY($1) ORDER BY failed_at LIMIT 100`, j.cfg.Registry.Namespaces())
-	if err != nil {
-		return st, err
+		if err != nil {
+			return st, err
+		}
+		failures, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (UpgradeFailure, error) {
+			var f UpgradeFailure
+			return f, r.Scan(&f.Ref.TenantID, &f.Ref.ContentKind, &f.Ref.ContentID, &f.Error, &f.At)
+		})
+		if err != nil {
+			return st, err
+		}
+		st.Failures = append(st.Failures, failures...)
 	}
-	st.Failures, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (UpgradeFailure, error) {
-		var f UpgradeFailure
-		return f, r.Scan(&f.Ref.TenantID, &f.Ref.ContentKind, &f.Ref.ContentID, &f.Error, &f.At)
-	})
-	return st, err
+	return st, nil
 }
 
 func (st UpgradeStatus) failed() int64 {

@@ -68,3 +68,5 @@ export {
 export { useMessages } from "./i18n/context.js";
 
 export { NotificationInbox, NotificationBell, type NotificationInboxProps, type NotificationBellProps } from "./components/notifications.js";
+
+export { BillingNotification, isBillingNotification, billingNotificationAction, type BillingNotificationActions, type BillingNotificationAction } from "./components/billing-notification.js";

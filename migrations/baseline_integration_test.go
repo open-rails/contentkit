@@ -10,9 +10,10 @@ import (
 	"github.com/open-rails/contentkit/migrations"
 )
 
-// The baseline installs into an empty schema once (applying again changes
-// nothing), every key of its tables leads with tenant_id, and a content
-// reference's version id is NULL for the work itself, never empty.
+// The catalog lineage installs into an empty schema once (applying again
+// changes nothing), content keys lead with tenant_id, and a content reference's
+// version id is NULL for the work itself, never empty. The ownership registry
+// has separate unique app and catalog keys rather than content references.
 func TestPostgresBaseline(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
@@ -37,14 +38,15 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	if err := rows.Err(); err != nil || len(applied) != 1 || applied[0] != "0001_baseline.up.sql" {
+	if err := rows.Err(); err != nil || len(applied) != 4 || applied[0] != "0001_baseline.up.sql" || applied[1] != "0002_app_bindings.up.sql" || applied[2] != "0003_prepare_version_covers.up.sql" || applied[3] != "0004_finish_version_covers.up.sql" {
 		t.Fatalf("ledger %v %v", applied, err)
 	}
 
 	keys, err := pool.Query(ctx, `SELECT c.relname || '.' || i.relname FROM pg_index x
  JOIN pg_class i ON i.oid = x.indexrelid JOIN pg_class c ON c.oid = x.indrelid
  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = x.indkey[0]
- WHERE c.relnamespace = $1::regnamespace AND c.relname LIKE 'content\_%' AND x.indisunique AND a.attname <> 'tenant_id'`, schema)
+ WHERE c.relnamespace = $1::regnamespace AND c.relname LIKE 'content\_%' AND c.relname <> 'content_app_bindings'
+   AND x.indisunique AND a.attname <> 'tenant_id'`, schema)
 	if err != nil {
 		t.Fatal(err)
 	}

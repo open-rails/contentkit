@@ -235,6 +235,12 @@ func (w *world) engine(edit func(*contentkit.Config, *contentkit.Deps)) *content
 	if edit != nil {
 		edit(&cfg, &deps)
 	}
+	if cfg.Scope != nil {
+		if err := contentkit.MigratePostgres(w.t.Context(), w.pool, cfg); err != nil {
+			w.t.Fatal(err)
+		}
+		cfg.Database.SkipMigrations = true
+	}
 	e, err := contentkit.New(w.t.Context(), cfg, deps)
 	if err != nil {
 		w.t.Fatal(err)
@@ -251,12 +257,35 @@ func (w *world) engine(edit func(*contentkit.Config, *contentkit.Deps)) *content
 	if w.reg, err = media.NewRegistry(mc); err != nil {
 		w.t.Fatal(err)
 	}
-	if w.queue, err = workqueue.New(w.pool, w.reg, w.schema+"_media_worker"); err != nil {
+	account, shared, err := cfg.AccountMedia()
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	accountQueue := ""
+	if shared {
+		accountQueue = account.WorkerSchema
+		w.t.Cleanup(func() {
+			_, _ = w.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{accountQueue}.Sanitize()+" CASCADE")
+		})
+	}
+	if w.queue, err = workqueue.NewWithAccounts(w.pool, w.reg, w.schema+"_media_worker", accountQueue); err != nil {
 		w.t.Fatal(err)
 	}
 	journal, err := media.NewPGJournal(w.pool, w.schema, w.queue)
 	if err != nil {
 		w.t.Fatal(err)
+	}
+	if shared {
+		aj, err := media.NewPGJournal(w.pool, account.Schema, w.queue)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		scope, _ := w.reg.Scope()
+		scope.AppID = ""
+		journal, err = media.RouteJournal(journal, aj, scope.Partition())
+		if err != nil {
+			w.t.Fatal(err)
+		}
 	}
 	if w.jobs, err = media.NewJobs(media.JobsConfig{Store: w.env.Store, Registry: w.reg, Locker: media.PGLocker(w.pool), Journal: journal,
 		Processes: w.queue, Pool: w.pool}); err != nil {

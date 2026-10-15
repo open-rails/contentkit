@@ -45,6 +45,9 @@ type Config struct {
 	// ContentSchema holds ContentKit's media journal and quota tables. Every
 	// writer for this host must use the same schema; migration is host-owned.
 	ContentSchema string
+	// AccountSchema and AccountWorkerSchema are the shared tenant avatar state
+	// and queue from contentkit.Config.AccountMedia. Empty retains legacy mode.
+	AccountSchema, AccountWorkerSchema string
 	// Queue selects a one-task process: encode runs video chunks; light runs
 	// video planning/assembly plus the existing image and audio queues.
 	// Empty keeps the long-running all-queue worker.
@@ -135,6 +138,7 @@ func (c *Config) defaults() error {
 // Worker is a configured worker; Run drains jobs or exits after one queued job.
 type Worker struct {
 	c             Config
+	account       *Worker
 	client        *river.Client[pgx.Tx]
 	singleStarted *atomic.Bool
 	singleDone    <-chan struct{}
@@ -179,13 +183,28 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	queue, err := workqueue.New(c.Pool, c.Kinds, c.Schema)
+	queue, err := workqueue.NewWithAccounts(c.Pool, c.Kinds, c.Schema, c.AccountWorkerSchema)
 	if err != nil {
 		return nil, err
 	}
 	journal, err := media.NewPGJournal(c.Pool, c.ContentSchema, queue)
 	if err != nil {
 		return nil, err
+	}
+	if c.AccountSchema != "" {
+		scope, ok := c.Kinds.Scope()
+		if !ok || c.AccountWorkerSchema == "" {
+			return nil, errors.New("media/worker: account storage requires scoped kinds and queue")
+		}
+		account, err := media.NewPGJournal(c.Pool, c.AccountSchema, queue)
+		if err != nil {
+			return nil, err
+		}
+		scope.AppID = ""
+		journal, err = media.RouteJournal(journal, account, scope.Partition())
+		if err != nil {
+			return nil, err
+		}
 	}
 	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, Sweeps: host})
 	if err != nil {
@@ -253,7 +272,19 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{c: c, client: client, singleStarted: singleStarted, singleDone: singleDone}, nil
+	out := &Worker{c: c, client: client, singleStarted: singleStarted, singleDone: singleDone}
+	if c.AccountSchema != "" && c.Queue == "" {
+		child := c
+		child.ContentSchema = c.AccountSchema
+		child.Schema = c.AccountWorkerSchema
+		child.AccountSchema = ""
+		child.AccountWorkerSchema = ""
+		out.account, err = New(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // Client is the worker's River client (tests subscribe to its events).
@@ -268,6 +299,19 @@ const checkTimeout = 10 * time.Second
 // after one task or one idle minute. Running jobs get ShutdownGrace before
 // cancellation.
 func (w *Worker) Run(ctx context.Context) error {
+	if w.account != nil {
+		run, cancel := context.WithCancel(ctx)
+		defer cancel()
+		out := make(chan error, 2)
+		own := *w
+		own.account = nil
+		go func() { out <- own.Run(run) }()
+		go func() { out <- w.account.Run(run) }()
+		first := <-out
+		cancel()
+		return errors.Join(first, <-out)
+	}
+
 	for attempt := 0; ; attempt++ {
 		checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
 		err := w.c.Store.Check(checkCtx)

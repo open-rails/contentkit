@@ -156,7 +156,7 @@ func (s *Service) ref(kind string, t Target) (contentref.ContentRef, error) {
 func (s *Service) decide(ctx context.Context, actor access.Actor, kind string, targets []Target) (map[Target]resolve.Resolution, error) {
 	refs := make([]contentref.ContentRef, len(targets))
 	for i, t := range targets {
-		refs[i] = contentref.New(s.reg.Namespace(), kind, t.Content).WithVersion(t.Version)
+		refs[i] = contentref.New(s.o.Tenant, kind, t.Content).WithVersion(t.Version)
 	}
 	got, err := s.o.Resolver.Resolve(ctx, refs, actor)
 	if err != nil {

@@ -36,7 +36,7 @@ export class StatsClient {
     const { access, tiers, ...rest } = q;
     return call(this.http, "GET", "/stats/top", { query: { ...rest, access: access?.join(","), tiers: tiers?.join(",") }, signal });
   }
-  /** The signed-in reader's statistics: contents finished per kind, comments and the reactions they received. */
+  /** The signed-in reader's statistics: contents finished per kind, comments, reactions received and elapsed access per tier when billing supplies its history. */
   mine(signal?: AbortSignal): Promise<MyStats> {
     return call(this.http, "GET", "/me/stats", { signal });
   }

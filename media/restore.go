@@ -242,6 +242,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 // Ownership precedes historical copies. Recovery may invalidate this open lease
 // while bytes are in flight; final prepare then refuses to publish their root.
 func (j *PGJournal) allocateRestore(ctx context.Context, c manifestCommit, incarnation string, keys []string) error {
+	j = j.forTenant(c.Ref.TenantID)
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {

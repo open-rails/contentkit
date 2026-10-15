@@ -19,6 +19,8 @@ type RecipientMapper func(context.Context, Event) (recipientID string, deliver b
 type ConsumeOptions struct {
 	Limit           int
 	IncludeOptional bool
+	// Filter is evaluated before recipient mapping; false intentionally skips+ACKs.
+	Filter func(Event) bool
 }
 
 // ConsumeResult counts this attempt, including idempotent destination replays.
@@ -50,7 +52,7 @@ func (s *Source) Consume(ctx context.Context, destination notify.Publisher, mapp
 			failures = append(failures, err)
 			break
 		}
-		if event.Optional && !opts.IncludeOptional {
+		if (event.Optional && !opts.IncludeOptional) || (opts.Filter != nil && !opts.Filter(event)) {
 			ids = append(ids, event.ID)
 			result.Skipped++
 			continue
@@ -70,7 +72,7 @@ func (s *Source) Consume(ctx context.Context, destination notify.Publisher, mapp
 			failures = append(failures, fmt.Errorf("map notification %s: %w", event.ID, err))
 			continue
 		}
-		_, err = destination.Publish(ctx, notify.Input{Recipient: target, Origin: notify.Origin{System: s.name, Scope: event.MerchantID, ID: event.ID, Subject: event.CustomerID}, Kind: event.EventType, Data: event.Data, CreatedAt: event.CreatedAt, ActionRequested: event.ActionRequested})
+		_, err = destination.Publish(ctx, notify.Input{Recipient: target, Origin: notify.Origin{System: s.name, Scope: event.MerchantID, ID: event.ID, Subject: event.CustomerID}, Kind: event.EventType, Data: event.Data, CreatedAt: event.CreatedAt, Visibility: notify.VisibilityTenant, ActionRequested: event.ActionRequested})
 		if errors.Is(err, notify.ErrRecipientErased) {
 			ids = append(ids, event.ID)
 			result.Skipped++

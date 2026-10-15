@@ -92,6 +92,10 @@ export const content = {
     saveSegments: "Save chapters",
   },
   myStats: {
+    accessFor: "{tier} for",
+    accessDescription: "Total time with access; a month is 30 days.",
+    lessThanDay: "Less than 1 day",
+    unavailable: "Some statistics are temporarily unavailable.",
     completed: "{kind} finished",
     comments: "Comments",
     likes: "Likes received",

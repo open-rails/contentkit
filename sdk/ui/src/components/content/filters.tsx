@@ -43,6 +43,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
     return root(<Skeleton className="h-24 w-full" />);
   }
   const filters = f.filters;
+  if (!filters.filters.length && p.includeDeleted === false) return null;
   return root(
     <>
       {filters.filters.length ? (
@@ -74,9 +75,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="text-muted-foreground">{t("contents.noFilters")}</p>
-      )}
+      ) : null}
       {p.includeDeleted !== false && (
         <div className="flex items-center gap-3">
           <Switch id={`${id}-deleted`} checked={filters.include_deleted} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setIncludeDeleted(v))} />

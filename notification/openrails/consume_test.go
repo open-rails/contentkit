@@ -162,7 +162,7 @@ func TestConsumeCommitsBeforeAckAndKeepsIndependentConsumers(t *testing.T) {
 		t.Fatalf("inbox %+v %v", page, err)
 	}
 	first := page.Items[0]
-	if first.Status != notify.StatusNotice || !first.ActionRequested || first.Origin.Subject != "c" {
+	if first.Status != notify.StatusNotice || !first.ActionRequested || first.Origin.Subject != "c" || first.Visibility != notify.VisibilityTenant || first.AppID != "" {
 		t.Fatalf("historical event became workflow: %+v", first)
 	}
 	if _, err := store.SetRead(ctx, recipient, first.ID, true); err != nil {

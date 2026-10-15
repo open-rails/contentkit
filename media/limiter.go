@@ -87,6 +87,7 @@ type PGLimiter struct {
 	usage    string
 	res      string
 	releases string
+	routes   map[string]*PGLimiter
 }
 
 var _ UploadLimiter = (*PGLimiter)(nil)
@@ -106,6 +107,7 @@ func NewPGLimiter(pool *pgxpool.Pool, schema string, limits PGLimits) (*PGLimite
 }
 
 func (l *PGLimiter) PrepareRelease(ctx context.Context, r QuotaRelease) (bool, error) {
+	l = l.forTenant(r.Tenant)
 	if r.Tenant == "" || r.Folder == "" || r.Owner == "" || r.Operation == "" || r.Bytes < 0 {
 		return false, errors.New("media: release needs a tenant, folder, owner, operation and nonnegative bytes")
 	}
@@ -135,6 +137,7 @@ WHERE tenant_id = $1 AND operation_id = $2`, r.Tenant, r.Operation).Scan(&folder
 }
 
 func (l *PGLimiter) Release(ctx context.Context, tenant, operation string) error {
+	l = l.forTenant(tenant)
 	return pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
 		var owner string
 		var bytes int64
@@ -160,6 +163,7 @@ WHERE tenant_id = $1 AND operation_id = $2`, tenant, operation)
 }
 
 func (l *PGLimiter) Reserve(ctx context.Context, r Reservation) error {
+	l = l.forTenant(r.Tenant)
 	var quota int64
 	if l.limits.Quota != nil && r.Owner != "" {
 		var err error
@@ -245,6 +249,7 @@ WHERE tenant_id = $1 AND uploader = $2`, r.Tenant, r.Uploader).Scan(&day, &oldes
 }
 
 func (l *PGLimiter) Settle(ctx context.Context, s Settlement) error {
+	l = l.forTenant(s.Tenant)
 	var quota int64
 	if s.Enforce && s.Delta > 0 {
 		var err error
@@ -304,8 +309,25 @@ WHERE tenant_id = $1 AND owner_id = $2`, s.Tenant, s.Owner, s.Delta)
 
 // Usage reports an owner's stored bytes and unexpired pending reservations.
 func (l *PGLimiter) Usage(ctx context.Context, tenant, owner string) (used, pending int64, err error) {
+	l = l.forTenant(tenant)
 	err = l.pool.QueryRow(ctx, `SELECT COALESCE((SELECT used_bytes FROM `+l.usage+` WHERE tenant_id = $1 AND owner_id = $2), 0),
 (SELECT COALESCE(sum(bytes), 0) FROM `+l.res+` WHERE tenant_id = $1 AND owner_id = $2 AND expires_at > now())`,
 		tenant, owner).Scan(&used, &pending)
 	return used, pending, err
+}
+
+// RouteLimiter pairs a routed journal with its account quota ledger.
+func RouteLimiter(app, account *PGLimiter, partition string) *PGLimiter {
+	if app == nil {
+		return nil
+	}
+	copy := *app
+	copy.routes = map[string]*PGLimiter{partition: account}
+	return &copy
+}
+func (l *PGLimiter) forTenant(tenant string) *PGLimiter {
+	if next := l.routes[tenant]; next != nil {
+		return next
+	}
+	return l
 }

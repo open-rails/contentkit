@@ -96,6 +96,11 @@ type Options struct {
 	// default DefaultCommentMaxLength.
 	CommentMaxLength int
 
+	// Notifications optionally shares an account inbox while retaining Tenant social origin.
+	Notifications *notification.Config
+	// NotificationAppID is the immutable owning app supplied by the engine.
+	NotificationAppID string
+
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
 	Logger *slog.Logger
@@ -194,7 +199,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		limiters:       limiters,
 		held:           map[string]HeldSource{},
 	}
-	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log})
+	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log, Shared: opts.Notifications, AppID: opts.NotificationAppID})
 	if err != nil {
 		return nil, err
 	}

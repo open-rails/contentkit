@@ -224,3 +224,22 @@ func TestVerifyDownload(t *testing.T) {
 		t.Fatalf("a version's download: %v", err)
 	}
 }
+
+func TestScopedTokensBindTenantAppAndAccountRoot(t *testing.T) {
+	r := ring(t, k1, nil)
+	now := time.Now()
+	exp := now.Add(time.Hour)
+	base := "tenant/11111111-1111-4111-8111-111111111111/"
+	app := base + "app/22222222-2222-4222-8222-222222222222/gallery/123"
+	account := base + "account/user/123"
+	tok := r.Sign(app, exp)
+	for _, root := range []string{app, strings.Replace(app, "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", 1), strings.Replace(app, "11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1), account} {
+		err := r.VerifyPrivate(tok, root+"/private/blob", now)
+		if (err == nil) != (root == app) {
+			t.Fatalf("token scope %s: %v", root, err)
+		}
+	}
+	if err := r.VerifyPrivate(r.Sign(account, exp), account+"/private/blob", now); err != nil {
+		t.Fatal(err)
+	}
+}

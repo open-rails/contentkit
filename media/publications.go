@@ -47,7 +47,17 @@ func (m *Manifests) Images(ctx context.Context, qs ...ImageQuery) ([][]PublicIma
 		}
 		at[i] = i
 	}
-	return out, m.images(ctx, m.journal, qs, at, out)
+	groups := map[*PGJournal][]int{}
+	for _, i := range at {
+		j := m.journal.forTenant(qs[i].Ref.TenantID)
+		groups[j] = append(groups[j], i)
+	}
+	for j, ids := range groups {
+		if err := m.images(ctx, j, qs, ids, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // images fills out[at[n]] from j's projection.
@@ -297,6 +307,7 @@ func (j *PGJournal) projectTx(ctx context.Context, tx pgx.Tx, p *projection) err
 	if p == nil {
 		return nil
 	}
+	j = j.forTenant(p.ref.TenantID)
 	rows := p.rows
 	if rows == nil {
 		rows = []publication{}

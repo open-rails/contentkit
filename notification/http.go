@@ -36,7 +36,7 @@ var routes = []httpapi.Route[*Store]{
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{id}/read", Resource: "notifications", Doc: "Marks one of the signed-in person's notices unread locally.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleRead(false) }},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/{id}/dismiss", Resource: "notifications", Doc: "Archives this receipt without changing its read or workflow state.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleDismiss(true) }},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{id}/dismiss", Resource: "notifications", Doc: "Restores an archived receipt to this user's inbox.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleDismiss(false) }},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/publish", Resource: "notifications", Doc: "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.", Auth: httpapi.Staff, Perm: string(access.NotificationsPublish), Request: Publication{}, Responses: []httpapi.Reply{httpapi.OK(Published{})}}, Serve: httpapi.H((*Store).handlePublish)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/publish", Resource: "notifications", Doc: "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.", Auth: httpapi.Staff, Perm: string(access.NotificationsPublish), Request: Publication{}, Responses: []httpapi.Reply{httpapi.OK(Published{})}, Errors: []string{httpapi.CodeConflict}}, Serve: httpapi.H((*Store).handlePublish)},
 }
 
 // MaxPublish bounds one publish batch.
@@ -84,6 +84,10 @@ func (s *Store) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i, n := range in.Notifications {
+		if s.appID != "" && (n.Visibility == notify.VisibilityTenant || (n.AppID != "" && n.AppID != s.appID)) {
+			s.fail(w, r, notify.ErrInvalid)
+			return
+		}
 		if string(n.Data) == "null" { // a Go client's nil Data
 			in.Notifications[i].Data = nil
 		}
@@ -165,6 +169,8 @@ func (s *Store) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, notify.ErrInvalid):
 		status, code, msg = http.StatusBadRequest, httpapi.CodeInvalidRequest, "invalid request"
+	case errors.Is(err, notify.ErrConflict):
+		status, code, msg = http.StatusConflict, httpapi.CodeConflict, "notification origin has conflicting visibility"
 	case errors.Is(err, notify.ErrNotFound):
 		status, code, msg = http.StatusNotFound, httpapi.CodeNotFound, "notification not found"
 	default:

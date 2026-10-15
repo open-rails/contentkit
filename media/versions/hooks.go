@@ -113,12 +113,17 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 			asked = append(asked, ref)
 		}
 	}
-	res, err := s.o.Resolver.Resolve(ctx, asked, actor)
+	domain := make([]contentref.ContentRef, len(asked))
+	for i, ref := range asked {
+		domain[i] = ref
+		domain[i].TenantID = s.o.Tenant
+	}
+	res, err := s.o.Resolver.Resolve(ctx, domain, actor)
 	if err != nil {
 		return err
 	}
-	for _, ref := range asked {
-		r := res[ref.Key()]
+	for i, ref := range asked {
+		r := res[domain[i].Key()]
 		if !r.Visible {
 			continue
 		}

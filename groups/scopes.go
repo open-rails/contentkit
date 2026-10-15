@@ -26,6 +26,19 @@ type Scopes interface {
 	Holding(ctx context.Context, user string, kinds []string) (map[string][]string, error)
 }
 
+// LocalScopes optionally narrows authorization lookups to scope IDs verified
+// by this app's store. It lets a shared identity directory resolve grants
+// without enumerating or trusting groups belonging to other apps.
+type LocalScopes interface {
+	HoldingScopes(ctx context.Context, user string, kinds, scopeIDs []string) (map[string][]string, error)
+}
+
+// AppBinding identifies the tenant/app an authorization scope provider serves.
+// A scoped engine requires a matching binding before enabling auth_scope kinds.
+type AppBinding interface {
+	ContentKitScope() (tenantID, appID string)
+}
+
 // Scope is one group's AuthKit scope: ContentKit keys it by the group's id.
 type Scope struct {
 	ID    string
@@ -316,5 +329,27 @@ func (s *Store) heldScopes(ctx context.Context, user, kind string) (map[string][
 		return nil, nil
 	}
 	slices.Sort(kinds)
+	if local, ok := s.scopes.(LocalScopes); ok {
+		var scopeIDs []string
+		err := s.read(ctx, func(q Querier) error {
+			rows, err := q.Query(ctx, fmt.Sprintf(`SELECT auth_scope FROM %s WHERE tenant_id=$1 AND state='active' AND auth_scope IS NOT NULL AND kind=ANY($2::text[]) ORDER BY auth_scope`, s.table("content_groups")), s.tenant, kinds)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				scopeIDs = append(scopeIDs, id)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			return nil, err
+		}
+		return local.HoldingScopes(ctx, user, kinds, scopeIDs)
+	}
 	return s.scopes.Holding(ctx, user, kinds)
 }

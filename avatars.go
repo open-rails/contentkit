@@ -36,11 +36,19 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		return nil, nil
 	}
 	kind, preset := a.kind()
+	if e.scope != nil && !e.cfg.Media.LegacyLayout {
+		kind.Namespace = ""
+		kind.Account = true
+	}
+	if e.cfg.Media.LegacyLayout && e.cfg.Notifications != nil {
+		kind.Namespace = e.cfg.Notifications.Namespace
+		kind.Account = false
+	}
 	out := &engineAvatars{urls: e.media.reg}
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.
 		var err error
-		if out.urls, err = media.NewRegistry(media.Config{Namespace: e.cfg.Tenant, BaseURL: e.media.reg.Config().BaseURL,
+		if out.urls, err = media.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
 			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Avatars: %w", err)
 		}

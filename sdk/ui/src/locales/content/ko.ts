@@ -93,6 +93,10 @@ export const content: typeof en = {
     saveSegments: "챕터 저장",
   },
   myStats: {
+    accessFor: "{tier} 이용 기간",
+    accessDescription: "이용 가능한 총기간입니다. 한 달은 30일입니다.",
+    lessThanDay: "1일 미만",
+    unavailable: "일부 통계를 일시적으로 사용할 수 없습니다.",
     completed: "완료한 {kind}",
     comments: "댓글",
     likes: "받은 좋아요",

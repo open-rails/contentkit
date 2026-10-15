@@ -15,7 +15,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"slices"
+	"github.com/open-rails/contentkit/media/layout"
 	"strconv"
 	"strings"
 	"time"
@@ -136,17 +136,11 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 // VerifyPrivate checks tok for the private object key
 // "{ns}/{kind}/{id}[/{version}]/private/{name}" at now: its item's token.
 func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
-	p := strings.Split(key, "/")
-	if slices.Contains(p, "") {
+	k, area, ok := keyFolder(key)
+	if !ok || area != layout.AreaPrivate {
 		return ErrInvalid
 	}
-	switch {
-	case len(p) == 5 && p[3] == "private":
-		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], ""), now)
-	case len(p) == 6 && p[4] == "private" && !slices.Contains(reserved, p[3]):
-		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], p[3]), now)
-	}
-	return ErrInvalid
+	return r.VerifyScope(tok, strings.TrimSuffix(k.Folder(), "/"), now)
 }
 
 // reserved are an item folder's own names, never a version.
@@ -156,8 +150,8 @@ var reserved = []string{"manifest.json", "private", "download", "public", "temp"
 // "{ns}/{kind}/{id}[/{version}]/download/{name}" at now: that one key's
 // download token.
 func (r Ring) VerifyDownload(tok, key string, now time.Time) error {
-	p := strings.Split(key, "/")
-	if slices.Contains(p, "") || !(len(p) == 5 && p[3] == "download" || len(p) == 6 && p[4] == "download" && !slices.Contains(reserved, p[3])) {
+	_, area, ok := keyFolder(key)
+	if !ok || area != layout.AreaDownload {
 		return ErrInvalid
 	}
 	return r.VerifyScope(tok, DownloadScope(key), now)
@@ -207,4 +201,14 @@ func mac(secret []byte, scope, exp string) string {
 	h := hmac.New(sha256.New, secret)
 	h.Write([]byte(scope + "|" + exp))
 	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}
+
+func keyFolder(key string) (layout.Key, string, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 3 || parts[len(parts)-1] == "" {
+		return layout.Key{}, "", false
+	}
+	area := parts[len(parts)-2]
+	k, ok := layout.ParseFolder(strings.Join(parts[:len(parts)-2], "/") + "/")
+	return k, area, ok
 }

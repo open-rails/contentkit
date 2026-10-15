@@ -16,6 +16,7 @@ import (
 // kindState is what NewRegistry compiles into a Kind.
 type kindState struct {
 	ns       string
+	scope    layout.Scope
 	patterns []pattern // parallel to Uploads
 	of       *Kind     // a published kind's Publish kind
 }
@@ -75,8 +76,8 @@ func (k *Kind) published() (*Kind, error) {
 		return nil, fmt.Errorf("Pages %q is no {name} image upload of versions", p.Pages)
 	}
 	maxBytes := max(k.Uploads[pages].MaxBytes, 64<<20)
-	out := &Kind{Name: k.Name + PublishedSuffix, Namespace: k.Namespace, KeepOriginals: true, ServeOriginals: true}
-	out.ns = k.ns
+	out := &Kind{Name: k.Name + PublishedSuffix, Namespace: k.Namespace, Account: k.Account, KeepOriginals: true, ServeOriginals: true}
+	out.ns, out.scope = k.ns, k.scope
 	if len(p.Renditions) == 0 {
 		return nil, errors.New("needs Renditions")
 	}

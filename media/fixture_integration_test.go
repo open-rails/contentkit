@@ -289,9 +289,17 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey}}); err != nil {
 		t.Fatal(err)
 	}
-	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Region: env.Config.Region,
+	gc := gateway.Config{Endpoint: env.Config.Endpoint, Region: env.Config.Region,
 		AccessKeyID: env.Config.AccessKeyID, SecretAccessKey: env.Config.SecretAccessKey, Ring: ring,
-		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Buckets: buckets(f.reg.Namespaces(), env.Config.Bucket)})
+		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Buckets: buckets(f.reg.Namespaces(), env.Config.Bucket)}
+	if scope, ok := f.reg.Scope(); ok {
+		gc.Hosts = nil
+		gc.Buckets = nil
+		gc.Routes = []gateway.Route{{Host: mediaHost, Scope: scope, Bucket: env.Config.Bucket}}
+		scope.AppID = ""
+		gc.Routes = append(gc.Routes, gateway.Route{Host: mediaHost, Scope: scope, Bucket: env.Config.Bucket})
+	}
+	h, err := gateway.New(gc)
 	if err != nil {
 		t.Fatal(err)
 	}

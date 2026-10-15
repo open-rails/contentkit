@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -50,6 +51,7 @@ func run(log *slog.Logger, args []string) error {
 	listen := fs.String("listen", env("MEDIA_GATEWAY_LISTEN", ":8080"), "listen address")
 	endpoint := fs.String("s3-endpoint", env("MEDIA_GATEWAY_S3_ENDPOINT", ""), "S3 endpoint")
 	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
+	routes := fs.String("routes", env("MEDIA_GATEWAY_ROUTES", ""), "JSON scoped host, scope, bucket and origins routes")
 	hosts := fs.String("hosts", env("MEDIA_GATEWAY_HOSTS", ""), "host=namespace,…; …")
 	buckets := fs.String("buckets", env("MEDIA_GATEWAY_BUCKETS", ""), "namespace=bucket; …")
 	origins := fs.String("cors-origins", env("MEDIA_GATEWAY_CORS_ORIGINS", ""), "CORS origins")
@@ -77,11 +79,23 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	hostMap, err := layout.ParseHosts(*hosts)
+	var scoped []gateway.Route
+	if *routes != "" {
+		if err := json.Unmarshal([]byte(*routes), &scoped); err != nil {
+			return fmt.Errorf("MEDIA_GATEWAY_ROUTES: %w", err)
+		}
+	}
+	var hostMap map[string][]string
+	if *hosts != "" {
+		hostMap, err = layout.ParseHosts(*hosts)
+	}
 	if err != nil {
 		return fmt.Errorf("MEDIA_GATEWAY_HOSTS: %w", err)
 	}
-	bucketMap, err := layout.ParseBuckets(*buckets)
+	var bucketMap map[string]string
+	if *buckets != "" {
+		bucketMap, err = layout.ParseBuckets(*buckets)
+	}
 	if err != nil {
 		return fmt.Errorf("MEDIA_GATEWAY_BUCKETS: %w", err)
 	}
@@ -92,7 +106,7 @@ func run(log *slog.Logger, args []string) error {
 	h, err := gateway.New(gateway.Config{
 		Endpoint: *endpoint, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Hosts: hostMap, Buckets: bucketMap, Origins: list(*origins), Defaults: defs, Logger: log,
+		Ring: ring, Routes: scoped, Hosts: hostMap, Buckets: bucketMap, Origins: list(*origins), Defaults: defs, Logger: log,
 	})
 	if err != nil {
 		return err

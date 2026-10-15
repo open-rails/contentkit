@@ -70,11 +70,7 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 }
 
 func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
-	ref, err := parseFolder(prefix)
-	if err != nil {
-		return SweepResult{}, err
-	}
-	item, err := j.cfg.Registry.Item(ref)
+	item, err := j.cfg.Registry.folderItem(prefix)
 	if err != nil {
 		return SweepResult{}, err
 	}
@@ -129,7 +125,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 // staged uploads and, unless hidden, the public names its uploads' presets
 // render.
 func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
-	keep := map[string]bool{}
+	keep := map[string]bool{layout.AreaPublic + "/" + layout.ErasureFenceName: true}
 	for _, b := range m.Blobs() {
 		if area, name, ok := layout.SplitBlobRef(b); ok {
 			keep[area+"/"+name] = true
@@ -186,6 +182,9 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	}
 	var first, public, rest []string
 	for _, o := range objs {
+		if o.Key == prefix+layout.AreaPublic+"/"+layout.ErasureFenceName {
+			continue
+		}
 		k, ok := layout.Parse(o.Key)
 		if ok && k.Folder() != prefix {
 			continue
@@ -268,7 +267,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 	}
 	cutoff := j.cfg.Now().Add(-s.Grace)
 	folders := map[string]*OrphanFolder{}
-	root := k.ns + "/" + k.Name + "/"
+	root := k.root() + k.Name + "/"
 	for o, err := range j.cfg.Store.List(ctx, root) {
 		if err != nil {
 			return rep, err
@@ -285,7 +284,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 		}
 		f := folders[prefix]
 		if f == nil {
-			_, err := j.cfg.Registry.Item(ref)
+			_, err := j.cfg.Registry.folderItem(prefix)
 			f = &OrphanFolder{Prefix: prefix, ID: id, ref: ref, ValidID: err == nil}
 			folders[prefix] = f
 		}

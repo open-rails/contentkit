@@ -991,6 +991,8 @@ export interface Input {
   kind: string;
   data: unknown;
   created_at: string;
+  visibility?: string;
+  app_id?: string;
   status?: string;
   action_requested?: boolean;
   severity?: string;
@@ -1015,6 +1017,8 @@ export interface Item {
   kind: string;
   data: unknown;
   created_at: string;
+  visibility?: string;
+  app_id?: string;
   status?: string;
   action_requested?: boolean;
   severity?: string;
@@ -1151,6 +1155,7 @@ export interface MyGroupPage {
 
 export interface MyStats {
   completed: Record<string, number>;
+  access_seconds?: Record<string, number>;
   comments: number;
   comment_likes: number;
   comment_dislikes: number;
@@ -1393,6 +1398,7 @@ export interface PresetRule {
   from: string;
   base: string;
   namespace: string;
+  root?: string;
   to: string;
   widths: number[];
   aspect?: string;

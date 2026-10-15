@@ -30,6 +30,12 @@ type Registry struct {
 
 // NewRegistry validates c and derives its kinds' published kinds.
 func NewRegistry(c Config) (*Registry, error) {
+	if !c.Scope.IsZero() {
+		if !c.Scope.Valid() || c.Scope.AppID == "" || c.Namespace != "" && c.Namespace != c.Scope.Partition() {
+			return nil, errors.New("media: Scope requires tenant and app IDs and no legacy Namespace")
+		}
+		c.Namespace = c.Scope.Partition()
+	}
 	if !layout.ValidSegment(c.Namespace) {
 		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
 	}
@@ -64,6 +70,18 @@ func NewRegistry(c Config) (*Registry, error) {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
 		k.ns = cmpOr(k.Namespace, c.Namespace)
+		if !c.Scope.IsZero() {
+			if k.Namespace != "" {
+				return nil, fmt.Errorf("media: scoped kind %q cannot choose a legacy Namespace", k.Name)
+			}
+			k.scope = c.Scope
+			if k.Account {
+				k.scope.AppID = ""
+			}
+			k.ns = k.scope.Partition()
+		} else if k.Account {
+			return nil, fmt.Errorf("media: account kind %q requires Scope", k.Name)
+		}
 		pub, err := k.levels()
 		if err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
@@ -180,7 +198,7 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 			return Item{}, fmt.Errorf("media: invalid ref %s: version: %w", ref, err)
 		}
 	}
-	return Item{ref: ref, kind: k, prefix: layout.Prefix(k.ns, k.Name, ref.ContentID, version)}, nil
+	return Item{ref: ref, kind: k, prefix: k.prefix(ref.ContentID, version)}, nil
 }
 
 func (i Item) Ref() contentref.ContentRef { return i.ref }
@@ -233,7 +251,7 @@ func (i Item) Public(name string) (string, error) {
 
 // DefaultKey is the key of the kind's default public image name.
 func (k *Kind) DefaultKey(name string) string {
-	return layout.Prefix(k.ns, k.Name, layout.DefaultID, "") + layout.AreaPublic + "/" + name
+	return k.prefix(layout.DefaultID, "") + layout.AreaPublic + "/" + name
 }
 
 // NS is the namespace the kind's items live in.
@@ -248,7 +266,11 @@ func PublicURL(base string, ref contentref.ContentRef, name string) string {
 
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
-	return PublicURL(r.cfg.BaseURL, ref, name)
+	item, err := r.Item(ref)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(r.cfg.BaseURL, "/") + layout.URLPrefix + item.Prefix() + layout.AreaPublic + "/" + name
 }
 
 // PresetRules lists every kind's public presets, in registry order.
@@ -257,7 +279,7 @@ func (r *Registry) PresetRules() []PresetRule {
 	for _, k := range r.all {
 		for _, p := range k.Public {
 			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
-				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
+				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
 				Default: p.hasDefault(), Stable: p.Stable})
 		}
 	}
@@ -281,4 +303,23 @@ func ParseConfig(b []byte) (Config, error) {
 		return Config{}, fmt.Errorf("media: registry JSON: %w", err)
 	}
 	return c, nil
+}
+
+// Scope identifies the registry's trusted app owner; false means legacy mode.
+func (r *Registry) Scope() (layout.Scope, bool) { return r.cfg.Scope, !r.cfg.Scope.IsZero() }
+func (r *Registry) IsAccount(ref contentref.ContentRef) bool {
+	k, e := r.Kind(ref.ContentKind)
+	return e == nil && k.Account && ref.TenantID == k.ns
+}
+func (k *Kind) root() string {
+	if !k.scope.IsZero() {
+		return k.scope.Root()
+	}
+	return k.ns + "/"
+}
+func (k *Kind) prefix(id, version string) string {
+	if !k.scope.IsZero() {
+		return k.scope.Prefix(k.Name, id, version)
+	}
+	return layout.Prefix(k.ns, k.Name, id, version)
 }

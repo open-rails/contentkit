@@ -5,9 +5,10 @@ import type { ReadResult, RefBody } from "../client/generated/wire.js";
 import type { PresetRule } from "../client/generated/wire.js";
 import { defaultImage, isPattern, ruleDir, stableImage } from "../client/media/rules.js";
 import type { PublicPreset } from "../client/public.js";
-import { useOptionalContentKitClient } from "./context.js";
+import { useOptionalContentKitClient, useReadScope } from "./context.js";
 import { useKinds } from "./groups.js";
 import { useMediaRead } from "./read.js";
+import { useContentScope } from "./use-resource.js";
 
 export interface UsePresets {
   /** Every kind's public presets; empty until they load (or when the server has none). */
@@ -90,12 +91,46 @@ export function usePublicImage(item: RefBody, preset: string, o: PublicImageOpti
 }
 
 /**
- * A person's avatar (the content model's `avatars`, a Stable preset): URLs
- * built from their id on this site's media host, showing their image or
- * the default. null while the model loads or when the site shows none.
+ * A person's avatar. The signed-in viewer reads their current immutable
+ * publication and follows upload/crop/removal events. Other accounts keep the
+ * stable public URL without one API request per author in a listing.
  */
 export function useAvatar(userId: string | null | undefined, o: { client?: ContentKitClient } = {}): PublicPreset | null {
-  const { kinds } = useKinds(o);
+  const { client, viewer } = useContentScope(o.client);
+  const scope = useReadScope();
+  const { kinds } = useKinds({ client });
   const rule = kinds?.avatars;
-  return useMemo(() => (rule && userId ? stableImage(rule, userId) : null), [rule, userId]);
+  const own = !!rule && !!userId && userId === viewer;
+  const prefix = rule ? (isPattern(rule.from) ? ruleDir(rule.from) : rule.from) : undefined;
+  const current = useMediaRead({ kind: rule?.kind ?? "", id: userId ?? "" }, { client, prefix, read: own ? undefined : null });
+  const [last, setLast] = useState<{ client: ContentKitClient; scope: string; id: string; read: ReadResult } | null>(null);
+  if (!own && last) setLast(null);
+  if (own && current.read && (last?.read !== current.read || last.client !== client || last.scope !== scope || last.id !== userId)) {
+    setLast({ client, scope, id: userId!, read: current.read });
+  }
+  const transient = current.error && (current.error.transient || current.error.status >= 500);
+  if (own && current.error && !transient && last) setLast(null);
+  const { refresh } = current;
+  const read = current.read ?? (own && (current.loading || transient) && last?.client === client && last.scope === scope && last.id === userId ? last.read : null);
+
+
+  // Another app can change the shared avatar while this tab is inactive.
+  // The read store deduplicates refreshes from multiple consumers.
+  useEffect(() => {
+    if (!own) return;
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [own, refresh]);
+
+  return useMemo(() => {
+    if (!rule || !userId) return null;
+    if (!own) return stableImage(rule, userId);
+    const publication = read?.public?.find((p) => p.preset === rule.name);
+    return publication?.renditions.length ? { preset: rule.name, aspect: rule.aspect, renditions: publication.renditions } : null;
+  }, [rule, userId, own, read]);
 }

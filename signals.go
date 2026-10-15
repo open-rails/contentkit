@@ -9,13 +9,9 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/open-rails/migratekit"
-	"github.com/open-rails/migratekit/chmigrate"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -34,7 +30,7 @@ const (
 // while it answers and off (the content model and the contentkit_clickhouse
 // probe say so) while it doesn't. Only start and its loop change the state.
 type signalPlane struct {
-	connect func(context.Context) (signal.Conn, error) // migrate, open, check the schema
+	connect func(context.Context) (signal.Conn, error) // open/check, optionally migrate in compatibility mode
 	up      func(signal.Conn) error                    // signals on
 	down    func()                                     // signals off
 	afterUp func()                                     // catch-up after publishing recovery
@@ -177,23 +173,14 @@ func (e *Engine) newSignals(deps Deps) *signalPlane {
 	return p
 }
 
-// connectSignals applies the signal migrations (with Addr), takes host's
-// connection or opens one from Config (once; it reconnects by itself) and
-// checks its schema.
+// connectSignals checks the signal schema on both initial connection and retry.
+// Compatibility mode first applies migrations; SkipMigrations never does DDL.
+// A host connection is borrowed; a configured connection is opened once.
 func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.Conn, error) {
 	c := e.cfg.ClickHouse
-	if c.Addr != "" {
-		steps, err := migratekit.Load(migrations.ClickHouse, ".")
-		if err != nil {
-			return nil, fmt.Errorf("contentkit: load signal migrations: %w", err)
-		}
-		db := stdlib.OpenDBFromPool(e.pool)
-		defer db.Close()
-		m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password,
-			Cluster: c.Cluster, App: "contentkit_signal", PostgresDB: db})
-		defer m.Close()
-		if err := m.ApplyMigrations(ctx, steps); err != nil {
-			return nil, fmt.Errorf("contentkit: apply signal migrations: %w", err)
+	if c.Addr != "" && !e.cfg.Database.SkipMigrations {
+		if err := MigrateClickHouse(ctx, e.pool, e.cfg); err != nil {
+			return nil, err
 		}
 	}
 	conn := host
@@ -212,7 +199,7 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 		e.chMu.Unlock()
 	}
 	if err := signal.CheckSchema(ctx, conn, c.Database); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("contentkit: signal schema unavailable (run contentkit.MigrateClickHouse if migrations are missing): %w", err)
 	}
 	return conn, nil
 }

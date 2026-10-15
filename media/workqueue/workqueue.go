@@ -59,7 +59,7 @@ func ValidSchema(schema string) error {
 }
 
 // Migrate creates the worker schema and applies River and video-run migrations.
-// Hosts run it in their migrate step; the worker also runs it at start.
+// Hosts run it in their explicit migration step; Validate is read-only.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err := ValidSchema(schema); err != nil {
 		return err
@@ -159,10 +159,11 @@ var EncodeKinds = []string{VideoPlanArgs{}.Kind(), VideoChunkArgs{}.Kind(), Vide
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
 type Queue struct {
-	client *river.Client[pgx.Tx]
-	pool   *pgxpool.Pool
-	kinds  *media.Registry
-	schema string
+	client  *river.Client[pgx.Tx]
+	pool    *pgxpool.Pool
+	kinds   *media.Registry
+	schema  string
+	account *Queue
 }
 
 var _ media.ProcessQueue = (*Queue)(nil)
@@ -190,11 +191,13 @@ func (q *Queue) Schema() string { return q.schema }
 // them once the item's staged uploads are placed. Image and place jobs are
 // one pending per job, with a follow-up behind a running one.
 func (q *Queue) Enqueue(ctx context.Context, job media.ProcessJob) error {
+	q = q.forRef(job.Ref)
 	return q.enqueue(ctx, q.client.Insert, job)
 }
 
 // EnqueueTx enqueues in the host's transaction.
 func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) error {
+	q = q.forRef(job.Ref)
 	return q.enqueue(ctx, func(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return q.client.InsertTx(ctx, tx, args, o)
 	}, job)
@@ -279,6 +282,7 @@ func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 // Running workers stop cooperatively after commit; cancellation alone does
 // not fence writes already in flight. It returns how many jobs it cancelled.
 func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, error) {
+	q = q.forRef(ref)
 	var count int
 	err := pgx.BeginFunc(ctx, q.pool, func(tx pgx.Tx) error {
 		var err error
@@ -292,6 +296,7 @@ func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, err
 // cancellation notification is delivered only after commit. A recovery
 // receipt and replacement EnqueueTx can be written in this same transaction.
 func (q *Queue) CancelTx(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) (int, error) {
+	q = q.forRef(ref)
 	match, err := RefMatch(ref)
 	if err != nil {
 		return 0, err
@@ -503,4 +508,47 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 		st.Files[name] = p
 	}
 	return st, runs.Err()
+}
+
+// NewWithAccounts routes account jobs to the shared tenant queue schema.
+func NewWithAccounts(pool *pgxpool.Pool, kinds *media.Registry, schema, accounts string) (*Queue, error) {
+	q, err := New(pool, kinds, schema)
+	if err != nil {
+		return nil, err
+	}
+	if accounts != "" && accounts != schema {
+		q.account, err = New(pool, kinds, accounts)
+	}
+	return q, err
+}
+func (q *Queue) forRef(ref contentref.ContentRef) *Queue {
+	if q.account != nil && q.kinds.IsAccount(ref) {
+		return q.account
+	}
+	return q
+}
+
+// NewProgressSourceWithAccounts reads the same queue selected for writes.
+func NewProgressSourceWithAccounts(pool *pgxpool.Pool, reg *media.Registry, schema, accounts string) (media.ProgressSource, error) {
+	app, err := NewProgressSource(pool, schema)
+	if err != nil || accounts == "" || accounts == schema {
+		return app, err
+	}
+	account, err := NewProgressSource(pool, accounts)
+	if err != nil {
+		return nil, err
+	}
+	return routedProgress{reg, app, account}, nil
+}
+
+type routedProgress struct {
+	reg          *media.Registry
+	app, account media.ProgressSource
+}
+
+func (r routedProgress) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
+	if r.reg.IsAccount(ref) {
+		return r.account.EncodeProgress(ctx, ref)
+	}
+	return r.app.EncodeProgress(ctx, ref)
 }

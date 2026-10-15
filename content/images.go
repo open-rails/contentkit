@@ -63,7 +63,7 @@ func (s *images) resolve(ctx context.Context) error {
 	}
 	qs := make([]media.ImageQuery, len(s.keys))
 	for i, k := range s.keys {
-		qs[i] = media.ImageQuery{Ref: s.rt.Ref(m.kind(k.f), k.id), Name: k.name}
+		qs[i] = media.ImageQuery{Ref: s.rt.mediaRef(m.kind(k.f), k.id), Name: k.name}
 	}
 	found, err := m.Images.Images(ctx, qs...)
 	if err != nil {

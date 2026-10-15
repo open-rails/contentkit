@@ -59,7 +59,11 @@ func (rt *Runtime) erasedSubjectsTable() string {
 	return pgx.Identifier{rt.schema, "content_erased_subjects"}.Sanitize()
 }
 
-// EraseSubjects first erases and fences the user inbox, then fences future
+// EraseSubjects is coordinated tenant-account deletion. With a shared account
+// inbox it fences that recipient across every app, so it must not be used for
+// an app-only reset or a content-only restore.
+//
+// It first erases and fences the user inbox, then fences future
 // authenticated content writes, removes reactions,
 // favorites, poll votes/answers and comment bans of or by them atomically,
 // and removes unpublished held/rejected comment payloads and moderation
@@ -75,6 +79,16 @@ func (rt *Runtime) erasedSubjectsTable() string {
 // Nil ProviderDataEraser means configured policy ports retain no external
 // personal data. Retaining providers must configure an eraser, including while offline.
 func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
+	return rt.eraseSubjects(ctx, actorIDs, true)
+}
+
+// EraseAppSubjects permanently fences and erases personal activity in this
+// app only. Shared account notifications and avatars are outside this boundary.
+func (rt *Runtime) EraseAppSubjects(ctx context.Context, actorIDs []string) error {
+	return rt.eraseSubjects(ctx, actorIDs, false)
+}
+
+func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account bool) error {
 	ids := append([]string(nil), actorIDs...)
 	sort.Strings(ids)
 	compact := ids[:0]
@@ -94,7 +108,11 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 	// Keeping the two fences in separate transactions avoids locking recipients
 	// in the reverse order of a comment producer.
 	for _, id := range ids {
-		if err := rt.Notifications.EraseRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: id}); err != nil {
+		erase := rt.Notifications.EraseAppRecipient
+		if account {
+			erase = rt.Notifications.EraseRecipient
+		}
+		if err := erase(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: id}); err != nil {
 			return fmt.Errorf("content: erase notifications: %w", err)
 		}
 	}
@@ -107,7 +125,7 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 		if err := rt.lockErasureSubject(ctx, tx, id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO `+rt.erasedSubjectsTable()+` (tenant_id,actor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, rt.tenant, id); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+rt.erasedSubjectsTable()+` (tenant_id,actor_id,engine_cleanup_complete) VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO UPDATE SET engine_cleanup_complete=false`, rt.tenant, id); err != nil {
 			return err
 		}
 	}

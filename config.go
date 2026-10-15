@@ -22,16 +22,25 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/avatar"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
 // Config is the engine's configuration: plain data.
 type Config struct {
-	// Tenant is the one tenant this engine serves: the first column of every
-	// key and query, and the prefix of every access key. Required.
-	Tenant   string         `yaml:"tenant" json:"tenant"`
+	// Scope is the business and app this engine serves. It is a trusted
+	// deployment binding, not request authorization. Nil preserves legacy config.
+	Scope *Scope `yaml:"scope,omitempty" json:"scope,omitempty"`
+	// LegacyCatalogKey preserves an adopted app's existing row and access
+	// keys, and the rollback layout's old media root. With Scope, empty uses AppID. This never renames existing data.
+	LegacyCatalogKey string `yaml:"legacy_catalog_key,omitempty" json:"legacy_catalog_key,omitempty"`
+	// Tenant is the legacy app/catalog key, not a business identity.
+	// Deprecated: use Scope, with LegacyCatalogKey for an existing catalog.
+	// It cannot be combined with Scope.
+	Tenant   string         `yaml:"tenant,omitempty" json:"tenant,omitempty"`
 	Database DatabaseConfig `yaml:"database" json:"database"`
 	// Content is the site's content model: languages, tiers, content kinds
 	// (commentable and indexed) and group kinds. Required.
@@ -52,13 +61,23 @@ type Config struct {
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
 	// Offers prices what creators and staff put on sale (needs Deps.Billing).
 	Offers offers.Config `yaml:"offers" json:"offers"`
+	// Accounts declares one shared account space for inboxes and avatars.
+	// It does not combine this site's content catalog with any other site's.
+	Accounts *AccountsConfig `json:"accounts,omitempty" yaml:"accounts,omitempty"`
+	// Notifications optionally puts this site's inbox in a shared account store.
+	// Content and social event origin remain scoped to Tenant.
+	Notifications *notification.Config `json:"notifications,omitempty" yaml:"notifications,omitempty"`
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
 }
 
-// DatabaseConfig names the Postgres schemas New creates or upgrades; the
-// pool's role owns them. ContentKit never reads or writes another schema.
+// DatabaseConfig names the Postgres schemas New validates or migrates; the
+// pool's role owns them. Notifications may use their separately configured schema.
 type DatabaseConfig struct {
+	// SkipMigrations makes New validate storage read-only. Hosts then run
+	// MigratePostgres/MigrateClickHouse from their explicit migration command.
+	// False preserves the existing embedded startup migration behavior.
+	SkipMigrations bool `yaml:"skip_migrations" json:"skip_migrations"`
 	// Schema holds ContentKit's tables. Empty is "contentkit".
 	Schema string `yaml:"schema" json:"schema"`
 	// RiverSchema holds the River tables ContentKit's jobs run in; empty is
@@ -102,6 +121,11 @@ type Rate struct {
 // tenant; content kinds' media are their versions', and each group kind
 // gains cover media, media.ForContent) and how ContentKit serves it.
 type MediaConfig struct {
+	// LegacyLayout is a migration-only compatibility mode. It retains old object
+	// paths while Scope still enforces ownership. Before rollback, require a
+	// successful media.VerifyLayoutRollback checkpoint (or reverse-copy plan).
+	LegacyLayout bool `yaml:"legacy_layout,omitempty" json:"legacy_layout,omitempty"`
+
 	media.Config `yaml:",inline"`
 	// WorkerSchema holds the media worker's queue (cmd/media-worker's
 	// MEDIA_WORKER_SCHEMA); empty is Database.Schema plus "_media_worker".
@@ -147,27 +171,58 @@ type AvatarsConfig struct {
 // MediaKinds is the media registry Config.Media serves, in the tenant's
 // namespace: content kinds' media are their versions', each group kind
 // gains cover media (media.ForContent), and the avatar primary holds the
-// avatar kind (Config.Avatars). The media worker runs it:
+// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker runs it:
 // cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
 // and a host building its own worker gives it, with its hooks, to
 // media.NewRegistry.
 func (c Config) MediaKinds() (media.Config, error) {
+	if c.Scope != nil && c.Media != nil && c.Media.LegacyLayout && (c.Avatars != nil || c.Accounts != nil && c.Accounts.Avatars != nil) {
+		return media.Config{}, errors.New("contentkit: rollback avatar workers require the saved legacy registry; the scoped engine resolves the account key at startup")
+	}
+	var err error
+	c, _, err = c.withScope()
+	if err != nil {
+		return media.Config{}, err
+	}
+	c, err = c.withAccounts()
+	if err != nil {
+		return media.Config{}, err
+	}
 	if c.Media == nil {
 		return media.Config{}, errors.New("contentkit: Config.Media is not set")
 	}
 	mc, tenant := c.Media.Config, strings.TrimSpace(c.Tenant)
-	switch mc.Namespace {
-	case "":
+	if c.Media.LegacyLayout {
+		mc.Scope = layout.Scope{}
 		mc.Namespace = tenant
-	case tenant:
-	default:
-		return media.Config{}, fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, tenant)
+	}
+	if !mc.Scope.IsZero() {
+		if mc.Namespace != "" {
+			return media.Config{}, errors.New("contentkit: scoped media derives its root; remove Media.Namespace")
+		}
+	} else {
+		switch mc.Namespace {
+		case "":
+			mc.Namespace = tenant
+		case tenant:
+		default:
+			return media.Config{}, fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, tenant)
+		}
 	}
 	if mc.Avatars != (media.Avatars{}) {
 		return media.Config{}, errors.New("contentkit: people's avatars are Config.Avatars, not Config.Media.Avatars")
 	}
 	if a := c.Avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
+		if c.Media.LegacyLayout {
+			kind.Account = false
+			if c.Notifications != nil {
+				kind.Namespace = c.Notifications.Namespace
+			}
+		} else if !mc.Scope.IsZero() {
+			kind.Namespace = ""
+			kind.Account = true
+		}
 		mc.Kinds = append(slices.Clone(mc.Kinds), kind)
 		mc.Avatars = media.Avatars{Kind: kind.Name, Preset: preset}
 	}
@@ -250,8 +305,11 @@ type Deps struct {
 
 	// Auth says who a request is (authkit/auth; AuthKit's
 	// ak.Authenticator()). It names its root scope (auth.Root), where staff
-	// hold access.Permissions(). Required.
+	// hold access.Permissions() in legacy mode. Required.
 	Auth auth.Authenticator
+	// Authorization binds verified identities and permissions to Scope.
+	// Required with Config.Scope; legacy-only engines do not use it.
+	Authorization Authorization
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
 	// authors' names. Nil shows authors by id.
 	Users userinfo.Lookup

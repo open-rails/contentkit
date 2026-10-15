@@ -162,6 +162,6 @@ function logicalImage(rule: PresetRule, id: string, version?: string): PublicPre
   return {
     preset: rule.name,
     aspect: rule.aspect,
-    renditions: rule.widths.map((w) => ({ url: publicURL(rule.base, rule.namespace, rule.kind, id, fill(rule.to, { w }), version), w, ...(r ? { h: Math.round(w / r) } : {}) })),
+    renditions: rule.widths.map((w) => ({ url: publicURL(rule.base, rule.namespace, rule.kind, id, fill(rule.to, { w }), version, rule.root), w, ...(r ? { h: Math.round(w / r) } : {}) })),
   };
 }

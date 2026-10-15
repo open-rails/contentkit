@@ -244,8 +244,10 @@ type PresetRule struct {
 	From      string `json:"from"`
 	Base      string `json:"base"`
 	Namespace string `json:"namespace"`
-	To        string `json:"to"`
-	Widths    []int  `json:"widths"`
+	// Root is the server-selected path before Kind, including its trailing slash.
+	Root   string `json:"root,omitempty"`
+	To     string `json:"to"`
+	Widths []int  `json:"widths"`
 	// Aspect is the rendition's shape ("W:H"); absent keeps the edit's.
 	Aspect Aspect `json:"aspect,omitzero"`
 	// MinWidth is the narrowest edit the preset accepts.

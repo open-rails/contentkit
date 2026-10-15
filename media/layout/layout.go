@@ -32,6 +32,8 @@ const (
 const (
 	// ManifestName is the manifest's key within the folder.
 	ManifestName = "manifest.json"
+	// ErasureFenceName is reserved gateway state, never a public rendition.
+	ErasureFenceName = "_contentkit_erased"
 	// DefaultID is the item id under which a kind's default public images live.
 	DefaultID = "_default"
 	// SHA256Prefix starts every blob name.
@@ -45,21 +47,45 @@ const (
 // Key is a parsed object key.
 type Key struct {
 	Namespace, Kind, ID string
+	Scope               Scope
 	Version             string // "" outside a version's folder
 	Area                string
 	Name                string // the name within the area; "" for the manifest
 }
 
 // Folder is the key's item folder.
-func (k Key) Folder() string { return Prefix(k.Namespace, k.Kind, k.ID, k.Version) }
+func (k Key) Folder() string {
+	if !k.Scope.IsZero() {
+		return k.Scope.Prefix(k.Kind, k.ID, k.Version)
+	}
+	return Prefix(k.Namespace, k.Kind, k.ID, k.Version)
+}
 
 // Parse classifies an object key; ok is false for anything outside the layout.
 func Parse(key string) (Key, bool) {
 	parts := strings.Split(key, "/")
+	var scope Scope
+	if len(parts) >= 3 && parts[0] == "tenant" && (parts[2] == "app" || parts[2] == "account") {
+		scope.TenantID = parts[1]
+		switch parts[2] {
+		case "app":
+			if len(parts) < 5 {
+				return Key{}, false
+			}
+			scope.AppID = parts[3]
+			parts = parts[4:]
+		case "account":
+			parts = parts[3:]
+		}
+		if !scope.Valid() {
+			return Key{}, false
+		}
+		parts = append([]string{scope.Partition()}, parts...)
+	}
 	if len(parts) < 4 || len(parts) > 6 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
 		return Key{}, false
 	}
-	k := Key{Namespace: parts[0], Kind: parts[1], ID: parts[2]}
+	k := Key{Namespace: parts[0], Scope: scope, Kind: parts[1], ID: parts[2]}
 	rest := parts[3:]
 	if len(rest) > 1 && ValidVersion(rest[0]) {
 		k.Version, rest = rest[0], rest[1:]
@@ -122,6 +148,9 @@ func ValidSegment(s string) bool {
 // filename. Only object names gain that allowance; folder segments keep their
 // existing bounds. Default images use content-addressed names.
 func ValidPublicName(name string) bool {
+	if name == ErasureFenceName {
+		return false
+	}
 	if ValidSegment(name) {
 		return true
 	}

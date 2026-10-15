@@ -50,6 +50,10 @@ type MyStats struct {
 	// Completed counts the contents they finished, per kind; empty without
 	// a signal plane.
 	Completed map[string]int64 `json:"completed"`
+	// AccessSeconds is elapsed access to each configured tier, from billing's
+	// recorded product windows and entitlement history. Overlaps count once;
+	// future access does not count. Absent when history is unavailable.
+	AccessSeconds map[string]int64 `json:"access_seconds,omitempty"`
 	// Comments counts their published comments; CommentLikes and
 	// CommentDislikes the reactions those received.
 	Comments        int64 `json:"comments"`
@@ -80,7 +84,7 @@ var statsRoutes = []httpapi.Route[handler]{
 			httpapi.Text("language", "the language of titles and paths; the site's first by default"), httpapi.Int("limit", "10 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(TopContents{})}, Errors: signals}, Serve: httpapi.H(handler.top)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/stats", Resource: "stats", Auth: httpapi.User,
-		Doc:       "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received.",
+		Doc:       "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history.",
 		Responses: []httpapi.Reply{httpapi.OK(MyStats{})}}, Serve: httpapi.H(handler.myStats)},
 }
 
@@ -280,6 +284,14 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 	if !actor.Person() {
 		return out, fmt.Errorf("%w: account statistics need a signed-in person", ErrInvalid)
 	}
+	if s.o.Tenure != nil && len(s.o.Kinds.Tiers) > 0 {
+		seconds, err := s.o.Tenure.Tenure(ctx, actor.ID, s.o.Kinds.Tiers, s.o.Now())
+		if err != nil {
+			s.o.Logger.WarnContext(ctx, "discovery: access tenure unavailable", "err", err)
+		} else {
+			out.AccessSeconds = seconds
+		}
+	}
 	if err := s.o.Pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(likes), 0), coalesce(sum(dislikes), 0) FROM `+s.t.comments+`
  WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL AND moderation = 'approved'`, s.o.Tenant, actor.ID).Scan(
 		&out.Comments, &out.CommentLikes, &out.CommentDislikes); err != nil {
@@ -293,11 +305,10 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 		n, err := s.o.Hub.HistoryCount(ctx, subject, signal.HistoryOptions{ContentKind: kind, Status: signal.HistoryCompleted})
 		if err != nil {
 			s.o.Logger.WarnContext(ctx, "discovery: completed counts unavailable", "err", err)
+			out.Completed = map[string]int64{}
 			return out, nil
 		}
-		if n > 0 {
-			out.Completed[kind] = n
-		}
+		out.Completed[kind] = n
 	}
 	return out, nil
 }

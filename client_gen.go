@@ -2951,7 +2951,7 @@ func (c *Client) GetStatsTop(ctx context.Context, q GetStatsTopQuery) (discovery
 	return out, err
 }
 
-// GetMeStats is GET /v1/me/stats (user). The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received.
+// GetMeStats is GET /v1/me/stats (user). The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history.
 func (c *Client) GetMeStats(ctx context.Context) (discovery.MyStats, error) {
 	var out discovery.MyStats
 	err := c.call(ctx, http.MethodGet, "/v1/me/stats", nil, nil, &out)

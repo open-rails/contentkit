@@ -58,15 +58,15 @@ that a release or deployment contains all of it.
 | Source | Current behavior | Target implication |
 | --- | --- | --- |
 | [`config.go`](../../config.go), [`engine.go`](../../engine.go) | `Config.Tenant` pins a catalog, access gate, signal scope and media setup | Its current value is a legacy **app** key, not the new business tenant |
-| [`scope.go`](../../scope.go) | In-progress typed tenant/app scope and immutable app/account-storage claims | Establishes compatible ownership metadata; it does not grant app permissions |
-| [`accounts.go`](../../accounts.go) | In-progress `AccountsConfig{Namespace, Schema, Avatars, SharedOrigins}` adapts inbox and avatar sharing | Preserve the working feature while replacing public sharing vocabulary |
-| [`notification/store.go`](../../notification/store.go), [`notification/shared_test.go`](../../notification/shared_test.go) | Shared receipt store with per-origin list/get/mutation filtering and common erasure fence | Reuse the persistence mechanism; make tenant/app scope explicit |
+| [`scope.go`](../../scope.go) | Local typed tenant/app scope and immutable app/account-storage claims | Establishes compatible ownership metadata; it does not grant app permissions |
+| [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars, SharedOrigins}` derives the tenant account root; legacy `Namespace` remains a migration input | Preserve the working feature while replacing public sharing vocabulary |
+| [`notification/store.go`](../../notification/store.go), [`notification/shared_test.go`](../../notification/shared_test.go) | Shared receipt store with explicit tenant/app visibility, filtered list/get/mutations and common erasure fence | Legacy origins remain explicit compatibility inputs; origin is not visibility |
 | [`notifications.go`](../../notifications.go), [`notification/openrails`](../../notification/openrails), [`adapters/openrails/notifications.go`](../../adapters/openrails/notifications.go) | In-progress reusable selection, verified recipient mapping, persist-before-ACK consumption and River contribution | Keep billing policy and retry mechanics out of host apps |
 | [`avatars.go`](../../avatars.go), [`media/avatar`](../../media/avatar) | One avatar writer; secondary app forwards authenticated self-only edits | Keep one canonical manifest and processing flow |
-| [`discovery/stats.go`](../../discovery/stats.go), [`adapters/openrails/tenure.go`](../../adapters/openrails/tenure.go) | App comments/completions plus in-progress authoritative elapsed access duration | Keep counters app-scoped; expose billing-derived tenure through ContentKit |
-| [`media/layout/layout.go`](../../media/layout/layout.go) | Paths begin `{namespace}/{kind}/{id}/{version?}` and the parser assumes that shape | Multi-segment tenant/app paths require a versioned parser/gateway migration |
+| [`discovery/stats.go`](../../discovery/stats.go), [`adapters/openrails/tenure.go`](../../adapters/openrails/tenure.go) | App comments/completions plus a thin adapter to OpenRails' native access-tenure query | Keep counters app-scoped; expose billing-derived tenure through ContentKit |
+| [`media/layout/layout.go`](../../media/layout/layout.go) | Scoped paths include the tenant and optional app; legacy paths remain explicit compatibility inputs | Registry, tokens, gateway, workers and verified copy plans share the same scope |
 | [`access/keys.go`](../../access/keys.go), [`content/runtime.go`](../../content/runtime.go) | Legacy tenant values occur in durable keys, references and query predicates | A config rename must not rewrite existing catalog/access identities |
-| [`internal/gate/gate.go`](../../internal/gate/gate.go) | Staff checks use the authenticator's root scope | A new app ID alone does not make existing staff permissions app-scoped |
+| [`internal/gate/gate.go`](../../internal/gate/gate.go), [`adapters/authkit/authorization.go`](../../adapters/authkit/authorization.go) | Legacy staff checks retain root scope; scoped engines require the app authorization port and explicit AuthKit grants | Host role/key adoption remains separate from the implemented adapter |
 
 The existing [design notes](../DESIGN.md) use "tenant" for the catalog
 isolation key. That accurately describes the current implementation, but
@@ -118,7 +118,9 @@ and optional content group. A missing binding fails startup. The binding must
 preserve credential ceilings, revocation and app restrictions; changing an
 AuthKit scope string alone is not sufficient because provider-wide root
 grants may be inherited. Legacy-only runtimes retain their existing authority
-contract. A production AuthKit adapter and host adoption remain #141 gates.
+contract. The local AuthKit adapter uses exact-group `CanDirect` checks and
+verifies its configured group personas; published delivery and host role/key
+adoption remain #141 gates.
 
 `Scope` is fixed when the embedded runtime or app-bound client is constructed.
 The default user-facing routes remain app-bound (`/me/stats`, notification
@@ -249,8 +251,8 @@ gateway checks must validate the tenant/app resource context.
 Logical target layout:
 
 ```text
-tenants/{tenantID}/accounts/{accountID}/avatar/{manifest|private|public|temp}/...
-tenants/{tenantID}/apps/{appID}/{kind}/{contentID}/{versionID}/{area}/...
+tenant/{tenantID}/account/user/{accountID}/{manifest|private|public|temp}/...
+tenant/{tenantID}/app/{appID}/{kind}/{contentID}/{versionID}/{area}/...
 ```
 
 `versionID` is present for versioned content; the avatar's manifest owns its
@@ -262,11 +264,11 @@ editor views and originals keep their existing access controls.
 
 The logical target is not a request to rename live objects immediately.
 Current storage uses `accounts/user/...`, `doujins/...` and `hentai0/...`;
-`media/layout.Parse` accepts the current short shape. Preserve those paths
-through explicit legacy bindings until the registry, manifest references,
-worker, gateway, signed paths, fallback/default rules and cache purge behavior
-all support the new layout. Never implement this by putting slashes into the
-existing single-segment `Namespace` field.
+`media/layout.Parse` accepts both shapes. Explicit copy plans hash and verify
+objects and adopt their manifest/journal state before cutover. A scoped-only
+gateway stops serving preserved legacy objects. The temporary `LegacyLayout`
+mode requires a successful rollback check; it is never an automatic fallback.
+See [media migration](../media-layout-migration.md).
 
 Consolidating buckets is independent of renaming keys. First copy and verify
 the existing keys into the shared bucket, switch explicit mappings, and keep
@@ -293,6 +295,13 @@ months or years consistently. If history is unavailable, omit/mark unavailable
 instead of displaying invented zero tenure. Legacy product-key changes require
 explicit mapping before promising a complete historical total.
 
+
+The approved initial `/account` display is exactly four metrics: Premium for
+(OpenRails query; elapsed days below one month, otherwise months), Galleries
+read (ContentKit completed-gallery count), Comments (ContentKit), and Likes
+received (ContentKit). Dislikes may remain queryable but are not displayed in
+this panel. Apps display these results and do not calculate tenure themselves.
+
 A future tenant-wide account overview may request an explicitly authorized
 aggregate with per-app breakdown. It is separate from the app default and
 must avoid counting an entitlement or content event twice.
@@ -301,9 +310,46 @@ Tenant account erasure fences the shared inbox and avatar first and dispatches
 app-owned deletion obligations to **all** tenant apps. Each obligation is
 idempotent and remains pending until completed; a failure in Hentai0 cannot be
 hidden by success in Doujins. App-only deletion/restriction affects that app's
-records and never accidentally calls shared account erasure. The existing
-`Engine.EraseSubjects` combines shared and local work and therefore requires
-an explicit compatibility wrapper plus tests before exposing app deletion.
+records and never accidentally calls shared account erasure. `EraseAppSubjects`
+cleans only the selected app. `EraseSubjects` cleans tenant account resources
+and the current app, with AuthKit's durable per-issuer purge callbacks delivering
+the other app obligations before final identity deletion.
+
+A catalog restored from backup must pass `ReplayErasureFences` before serving.
+`NewForErasureReplay` opens a restricted recovery engine with no serving or worker
+capability. Ordinary startup returns `ErrErasureReplayRequired` until each
+replayed fence has its completed engine-cleanup receipt (main migration0005).
+Avatar completion requires synchronous deletion and verification plus a durable
+access fence; recorded late-upload cleanup continues after completion.
+
+## Local database placement and startup
+
+The local Doujins and Hentai0 stack uses one PostgreSQL database,
+`doujins_db`. Its schemas separate app records (`doujins`, `hentai0`) and
+catalogs (`doujins_contentkit`, `hentai0_contentkit`); `profiles`, `billing`
+and `account_notifications` hold the shared account, merchant and inbox
+records. A schema is a named section inside a PostgreSQL database.
+
+ContentKit activity uses a separate database engine, ClickHouse. Both apps
+use its existing `hub` database and shared tables. The tables' legacy
+`tenant` column contains the app catalog key, so one app's reading activity
+does not become the other's. `hub` is a historical storage name, not an
+additional product concept or a separate service. ClickHouse does not use
+PostgreSQL schemas; these two kinds of placement must not be conflated.
+
+The owner specified an explicit migration boundary on 2026-10-14:
+`task up` starts the Compose dependencies; `task dev` compiles and runs
+migrations against those running services before starting Air and Vite.
+Server and worker startup validate the required schemas without applying
+migrations. This includes embedded AuthKit, OpenRails and ContentKit, their
+River schemas, the shared inbox, and ContentKit's ClickHouse signal tables.
+Missing migrations must produce an actionable error, not an automatic
+upgrade. Explicit migration commands remain available outside development.
+Local library compatibility modes and both host integrations implement this
+boundary with `Database.SkipMigrations` and explicit migration entrypoints.
+Real PostgreSQL tests cover unprepared startup, unchanged migration ledgers,
+and prepared startup with DDL blocked. Both local migration commands completed;
+published package and deployment evidence remain separate.
 
 ## Delivery plan and evidence gates
 

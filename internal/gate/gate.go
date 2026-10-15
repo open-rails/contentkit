@@ -31,6 +31,14 @@ type Gate struct {
 	Log  *slog.Logger
 }
 
+// ScopedAuthorization is the fixed app policy installed by a scoped engine.
+// It receives the provider's original verified credential, never an identity
+// reconstructed from request data. Legacy authenticators do not implement it.
+type ScopedAuthorization interface {
+	ResolveActor(context.Context, auth.Verified) (string, error)
+	Authorize(context.Context, auth.Verified, string, string) (bool, error)
+}
+
 // Check refuses a missing Authenticator, typed nil pointers included. A
 // module with staff routes passes their permissions: the Authenticator must
 // name its root scope (auth.Root), where they are held, and know each one
@@ -41,6 +49,9 @@ func Check(a auth.Authenticator, perms ...access.Permission) error {
 		return errors.New("an auth.Authenticator is required")
 	}
 	if len(perms) == 0 {
+		return nil
+	}
+	if _, scoped := a.(ScopedAuthorization); scoped {
 		return nil
 	}
 	if _, ok := a.(auth.Root); !ok {
@@ -68,6 +79,9 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 	if _, ok := actor.Verified.(hostVerified); ok {
 		return true, nil
 	}
+	if scoped, ok := a.(ScopedAuthorization); ok {
+		return authorize(ctx, scoped, actor.Verified, "", perm)
+	}
 	root, err := RootScope(ctx, a)
 	if err != nil {
 		return false, err
@@ -86,6 +100,14 @@ func GroupEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, 
 	case owner != "" && actor.Person() && owner == actor.ID:
 		return true, nil
 	case scope == "":
+		return false, nil
+	}
+	if scoped, ok := a.(ScopedAuthorization); ok {
+		for _, p := range perms {
+			if ok, err := authorize(ctx, scoped, actor.Verified, scope, p); err != nil || ok {
+				return ok, err
+			}
+		}
 		return false, nil
 	}
 	root, err := RootScope(ctx, a)
@@ -263,10 +285,64 @@ func (g *Gate) actor(r *http.Request) (access.Actor, error) {
 		return access.Actor{}, errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("%T: the Identity's subject kind %q is neither a user nor an application", v, id.SubjectKind)))
 	}
 	a := access.Actor{ID: id.Subject, Kind: id.SubjectKind, IP: clientIP(r), Verified: &memo{v: v}}
+	if scoped, ok := g.Auth.(ScopedAuthorization); ok {
+		if strings.TrimSpace(id.Issuer) == "" {
+			return access.Actor{}, errors.Join(auth.ErrUnavailable, fault("scoped identity names no issuer"))
+		}
+		a.ID, err = resolveActor(r.Context(), scoped, v)
+		if err != nil {
+			return access.Actor{}, err
+		}
+		if strings.TrimSpace(a.ID) == "" {
+			return access.Actor{}, errors.Join(auth.ErrUnavailable, fault("app authorization returned an empty actor ID"))
+		}
+	}
 	if id.Invoker != (auth.Invoker{}) && !id.SelfInvoked() {
 		a.Invoker = id.Invoker
 	}
 	return a, nil
+}
+
+func resolveActor(ctx context.Context, a ScopedAuthorization, v auth.Verified) (id string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			id, err = "", errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("app authorization ResolveActor panicked: %v", p)))
+		}
+	}()
+	return a.ResolveActor(ctx, v)
+}
+
+func authorize(ctx context.Context, a ScopedAuthorization, v auth.Verified, group, permission string) (ok bool, err error) {
+	var memoized *memo
+	key := canKey{scope: auth.Scope{ID: group}, perm: permission}
+	if m, wrapped := v.(*memo); wrapped {
+		memoized = m
+		m.mu.Lock()
+		cached, hit := m.scoped[key]
+		m.mu.Unlock()
+		if hit {
+			return cached, nil
+		}
+		v = m.v
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			ok, err = false, errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("app authorization Authorize panicked: %v", p)))
+		}
+	}()
+	ok, err = a.Authorize(ctx, v, group, permission)
+	if err != nil {
+		return false, err
+	}
+	if memoized != nil {
+		memoized.mu.Lock()
+		if memoized.scoped == nil {
+			memoized.scoped = make(map[canKey]bool)
+		}
+		memoized.scoped[key] = ok
+		memoized.mu.Unlock()
+	}
+	return ok, nil
 }
 
 // presented reports a credential in r: any header the Authenticator's
@@ -346,9 +422,10 @@ func (g *Gate) refuse(w http.ResponseWriter, r *http.Request, s httpapi.Spec, er
 // memo is the request's Verified, remembering each Can it answered, so the
 // gate and the handler ask the provider once per permission.
 type memo struct {
-	v   auth.Verified
-	mu  sync.Mutex
-	can map[canKey]bool
+	v      auth.Verified
+	mu     sync.Mutex
+	can    map[canKey]bool
+	scoped map[canKey]bool
 }
 
 type canKey struct {

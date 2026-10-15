@@ -220,7 +220,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/v1/sitemap/groups` | open | — | 200 `SitemapPage` | Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves. Query: `kind`, `cursor`, `limit`. |
 | GET | `/v1/stats/activity` | staff `root:content:view-restricted` | — | 200 `Activity` | A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane. Query: `kind`, `days`. |
 | GET | `/v1/stats/top` | staff `root:content:view-restricted` | — | 200 `TopContents` | A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period. Query: `kind`, `metric`, `period`, `access`, `tiers`, `language`, `limit`. |
-| GET | `/v1/me/stats` | user | — | 200 `MyStats` | The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received. |
+| GET | `/v1/me/stats` | user | — | 200 `MyStats` | The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history. |
 
 ## Bulk import (`/v1`)
 

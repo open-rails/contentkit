@@ -82,6 +82,9 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			if err != nil {
 				return err
 			}
+			if obj.Key == item.PublicPrefix()+layout.ErasureFenceName {
+				continue
+			}
 			if k, ok := layout.Parse(obj.Key); ok && k.Folder() != item.Prefix() {
 				continue // a version's folder within a content's
 			}
@@ -107,7 +110,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			}
 		}
 		mutation.effects.Cancel = j.cfg.Journal.queue != nil
-		if owner != "" && j.cfg.Limiter != nil {
+		if owner != "" {
 			charged, err := j.uploadBytes(ctx, item.Prefix())
 			if err != nil {
 				return err
@@ -141,6 +144,11 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 }
 
 func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) error {
+	if _, err := j.cfg.Store.Head(ctx, item.PublicPrefix()+layout.ErasureFenceName); err == nil {
+		return errors.New("media: permanently erased item cannot be reset")
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	operation := uuid.NewSHA1(deletion, []byte("reset"))
 	mutation := &manifestMutation{lifecycle: true, commit: manifestCommit{ID: operation,
 		Fingerprint: sha256.Sum256([]byte("reset:" + deletion.String()))}}

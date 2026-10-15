@@ -1,26 +1,51 @@
 # Database initialization
 
-Each store has one baseline of the final schema (#117, pre-launch hard cut):
+Each store has a fresh-install baseline, followed by versioned upgrades:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
 | PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, groups, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
-There is no upgrade path from installs of an older chain: start from empty
-stores and import their data (`POST /v1/import`). A version id is NULL for the
-work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
+The PostgreSQL migrator also recognizes the exact baseline shipped before
+version-owned covers (`79d1bcc`, SHA-256 `5f1614f38022…`). Its immutable bytes
+remain embedded under `migrations/compat`; installations that recorded it keep
+that truthful ledger entry and apply the numbered upgrade steps. No checksum
+is silently accepted or rewritten. Other historical baseline hashes require
+an explicitly supported conversion; do not reset a populated store to hide a
+migration error. A version id is NULL for the work itself in PostgreSQL and
+`''` in ClickHouse, whose sorting keys hold it.
+
+The cover upgrade prepares the version column in migration `0003`. Migration
+`0004` refuses to remove content-level metadata while any old cover remains.
+An installation with old covers must first run the explicit media migration:
+inventory and copy the files, verify the destination, move the metadata to its
+declared version owner, then clear the old metadata and rerun migrations.
+Preparation remains applied so the operator can resume; an interrupted copy
+never causes the schema migration to discard the original cover.
 
 ## ContentKit's own schema
 
-`contentkit.New` applies the PostgreSQL baseline to `Config.Database.Schema`
-(default `contentkit`), River's migrations to `Database.RiverSchema` and the
-media worker's queue, and, with `Config.ClickHouse.Addr`, the ClickHouse
-baseline to `ClickHouse.Database`. The schema is ContentKit's alone: it may
-share the host's database, never the host's schema. Create the ClickHouse
-database with `signal.CreateDatabase` first.
+Hosts run `MigratePostgres(ctx, pool, cfg)` and
+`MigrateClickHouse(ctx, pool, cfg)` from their explicit migration command.
+The PostgreSQL entrypoint prepares the configured catalog, account storage,
+scope bindings and queues; `MigrationOptions{SkipQueues: true}` skips queue
+DDL when the caller manages that separately. The ClickHouse entrypoint creates
+its target database before applying the signal lineage.
 
-New is idempotent through MigrateKit's ledger, and replicas booting together take turns on its lock. PostgreSQL uses
+Set `Config.Database.SkipMigrations = true` for application startup. `New`
+then checks prepared storage without applying migrations, including when the
+signal plane reconnects. Missing migrations produce an actionable error; an
+unavailable optional signal plane retains its existing degraded behavior.
+The zero value keeps automatic migration for older embedded callers. Doujins
+and Hentai0 use explicit migration commands and validation-only startup.
+
+The catalog schema is ContentKit's alone: it may share the host's database,
+never the host's schema. Account storage can use a separate schema shared by
+the tenant's apps; it does not merge their catalogs.
+
+Explicit migration is idempotent through MigrateKit's ledger, and concurrent
+migration commands take turns on its lock. PostgreSQL uses
 app identity `contentkit`; ClickHouse defaults to `contentkit_signal`. The
 ClickHouse ledger also binds the explicit `Database`, so two databases may
 share the same app identity and PostgreSQL tracker. Each PostgreSQL tracker

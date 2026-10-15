@@ -1,6 +1,18 @@
 package access
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+// TenureReader optionally extends Billing with elapsed access to its
+// entitlement keys. Tenure answers seconds per requested key as of at, merging
+// overlapping product-access windows and excluding future time. An unavailable
+// history returns an error, not an invented zero. Adapters may implement it to
+// populate the reader's account statistics without a host-specific endpoint.
+type TenureReader interface {
+	Tenure(ctx context.Context, subject string, keys []string, at time.Time) (map[string]int64, error)
+}
 
 // HeldLimit is the keys one billing read returns per keyspace; a viewer
 // holding more gets an incomplete Filter.

@@ -93,6 +93,10 @@ export const content: typeof en = {
     saveSegments: "保存章节",
   },
   myStats: {
+    accessFor: "{tier}使用时长",
+    accessDescription: "拥有访问权限的累计时间；一个月按30天计算。",
+    lessThanDay: "不足1天",
+    unavailable: "部分统计数据暂时不可用。",
     completed: "已看完的{kind}",
     comments: "评论",
     likes: "收到的赞",

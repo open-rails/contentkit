@@ -1,7 +1,7 @@
 // Package contentkit is ContentKit running in this process: the content
 // library a host configures and mounts, as it does OpenRails and AuthKit.
 //
-//	ck, err := contentkit.New(ctx, cfg, deps)  // migrates its schema
+//	ck, err := contentkit.New(ctx, cfg, deps)  // validates or migrates its schema
 //	err = ck.Start(ctx)                        // its jobs, on its own River
 //	routes, err := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
 //
@@ -44,6 +44,7 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
@@ -59,33 +60,36 @@ const DefaultSchema = "contentkit"
 
 var schemaRE = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-// Engine is ContentKit running in this process for one tenant.
+// Engine is ContentKit running in this process for one app's catalog.
 type Engine struct {
-	cfg         Config
-	schema      string
-	riverSchema string
-	pool        *pgxpool.Pool
-	log         *slog.Logger
-	auth        auth.Authenticator
-	gate        *access.Gate
-	classifier  bool // free-text answers to reclassify
+	cfg             Config
+	scope           *Scope
+	erasureRecovery bool
+	schema          string
+	riverSchema     string
+	pool            *pgxpool.Pool
+	log             *slog.Logger
+	auth            auth.Authenticator
+	gate            *access.Gate
+	classifier      bool // free-text answers to reclassify
 
-	hub      *hub.Hub
-	signals  *signalPlane // nil without ClickHouse
-	chMu     sync.Mutex
-	ownCH    clickhouse.Conn // opened from Config.ClickHouse
-	content  *content.Runtime
-	notices  *notification.Store
-	groups   *groups.Store
-	catalog  *catalog.Store
-	offers   *offers.Service
-	discover *discovery.Service
-	importer *importer.Service
-	media    *engineMedia
-	avatars  *engineAvatars
-	modules  map[httpapi.Module]http.Handler
-	inproc   http.Handler
-	probes   []Probe
+	hub              *hub.Hub
+	signals          *signalPlane // nil without ClickHouse
+	chMu             sync.Mutex
+	ownCH            clickhouse.Conn // opened from Config.ClickHouse
+	content          *content.Runtime
+	notices          *notification.Store
+	notificationJobs *billingNotificationJobs
+	groups           *groups.Store
+	catalog          *catalog.Store
+	offers           *offers.Service
+	discover         *discovery.Service
+	importer         *importer.Service
+	media            *engineMedia
+	avatars          *engineAvatars
+	modules          map[httpapi.Module]http.Handler
+	inproc           http.Handler
+	probes           []Probe
 
 	mu        sync.Mutex
 	jobs      *jobs
@@ -109,17 +113,27 @@ type engineMedia struct {
 	progress media.ProgressSource
 }
 
-// New runs ContentKit in this process. Before anything else touches the
-// database it creates or upgrades ContentKit's tables in
-// Config.Database.Schema, River's in Config.Database.RiverSchema and the
-// media worker's queue; replicas booting together take turns on an advisory
-// lock. With ClickHouse configured it opens the signal plane, applying its
-// migrations with ClickHouse.Addr; while ClickHouse is down signals are off,
-// and the engine retries in the background until Close. It starts no jobs:
-// Start does, and jobs queued before it wait. ctx bounds the wait for the
-// databases.
+// New runs ContentKit in this process. With Database.SkipMigrations it checks
+// prepared catalog, shared account, notification and queue storage read-only;
+// the host calls MigratePostgres and MigrateClickHouse explicitly beforehand.
+// The zero value retains automatic embedded migrations for compatibility.
+// A configured ClickHouse outage disables signals while the engine retries;
+// read-only mode never applies DDL on those retries. New starts no jobs: Start
+// does, and queued jobs wait until then. ctx bounds database initialization.
 func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil}
+	return newEngine(ctx, cfg, deps, false)
+}
+
+// NewForErasureReplay opens the normal app stores for explicit restore repair.
+// It permits pending erasure replay, but cannot serve routes, use Client, or
+// start jobs. Close it after ReplayErasureFences and construct New normally.
+func NewForErasureReplay(ctx context.Context, cfg Config, deps Deps) (*Engine, error) {
+	cfg.Database.SkipMigrations = true
+	return newEngine(ctx, cfg, deps, true)
+}
+
+func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *Engine, err error) {
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil, erasureRecovery: recovery}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -130,12 +144,20 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	if err := e.validate(deps); err != nil {
 		return nil, err
 	}
+	cfg = e.cfg
 	defer func() {
 		if err != nil {
 			_ = e.Close(context.WithoutCancel(ctx))
 		}
 	}()
-	if err := e.migrate(ctx); err != nil {
+	if e.cfg.Database.SkipMigrations {
+		if err := e.resolveAccountKey(ctx); err != nil {
+			return nil, migrationValidationError(err)
+		}
+		if err := e.validateDatabase(ctx); err != nil {
+			return nil, err
+		}
+	} else if err := e.migrate(ctx); err != nil {
 		return nil, err
 	}
 	e.signals = e.newSignals(deps)
@@ -174,32 +196,38 @@ func New(ctx context.Context, cfg Config, deps Deps) (_ *Engine, err error) {
 	e.jobs = &jobs{e: e}
 	e.probes = e.newProbes(deps)
 	if e.signals != nil {
-		e.signals.start(ctx)
+		if recovery {
+			first, cancel := context.WithTimeout(ctx, e.signals.bootWait)
+			e.signals.attempt(first)
+			cancel()
+		} else {
+			e.signals.start(ctx)
+		}
+	}
+	if !recovery {
+		if err := e.checkErasureReplay(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if recovery {
+		e.inproc = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, ErrErasureReplayRequired.Error(), http.StatusServiceUnavailable)
+		})
 	}
 	return e, nil
 }
 
 func (e *Engine) validate(deps Deps) error {
+	if err := e.configureStorage(); err != nil {
+		return err
+	}
 	cfg := &e.cfg
-	cfg.Tenant = strings.TrimSpace(cfg.Tenant)
-	if cfg.Tenant == "" {
-		return errors.New("contentkit: Config.Tenant is required")
-	}
-	e.schema = strings.TrimSpace(cfg.Database.Schema)
-	if e.schema == "" {
-		e.schema = DefaultSchema
-	}
-	e.riverSchema = strings.TrimSpace(cfg.Database.RiverSchema)
-	if e.riverSchema == "" {
-		e.riverSchema = e.schema + "_river"
-	}
-	for _, s := range []string{e.schema, e.riverSchema} {
-		if !schemaRE.MatchString(s) || len(s) > 63 {
-			return fmt.Errorf("contentkit: schema %q is not a lower-case identifier", s)
-		}
-	}
+	var err error
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
+	}
+	if err := e.validateGroupScopes(deps.Scopes); err != nil {
+		return err
 	}
 	for kind := range cfg.Content.Kinds {
 		if slices.Contains(httpapi.Reserved(), kind) {
@@ -209,12 +237,14 @@ func (e *Engine) validate(deps Deps) error {
 	if deps.Postgres == nil {
 		return errors.New("contentkit: Deps.Postgres is required")
 	}
-	if err := gate.Check(deps.Auth, access.Permissions()...); err != nil {
+	e.auth, err = e.authorization(deps.Auth, deps.Authorization)
+	if err != nil {
+		return err
+	}
+	if err := gate.Check(e.auth, access.Permissions()...); err != nil {
 		return fmt.Errorf("contentkit: Deps.Auth: %w", err)
 	}
 	if cfg.Media != nil {
-		mc := *cfg.Media
-		cfg.Media = &mc
 		if _, err := cfg.MediaKinds(); err != nil {
 			return err
 		}
@@ -245,16 +275,58 @@ func (e *Engine) validate(deps Deps) error {
 	return nil
 }
 
-// migrate applies ContentKit's, River's and the media worker queue's
-// migrations, each under its migrator's advisory lock.
+// migrate applies the catalog, account metadata, River and media worker
+// migrations under their migrators' locks, then claims the configured scope.
 func (e *Engine) migrate(ctx context.Context) error {
+	return e.migratePostgres(ctx, MigrationOptions{})
+}
+
+func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) error {
 	db := stdlib.OpenDBFromPool(e.pool)
 	defer db.Close()
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
+	if n := e.cfg.Notifications; n != nil {
+		if !schemaRE.MatchString(n.Schema) || strings.TrimSpace(n.Namespace) == "" {
+			return errors.New("contentkit: notifications require a valid schema and namespace")
+		}
+		if err := notification.Migrate(ctx, e.pool, n.Schema); err != nil {
+			return err
+		}
+	}
+	accountSchema, _ := e.accountStorage()
+	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
+		return err
+	}
+	if options.LegacyAccountKey != "" {
+		if e.scope == nil || !layout.ValidSegment(options.LegacyAccountKey) {
+			return errors.New("contentkit: LegacyAccountKey requires Scope and a valid key")
+		}
+		e.cfg.Notifications.Namespace = options.LegacyAccountKey
+	}
+	if err := e.resolveAccountKey(ctx); err != nil {
+		return err
+	}
+	if options.LegacyAccountKey != "" && e.cfg.Notifications.Namespace != options.LegacyAccountKey {
+		return ErrScopeConflict
+	}
+	if err := e.bindScope(ctx); err != nil {
+		return err
+	}
+	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
+		return err
+	}
+	if options.SkipQueues {
+		return nil
+	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
+	}
+	if account, ok := e.accountMediaStorage(); ok {
+		if err := workqueue.Migrate(ctx, e.pool, account.WorkerSchema); err != nil {
+			return fmt.Errorf("contentkit: account media queue migrations: %w", err)
+		}
 	}
 	if m := e.cfg.Media; m != nil {
 		if m.WorkerSchema == "" {
@@ -325,18 +397,44 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
 	}
-	if m.queue, err = workqueue.New(e.pool, m.reg, mc.WorkerSchema); err != nil {
+	accountStorage, sharedAccounts := e.accountMediaStorage()
+	accountQueue := ""
+	if sharedAccounts {
+		accountQueue = accountStorage.WorkerSchema
+	}
+	if m.queue, err = workqueue.NewWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
 		return nil, err
 	}
 	journal, err := media.NewPGJournal(e.pool, e.schema, m.queue)
 	if err != nil {
 		return nil, err
 	}
+	if sharedAccounts {
+		accountJournal, err := media.NewPGJournal(e.pool, accountStorage.Schema, m.queue)
+		if err != nil {
+			return nil, err
+		}
+		journal, err = media.RouteJournal(journal, accountJournal, e.accountMediaPartition())
+		if err != nil {
+			return nil, err
+		}
+	}
 	limiter, err := e.groupLimiter()
 	if err != nil {
 		return nil, err
 	}
-	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
+	if sharedAccounts && limiter != nil {
+		accountLimiter, err := media.NewPGLimiter(e.pool, accountStorage.Schema, media.PGLimits{})
+		if err != nil {
+			return nil, err
+		}
+		limiter = media.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
+	}
+	erasureQueue, err := media.NewHostQueue(e.pool, m.reg, e.riverSchema, "", 0)
+	if err != nil {
+		return nil, err
+	}
+	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal, ErasureQueue: erasureQueue,
 		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
@@ -370,7 +468,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
 		return nil, err
 	}
-	if m.progress, err = workqueue.NewProgressSource(e.pool, mc.WorkerSchema); err != nil {
+	if m.progress, err = workqueue.NewProgressSourceWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
 		return nil, err
 	}
 	mode := media.DeliverURL
@@ -426,7 +524,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	l := in.Limits
 	o := content.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Notifications: e.cfg.Notifications, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor: deps.Processor,
 		Moderator: deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
@@ -435,8 +533,11 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
 		Logger: e.log,
 	}
+	if e.scope != nil {
+		o.NotificationAppID = e.scope.AppID.String()
+	}
 	if e.media != nil {
-		o.Media = &content.Media{Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
+		o.Media = &content.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
 	}
 	if e.avatars != nil {
 		o.Avatars = e.avatars.urls
@@ -508,6 +609,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog}
+	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")
 		o.Candidates = nil
@@ -550,6 +652,9 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start
 // started. Call it once, before serving.
 func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
+	if e.erasureRecovery {
+		return ErrErasureReplayRequired
+	}
 	var o startOptions
 	for _, opt := range opts {
 		if opt != nil {
@@ -671,7 +776,12 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 	return out
 }
 
-// EraseSubjects erases subjects from every plane: signals, interaction data,
+// EraseSubjects erases the shared account inbox/avatar plus this app's data.
+// The identity lifecycle must invoke it for EVERY app of the tenant; AuthKit's
+// AccountIssuers and durable OnPurge deliveries provide that fanout and retry.
+// It does not discover or erase another engine's catalog on its own.
+//
+// It erases subjects from every plane: signals, interaction data,
 // recent searches, inboxes, people's avatars (on the avatar primary only:
 // another site's people's avatars are the primary's, which its own
 // EraseSubjects erases; see AvatarsConfig) and data
@@ -682,6 +792,17 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // content and media planes are erased; a configured one that is down stays
 // signal_plane until it is back.
 func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
+	return e.eraseSubjects(ctx, subjects, true)
+}
+
+// EraseAppSubjects permanently erases/fences personal activity in this app
+// only. It preserves shared account notices, avatars, credentials and other
+// apps' activity. It is not an account deregistration or an inbox reset API.
+func (e *Engine) EraseAppSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
+	return e.eraseSubjects(ctx, subjects, false)
+}
+
+func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, account bool) (signal.ErasureReport, error) {
 	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
 	if len(subjects) > signal.MaxErasureSubjects {
 		return invalid, &signal.LimitError{Field: "subjects per erasure", Limit: signal.MaxErasureSubjects, Got: len(subjects)}
@@ -708,8 +829,15 @@ func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (
 			actors = append(actors, s.Key())
 		}
 	}
-	contentErr := errors.Join(e.content.EraseSubjects(ctx, actors), e.discover.EraseSearches(ctx, subjects))
-	mediaErr := e.eraseAvatars(ctx, actors)
+	eraseContent := e.content.EraseAppSubjects
+	if account {
+		eraseContent = e.content.EraseSubjects
+	}
+	contentErr := errors.Join(eraseContent(ctx, actors), e.discover.EraseSearches(ctx, subjects))
+	var mediaErr error
+	if account {
+		mediaErr = e.eraseAvatars(ctx, actors)
+	}
 	if signalErr != nil {
 		report.Remaining["signal_plane"] = 1
 	}
@@ -719,12 +847,30 @@ func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (
 	if mediaErr != nil {
 		report.Remaining["media_plane"] = 1
 	}
-	return report, errors.Join(signalErr, contentErr, mediaErr)
+	err := errors.Join(signalErr, contentErr, mediaErr)
+	if err == nil && report.Complete() && len(actors) > 0 {
+		err = e.completeErasure(ctx, actors, account)
+		if err != nil {
+			report.Remaining["content_plane"] = 1
+		}
+	}
+	return report, err
 }
 
-// eraseAvatars deletes people's avatar items, their uploads and public
-// files: one job each, queued together.
+// eraseAvatars permanently fences and verifies each tenant account avatar.
+// Completion means the first storage cleanup finished, not just job acceptance.
 func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
+	if e.scope != nil && len(users) > 0 {
+		schema, _ := e.accountStorage()
+		var primary string
+		err := e.pool.QueryRow(ctx, `SELECT primary_app_id::text FROM `+pgx.Identifier{schema, "content_account_avatar_placement"}.Sanitize()+` WHERE tenant_id=$1`, e.scope.TenantID.String()).Scan(&primary)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if primary == e.scope.AppID.String() && (e.media == nil || e.media.reg.Config().Avatars.Kind == "") {
+			return errors.New("contentkit: avatar primary cannot complete account erasure without its avatar storage")
+		}
+	}
 	if e.media == nil || len(users) == 0 {
 		return nil
 	}
@@ -732,13 +878,14 @@ func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
 	if kind == "" {
 		return nil
 	}
-	del := make([]media.Deletion, len(users))
-	for i, u := range users {
+	for _, u := range users {
 		ref, err := e.media.reg.Ref(kind, u)
 		if err != nil {
 			return err
 		}
-		del[i] = media.Deletion{Ref: ref, Owner: u}
+		if err = e.media.jobs.Erase(ctx, media.Deletion{Ref: ref, Owner: u, OperationID: "account-erasure:" + u}); err != nil {
+			return err
+		}
 	}
-	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error { return e.media.jobs.DeleteItemsTx(ctx, tx, del...) })
+	return nil
 }

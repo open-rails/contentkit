@@ -32,7 +32,16 @@ type Client struct {
 // every staff permission. Routes for a signed-in person (tier user) refuse
 // it.
 func (e *Engine) Client() *Client {
+	if e.erasureRecovery {
+		return &Client{hc: &http.Client{Transport: erasureRecoveryTransport{}}, base: inprocessBase}
+	}
 	return &Client{hc: &http.Client{Transport: inprocess{e.inproc}}, base: inprocessBase}
+}
+
+type erasureRecoveryTransport struct{}
+
+func (erasureRecoveryTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, ErrErasureReplayRequired
 }
 
 // NewClient is a client of the ContentKit served at base, the host's prefix

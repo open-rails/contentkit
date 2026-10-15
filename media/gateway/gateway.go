@@ -1,18 +1,14 @@
-// Package gateway is the media gateway run by cmd/media-gateway. For the
-// namespaces served on the request's host it streams, from each namespace's
-// private bucket with one read-only key:
+// Package gateway serves the exact app/account roots declared for a media
+// host. Scoped URLs are /v1/tenant/{tenant}/app/{app}/{kind}/{id}[/{version}]/…
+// or /v1/tenant/{tenant}/account/{kind}/{account}/… . Legacy namespace URLs
+// remain available only through explicitly configured Hosts/Buckets.
 //
-//	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, the configured immutable default
-//	/v1/{ns}/{kind}/{id}/private/sha256-{hex}-{uuid}  with the item's unexpired token (?t= or an mt cookie);
-//	                                           ?dl={name} serves it as a download under that name
-//	/v1/{ns}/{kind}/{id}/download/sha256-{hex}-{uuid} with that one key's unexpired download token (?t= only);
-//	                                           ?dl= alike
-//
-// An item token opens every private file of its item or none, and never a
-// download; a download token opens only its key. Everything else and
-// every denial is one identical no-store 404; token denials are decided
-// before any bucket access. It keeps no state, reads no manifests and no
-// databases, and knows nothing of apps, presets or originals.
+// Public renditions are anonymous; private files require the item's token and
+// download files require a token for that exact key. Denials use a uniform
+// no-store 404 and token denials precede S3 access. Before serving a scoped
+// item, a HEAD of its reserved public erasure marker rejects permanently erased
+// items, including late uploads reached through old tokens. Forbidden marker
+// reads fail closed. The gateway reads no manifests or databases.
 package gateway
 
 import (
@@ -43,12 +39,23 @@ const (
 )
 
 // Config configures a Handler.
+// Route exposes exactly one tenant account or app root on a media host.
+// Legacy Hosts/Buckets never authorize a scoped path.
+type Route struct {
+	Host    string       `json:"host"`
+	Scope   layout.Scope `json:"scope"`
+	Bucket  string       `json:"bucket"`
+	Origins []string     `json:"origins,omitempty"`
+}
+
 type Config struct {
+	Routes []Route
+
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // a key that can read only */private/*, */download/* and */public/* of every bucket
+	AccessKeyID, SecretAccessKey string // read key for served private/download/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
-	Hosts                        map[string][]string // lower-case host name (no port) -> namespaces served on it; required
-	Buckets                      map[string]string   // namespace -> its app's bucket; required for every served namespace
+	Hosts                        map[string][]string // legacy lower-case host -> namespaces; Routes selects scoped paths
+	Buckets                      map[string]string   // legacy namespace -> bucket; required for each legacy host namespace
 	Origins                      []string            // exact CORS origins ("scheme://host[:port]") allowed with credentials
 	Defaults                     []layout.Default    // deployment selection from image.PublishDefaults
 	Client                       *http.Client        // default: a tuned transport without compression
@@ -75,16 +82,38 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return nil, errors.New("gateway: invalid Endpoint")
 	}
-	if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
-		return nil, err
+	if len(cfg.Hosts) > 0 {
+		if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
+			return nil, err
+		}
+		if cfg.Buckets, err = layout.CheckBuckets(cfg.Buckets); err != nil {
+			return nil, err
+		}
 	}
-	if cfg.Buckets, err = layout.CheckBuckets(cfg.Buckets); err != nil {
-		return nil, err
+	if len(cfg.Hosts) == 0 && len(cfg.Routes) == 0 {
+		return nil, errors.New("gateway: at least one scoped Route or legacy Host is required")
 	}
 	for host, nss := range cfg.Hosts {
 		for _, ns := range nss {
 			if cfg.Buckets[ns] == "" {
 				return nil, fmt.Errorf("gateway: host %q serves namespace %q, which has no bucket", host, ns)
+			}
+		}
+	}
+	cfg.Routes = slices.Clone(cfg.Routes)
+	for i := range cfg.Routes {
+		cfg.Routes[i].Origins = slices.Clone(cfg.Routes[i].Origins)
+	}
+	seen := map[string]bool{}
+	for _, r := range cfg.Routes {
+		key := r.Host + "/" + r.Scope.Partition()
+		if !r.Scope.Valid() || r.Host == "" || strings.Trim(r.Host, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" || !layout.ValidSegment(r.Bucket) || seen[key] {
+			return nil, errors.New("gateway: invalid or duplicate scoped Route")
+		}
+		seen[key] = true
+		for _, origin := range r.Origins {
+			if err := validOrigin(origin); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -157,13 +186,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			dl = new(q.Get("dl"))
 		}
 	}
-	resp, err := h.fetch(r, o.ns, key)
+	if !o.scope.IsZero() {
+		check := r.Clone(r.Context())
+		check.Method = http.MethodHead
+		check.Header = make(http.Header)
+		fence := o
+		fence.area = layout.AreaPublic
+		fence.name = layout.ErasureFenceName
+		status, err := h.fetch(check, o.bucket, fence.key())
+		if err != nil {
+			h.fail(w, http.StatusBadGateway)
+			return
+		}
+		code := status.StatusCode
+		_ = status.Body.Close()
+		if code != http.StatusNotFound {
+			if code == http.StatusOK {
+				h.fail(w, http.StatusNotFound)
+			} else {
+				h.fail(w, http.StatusBadGateway)
+			}
+			return
+		}
+	}
+	resp, err := h.fetch(r, o.bucket, key)
 	if err == nil && missing(resp.StatusCode) && o.area == "public" {
 		if name := h.defaultName(o); name != "" {
 			_ = resp.Body.Close()
 			o.name, o.id, o.version = name, layout.DefaultID, ""
 			key = o.key()
-			resp, err = h.fetch(r, o.ns, key)
+			resp, err = h.fetch(r, o.bucket, key)
 		}
 	}
 	if err != nil {
@@ -177,9 +229,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.relay(w, r, key, resp, cacheControl, dl)
 }
 
-type object struct{ ns, kind, id, version, area, name string }
+type object struct {
+	ns, kind, id, version, area, name string
+	scope                             layout.Scope
+	bucket                            string
+}
 
 func (o object) key() string {
+	if !o.scope.IsZero() {
+		return o.scope.Prefix(o.kind, o.id, o.version) + o.area + "/" + o.name
+	}
 	return layout.Prefix(o.ns, o.kind, o.id, o.version) + o.area + "/" + o.name
 }
 
@@ -187,32 +246,39 @@ func (o object) key() string {
 // unescaped, for a namespace served on the request's host.
 func (h *Handler) parse(r *http.Request) (object, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
-	p := strings.Split(rest, "/")
-	if !ok || r.URL.RawPath != "" || len(p) < 5 || len(p) > 6 || slices.ContainsFunc(p[:len(p)-1], func(s string) bool { return !layout.ValidSegment(s) }) {
+	if !ok || r.URL.RawPath != "" {
 		return object{}, false
 	}
-	o := object{ns: p[0], kind: p[1], id: p[2], area: p[len(p)-2], name: p[len(p)-1]}
-	if len(p) == 6 {
-		if o.version = p[3]; !layout.ValidVersion(o.version) {
-			return object{}, false
-		}
+	k, ok := layout.Parse(rest)
+	if !ok || strings.HasPrefix(k.ID, "_") {
+		return object{}, false
+	}
+	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, version: k.Version, area: k.Area, name: k.Name, scope: k.Scope}
+	if o.area != layout.AreaPublic && o.area != layout.AreaPrivate && o.area != layout.AreaDownload {
+		return object{}, false
 	}
 	host := r.Host
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		host = hh
 	}
-	if strings.HasPrefix(o.id, "_") || !slices.Contains(h.cfg.Hosts[strings.ToLower(host)], o.ns) {
-		return object{}, false
+	host = strings.ToLower(host)
+	if k.Scope.IsZero() {
+		if !slices.Contains(h.cfg.Hosts[host], k.Namespace) {
+			return object{}, false
+		}
+		o.bucket = h.cfg.Buckets[k.Namespace]
+	} else {
+		for _, route := range h.cfg.Routes {
+			if route.Host == host && route.Scope == k.Scope {
+				o.bucket = route.Bucket
+				break
+			}
+		}
+		if o.bucket == "" {
+			return object{}, false
+		}
 	}
-	switch o.area {
-	case layout.AreaPublic:
-		return o, layout.ValidPublicName(o.name)
-	case layout.AreaPrivate:
-		return o, layout.ValidBlobName(o.name)
-	case layout.AreaDownload:
-		return o, layout.ValidBlobRef(layout.BlobRef(layout.AreaDownload, o.name))
-	}
-	return object{}, false
+	return o, true
 }
 
 var errNoToken = errors.New("no token")
@@ -270,9 +336,9 @@ var (
 	forwardResponse = []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"}
 )
 
-func (h *Handler) fetch(r *http.Request, ns, key string) (*http.Response, error) {
+func (h *Handler) fetch(r *http.Request, bucket, key string) (*http.Response, error) {
 	u := *h.base
-	u.Path = h.base.Path + "/" + h.cfg.Buckets[ns] + "/" + key
+	u.Path = h.base.Path + "/" + bucket + "/" + key
 	up, err := http.NewRequestWithContext(r.Context(), r.Method, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -328,7 +394,20 @@ func (h *Handler) cors(w http.ResponseWriter, r *http.Request) {
 	hdr := w.Header()
 	hdr.Add("Vary", "Origin")
 	o := r.Header.Get("Origin")
-	if o == "" || !slices.Contains(h.cfg.Origins, o) {
+	origins := h.cfg.Origins
+	if obj, ok := h.parse(r); ok && !obj.scope.IsZero() {
+		origins = nil
+		for _, route := range h.cfg.Routes {
+			host := r.Host
+			if hh, _, err := net.SplitHostPort(host); err == nil {
+				host = hh
+			}
+			if route.Host == strings.ToLower(host) && route.Scope == obj.scope && route.Bucket == obj.bucket {
+				origins = append(origins, route.Origins...)
+			}
+		}
+	}
+	if o == "" || !slices.Contains(origins, o) {
 		return
 	}
 	hdr.Set("Access-Control-Allow-Origin", o)

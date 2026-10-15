@@ -15,12 +15,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/helpers/notify"
 )
 
 // Options binds one trusted OpenRails deployment, merchant and independent
 // consumer. Token supplies a merchant-authorized application access token;
 // Client may instead authenticate through its transport. URL precedes /v1.
+type Backend interface {
+	Register(context.Context) error
+	Pending(context.Context, int) ([]Event, error)
+	Acknowledge(context.Context, []string) error
+	Retire(context.Context) error
+}
+
 type Options struct {
+	// Backend connects an embedded OpenRails client; nil uses HTTP.
+	Backend Backend
 	// Name is the complete stable origin system; defaults to openrails:URL.
 	Name       string
 	URL        string
@@ -37,6 +47,7 @@ type Source struct {
 	base, name, merchant, consumer string
 	client                         *http.Client
 	token                          func(context.Context) (string, error)
+	backend                        Backend
 }
 
 var consumerName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
@@ -45,14 +56,14 @@ var consumerName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 // Redirects are refused to keep credentials on the configured deployment.
 func New(opts Options) (*Source, error) {
 	u, err := url.Parse(opts.URL)
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if opts.Backend == nil && (err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "") {
 		return nil, fmt.Errorf("openrails notifications: URL must be a trusted HTTP(S) deployment URL")
 	}
 	if strings.TrimSpace(opts.MerchantID) == "" || len(opts.MerchantID) > 512 || strings.ContainsRune(opts.MerchantID, 0) || !consumerName.MatchString(opts.Consumer) || opts.Consumer == "." || opts.Consumer == ".." {
 		return nil, fmt.Errorf("openrails notifications: merchant and a valid 1-64 character consumer name are required")
 	}
 	name := opts.Name
-	if name == "" {
+	if name == "" && opts.Backend == nil {
 		name = "openrails:" + strings.TrimRight(u.String(), "/")
 	}
 	if strings.TrimSpace(name) == "" || len(name) > 512 || strings.ContainsRune(name, 0) {
@@ -63,7 +74,11 @@ func New(opts Options) (*Source, error) {
 		client = *opts.Client
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Source{base: strings.TrimRight(u.String(), "/"), name: name, merchant: opts.MerchantID, consumer: opts.Consumer, client: &client, token: opts.Token}, nil
+	base := ""
+	if u != nil {
+		base = strings.TrimRight(u.String(), "/")
+	}
+	return &Source{base: base, name: name, merchant: opts.MerchantID, consumer: opts.Consumer, client: &client, token: opts.Token, backend: opts.Backend}, nil
 }
 
 // Event is an immutable source fact, not an OpenRails-owned inbox item. Kind
@@ -89,18 +104,30 @@ func (s *Source) path() string { return "/v1/app/notification-consumers/" + s.co
 // Register idempotently establishes this consumer's independent ACK namespace.
 // Register before scheduling Consume; the source controls historical retention.
 func (s *Source) Register(ctx context.Context) error {
+	if s.backend != nil {
+		return s.backend.Register(ctx)
+	}
 	return s.request(ctx, http.MethodPost, s.path(), nil, nil)
 }
 
 // Retire explicitly ends this consumer's delivery obligation. Do not retire on
 // an ordinary worker shutdown: registration and ACKs must survive restarts.
 func (s *Source) Retire(ctx context.Context) error {
+	if s.backend != nil {
+		return s.backend.Retire(ctx)
+	}
 	return s.request(ctx, http.MethodDelete, s.path(), nil, nil)
 }
 
 func (s *Source) pending(ctx context.Context, limit int) ([]Event, error) {
 	var page eventPage
-	if err := s.request(ctx, http.MethodGet, fmt.Sprintf("%s/events?limit=%d", s.path(), limit), nil, &page); err != nil {
+	var err error
+	if s.backend != nil {
+		page.Data, err = s.backend.Pending(ctx, limit)
+	} else {
+		err = s.request(ctx, http.MethodGet, fmt.Sprintf("%s/events?limit=%d", s.path(), limit), nil, &page)
+	}
+	if err != nil {
 		return nil, err
 	}
 	if page.Data == nil || len(page.Data) > limit {
@@ -124,6 +151,9 @@ func (s *Source) pending(ctx context.Context, limit int) ([]Event, error) {
 func (s *Source) acknowledge(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
+	}
+	if s.backend != nil {
+		return s.backend.Acknowledge(ctx, ids)
 	}
 	return s.request(ctx, http.MethodPost, s.path()+"/acknowledge", struct {
 		IDs []string `json:"notification_ids"`
@@ -185,4 +215,9 @@ func (s *Source) request(ctx context.Context, method, path string, input, output
 		return fmt.Errorf("openrails notifications: decode events: %w", err)
 	}
 	return nil
+}
+
+// Origin is the exact source namespace admitted by an integration.
+func (s *Source) Origin() notify.OriginScope {
+	return notify.OriginScope{System: s.name, Scope: s.merchant}
 }

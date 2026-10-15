@@ -25,11 +25,12 @@ import (
 
 // JobsConfig configures media's River jobs in the host.
 type JobsConfig struct {
-	Store     Store
-	Registry  *Registry
-	Locker    Locker       // serializes manifest edits and sweep deletion; required
-	Journal   *PGJournal   // same ContentKit journal used by the uploader and media worker; required
-	Processes ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
+	Store        Store
+	Registry     *Registry
+	Locker       Locker       // serializes manifest edits and sweep deletion; required
+	Journal      *PGJournal   // same ContentKit journal used by the uploader and media worker; required
+	ErasureQueue *HostQueue   // optional insert-only late-erasure queue; allows recovery without starting workers
+	Processes    ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
 	// Pool is the host database Hooks.ItemReady's transaction runs on;
 	// required with ItemReady.
 	Pool *pgxpool.Pool
@@ -73,6 +74,9 @@ var ErrJobsNotBound = errors.New("media: River jobs are not composed into a clie
 func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil || cfg.Journal == nil {
 		return nil, errors.New("media: Jobs needs a Store, a Registry, a Locker and a Journal")
+	}
+	if cfg.ErasureQueue != nil && (cfg.ErasureQueue.reg != cfg.Registry || cfg.ErasureQueue.pool != cfg.Journal.pool) {
+		return nil, errors.New("media: erasure queue must use the registry and journal database")
 	}
 	if cfg.Registry.cfg.Hooks.ItemReady != nil && cfg.Pool == nil {
 		return nil, errors.New("media: Hooks.ItemReady needs JobsConfig.Pool")
@@ -326,12 +330,29 @@ func parseFolder(prefix string) (contentref.ContentRef, error) {
 	return contentref.New(k.Namespace, k.Kind, k.ID).WithVersion(k.Version), nil
 }
 
+// folderItem also binds the serialized path shape. A legacy-looking path
+// whose namespace equals an internal scoped partition must not alias a new root.
+func (r *Registry) folderItem(prefix string) (Item, error) {
+	ref, err := parseFolder(prefix)
+	if err != nil {
+		return Item{}, err
+	}
+	item, err := r.Item(ref)
+	if err != nil {
+		return Item{}, err
+	}
+	if item.Prefix() != prefix {
+		return Item{}, fmt.Errorf("media: folder does not match registry scope %q", prefix)
+	}
+	return item, nil
+}
+
 // itemFolders lists the item folders of kind k in key order: each item's,
 // and each content's versions' before its own.
 func (j *Jobs) itemFolders(ctx context.Context, k *Kind) iter.Seq2[contentref.ContentRef, error] {
 	return func(yield func(contentref.ContentRef, error) bool) {
 		last := ""
-		for o, err := range j.cfg.Store.List(ctx, k.ns+"/"+k.Name+"/") {
+		for o, err := range j.cfg.Store.List(ctx, k.root()+k.Name+"/") {
 			if err != nil {
 				yield(contentref.ContentRef{}, err)
 				return
@@ -464,11 +485,7 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	a := job.Args
-	ref, err := parseFolder(a.Prefix)
-	if err != nil {
-		return river.JobCancel(err)
-	}
-	item, err := w.j.cfg.Registry.Item(ref)
+	item, err := w.j.cfg.Registry.folderItem(a.Prefix)
 	if err != nil {
 		return river.JobCancel(err)
 	}
@@ -567,6 +584,7 @@ func (j *Jobs) purge(ctx context.Context, keys []string) {
 // inserts the jobs the host runs on the worker's behalf (a folder's sweep
 // after an edit, ItemReady and PurgePublic relays). It inserts only.
 type HostQueue struct {
+	pool   *pgxpool.Pool
 	client *river.Client[pgx.Tx]
 	reg    *Registry
 	queue  string
@@ -590,7 +608,7 @@ func NewHostQueue(pool *pgxpool.Pool, reg *Registry, schema, queue string, grace
 	if err != nil {
 		return nil, err
 	}
-	return &HostQueue{client: c, reg: reg, queue: queue, grace: grace}, nil
+	return &HostQueue{pool: pool, client: c, reg: reg, queue: queue, grace: grace}, nil
 }
 
 func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {

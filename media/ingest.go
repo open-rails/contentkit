@@ -252,7 +252,7 @@ func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref conte
 // copySource refuses a source inside ContentKit's namespaces: an item's
 // upload copies with OpCopy.
 func (u *Uploads) copySource(from string) error {
-	if ns, _, _ := strings.Cut(from, "/"); slices.Contains(u.reg.Namespaces(), ns) {
+	if key, ok := layout.Parse(from); ok && (!key.Scope.IsZero() || slices.Contains(u.reg.Namespaces(), key.Namespace)) {
 		return uploadErr(CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", from)
 	}
 	return nil

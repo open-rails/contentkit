@@ -111,6 +111,9 @@ func ParseRouteGroups(names []string) (RouteGroups, error) {
 // ServeMux). It fails, before anything mounts, for a group the engine cannot
 // serve: one whose module its Config leaves out.
 func (e *Engine) Routes(selection Routes) ([]Route, error) {
+	if e.erasureRecovery {
+		return nil, ErrErasureReplayRequired
+	}
 	if selection.Groups == 0 || selection.Groups&^AllRoutes != 0 {
 		return nil, errors.New("contentkit: Routes.Groups selects no known route group")
 	}

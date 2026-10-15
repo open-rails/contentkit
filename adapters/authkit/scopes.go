@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/iam"
 
+	"github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 )
@@ -35,9 +36,47 @@ type Client interface {
 var _ Client = (*authkit.Client)(nil)
 
 // Scopes is groups.Scopes over c.
-func Scopes(c Client) groups.Scopes { return scopes{c} }
+func Scopes(c Client) groups.Scopes { return scopes{c: c} }
 
-type scopes struct{ c Client }
+// AppScopes isolates provider authorization groups even when two apps reuse a
+// content group ID. Existing content references remain unchanged.
+func AppScopes(c Client, scope contentkit.Scope) (groups.Scopes, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return nil, errors.New("contentkit/authkit: scope client is required")
+	}
+	if _, ok := c.(directScopeClient); !ok {
+		return nil, errors.New("contentkit/authkit: app scopes require CanDirect")
+	}
+	return scopes{c: c, app: &scope}, nil
+}
+
+type scopes struct {
+	c   Client
+	app *contentkit.Scope
+}
+
+// ContentKitScope identifies the app binding of this provider; legacy Scopes
+// returns empty IDs and cannot be used for a scoped app's authorization groups.
+func (s scopes) ContentKitScope() (string, string) {
+	if s.app == nil {
+		return "", ""
+	}
+	return s.app.TenantID.String(), s.app.AppID.String()
+}
+
+type directScopeClient interface {
+	CanDirect(context.Context, auth.Identity, iam.GroupRef, iam.Perm) (bool, error)
+}
+
+func (s scopes) providerID(id string) (string, error) {
+	if s.app == nil {
+		return id, nil
+	}
+	return GroupScopeID(*s.app, id)
+}
 
 // Provision creates each scope as a group of its kind's persona, its owner
 // seeded with the persona's owner role; one that exists live is kept as it
@@ -45,18 +84,22 @@ type scopes struct{ c Client }
 // restored group starts a new team with its owner.
 func (s scopes) Provision(ctx context.Context, list []groups.Scope) error {
 	for _, sc := range list {
+		id, err := s.providerID(sc.ID)
+		if err != nil {
+			return err
+		}
 		persona, err := s.c.Persona(sc.Kind)
 		if err != nil {
 			return fmt.Errorf("authkit: persona of group kind %s: %w", sc.Kind, err)
 		}
-		g := iam.NewGroup{ID: sc.ID, Persona: persona}
+		g := iam.NewGroup{ID: id, Persona: persona}
 		if sc.Owner != "" {
 			owner := iam.UserSubject(sc.Owner)
 			g.Owner = &owner
 		}
 		_, err = s.c.CreateGroup(ctx, g)
 		if errors.Is(err, iam.ErrGroupConflict) {
-			ref := iam.GroupByID(sc.ID)
+			ref := iam.GroupByID(id)
 			old, gerr := s.c.Group(ctx, ref)
 			if gerr != nil || old.DeletedAt == nil || old.Persona != persona {
 				return errors.Join(fmt.Errorf("authkit: scope %s is another group", sc.ID), err, gerr)
@@ -75,6 +118,10 @@ func (s scopes) Provision(ctx context.Context, list []groups.Scope) error {
 // Retire soft-deletes each scope: it stops resolving and granting at once.
 func (s scopes) Retire(ctx context.Context, ids []string) error {
 	for _, id := range ids {
+		id, err := s.providerID(id)
+		if err != nil {
+			return err
+		}
 		if err := s.c.DeleteGroup(ctx, iam.GroupByID(id)); err != nil && !errors.Is(err, iam.ErrGroupNotFound) {
 			return fmt.Errorf("authkit: retire scope %s: %w", id, err)
 		}
@@ -87,6 +134,9 @@ func (s scopes) Retire(ctx context.Context, ids []string) error {
 // permissions there cover: one memberships listing and one
 // EffectivePermissions read.
 func (s scopes) Holding(ctx context.Context, user string, kinds []string) (map[string][]string, error) {
+	if s.app != nil {
+		return nil, errors.New("contentkit/authkit: app scope lookups require verified local group IDs")
+	}
 	type named struct {
 		name string
 		perm iam.Perm
@@ -129,6 +179,43 @@ func (s scopes) Holding(ctx context.Context, user string, kinds []string) (map[s
 		for _, p := range asked[id] {
 			if slices.ContainsFunc(gs, p.perm.Matches) {
 				out[id] = append(out[id], p.name)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []string) (map[string][]string, error) {
+	if s.app == nil {
+		return s.Holding(ctx, user, kinds)
+	}
+	out := map[string][]string{}
+	for _, id := range ids {
+		providerID, err := s.providerID(id)
+		if err != nil {
+			return nil, err
+		}
+		group, err := s.c.Group(ctx, iam.GroupByID(providerID))
+		if errors.Is(err, iam.ErrGroupNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) {
+			continue
+		}
+		for _, name := range access.GroupPermissions(group.Persona.String()) {
+			perm, err := s.c.Permission(name)
+			if err != nil {
+				return nil, err
+			}
+			allowed, err := s.c.(directScopeClient).CanDirect(ctx, iam.UserIdentity(user), iam.GroupByID(providerID), perm)
+			if err != nil {
+				return nil, err
+			}
+			if allowed {
+				out[id] = append(out[id], name)
 			}
 		}
 	}

@@ -66,6 +66,9 @@ const (
 func (j *jobs) contribution() riverhelpers.Contribution {
 	e := j.e
 	own := riverhelpers.NewContribution("contentkit", func(_ context.Context, cfg *river.Config) error {
+		if e.erasureRecovery {
+			return ErrErasureReplayRequired
+		}
 		workers := e.cfg.Jobs.MaxWorkers
 		if workers <= 0 {
 			workers = 2

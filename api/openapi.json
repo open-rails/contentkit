@@ -7558,7 +7558,9 @@
         "x-contentkit-module": "notifications",
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:notifications:publish",
-        "x-contentkit-errors": [],
+        "x-contentkit-errors": [
+          "conflict"
+        ],
         "x-contentkit-error-sets": [
           "module:notifications",
           "auth",
@@ -10460,7 +10462,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received.",
+        "summary": "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history.",
         "responses": {
           "200": {
             "description": "OK",
@@ -13830,6 +13832,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "visibility": {
+            "type": "string"
+          },
+          "app_id": {
+            "type": "string"
+          },
           "status": {
             "type": "string"
           },
@@ -13899,6 +13907,12 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "app_id": {
+            "type": "string"
           },
           "status": {
             "type": "string"
@@ -14378,6 +14392,12 @@
         "type": "object",
         "properties": {
           "completed": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "access_seconds": {
             "type": "object",
             "additionalProperties": {
               "type": "integer"
@@ -15181,6 +15201,9 @@
             "type": "string"
           },
           "namespace": {
+            "type": "string"
+          },
+          "root": {
             "type": "string"
           },
           "to": {

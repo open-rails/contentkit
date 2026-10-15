@@ -19,13 +19,16 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Config is the app's media registry (NewRegistry).
 type Config struct {
 	// Namespace is the app's own namespace, e.g. "doujins": its kinds' items
 	// live under {Namespace}/{kind}/{id}/.
-	Namespace string `json:"namespace"`
+	Namespace string `json:"namespace,omitempty"`
+	// Scope derives object roots and internal partitions; Namespace is legacy-only.
+	Scope layout.Scope `json:"scope,omitzero"`
 	// BaseURL is the site's media origin, e.g. "https://media.doujins.ai":
 	// every URL is {BaseURL}/v1/{namespace}/{kind}/{id}/{public|private}/{name}.
 	BaseURL string `json:"base_url,omitempty"`
@@ -58,6 +61,8 @@ type Kind struct {
 	// Namespace is "" for Config.Namespace, or a shared one such as
 	// "accounts" whose items every app importing the kind serves.
 	Namespace string `json:"namespace,omitempty"`
+	// Account places this kind in the tenant account root of a scoped registry.
+	Account bool `json:"account,omitempty"`
 	// Versions marks a content kind (ForContent): its items are its
 	// contents' versions, {kind, content, version}; a content has no item of
 	// its own.

@@ -69,7 +69,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_JOB_TIMEOUT     per audio job (default 48h); video tasks use 1h
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
-	for k, p := range map[string]*string{"MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_WORKER_QUEUE": &c.Queue, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
+	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_WORKER_QUEUE": &c.Queue, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
 		if v := os.Getenv(k); v != "" {
 			*p = v

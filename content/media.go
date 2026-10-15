@@ -20,8 +20,9 @@ import (
 // images' current public files, one MediaImages lookup per response; poll
 // deletion removes the item. Runtime.CanUpload authorizes those uploads.
 type Media struct {
-	Images  MediaImages  // *media.Manifests
-	Folders MediaFolders // *media.Jobs
+	Namespace string       // media partition; empty retains the content catalog key
+	Images    MediaImages  // *media.Manifests
+	Folders   MediaFolders // *media.Jobs
 	// Reader reads items as the media read API does; the engine fills it
 	// from its Reader.
 	Reader   MediaReader
@@ -81,7 +82,7 @@ func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id st
 	if rt.media == nil {
 		return nil
 	}
-	return rt.media.Folders.DeleteItemsTx(ctx, tx, media.Deletion{Ref: rt.Ref(rt.media.kind(f), id)})
+	return rt.media.Folders.DeleteItemsTx(ctx, tx, media.Deletion{Ref: rt.mediaRef(rt.media.kind(f), id)})
 }
 
 // CanUpload is media's UploadAuthorizer for poll items: the actor holds
@@ -89,7 +90,7 @@ func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id st
 // refused; other kinds are routed elsewhere.
 func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	ref := t.Ref
-	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil {
+	if rt.media == nil || ref.TenantID != rt.mediaTenant() || ref.ContentVersionID != nil {
 		return media.UploadGrant{}, nil
 	}
 	if ref.ContentKind != rt.media.PollKind || !uuidRe.MatchString(ref.ContentID) {
@@ -129,7 +130,7 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 	}
 	var polls []string
 	for _, ref := range refs {
-		if ref.TenantID == rt.tenant && ref.ContentVersionID == nil && ref.ContentKind == rt.media.PollKind && uuidRe.MatchString(ref.ContentID) {
+		if ref.TenantID == rt.mediaTenant() && ref.ContentVersionID == nil && ref.ContentKind == rt.media.PollKind && uuidRe.MatchString(ref.ContentID) {
 			polls = append(polls, ref.ContentID)
 		}
 	}
@@ -148,11 +149,21 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 			if err := rows.Scan(&id); err != nil {
 				return nil, err
 			}
-			out[rt.Ref(rt.media.PollKind, id).Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: pollWrite}
+			out[rt.mediaRef(rt.media.PollKind, id).Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: pollWrite}
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+func (rt *Runtime) mediaTenant() string {
+	if rt.media != nil && rt.media.Namespace != "" {
+		return rt.media.Namespace
+	}
+	return rt.tenant
+}
+func (rt *Runtime) mediaRef(kind, id string) contentref.ContentRef {
+	return contentref.New(rt.mediaTenant(), kind, id)
 }

@@ -93,6 +93,10 @@ export const content: typeof en = {
     saveSegments: "Guardar capítulos",
   },
   myStats: {
+    accessFor: "Tiempo con {tier}",
+    accessDescription: "Tiempo total con acceso; un mes equivale a 30 días.",
+    lessThanDay: "Menos de 1 día",
+    unavailable: "Algunas estadísticas no están disponibles temporalmente.",
     completed: "{kind} terminados",
     comments: "Comentarios",
     likes: "Me gusta recibidos",

@@ -93,6 +93,10 @@ export const content: typeof en = {
     saveSegments: "章を保存",
   },
   myStats: {
+    accessFor: "{tier}の利用期間",
+    accessDescription: "利用可能だった合計期間。1か月は30日です。",
+    lessThanDay: "1日未満",
+    unavailable: "一部の統計は一時的に利用できません。",
     completed: "読了・視聴済みの{kind}",
     comments: "コメント",
     likes: "もらったいいね",

@@ -78,6 +78,8 @@ describe("upload rules", () => {
     });
     // A version's default sits at its own folder.
     expect(defaultImage(preset, "c", "v")!.renditions.map((r) => r.url)).toEqual([128, 256].map((w) => `https://m.example/v1/app/user/c/v/public/avatar-${w}.webp`));
+    const root = "tenant/11111111-1111-4111-8111-111111111111/account/";
+    expect(defaultImage({ ...preset, root }, "account-id")!.renditions[0]!.url).toBe(`https://m.example/v1/${root}user/account-id/public/avatar-128.webp`);
     expect(defaultImage({ ...preset, default: false }, "x")).toBeNull();
     expect(defaultImage({ ...preset, first: 1, to: "preview-{n}.webp" }, "x")).toBeNull();
   });

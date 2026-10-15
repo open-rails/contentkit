@@ -68,6 +68,9 @@ type Options struct {
 	// Candidates sources similar and recommendations; nil is co-engagement
 	// over the signal plane.
 	Candidates Candidates
+	// Tenure supplies elapsed access to configured tiers; nil omits it from
+	// account statistics. Billing adapters may implement access.TenureReader.
+	Tenure access.TenureReader
 	// Policy ranks popular sorts; zero is popularity.PolicyV1.
 	Policy popularity.Policy
 	Logger *slog.Logger
