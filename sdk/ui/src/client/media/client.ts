@@ -1,6 +1,6 @@
 import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
 import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresetRule, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
-import type { Http } from "../http.js";
+import type { HlsLoader, Http } from "../http.js";
 import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
@@ -371,9 +371,9 @@ export class MediaClient {
     return `${this.api.itemURL(ref)}/hls/${dir}`;
   }
 
-  /** hls.js `xhrSetup` for playlists on the API (the client's token and credentials); pass it to players as is. */
-  get xhrSetup(): (xhr: XMLHttpRequest, url: string) => Promise<void> {
-    return this.http.xhrSetup;
+  /** How players load HLS from this API (playlists through the client's fetch); pass it to players as is. */
+  get hls(): HlsLoader {
+    return this.http.hls;
   }
 
   /**

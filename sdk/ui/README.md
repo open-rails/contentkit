@@ -78,7 +78,9 @@ operation. This does not change the operation's result or its authentication.
   `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
-  `xhrSetup` for players (`<MediaGallery xhrSetup={contentkit.media.xhrSetup} />`).
+  `hls` for players (`<VideoPlayer loader={contentkit.media.hls} />`): playlists
+  load through the client's fetch, so they carry what its calls carry (an
+  `authFetch` adds DPoP proofs); segments carry only cookies.
   Uploads hash in a Web Worker, send one checksum-bound PUT up to 64 MiB and
   resumable multipart above (`onState`/`resume`). The bucket must allow CORS
   `PUT` from the app's origin with `Content-Type` and `x-amz-checksum-sha256`.
@@ -341,7 +343,7 @@ the starting shape and edit.
 
 `<MediaGallery item={post} prefix="low-res/" renderLocked={unlock} />` reads
 through the client: the read (refreshed, reloaded after commits), HLS bases,
-playlist auth and the grant refresh. Passing `read`, `hlsBase`, `xhrSetup`
+playlist auth and the grant refresh. Passing `read`, `hlsBase`, `loader`
 and `refresh` yourself still works. A locked read lists no files, so the
 lock is uncounted; its public teaser carries `renderLocked`, so the unlock is
 on the first slide;
@@ -388,7 +390,7 @@ fullscreen and a mini player.
 ```tsx
 <VideoPlayer
   base={contentkit.media.hlsBase(ref, "hls/")}
-  xhrSetup={contentkit.media.xhrSetup}
+  loader={contentkit.media.hls}
   refresh={reload} expires={read.expires}       // re-grant before the token expires
   width={video.w} height={video.h} duration={video.dur} poster={posterPreset}
   autoPlay startAt={resumePoint}                 // resume; never a muted autoplay
@@ -401,7 +403,7 @@ fullscreen and a mini player.
   renderDownloads={({ className, container }) => <Downloads className={className} container={container} />}
   menuItems={[{ label: "Version", value, options, onChange }, { label: "Report a problem", onSelect }]}
 />
-{handoff && <VideoMiniPlayer handoff={handoff} xhrSetup={contentkit.media.xhrSetup} onExpand={openWatchPage} onClose={() => setHandoff(null)} />}
+{handoff && <VideoMiniPlayer handoff={handoff} loader={contentkit.media.hls} onExpand={openWatchPage} onClose={() => setHandoff(null)} />}
 ```
 
 - **Shortcuts:** Space/K play, ←/→ 5 s, J/L 10 s, ↑/↓ volume, M mute, C

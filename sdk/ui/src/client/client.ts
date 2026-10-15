@@ -30,7 +30,7 @@ export interface ContentKitClientOptions extends HttpOptions {
  * over one shared transport (mounts, auth, language, errors, change events).
  */
 export interface ContentKitClient {
-  /** Uploads, multipart, commits, reads, frames, HLS bases, hls.js `xhrSetup` and inline images. */
+  /** Uploads, multipart, commits, reads, frames, HLS bases, the HLS loader and inline images. */
   readonly media: MediaClient;
   /** Content items: reads, and writes for their creators, owner-group editors and staff. */
   readonly contents: ContentsClient;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSpriteVtt, playedBetween, type PlaySample, type SpriteCue } from "../client/player.js";
-import type { HlsPlayerOptions } from "./gallery.js";
+import type { HlsLoader } from "../client/http.js";
+import { fetchPlaylist } from "./gallery.js";
 
 /** What the controls show about a `<video>`, kept current from its events. */
 export interface MediaState {
@@ -166,27 +167,19 @@ export interface Sprite {
   height: number;
 }
 
-type XhrSetup = HlsPlayerOptions["xhrSetup"];
 const sprites = new Map<string, Promise<Sprite | null>>();
 
-function fetchText(url: string, setup: XhrSetup): Promise<string> {
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    const send = () => {
-      if (xhr.readyState === 0) xhr.open("GET", url, true);
-      xhr.onload = () => resolve(xhr.status === 200 ? xhr.responseText : "");
-      xhr.onerror = () => resolve("");
-      xhr.send();
-    };
-    Promise.resolve(setup?.(xhr, url)).then(send, () => resolve(""));
-  });
-}
+const fetchText = (url: string, loader?: HlsLoader): Promise<string> =>
+  fetchPlaylist(loader, url).then(
+    (r) => (r.status === 200 ? r.text() : ""),
+    () => "",
+  );
 
-/** A ladder's sprite.vtt and its sheet, fetched once per URL (through xhrSetup, like the playlists). */
-export function loadSprite(vtt: string, setup?: XhrSetup): Promise<Sprite | null> {
+/** A ladder's sprite.vtt and its sheet, fetched once per URL (through the loader, like the playlists). */
+export function loadSprite(vtt: string, loader?: HlsLoader): Promise<Sprite | null> {
   let p = sprites.get(vtt);
   if (!p) {
-    p = fetchText(vtt, setup).then((text) => {
+    p = fetchText(vtt, loader).then((text) => {
       const cues = text ? parseSpriteVtt(text, new URL(vtt, globalThis.location?.href).href) : [];
       if (!cues.length) return null;
       return new Promise<Sprite | null>((resolve) => {
@@ -202,14 +195,14 @@ export function loadSprite(vtt: string, setup?: XhrSetup): Promise<Sprite | null
   return p;
 }
 
-export function useSprite(vtt: string | null | undefined, setup?: XhrSetup): Sprite | null {
+export function useSprite(vtt: string | null | undefined, loader?: HlsLoader): Sprite | null {
   const [sprite, setSprite] = useState<{ vtt: string; sprite: Sprite | null } | null>(null);
-  const setupRef = useRef(setup);
-  setupRef.current = setup;
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
   useEffect(() => {
     if (!vtt) return;
     let live = true;
-    void loadSprite(vtt, setupRef.current).then((s) => live && setSprite({ vtt, sprite: s }));
+    void loadSprite(vtt, loaderRef.current).then((s) => live && setSprite({ vtt, sprite: s }));
     return () => {
       live = false;
     };

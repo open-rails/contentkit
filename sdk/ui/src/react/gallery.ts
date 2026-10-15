@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import type { GalleryView } from "../client/gallery.js";
-import type { CapLevelController, Level } from "hls.js";
+import type { HlsLoader } from "../client/http.js";
+import type { CapLevelController, Level, Loader, LoaderCallbacks, LoaderConfiguration, LoaderStats, PlaylistLoaderConstructor, PlaylistLoaderContext } from "hls.js";
 import {
   NETWORK_FAILURES_BEFORE_ERROR,
   abrHlsConfig,
@@ -181,8 +182,8 @@ export type PlayerStatus = "idle" | "loading" | "playing" | "paused" | "bufferin
 export interface HlsPlayerOptions {
   /** The master playlist; nothing loads while absent. */
   src?: string | null;
-  /** Adds auth to playlist and segment requests (e.g. a bearer header for the app's read API). */
-  xhrSetup?: (xhr: XMLHttpRequest, url: string) => void | Promise<void>;
+  /** Loads playlists with the app's credentials and prepares segment requests: the media client's `hls`. */
+  loader?: HlsLoader;
   /**
    * Re-grants access (refetch the read API). Called shortly before `expires`,
    * and once after a 401, 403 or 404 — media-gateway answers an expired token
@@ -316,19 +317,88 @@ function corsHint() {
   );
 }
 
+/** Fetches a playlist: the loader's, else a plain fetch. */
+export const fetchPlaylist = (loader: HlsLoader | undefined, url: string, signal?: AbortSignal): Promise<Response> =>
+  loader ? loader.playlist(url, signal) : fetch(url, { signal: signal ?? null });
+
 // Safari plays HLS natively and hides statuses; one playlist request tells access from absence.
-function probe(url: string, setup?: HlsPlayerOptions["xhrSetup"]): Promise<number> {
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    const send = () => {
-      if (xhr.readyState === 0) xhr.open("GET", url, true);
-      xhr.onload = () => resolve(xhr.status);
-      xhr.onerror = xhr.ontimeout = () => resolve(0);
-      xhr.timeout = 8000;
-      xhr.send();
+function probe(url: string, loader?: HlsLoader): Promise<number> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  return fetchPlaylist(loader, url, ctrl.signal).then(
+    (r) => r.status,
+    () => 0,
+  ).finally(() => clearTimeout(timer));
+}
+
+// hls.js loads playlists through fetchPlaylist (the app's credentials, DPoP
+// included) instead of its XHR loader; statuses reach its retry and the
+// player's refresh as before.
+function playlistLoader(load: (url: string, signal: AbortSignal) => Promise<Response>): PlaylistLoaderConstructor {
+  return class implements Loader<PlaylistLoaderContext> {
+    context: PlaylistLoaderContext | null = null;
+    stats: LoaderStats = {
+      aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+      loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 },
     };
-    Promise.resolve(setup?.(xhr, url)).then(send, () => resolve(0));
-  });
+    private ctrl: AbortController | null = null;
+    private timer: ReturnType<typeof setTimeout> | undefined;
+    private headers: Headers | null = null;
+    private callbacks: LoaderCallbacks<PlaylistLoaderContext> | null = null;
+
+    load(context: PlaylistLoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<PlaylistLoaderContext>) {
+      const ctrl = new AbortController();
+      Object.assign(this, { context, callbacks, ctrl });
+      const s = this.stats;
+      s.loading.start = performance.now();
+      const limit = config.loadPolicy.maxLoadTimeMs;
+      if (limit > 0 && Number.isFinite(limit))
+        this.timer = setTimeout(() => {
+          ctrl.abort();
+          if (this.ctrl === ctrl) callbacks.onTimeout(s, context, null);
+        }, limit);
+      load(context.url, ctrl.signal).then(
+        async (res) => {
+          s.loading.first = performance.now();
+          const text = await res.text();
+          if (this.ctrl !== ctrl || ctrl.signal.aborted) return;
+          clearTimeout(this.timer);
+          this.headers = res.headers;
+          s.loaded = s.total = text.length;
+          s.loading.end = performance.now();
+          if (!res.ok) return callbacks.onError({ code: res.status, text: res.statusText }, context, res, s);
+          callbacks.onSuccess({ url: res.url || context.url, data: text, code: res.status }, s, context, res);
+        },
+        (err: unknown) => {
+          if (this.ctrl !== ctrl || ctrl.signal.aborted) return;
+          clearTimeout(this.timer);
+          callbacks.onError({ code: 0, text: String(err) }, context, null, s);
+        },
+      );
+    }
+
+    abort() {
+      clearTimeout(this.timer);
+      this.ctrl?.abort();
+      this.stats.aborted = true;
+      if (this.context) this.callbacks?.onAbort?.(this.stats, this.context, null);
+    }
+
+    destroy() {
+      clearTimeout(this.timer);
+      this.ctrl?.abort();
+      this.ctrl = this.callbacks = this.context = null;
+    }
+
+    getResponseHeader(name: string) {
+      return this.headers?.get(name) ?? null;
+    }
+
+    getCacheAge() {
+      const age = this.headers?.get("age");
+      return age ? Number(age) : null;
+    }
+  };
 }
 
 function storedQuality(key: string | null): number | "auto" | null {
@@ -391,7 +461,7 @@ function capController(Base: typeof CapLevelController | undefined, policy: AbrP
  */
 export function useHlsPlayer({
   src,
-  xhrSetup,
+  loader,
   refresh,
   expires,
   active = true,
@@ -435,8 +505,8 @@ export function useHlsPlayer({
   startedRef.current = started;
   // A preview becoming real playback: drop its buffer so the chosen level or ABR takes over.
   const commit = useRef<() => void>(() => {});
-  const opts = useRef({ xhrSetup, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey });
-  opts.current = { xhrSetup, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey };
+  const opts = useRef({ loader, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey });
+  opts.current = { loader, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey };
   // Loads the playlists again at the playhead when they hold the old token.
   const renew = useRef<() => void>(() => {});
   useRefreshBeforeExpiry(expires, refresh);
@@ -534,7 +604,8 @@ export function useHlsPlayer({
             ...abrHlsConfig(policy, estimate),
             capLevelController: capController(Hls.DefaultConfig.capLevelController, policy),
             autoStartLoad: false,
-            xhrSetup: (xhr, url) => opts.current.xhrSetup?.(xhr, url),
+            pLoader: playlistLoader((url, signal) => fetchPlaylist(opts.current.loader, url, signal)),
+            xhrSetup: (xhr, url) => opts.current.loader?.segment(xhr, url),
           });
           destroy = () => hls.destroy();
           // The player draws the cues of the chosen track ("hidden"), above its controls.
@@ -662,7 +733,7 @@ export function useHlsPlayer({
           return;
         }
         if (!el.canPlayType(HLS_TYPE)) return fail({ kind: "unsupported", code: "no-hls" });
-        void probe(src, opts.current.xhrSetup).then((code) => {
+        void probe(src, opts.current.loader).then((code) => {
           if (dead) return;
           if (code < 200 || code >= 400) return fail({ kind: statusKind(code), code: `probe/${code}`, status: code });
           native = true;

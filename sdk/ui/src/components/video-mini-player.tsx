@@ -206,7 +206,7 @@ export function VideoMiniPlayer({
         ) : posterOutputs.length ? (
           <RenditionImg outputs={posterOutputs} className="pointer-events-none absolute inset-0 size-full object-contain" />
         ) : (
-          <SpriteFrame vtt={`${handoff.base}sprite.vtt`} xhrSetup={options.xhrSetup} />
+          <SpriteFrame vtt={`${handoff.base}sprite.vtt`} loader={options.loader} />
         ))}
       <div aria-hidden data-ckui="surface" className="absolute inset-0" onClick={onSurfaceClick} />
       <Captions cues={started ? cues : []} bottom={shown ? "2.75rem" : "0.75rem"} />
