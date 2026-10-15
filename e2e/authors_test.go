@@ -22,6 +22,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -135,7 +136,7 @@ func TestAuthorsFromAuthKitAndMedia(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if obj.Key != avatars.ManifestKey() { // the deletion's tombstone
+			if obj.Key != avatars.ManifestKey() && obj.Key != avatars.PublicPrefix()+layout.ErasureFenceName { // the erasure's tombstones
 				left++
 			}
 		}
