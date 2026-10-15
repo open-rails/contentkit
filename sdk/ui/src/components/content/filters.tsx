@@ -24,7 +24,7 @@ export interface ContentFilterSettingsProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** The signed-in reader's content filters: show or hide each configured group, and go back to its default. */
+/** The signed-in reader's content filters: show or hide each configured group. */
 export function ContentFilterSettings(p: ContentFilterSettingsProps) {
   const m = useMessages();
   const { t } = m;
@@ -54,24 +54,6 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
               <Label htmlFor={`${id}-${x.group.id}`} className="min-w-0 flex-1">
                 {x.label || x.group.name}
               </Label>
-              <span className="text-xs text-muted-foreground">{t(x.visible ? "contents.shown" : "contents.hidden")}</span>
-              {x.overridden && (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={save.pending}
-                  onClick={() =>
-                    void save.run(() =>
-                      f.save({
-                        filters: filters.filters.filter((y) => y.overridden && y.group.id !== x.group.id).map((y) => ({ group_id: y.group.id, visible: y.visible })),
-                        include_deleted: filters.include_deleted,
-                      }),
-                    )
-                  }
-                >
-                  {t("contents.useDefault")}
-                </Button>
-              )}
             </li>
           ))}
         </ul>

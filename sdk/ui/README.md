@@ -3,7 +3,8 @@
 ContentKit in the browser: a framework-free client, content URLs, React hooks
 and styled components (uploads with cropping, video posters, galleries, HLS
 playback, comments, reactions, favorites, polls and their staff screens).
-`@openrails/contentkit-ui@X.Y.Z` speaks ContentKit `vX.Y.Z`.
+UI releases share the backend's major/minor API version; UI-only patches can
+advance independently (for example, UI `0.89.1` with ContentKit `v0.89.0`).
 
 ```sh
 pnpm add @openrails/contentkit-ui@X.Y.Z
@@ -648,7 +649,8 @@ generated from ContentKit's route catalog (`pnpm contract`; CI runs
 `pnpm contract:check`). UI primitives come from
 `pnpm dlx shadcn@4.21.0 add …` (`components.json`); local edits are marked
 `// Local:`. The `release` workflow publishes the package to npm for every
-published `v*` release.
+published `v*` release. For a UI-only patch, publish an `sdk/ui/vX.Y.Z` release;
+this uses the same checks and trusted npm publication without tagging the Go modules.
 
 
 ## Notifications

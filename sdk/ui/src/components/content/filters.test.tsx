@@ -34,8 +34,11 @@ it("keeps configured filters visible and saves reader changes", async () => {
   render(<ContentKitProvider client={client} viewer="reader"><ContentFilterSettings includeDeleted={false} /></ContentKitProvider>);
   const toggle = await screen.findByRole("switch", { name: "Explicit content" });
   expect(toggle).not.toBeChecked();
+  expect(screen.queryByText("Hidden")).toBeNull();
   await userEvent.setup().click(toggle);
   await waitFor(() => expect(toggle).toBeChecked());
+  expect(screen.queryByText("Shown")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Use the default" })).toBeNull();
   const update = fetcher.mock.calls.find(([, init]) => init?.method === "PUT");
   expect(JSON.parse(String(update?.[1]?.body))).toEqual({ filters: [{ group_id: "filter-group", visible: true }], include_deleted: false });
 });

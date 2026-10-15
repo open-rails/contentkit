@@ -1,6 +1,7 @@
 name: Release
 # A published release publishes @openrails/contentkit-ui at X.Y.Z to npm, built
 # from the release's tag, through npm trusted publishing with provenance.
+# sdk/ui/vX.Y.Z tags publish UI-only patches without releasing the Go modules.
 'on':
   release:
     types: [published]
@@ -13,14 +14,19 @@ jobs:
     name: Pack @openrails/contentkit-ui
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     defaults:
       run:
         working-directory: sdk/ui
     steps:
     - name: Version tag
+      id: version
       working-directory: .
       run: |
-        [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::$TAG is not a vX.Y.Z tag"; exit 1; }
+        tag="${TAG#sdk/ui/}"
+        [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::$TAG is not a vX.Y.Z or sdk/ui/vX.Y.Z tag"; exit 1; }
+        echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
     - uses: actions/checkout@v4
       with:
         ref: ${{ env.TAG }}
@@ -34,12 +40,16 @@ jobs:
     - run: pnpm install --frozen-lockfile --ignore-scripts
     - run: pnpm check
     - name: Version from tag
-      run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: npm version "$VERSION" --no-git-tag-version --allow-same-version
     - name: Pack
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
       run: |
         mkdir release
         pnpm pack --pack-destination release
-        ls "release/openrails-contentkit-ui-${TAG#v}.tgz"
+        ls "release/openrails-contentkit-ui-$VERSION.tgz"
     - uses: actions/upload-artifact@v4
       with:
         name: contentkit-ui
@@ -56,6 +66,7 @@ jobs:
       id-token: write # npm trusted publishing
     env:
       PKG: '@openrails/contentkit-ui'
+      VERSION: ${{ needs.package.outputs.version }}
     steps:
     - uses: actions/setup-node@v4
       with:
@@ -66,7 +77,7 @@ jobs:
         name: contentkit-ui
     - name: Publish
       run: |
-        v="${TAG#v}"
+        v="$VERSION"
         need=11.5.1
         [[ "$(printf '%s\n%s\n' "$need" "$(npm --version)" | sort -V | head -1)" == "$need" ]] || { echo "::error::trusted publishing needs npm >= $need"; exit 1; }
         if npm view "$PKG@$v" version >/dev/null 2>&1; then
