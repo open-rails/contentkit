@@ -41,11 +41,11 @@ import { EncodeProgress } from "./encode-progress.js";
 import { Button } from "#ckui/ui/button";
 import { Captions, ControlButton, SeekBar, SeekFlash, SettingsMenu, Spinner, VolumeControl, clock, playerButtonClass, type MenuSection, type SeekFlashState } from "./player-controls.js";
 
-type XhrSetup = HlsPlayerOptions["xhrSetup"];
+type Loader = HlsPlayerOptions["loader"];
 
 /** The first frame of a video's seek sprite (sprite.vtt), fitted like object-fit. */
-export function SpriteFrame({ vtt, xhrSetup, fit = "contain", className }: { vtt: string; xhrSetup?: XhrSetup; fit?: "contain" | "cover"; className?: string }) {
-  const sprite = useSprite(vtt, xhrSetup);
+export function SpriteFrame({ vtt, loader, fit = "contain", className }: { vtt: string; loader?: Loader; fit?: "contain" | "cover"; className?: string }) {
+  const sprite = useSprite(vtt, loader);
   const cue = sprite?.cues[0];
   if (!sprite || !cue) return null;
   return (
@@ -247,7 +247,7 @@ export function VideoPlayer({
   const fs = useFullscreen(root, video);
   const pip = usePictureInPicture(video);
   const cues = useActiveCues(video);
-  const sprite = useSprite(started && base ? `${base}sprite.vtt` : null, options.xhrSetup);
+  const sprite = useSprite(started && base ? `${base}sprite.vtt` : null, options.loader);
   const live = !previewing && started;
   useProgressReports(video, { enabled: live, source: live ? src : null, interval: progressInterval, onProgress });
 
@@ -605,7 +605,7 @@ export function VideoPlayer({
               ) : posterOutputs.length ? (
                 <RenditionImg outputs={posterOutputs} className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
               ) : (
-                <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={options.xhrSetup} className={fade} />
+                <SpriteFrame vtt={`${base}sprite.vtt`} loader={options.loader} className={fade} />
               )}
               <BigButton label={t("player.play")} onClick={player.play} disabled={busy} className={fade}>
                 {busy ? <Spinner /> : <HugeiconsIcon icon={PlayIcon} className="ml-1 size-7 fill-current" strokeWidth={1.5} />}

@@ -34,7 +34,7 @@ export interface HoverPreviewProps extends Pick<HlsPlayerOptions, "abr"> {
 export function HoverPreview({ item, dir = "hls/", duration, start, available = true, target, enabled, abr, className, client: own }: HoverPreviewProps) {
   const { media } = useContentKitClient(own);
   const [el, setEl] = useState<HTMLVideoElement | null>(null);
-  const player = useHlsPlayer({ src: `${media.hlsBase(item, dir)}master.m3u8`, xhrSetup: media.xhrSetup, abr, qualityKey: null });
+  const player = useHlsPlayer({ src: `${media.hlsBase(item, dir)}master.m3u8`, loader: media.hls, abr, qualityKey: null });
   const d = duration ?? 0;
   const at = Math.max(0, start ?? (d > 1 ? Math.min(d * 0.1, d - 1) : 0));
   useInlinePreview({ setting: enabled, available, target: target ?? el?.parentElement ?? null, start: () => player.preview(at), stop: player.unload });

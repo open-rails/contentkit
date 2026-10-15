@@ -48,21 +48,33 @@ it("sends the token and language, and reports commits to subscribers", async () 
   expect(changes).toEqual([{ type: "media.committed", ref, files: [{ path: "a.png", type: "image/png", upload: true }] }]);
 });
 
-it("xhrSetup opens the request and adds the bearer only on the API origin", async () => {
-  const client = createContentKitClient({ baseUrl: "https://api.test/ck", token: () => "tok", credentials: "include" });
-  const xhr = () => {
-    const x = { readyState: 0, withCredentials: false, opened: "", headers: {} as Record<string, string> };
-    return Object.assign(x, {
-      open: (_m: string, url: string) => ((x.opened = url), (x.readyState = 1)),
-      setRequestHeader: (k: string, v: string) => (x.headers[k] = v),
-    });
+it("HLS loader: API playlists go through the client's fetch, segments carry only cookies", async () => {
+  const calls: { url: string; auth: string | null; credentials?: RequestCredentials }[] = [];
+  const record = (url: string, init?: RequestInit) => {
+    calls.push({ url, auth: new Headers(init?.headers).get("Authorization"), credentials: init?.credentials });
+    return Promise.resolve(new Response("#EXTM3U"));
   };
-  const api = xhr();
-  await client.media.xhrSetup(api as unknown as XMLHttpRequest, "https://api.test/ck/media/video/x/hls/master.m3u8");
-  expect([api.opened, api.withCredentials, api.headers]).toEqual(["https://api.test/ck/media/video/x/hls/master.m3u8", true, { Authorization: "Bearer tok" }]);
-  const cdn = xhr();
-  await client.media.xhrSetup(cdn as unknown as XMLHttpRequest, "https://media.test/seg/0.m4s");
-  expect(cdn.headers).toEqual({});
+  const plain = globalThis.fetch;
+  globalThis.fetch = ((url: string, init?: RequestInit) => record(`plain ${url}`, init)) as typeof fetch;
+  try {
+    const client = createContentKitClient({ baseUrl: "https://api.test/ck", token: () => "tok", credentials: "include", fetch: ((url: string, init?: RequestInit) => record(url, init)) as typeof fetch });
+    await client.media.hls.playlist("https://api.test/ck/media/video/x/hls/master.m3u8");
+    await client.media.hls.playlist("https://media.test/x/master.m3u8");
+    expect(calls).toEqual([
+      { url: "https://api.test/ck/media/video/x/hls/master.m3u8", auth: "Bearer tok", credentials: "include" },
+      { url: "plain https://media.test/x/master.m3u8", auth: null, credentials: "include" },
+    ]);
+  } finally {
+    globalThis.fetch = plain;
+  }
+  const client = createContentKitClient({ baseUrl: "https://api.test/ck", token: () => "tok", credentials: "include" });
+  const x = { readyState: 0, withCredentials: false, opened: "", headers: {} as Record<string, string> };
+  const xhr = Object.assign(x, {
+    open: (_m: string, url: string) => ((x.opened = url), (x.readyState = 1)),
+    setRequestHeader: (k: string, v: string) => (x.headers[k] = v),
+  });
+  client.media.hls.segment(xhr as unknown as XMLHttpRequest, "https://api.test/ck/media/video/x/seg/0.m4s");
+  expect([x.opened, x.withCredentials, x.headers]).toEqual(["https://api.test/ck/media/video/x/seg/0.m4s", true, {}]);
 });
 
 

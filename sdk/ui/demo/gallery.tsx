@@ -66,7 +66,7 @@ function Player({ at }: { at: RefBody }) {
   if (!dir || !video) return null;
   return (
     <>
-      <VideoPlayer base={client.media.hlsBase(at, dir)} xhrSetup={client.media.xhrSetup} width={video.w} height={video.h} duration={video.dur} refresh={refresh} />
+      <VideoPlayer base={client.media.hlsBase(at, dir)} loader={client.media.hls} width={video.w} height={video.h} duration={video.dur} refresh={refresh} />
       <span data-demo="refreshed">{refreshed}</span>
     </>
   );
@@ -98,7 +98,7 @@ export function AbrDemo() {
   return (
     <main style={{ maxWidth: 680, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20 }}>
       <Post title="abr" demo="abr">
-        {dir && <VideoPlayer base={client.media.hlsBase(at, dir)} xhrSetup={client.media.xhrSetup} width={1920} height={1080} refresh={refresh} />}
+        {dir && <VideoPlayer base={client.media.hlsBase(at, dir)} loader={client.media.hls} width={1920} height={1080} refresh={refresh} />}
         <button type="button" onClick={() => document.querySelector<HTMLElement>("[data-demo=abr] [data-ckui=video-player]")?.requestFullscreen()}>
           Fullscreen
         </button>
@@ -134,7 +134,7 @@ export function WatchDemo() {
             <VideoPlayer
               key={start.key}
               base={client.media.hlsBase(at, dir)}
-              xhrSetup={client.media.xhrSetup}
+              loader={client.media.hls}
               refresh={refresh}
               width={video.w}
               height={video.h}

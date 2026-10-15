@@ -58,16 +58,13 @@ export interface HttpOptions {
   mounts?: ContentKitMounts;
   /** Transport for API calls; pass an authenticating fetch (auth-ui's authFetch). */
   fetch?: typeof fetch;
-  /**
-   * Bearer for API calls and for HLS playlists on the API origin (hls.js
-   * loads them with XHR, not fetch). An authenticating fetch overrides it.
-   */
+  /** Bearer for API calls and HLS playlists. An authenticating fetch overrides it. */
   token?: TokenSource;
   /** Sent as Accept-Language. */
   language?: () => string | null | undefined;
   /** Extra headers per call (CSRF). */
   headers?: () => HeadersInit | Promise<HeadersInit>;
-  /** Default "same-origin"; "include" also sends cookies with HLS requests. */
+  /** Default "same-origin"; "include" also sends cookies with HLS segment requests. */
   credentials?: RequestCredentials;
 }
 
@@ -81,6 +78,14 @@ export interface RequestOptions {
 }
 
 const trim = (u: string) => u.replace(/\/+$/, "");
+
+/** How a player loads HLS: the media client's `hls`. */
+export interface HlsLoader {
+  /** Fetches a playlist or sprite VTT with the app's credentials. */
+  playlist(url: string, signal?: AbortSignal): Promise<Response>;
+  /** hls.js `xhrSetup` for segments: cookies, never the app's credentials. */
+  segment(xhr: XMLHttpRequest, url: string): void;
+}
 
 /** The transport every module shares: mounts, auth, language, errors and change events. */
 export class Http {
@@ -131,15 +136,21 @@ export class Http {
   }
 
   /**
-   * hls.js `xhrSetup`: opens the request, sends cookies when credentials is
-   * "include", and adds the bearer only on the API's origin (never a media host).
+   * How players load this API's HLS. Playlists and sprite VTTs go through
+   * the client's fetch, so they carry what its other calls carry (a DPoP
+   * proof when that fetch adds one); segments only carry cookies.
    */
-  readonly xhrSetup = async (xhr: XMLHttpRequest, url: string): Promise<void> => {
-    if (!xhr.readyState) xhr.open("GET", url, true);
-    if (this.o.credentials === "include") xhr.withCredentials = true;
-    if (!this.onApiOrigin(url)) return;
-    const token = await this.o.token?.();
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  readonly hls: HlsLoader = {
+    playlist: async (url, signal) => {
+      const init: RequestInit = { credentials: this.o.credentials ?? "same-origin", signal: signal ?? null };
+      if (!this.onApiOrigin(url)) return fetch(url, init);
+      const token = await this.o.token?.();
+      return (this.o.fetch ?? fetch)(url, token ? { ...init, headers: { Authorization: `Bearer ${token}` } } : init);
+    },
+    segment: (xhr, url) => {
+      if (!xhr.readyState) xhr.open("GET", url, true);
+      if (this.o.credentials === "include") xhr.withCredentials = true;
+    },
   };
 
   setReadScope(key: string): void {

@@ -1,7 +1,7 @@
 // Framework-free ContentKit client: one createContentKitClient, its modules,
 // one error type, the generated wire types, and the media math the UI uses.
 export { createContentKitClient, type ContentKitClient, type ContentKitClientOptions } from "./client.js";
-export type { ContentKitChange, ContentKitModule, ContentKitMounts, Mount, TokenSource } from "./http.js";
+export type { ContentKitChange, ContentKitModule, ContentKitMounts, HlsLoader, Mount, TokenSource } from "./http.js";
 export {
   CLIENT_ERROR_CODES,
   ContentKitError,

@@ -30,11 +30,11 @@ import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
-export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
+export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "loader" | "refresh" | "abr"> {
   /**
    * The item to show, read through the client: its read (refreshed before
    * the URLs expire, after commits), HLS bases, playlist auth and grant
-   * refresh. Or pass `read` (and hlsBase, xhrSetup, refresh) yourself.
+   * refresh. Or pass `read` (and hlsBase, loader, refresh) yourself.
    */
   item?: RefBody;
   /** With item: only files under this path prefix. */
@@ -141,7 +141,7 @@ function useItemRead(p: MediaGalleryProps): MediaGalleryProps {
   const item = p.item;
   const hlsBase = useCallback((dir: string) => client!.media.hlsBase(item!, dir), [client, item]);
   if (!item || !client) return p;
-  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, xhrSetup: p.xhrSetup ?? client.media.xhrSetup, refresh: p.refresh ?? r.refresh };
+  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, loader: p.loader ?? client.media.hls, refresh: p.refresh ?? r.refresh };
 }
 
 function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: number; onIndex: (i: number) => void; lightbox?: boolean }) {
@@ -293,7 +293,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       height={f.h}
       duration={f.dur}
       active={active}
-      xhrSetup={ctx.xhrSetup}
+      loader={ctx.loader}
       refresh={ctx.refresh}
       expires={ctx.read?.expires}
       abr={ctx.abr}
@@ -439,7 +439,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
         ) : covers.length ? (
           <RenditionImg outputs={covers} loading="lazy" className="absolute inset-0 size-full object-cover" />
         ) : base ? (
-          <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={ctx.xhrSetup} fit="cover" />
+          <SpriteFrame vtt={`${base}sprite.vtt`} loader={ctx.loader} fit="cover" />
         ) : null}
         {base && <TilePreview ctx={ctx} base={base} start={start} target={el} />}
         {f.failed ? (
@@ -478,7 +478,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
 
 // A grid tile's inline preview; the tile opens the lightbox for real playback.
 function TilePreview({ ctx, base, start, target }: { ctx: Ctx; base: string; start: number; target: HTMLElement | null }) {
-  const player = useHlsPlayer({ src: `${base}master.m3u8`, xhrSetup: ctx.xhrSetup, refresh: ctx.refresh, expires: ctx.read?.expires, abr: ctx.abr, qualityKey: null });
+  const player = useHlsPlayer({ src: `${base}master.m3u8`, loader: ctx.loader, refresh: ctx.refresh, expires: ctx.read?.expires, abr: ctx.abr, qualityKey: null });
   useInlinePreview({ setting: ctx.inlinePreview, available: true, target, start: () => player.preview(start), stop: player.unload });
   return (
     <video
