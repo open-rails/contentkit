@@ -56,7 +56,8 @@ it("screens files against the kind's rules, uploads the rest and adds them in qu
   expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "type_not_allowed" }), { operation: "upload", file: "c.gif" });
 
   await waitFor(() => expect(screen.getAllByText("Uploaded")).toHaveLength(2), wait);
-  expect(record.presigns.map((p) => p.path)).toEqual(["originals/b.png", "originals/a.png"]);
+  // Parallel file hashing may reorder presigns; commit and display keep queue order.
+  expect(record.presigns.map((p) => p.path).sort()).toEqual(["originals/a.png", "originals/b.png"]);
   await user.click(screen.getByRole("button", { name: "Add 2" }));
   await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(2), wait);
   expect(ops(record)).toEqual([["put originals/b.png", "put originals/a.png"]]);
