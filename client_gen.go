@@ -2498,7 +2498,7 @@ func (q GetTypeaheadQuery) values() url.Values {
 	return v
 }
 
-// GetTypeahead is GET /v1/typeahead (public). Suggests contents and groups while the reader types, tolerating typos and partial words.
+// GetTypeahead is GET /v1/typeahead (public). Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.
 func (c *Client) GetTypeahead(ctx context.Context, q GetTypeaheadQuery) (discovery.Typeahead, error) {
 	var out discovery.Typeahead
 	err := c.call(ctx, http.MethodGet, "/v1/typeahead", q.values(), nil, &out)

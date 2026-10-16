@@ -274,8 +274,8 @@ type TypeaheadHit struct {
 	Score    float32
 }
 
-// Typeahead returns suggestions while a user is typing (typos/substring
-// matching), one per content item, grouped before Limit.
+// Typeahead returns title/alias prefixes while a user is typing, one per
+// content item, grouped before Limit. Contextual matching belongs to Search.
 func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
 	q := strings.TrimSpace(userText)
 	if q == "" || !normalize.HasAnyLetterOrNumber(q) {
@@ -304,7 +304,7 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 
 	var docs []groupedDoc
 	for i, lang := range languages {
-		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
+		result, err := search.PrefixSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
 		if err != nil {
 			return nil, err
 		}

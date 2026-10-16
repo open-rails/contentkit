@@ -118,7 +118,7 @@ var routes = []httpapi.Route[handler]{
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Suggests contents and groups while the reader types, tolerating typos and partial words.",
+		Doc: "Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the partial query"), httpapi.Text("kind", "only contents of this kind"),
 			httpapi.List("entity_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
 			[]httpapi.Param{httpapi.Int("limit", "per section: 8 by default, at most 20")}),

@@ -693,7 +693,9 @@ that fits the reader (`display_language` first, then position).
   its `version.has_audio` says the version's media has audio.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
   signed-in reader, or any list sort of the best 1000 matches), `GET
-  /typeahead` (contents and groups).
+  /typeahead` (direct title/entity-name/alias prefixes only; no contextual
+  keywords or typo expansion). `SearchBox` puts matching recent queries first,
+  followed by entities and content titles; full search remains broader.
 - `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
   (co-engagement by default), admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,

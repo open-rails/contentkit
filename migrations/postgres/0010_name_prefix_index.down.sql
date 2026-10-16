@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS content_search_documents_name_prefix;

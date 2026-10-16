@@ -112,12 +112,21 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		}
 	}
 	upsertDocs(t, ctx, pool, schema, all...)
+	// Full search retains every fuzzy/interior match below; typeahead only
+	// admits these literal title/alias prefixes (including normalized scripts).
+	prefixQueries := map[string]bool{
+		"Not Guilty": true, "ＮＯＴ　ＧＵＩＬＴＹ": true, "not gui": true, "ca": true,
+		"Café Moon": true, "Two-Factor": true, "cafe moon": true, "resume faconne": true,
+		"鬼滅の刃": true, "demon slayer": true, "ｶﾞﾝﾀﾞﾑ": true, "ガンダム": true,
+		"カンタム": true, "마법소녀": true,
+		"鬼滅": true, "ガン": true, "魔法少": true, "마법소": true,
+	}
 	for _, tc := range []struct{ lang, query, id string }{
 		{"en", "Not Guilty", canonical}, {"en", "not giulty", canonical}, {"en", "not guily", canonical}, {"en", "not guillty", canonical}, {"en", "not guxlty", canonical},
 		{"en", "ＮＯＴ　ＧＵＩＬＴＹ", canonical}, {"en", "not gui", canonical}, {"en", "ca", accent}, {"en", "Café Moon", accent}, {"en", "Two-Factor", hyphen}, {"en", "cafe moon", accent}, {"en", "resume faconne", accentMany},
-		{"ja", "鬼滅の刃", native}, {"ja", "鬼滅の刀", native}, {"ja", "鬼の刃", native}, {"ja", "鬼滅なの刃", native}, {"ja", "鬼の滅刃", native}, {"ja", "滅鬼の刃", native}, {"ja", "の刃", native}, {"ja", "demon slayer", native}, {"ja", "ｶﾞﾝﾀﾞﾑ", voiced}, {"ja", "ガンダム", voiced}, {"ja", "カンタム", unvoiced},
-		{"zh", "魔法少如", native}, {"zh", "魔少女", native}, {"zh", "魔法小少女", native}, {"zh", "魔法女少", native}, {"zh", "法魔少女", native},
-		{"ko", "마법소너", native}, {"ko", "마소녀", native}, {"ko", "마법작소녀", native}, {"ko", "마법녀소", native}, {"ko", "법마소녀", native}, {"ko", "마법소녀", native},
+		{"ja", "鬼滅の刃", native}, {"ja", "鬼滅", native}, {"ja", "鬼滅の刀", native}, {"ja", "鬼の刃", native}, {"ja", "鬼滅なの刃", native}, {"ja", "鬼の滅刃", native}, {"ja", "滅鬼の刃", native}, {"ja", "の刃", native}, {"ja", "demon slayer", native}, {"ja", "ｶﾞﾝﾀﾞﾑ", voiced}, {"ja", "ガンダム", voiced}, {"ja", "ガン", voiced}, {"ja", "カンタム", unvoiced},
+		{"zh", "魔法少如", native}, {"zh", "魔法少", native}, {"zh", "魔少女", native}, {"zh", "魔法小少女", native}, {"zh", "魔法女少", native}, {"zh", "法魔少女", native},
+		{"ko", "마법소너", native}, {"ko", "마소녀", native}, {"ko", "마법작소녀", native}, {"ko", "마법녀소", native}, {"ko", "법마소녀", native}, {"ko", "마법소녀", native}, {"ko", "마법소", native},
 	} {
 		t.Run(tc.lang+"/"+tc.query, func(t *testing.T) {
 			page, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, ContentKinds: []string{"gallery"}, Limit: 10})
@@ -135,8 +144,12 @@ func TestKeywordNativeIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(suggestions) == 0 || suggestions[0].ContentID != tc.id || suggestions[0].Score <= 0 {
-				t.Fatalf("suggestions=%v", suggestions)
+			if prefixQueries[tc.query] {
+				if len(suggestions) == 0 || suggestions[0].ContentID != tc.id || suggestions[0].Score <= 0 {
+					t.Fatalf("prefix suggestions=%v", suggestions)
+				}
+			} else if len(suggestions) != 0 {
+				t.Fatalf("non-prefix full-search match leaked into suggestions: %v", suggestions)
 			}
 		})
 	}
@@ -221,6 +234,28 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	t.Log(plan.String())
 	if !strings.Contains(plan.String(), "content_search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
 		t.Fatalf("expected indexed bounded fuzzy path:\n%s", plan.String())
+	}
+	rows, err = pool.Query(ctx, `EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id
+ FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
+ AND app.contentkit_keyword_terms(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) '魔法' LIMIT 20`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Reset()
+	for rows.Next() {
+		var line string
+		if err = rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(line + "\n")
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		t.Fatal(rows.Err())
+	}
+	t.Log(plan.String())
+	if !strings.Contains(plan.String(), "content_search_documents_name_prefix") || strings.Contains(plan.String(), "Seq Scan") {
+		t.Fatalf("expected indexed name-prefix path:\n%s", plan.String())
 	}
 	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", ContentKinds: []string{"gallery"}})
 	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != native || page.HasMore {

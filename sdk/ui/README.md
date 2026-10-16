@@ -860,11 +860,27 @@ access revision current; signed-out viewers do not fetch an inbox.
 including loading and empty states. Set `presentation="header"` for a portal
 panel directly below the input, matching its width and following it on resize
 or scroll: a dimmed backdrop, text rows with colored type icons, and no
-thumbnails. Recent-search dates appear when the panel is wide enough. The panel
+thumbnails. Recent searches omit dates. The panel
 slides downward when opened and honors reduced motion. Its mobile/desktop
 scroll limit is 70vh/60vh. The default inline
-presentation is unchanged. Both presentations keep the provider's result order;
-the host owns search-page navigation.
+presentation is unchanged. Both presentations show prefix-matching recent
+queries first (newest first), then matching entities, then content titles. A
+recent query remains selectable while network suggestions debounce or load.
+Guest history persists in localStorage across tabs; account history comes from
+the server, fetched on opening rather than on every keystroke. `recent={false}`
+omits history. Only completed searches are recorded.
+
+`GET /v1/typeahead` matches the beginning of a title, entity name or direct
+alias, using the keyword index's case/accent/whitespace normalization. It does
+not expand associated entities, contextual keywords, interior words or typos:
+Inazuma can suggest that artist, but not Business Question merely because
+Inazuma created it. Full `GET /v1/search` retains broader keyword and typo
+matching. Visibility, tenant, language and version eligibility still apply.
+The host owns search-page navigation and suggestion links.
+
+Core migration `0010_name_prefix_index` adds the name-only prefix index; apply
+normal ContentKit migrations before serving the new core. Original keyword
+indexes and full-search behavior remain in place.
 `ReaderSettings` combines language selection and content filters in one dialog:
 
 ```tsx

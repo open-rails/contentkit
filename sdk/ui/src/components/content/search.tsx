@@ -26,7 +26,7 @@ export interface SearchBoxProps {
   /** A suggestion's link; default its canonical path. */
   href?: (item: Card | GroupCard) => string | undefined;
   labels?: Labels;
-  /** The reader's recent searches while the box is empty. Default true. */
+  /** Recent searches first, prefix-filtered while typing. Default true. */
   recent?: boolean;
   /** A portal dropdown anchored to the header field; default stays inline. */
   presentation?: "inline" | "header";
@@ -36,6 +36,9 @@ export interface SearchBoxProps {
 }
 
 type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
+
+// Match the keyword index's case, Latin accent and whitespace normalization.
+const prefixText = (text: string) => text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase().trim().replace(/\s+/g, " ");
 
 const TYPE_ICONS: Record<string, { icon: IconSvgElement; color: string }> = {
   artist: { icon: UserIcon, color: "text-blue-500 dark:text-blue-400" },
@@ -83,8 +86,8 @@ function SearchTypeIcon({ kind }: { kind: string }) {
 }
 
 /**
- * A search field suggesting contents and groups as the reader types, and
- * recent searches while it is empty; Enter searches, or opens the suggestion chosen.
+ * Recent query prefixes first, followed by entity and title prefixes. Enter
+ * searches, or opens the chosen suggestion; full search can match more deeply.
  */
 export function SearchBox(p: SearchBoxProps) {
   const { t, error } = useMessages();
@@ -101,18 +104,21 @@ export function SearchBox(p: SearchBoxProps) {
   const { top } = anchor;
   const empty = !text.trim();
   const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client });
-  const recent = useRecentSearches({ enabled: p.recent !== false && open && empty, client: p.client });
-  const items = useMemo<Suggestion[]>(
-    () =>
-      empty
-        ? recent.searches.map((r) => ({ type: "recent" as const, query: r.query }))
-        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.entities.map((group) => ({ type: "group" as const, group }))],
-    [empty, recent.searches, found.contents, found.entities],
+  const recent = useRecentSearches({ enabled: p.recent !== false && open, client: p.client });
+  const prefix = prefixText(text);
+  const current = found.query === text.trim();
+  const visible = useMemo<Suggestion[]>(
+    () => [
+      ...(p.recent === false ? [] : recent.searches.filter((r) => prefixText(r.query).startsWith(prefix)).map((r) => ({ type: "recent" as const, query: r.query }))),
+      ...(!empty && current ? [
+        ...found.entities.map((group) => ({ type: "group" as const, group })),
+        ...found.contents.map((card) => ({ type: "content" as const, card })),
+      ] : []),
+    ],
+    [p.recent, prefix, empty, current, recent.searches, found.contents, found.entities],
   );
-  const current = empty || found.query === text.trim();
-  const visible = current ? items : [];
   const selected = visible[active];
-  const loading = empty ? recent.loading : !current || found.loading;
+  const loading = recent.loading || (!empty && (!current || found.loading));
   const showRecent = empty && p.recent !== false;
   const emptyMessage = empty ? !header && showRecent && !recent.error ? "contents.noRecentSearches" : "contents.searchHint" : "contents.noResults";
   useEffect(() => {

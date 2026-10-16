@@ -9745,7 +9745,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Suggests contents and groups while the reader types, tolerating typos and partial words.",
+        "summary": "Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.",
         "parameters": [
           {
             "name": "q",

@@ -26,6 +26,10 @@ type documentKey struct {
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
 // The eligibility join runs inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
+	return queryDocuments(ctx, pool, query, opts, keywordSearch)
+}
+
+func queryDocuments(ctx context.Context, pool *pgxpool.Pool, query string, opts Options, retrieve func(context.Context, pgx.Tx, string, Options) (Result, error)) (Result, error) {
 	if pool == nil {
 		return Result{}, fmt.Errorf("pool is required")
 	}
@@ -42,7 +46,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		return Result{}, err
 	}
 	defer tx.Rollback(ctx)
-	result, err := keywordSearch(ctx, tx, query, opts)
+	result, err := retrieve(ctx, tx, query, opts)
 	if err != nil {
 		return result, err
 	}
