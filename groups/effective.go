@@ -62,6 +62,20 @@ func (s *Store) refreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	if len(contentIDs) == 0 {
 		return nil
 	}
+	// Catalog mutations lock content before facets/documents. Take that same
+	// order before a membership callback advances the catalog revision, so a
+	// concurrent publication cannot hold content while waiting on our facets.
+	locked, err := q.Query(ctx, `SELECT id FROM `+s.table("content_items")+` WHERE tenant_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE`, s.tenant, contentIDs)
+	if err != nil {
+		return err
+	}
+	for locked.Next() {
+	}
+	err = locked.Err()
+	locked.Close()
+	if err != nil {
+		return err
+	}
 	if _, err := q.Exec(ctx, s.effectiveSQL(fmt.Sprintf(`SELECT f.version_id, f.content_id FROM %s f WHERE f.tenant_id = $1 AND f.content_id = ANY($2::text[])`,
 		s.table("content_facets")))+fmt.Sprintf(`
 UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff

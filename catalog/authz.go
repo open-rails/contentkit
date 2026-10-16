@@ -19,7 +19,16 @@ func (e *AuthError) Unwrap() error { return e.Err }
 // staffRights are the actor's root permissions over content.
 type staffRights struct{ write, view bool }
 
+type checkedStaffKey struct{}
+type checkedStaff struct {
+	store  *Store
+	rights staffRights
+}
+
 func (s *Store) staffRights(ctx context.Context, actor access.Actor) (staffRights, error) {
+	if checked, ok := ctx.Value(checkedStaffKey{}).(checkedStaff); ok && checked.store == s {
+		return checked.rights, nil
+	}
 	if actor.Anonymous || actor.ID == "" {
 		return staffRights{}, nil
 	}

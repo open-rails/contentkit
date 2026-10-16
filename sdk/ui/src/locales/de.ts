@@ -234,6 +234,13 @@ export const de: ContentKitUiMessageBundle = {
     failed: "Der Download konnte nicht starten. Bitte versuche es erneut.",
   },
   errors: {
+    ambiguous_entity: "Mehrere Einträge passen zu diesem Namen. Wähle den gewünschten Eintrag.",
+    unknown_entity: "Dieser Eintrag wurde nicht gefunden. Wähle einen vorhandenen Eintrag oder erlaube die Erstellung.",
+    operation_conflict: "Diese Einreichung enthält bereits andere Inhalte. Erstelle eine neue Einreichung.",
+    operation_busy: "Diese Einreichung wird noch aktualisiert. Versuche es gleich erneut.",
+    source_conflict: "Diese Quelle wurde bereits eingereicht.",
+    content_changed: "Der Inhalt wurde nach der Einreichung geändert. Prüfe ihn vor der Veröffentlichung.",
+    invalid_archive: "Diese ZIP-Datei konnte nicht verarbeitet werden. Prüfe, ob sie unterstützte Dateien enthält.",
     download_unavailable: "Das ist gerade nicht zum Herunterladen verfügbar.",
     no_download: "Hier gibt es noch nichts herunterzuladen.",
     generic: "Auf unserer Seite ist etwas schiefgelaufen. Bitte versuche es erneut.",

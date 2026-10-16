@@ -106,14 +106,14 @@ export function SearchBox(p: SearchBoxProps) {
   const { top } = anchor;
   const dates = useMemo(() => new Intl.DateTimeFormat(language, { dateStyle: "short" }), [language]);
   const empty = !text.trim();
-  const found = useTypeahead(text, { kind: p.kind, group_kinds: p.groupKinds, client: p.client });
+  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client });
   const recent = useRecentSearches({ enabled: p.recent !== false && open && empty, client: p.client });
   const items = useMemo<Suggestion[]>(
     () =>
       empty
         ? recent.searches.map((r) => ({ type: "recent" as const, query: r.query, searchedAt: r.searched_at }))
-        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.groups.map((group) => ({ type: "group" as const, group }))],
-    [empty, recent.searches, found.contents, found.groups],
+        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.entities.map((group) => ({ type: "group" as const, group }))],
+    [empty, recent.searches, found.contents, found.entities],
   );
   const current = empty || found.query === text.trim();
   const visible = current ? items : [];

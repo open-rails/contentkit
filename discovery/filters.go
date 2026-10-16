@@ -16,7 +16,7 @@ import (
 
 // ContentFilterState is one configured content filter as the reader has it.
 type ContentFilterState struct {
-	Group groups.GroupCard `json:"group"`
+	Group groups.GroupCard `json:"entity"`
 	// Label is the configured label in the requested language, else the
 	// group's name.
 	Label          string `json:"label"`

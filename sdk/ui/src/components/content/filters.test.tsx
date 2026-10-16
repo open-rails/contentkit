@@ -25,7 +25,7 @@ it("retains the separate deleted-content option without an empty-filter message"
 });
 
 it("keeps configured filters visible and saves reader changes", async () => {
-  const filter = { group: { id: "filter-group", slug: "explicit", name: "Explicit content" }, label: "Explicit content", visible: false, overridden: false };
+  const filter = { entity: { id: "filter-group", slug: "explicit", name: "Explicit content" }, label: "Explicit content", visible: false, overridden: false };
   const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "PUT") return Response.json({ filters: [{ ...filter, visible: true, overridden: true }], include_deleted: false });
     return Response.json({ filters: [filter], include_deleted: false });

@@ -136,6 +136,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 	if e.offers != nil {
 		parts = append(parts, e.offers.RiverJobs())
 	}
+	if e.publishing != nil {
+		parts = append(parts, e.publishing.RiverJobs())
+	}
 	return riverhelpers.Group(parts...)
 }
 

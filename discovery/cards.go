@@ -42,7 +42,7 @@ type Card struct {
 	Cover    []media.PublicRendition `json:"cover"`
 	Version  CardVersion             `json:"version"`
 	// Groups are the version's effective groups with a page, by group kind.
-	Groups map[string][]Chip `json:"groups"`
+	Groups map[string][]Chip `json:"entities"`
 	// Owner is the owner group's card (a channel's name, path, avatar and
 	// cover).
 	Owner       *groups.GroupCard    `json:"owner,omitempty"`

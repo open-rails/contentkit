@@ -47,7 +47,7 @@ export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitC
   const { client, store, scope } = useContentScope(o.client);
   const filter = useMemo(() => {
     if (!q) return null;
-    const { sort: _s, cursor: _c, limit: _l, card_groups: _g, mode: _m, ...f } = q;
+    const { sort: _s, cursor: _c, limit: _l, card_entities: _g, mode: _m, ...f } = q;
     return f;
   }, [q]);
   const query = useDisplay(filter);
@@ -180,7 +180,7 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
 /** A favorite or reaction with its content's or group's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.group?.id ?? "" })), next: p.next_cursor ?? null });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? "" })), next: p.next_cursor ?? null });
 
 /** The signed-in reader's favorites, most recent first: content cards or groups. */
 export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
@@ -236,7 +236,7 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
     },
     [client, guarded, language, key, store],
   );
-  const settings = (f: ContentFilters) => f.filters.filter((x) => x.overridden).map((x) => ({ group_id: x.group.id, visible: x.visible }));
+  const settings = (f: ContentFilters) => f.filters.filter((x) => x.overridden).map((x) => ({ group_id: x.entity.id, visible: x.visible }));
   const setVisible = useCallback(
     (groupId: string, visible: boolean) => {
       const f = current.current;
@@ -258,14 +258,14 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
 
 export interface UseTypeahead {
   contents: Card[];
-  groups: GroupCard[];
+  entities: GroupCard[];
   /** The query the suggestions answer (trimmed). */
   query: string;
   loading: boolean;
   error?: ContentKitError;
 }
 
-const NONE: Pick<UseTypeahead, "contents" | "groups"> = { contents: [], groups: [] };
+const NONE: Pick<UseTypeahead, "contents" | "entities"> = { contents: [], entities: [] };
 
 /** Suggestions while the reader types: debounced, the stale ones abandoned. */
 export function useTypeahead(
@@ -286,7 +286,7 @@ export function useTypeahead(
     const ctl = new AbortController();
     const timer = setTimeout(() => {
       client.discovery.typeahead(query, ctl.signal).then(
-        (r) => setState({ contents: r.contents, groups: r.groups, query: q, loading: false }),
+        (r) => setState({ contents: r.contents, entities: r.entities, query: q, loading: false }),
         (e) => {
           const error = toContentKitError(e);
           if (error.code !== "aborted") setState({ ...NONE, query: q, loading: false, error });

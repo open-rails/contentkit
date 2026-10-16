@@ -118,7 +118,7 @@ const PROBES: Record<StaffArea, (c: ContentKitClient, signal: AbortSignal) => Pr
   polls: (c, signal) => c.polls.adminList({ limit: 1 }, signal),
   contents: (c, signal) => c.contents.manage({ limit: 1 }, signal),
   groups: (c, signal) =>
-    c.groups.members(NO_GROUP, { limit: 1 }, signal).catch((e) => {
+    c.entities.members(NO_GROUP, { limit: 1 }, signal).catch((e) => {
       if (toContentKitError(e).code !== "not_found") throw e;
     }),
 };

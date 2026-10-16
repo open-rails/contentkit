@@ -17,7 +17,7 @@ const card = (id: string, allowed = true): Card => ({
   language: "en",
   cover: [],
   version: { id: `${id}v`, code: "X1", languages: ["en"], traits: [], has_audio: id === "a" },
-  groups: {},
+  entities: {},
   counts: {},
   access: allowed ? { allowed, level: "public" } : { allowed, level: "tier", tiers: ["premium"], sell: ["premium"] },
   attributes: {},

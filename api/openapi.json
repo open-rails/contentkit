@@ -245,7 +245,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/comments": {
+    "/v1/entities/{id}/comments": {
       "get": {
         "tags": [
           "comments"
@@ -1263,7 +1263,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/like": {
+    "/v1/entities/{id}/like": {
       "post": {
         "tags": [
           "reactions"
@@ -1316,7 +1316,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/dislike": {
+    "/v1/entities/{id}/dislike": {
       "post": {
         "tags": [
           "reactions"
@@ -1369,7 +1369,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/reaction": {
+    "/v1/entities/{id}/reaction": {
       "delete": {
         "tags": [
           "reactions"
@@ -1640,7 +1640,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/favorite": {
+    "/v1/entities/{id}/favorite": {
       "post": {
         "tags": [
           "favorites"
@@ -2945,7 +2945,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/held-comments": {
+    "/v1/entities/{id}/held-comments": {
       "get": {
         "tags": [
           "moderation"
@@ -3010,7 +3010,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/comment-bans": {
+    "/v1/entities/{id}/comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -3078,7 +3078,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/comment-bans/{user}": {
+    "/v1/entities/{id}/comment-bans/{user}": {
       "put": {
         "tags": [
           "bans"
@@ -3250,7 +3250,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/can-comment": {
+    "/v1/entities/{id}/can-comment": {
       "get": {
         "tags": [
           "bans"
@@ -4094,21 +4094,13 @@
         ]
       }
     },
-    "/v1/manage/contents": {
+    "/v1/manage": {
       "get": {
         "tags": [
           "contents"
         ],
         "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "only this kind",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "state",
             "in": "query",
@@ -4185,6 +4177,106 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/manage/{kind}": {
+      "get": {
+        "tags": [
+          "contents"
+        ],
+        "summary": "Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "draft, scheduled, published or deleted",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "only this owner group's, which the caller edits",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "only items whose title, description or body contains this text, ignoring case",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language to show text in; the site's first language, then any, when it has none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Content"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
         "x-contentkit-error-sets": [
           "module:contents",
           "auth",
@@ -4415,7 +4507,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -6101,17 +6193,17 @@
         ]
       }
     },
-    "/v1/groups": {
+    "/v1/entities": {
       "get": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.",
+        "summary": "Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.",
         "parameters": [
           {
             "name": "kind",
             "in": "query",
-            "description": "only groups of this kind",
+            "description": "only entities of this kind",
             "schema": {
               "type": "string"
             }
@@ -6119,7 +6211,7 @@
           {
             "name": "parent",
             "in": "query",
-            "description": "only children of this group",
+            "description": "only children of this entity",
             "schema": {
               "type": "string"
             }
@@ -6127,7 +6219,7 @@
           {
             "name": "scope",
             "in": "query",
-            "description": "only groups scoped by this group",
+            "description": "only entities scoped by this entity",
             "schema": {
               "type": "string"
             }
@@ -6135,7 +6227,7 @@
           {
             "name": "slug",
             "in": "query",
-            "description": "only the group with this slug",
+            "description": "only the entity with this slug",
             "schema": {
               "type": "string"
             }
@@ -6210,20 +6302,20 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "post": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
+        "summary": "Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "requestBody": {
           "required": true,
           "content": {
@@ -6260,27 +6352,27 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found",
           "limit_reached"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}": {
+    "/v1/entities/{id}": {
       "get": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
+        "summary": "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
         "parameters": [
           {
             "name": "id",
@@ -6320,22 +6412,22 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "patch": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
+        "summary": "Updates a entity's given fields; state restores or deletes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -6376,25 +6468,25 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found",
           "limit_reached"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "delete": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
+        "summary": "Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",
@@ -6425,30 +6517,30 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/me/groups": {
+    "/v1/me/entities": {
       "get": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
+        "summary": "The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.",
         "parameters": [
           {
             "name": "kind",
             "in": "query",
-            "description": "only groups of this kind",
+            "description": "only entities of this kind",
             "schema": {
               "type": "string"
             }
@@ -6506,22 +6598,22 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}/names": {
+    "/v1/entities/{id}/names": {
       "put": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Replaces a group's names and aliases.",
+        "summary": "Replaces a entity's names and aliases.",
         "parameters": [
           {
             "name": "id",
@@ -6568,24 +6660,24 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "post": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Adds names and aliases to a group; a new canonical name demotes the old one to an alias.",
+        "summary": "Adds names and aliases to a entity; a new canonical name demotes the old one to an alias.",
         "parameters": [
           {
             "name": "id",
@@ -6632,24 +6724,24 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "delete": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Removes names and aliases from a group.",
+        "summary": "Removes names and aliases from a entity.",
         "parameters": [
           {
             "name": "id",
@@ -6696,26 +6788,26 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}/edges": {
+    "/v1/entities/{id}/edges": {
       "post": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Adds edges from a group.",
+        "summary": "Adds edges from a entity.",
         "parameters": [
           {
             "name": "id",
@@ -6762,24 +6854,24 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "delete": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Removes edges from a group.",
+        "summary": "Removes edges from a entity.",
         "parameters": [
           {
             "name": "id",
@@ -6826,23 +6918,23 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}/merge": {
+    "/v1/entities/{id}/merge": {
       "post": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects.",
+        "summary": "Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.",
         "parameters": [
           {
             "name": "id",
@@ -6883,26 +6975,26 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}/members": {
+    "/v1/entities/{id}/members": {
       "get": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "A group's memberships in member order, paged.",
+        "summary": "A entity's memberships in member order, paged.",
         "parameters": [
           {
             "name": "id",
@@ -6949,23 +7041,23 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "post": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Adds contents or versions to a group, or updates their position, window and state.",
+        "summary": "Adds contents or versions to a entity, or updates their position, window and state.",
         "parameters": [
           {
             "name": "id",
@@ -7009,24 +7101,24 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "delete": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Removes contents or versions from a group.",
+        "summary": "Removes contents or versions from a entity.",
         "parameters": [
           {
             "name": "id",
@@ -7070,23 +7162,23 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/groups/{id}/members/order": {
+    "/v1/entities/{id}/members/order": {
       "put": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Orders an ordered group: the listed members first, in list order.",
+        "summary": "Orders an ordered entity: the listed members first, in list order.",
         "parameters": [
           {
             "name": "id",
@@ -7127,25 +7219,25 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       }
     },
-    "/v1/contents/{id}/groups": {
+    "/v1/contents/{id}/entities": {
       "get": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "A content's memberships, its versions' included, with the groups they name.",
+        "summary": "A content's memberships, its versions' included, with the entities they name.",
         "parameters": [
           {
             "name": "id",
@@ -7184,21 +7276,21 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
       },
       "put": {
         "tags": [
-          "groups"
+          "entities"
         ],
-        "summary": "Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default).",
+        "summary": "Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).",
         "parameters": [
           {
             "name": "id",
@@ -7247,15 +7339,15 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "groups",
+        "x-contentkit-module": "entities",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:groups:write",
+        "x-contentkit-permission": "root:entities:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
-          "module:groups",
+          "module:entities",
           "auth",
           "request"
         ]
@@ -8142,7 +8234,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/offer": {
+    "/v1/entities/{id}/offer": {
       "put": {
         "tags": [
           "offers"
@@ -8250,7 +8342,7 @@
         ]
       }
     },
-    "/v1/groups/{id}/join": {
+    "/v1/entities/{id}/join": {
       "post": {
         "tags": [
           "offers"
@@ -8663,7 +8755,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -8765,7 +8857,7 @@
             }
           },
           {
-            "name": "group_kinds",
+            "name": "entity_kinds",
             "in": "query",
             "description": "the group kinds suggested; every kind with a page by default",
             "style": "form",
@@ -9017,7 +9109,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -9240,7 +9332,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -9642,7 +9734,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -9871,7 +9963,7 @@
           {
             "name": "target",
             "in": "query",
-            "description": "contents (the default) or groups",
+            "description": "contents (the default) or entities",
             "schema": {
               "type": "string"
             }
@@ -9885,7 +9977,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -9986,7 +10078,7 @@
           {
             "name": "target",
             "in": "query",
-            "description": "contents (the default) or groups",
+            "description": "contents (the default) or entities",
             "schema": {
               "type": "string"
             }
@@ -10000,7 +10092,7 @@
             }
           },
           {
-            "name": "card_groups",
+            "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
             "style": "form",
@@ -10243,7 +10335,7 @@
         ]
       }
     },
-    "/v1/sitemap/groups": {
+    "/v1/sitemap/entities": {
       "get": {
         "tags": [
           "discovery"
@@ -10594,6 +10686,181 @@
           "request"
         ]
       }
+    },
+    "/v1/publishing-operations/{id}": {
+      "put": {
+        "tags": [
+          "publishing"
+        ],
+        "summary": "Creates or resumes one immutable archive submission. id is a client-chosen UUID. Requires content write; creating missing taxonomy also requires group write. Tenant and app come from the verified request. Repeating identical input returns the same draft and renews expired upload instructions; changed input is a conflict. when_ready requires provider-supported durable authorization.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "publishing",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "operation_conflict",
+          "source_conflict",
+          "ambiguous_entity",
+          "unknown_entity",
+          "operation_busy",
+          "forbidden",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:publishing",
+          "auth",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "publishing"
+        ],
+        "summary": "Reads an owned submission, its compact progress, asynchronous failure or final catalog path. This read never creates upload URLs or advances the operation. HTTP 200 does not imply successful publication.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "publishing",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "forbidden"
+        ],
+        "x-contentkit-error-sets": [
+          "module:publishing",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/publishing-operations/{id}/complete": {
+      "post": {
+        "tags": [
+          "publishing"
+        ],
+        "summary": "Completes the submission's declared upload and durably begins processing. The server owns its exact media commit; no caller-supplied content IDs or blob references are accepted. Repeats do not create another import.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "publishing",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "forbidden",
+          "not_uploaded",
+          "operation_busy"
+        ],
+        "x-contentkit-error-sets": [
+          "module:publishing",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -10887,6 +11154,20 @@
           }
         }
       },
+      "Archive": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        }
+      },
       "Attribute": {
         "type": "object",
         "properties": {
@@ -11045,7 +11326,7 @@
           "provision_scopes": {
             "type": "boolean"
           },
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupRecord"
@@ -11173,7 +11454,7 @@
           "version": {
             "$ref": "#/components/schemas/CardVersion"
           },
-          "groups": {
+          "entities": {
             "type": "object",
             "additionalProperties": {
               "type": "array",
@@ -11212,7 +11493,7 @@
           "language",
           "cover",
           "version",
-          "groups",
+          "entities",
           "counts",
           "access",
           "attributes"
@@ -11652,6 +11933,10 @@
           "size"
         ]
       },
+      "CompleteRequest": {
+        "type": "object",
+        "properties": {}
+      },
       "Config": {
         "type": "object",
         "properties": {
@@ -11754,7 +12039,7 @@
               "$ref": "#/components/schemas/Creator"
             }
           },
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupSummary"
@@ -11825,7 +12110,7 @@
           "restrictions",
           "attributes",
           "creators",
-          "groups",
+          "entities",
           "versions",
           "editor",
           "revision",
@@ -11836,7 +12121,7 @@
       "ContentFilter": {
         "type": "object",
         "properties": {
-          "group": {
+          "entity": {
             "$ref": "#/components/schemas/GroupRef"
           },
           "default_visible": {
@@ -11850,14 +12135,14 @@
           }
         },
         "required": [
-          "group",
+          "entity",
           "default_visible"
         ]
       },
       "ContentFilterState": {
         "type": "object",
         "properties": {
-          "group": {
+          "entity": {
             "$ref": "#/components/schemas/GroupCard"
           },
           "label": {
@@ -11874,7 +12159,7 @@
           }
         },
         "required": [
-          "group",
+          "entity",
           "label",
           "default_visible",
           "visible",
@@ -11990,7 +12275,7 @@
               "$ref": "#/components/schemas/Membership"
             }
           },
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupCard"
@@ -12000,7 +12285,7 @@
         "required": [
           "content_id",
           "memberships",
-          "groups"
+          "entities"
         ]
       },
       "ContentModel": {
@@ -12024,7 +12309,7 @@
               "$ref": "#/components/schemas/Kind"
             }
           },
-          "group_kinds": {
+          "entity_kinds": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/GroupKind"
@@ -12047,7 +12332,7 @@
           "languages",
           "tiers",
           "kinds",
-          "group_kinds",
+          "entity_kinds",
           "content_filters",
           "signals"
         ]
@@ -12524,6 +12809,52 @@
           "phase",
           "percent",
           "at"
+        ]
+      },
+      "EntityReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EntityReference"
+          }
+        }
+      },
+      "EntityResolution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EntityResolution"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "created"
         ]
       },
       "ErrorDetails": {
@@ -13443,7 +13774,7 @@
       "GroupPage": {
         "type": "object",
         "properties": {
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupCard"
@@ -13454,7 +13785,7 @@
           }
         },
         "required": [
-          "groups"
+          "entities"
         ]
       },
       "GroupRecord": {
@@ -13867,7 +14198,7 @@
           "content": {
             "$ref": "#/components/schemas/Card"
           },
-          "group": {
+          "entity": {
             "$ref": "#/components/schemas/GroupCard"
           },
           "value": {
@@ -14005,7 +14336,7 @@
           "segments": {
             "type": "boolean"
           },
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "type": "string"
@@ -14386,7 +14717,7 @@
       "MyGroupPage": {
         "type": "object",
         "properties": {
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MyGroup"
@@ -14397,7 +14728,7 @@
           }
         },
         "required": [
-          "groups"
+          "entities"
         ]
       },
       "MyStats": {
@@ -14586,6 +14917,111 @@
             "type": "boolean"
           }
         }
+      },
+      "Operation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "awaiting_upload",
+              "blocked",
+              "failed",
+              "processing",
+              "published",
+              "publishing",
+              "ready",
+              "review_required",
+              "scheduled"
+            ]
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "publish_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityResolution"
+            }
+          },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperationResult"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OperationError"
+          },
+          "upload": {
+            "$ref": "#/components/schemas/PresignReply"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "content_id",
+          "version_id",
+          "entities",
+          "progress",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "OperationError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ]
+      },
+      "OperationResult": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "pages"
+        ]
       },
       "Order": {
         "type": "object",
@@ -15312,6 +15748,25 @@
           }
         }
       },
+      "Progress": {
+        "type": "object",
+        "properties": {
+          "stage": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage",
+          "completed",
+          "total"
+        ]
+      },
       "PublicImage": {
         "type": "object",
         "properties": {
@@ -15768,6 +16223,40 @@
           "h"
         ]
       },
+      "Request": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/ContentInput"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityReference"
+            }
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "publish": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "when_ready"
+            ]
+          },
+          "publish_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "create_missing_entities": {
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        }
+      },
       "RequestReply": {
         "type": "object",
         "properties": {
@@ -16176,6 +16665,20 @@
           "entries"
         ]
       },
+      "Source": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "StagedCopy": {
         "type": "object",
         "properties": {
@@ -16326,7 +16829,7 @@
               "$ref": "#/components/schemas/Card"
             }
           },
-          "groups": {
+          "entities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupCard"
@@ -16335,7 +16838,7 @@
         },
         "required": [
           "contents",
-          "groups"
+          "entities"
         ]
       },
       "UploadLimits": {
@@ -16777,6 +17280,7 @@
       "ErrorCode": {
         "type": "string",
         "enum": [
+          "ambiguous_entity",
           "animation_not_allowed",
           "animation_too_long",
           "animation_unsupported",
@@ -16786,6 +17290,7 @@
           "comments_closed",
           "comments_locked",
           "conflict",
+          "content_changed",
           "download_unavailable",
           "forbidden",
           "gone",
@@ -16794,6 +17299,7 @@
           "image_unreadable",
           "incomplete",
           "internal_error",
+          "invalid_archive",
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
@@ -16802,14 +17308,18 @@
           "not_found",
           "not_joinable",
           "not_uploaded",
+          "operation_busy",
+          "operation_conflict",
           "quota_exceeded",
           "rate_limited",
+          "source_conflict",
           "tenant_mismatch",
           "too_large",
           "too_many_files",
           "type_not_allowed",
           "unauthorized",
           "unavailable",
+          "unknown_entity",
           "upgrade_required",
           "video_aspect_unsupported",
           "video_over_budget",
@@ -16934,12 +17444,13 @@
     "upload": "/v1/media/upload",
     "media": "/v1/media",
     "codes": "/v1/codes",
-    "groups": "/v1",
+    "entities": "/v1",
     "notifications": "/v1/notifications",
     "versions": "/v1",
     "offers": "/v1",
     "discovery": "/v1",
-    "import": "/v1"
+    "import": "/v1",
+    "publishing": "/v1"
   },
   "x-contentkit-error-sets": {
     "module:kinds": [
@@ -16976,7 +17487,7 @@
     "module:codes": [
       "internal_error"
     ],
-    "module:groups": [
+    "module:entities": [
       "internal_error"
     ],
     "module:notifications": [
@@ -16998,9 +17509,14 @@
     "module:import": [
       "internal_error",
       "unavailable"
-    ]
+    ],
+    "module:publishing": null
   },
   "x-contentkit-error-codes": {
+    "ambiguous_entity": {
+      "status": 409,
+      "meaning": "More than one entity matches the localized name or alias and scope; supply its ID."
+    },
     "animation_not_allowed": {
       "status": 422,
       "meaning": "An animated image where the upload path refuses animation."
@@ -17037,6 +17553,10 @@
       "status": 409,
       "meaning": "A concurrent change, a path or slug already taken, or an operation id already used for another commit."
     },
+    "content_changed": {
+      "status": 409,
+      "meaning": "A publishing operation's content or version was edited after submission."
+    },
     "download_unavailable": {
       "status": 403,
       "meaning": "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged."
@@ -17068,6 +17588,10 @@
     "internal_error": {
       "status": 500,
       "meaning": "A server fault; the cause is in the server log."
+    },
+    "invalid_archive": {
+      "status": 422,
+      "meaning": "The publishing archive cannot produce the required supported pages."
     },
     "invalid_request": {
       "status": 400,
@@ -17101,6 +17625,14 @@
       "status": 409,
       "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
     },
+    "operation_busy": {
+      "status": 409,
+      "meaning": "The publishing operation is preparing an upload or completing another request; retry."
+    },
+    "operation_conflict": {
+      "status": 409,
+      "meaning": "A publishing operation ID already names different immutable input."
+    },
     "quota_exceeded": {
       "status": 413,
       "meaning": "The uploader's storage quota is used up."
@@ -17108,6 +17640,10 @@
     "rate_limited": {
       "status": 429,
       "meaning": "Too many requests; retry after `retry_after` seconds (also the Retry-After header)."
+    },
+    "source_conflict": {
+      "status": 409,
+      "meaning": "The external source already belongs to another publishing operation in this app."
     },
     "tenant_mismatch": {
       "status": 500,
@@ -17132,6 +17668,10 @@
     "unavailable": {
       "status": 503,
       "meaning": "The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry."
+    },
+    "unknown_entity": {
+      "status": 400,
+      "meaning": "A publishing entity reference does not resolve in this app and entity creation is disabled."
     },
     "upgrade_required": {
       "status": 503,

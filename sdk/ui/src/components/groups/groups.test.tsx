@@ -51,7 +51,7 @@ it("MembershipBox: no Join where the group sells no membership; members stay mem
 });
 
 it("MembershipBox: a free group's Join refused as not joinable says so, not that something changed elsewhere", async () => {
-  const s = server({ "POST /groups/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
+  const s = server({ "POST /entities/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
   const user = userEvent.setup();
   render(<MembershipBox group={group({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
   await user.click(screen.getByRole("button", { name: "Join" }));
@@ -59,7 +59,7 @@ it("MembershipBox: a free group's Join refused as not joinable says so, not that
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
 });
 
-const model: ContentModel = { languages: ["en"], tiers: [], content_filters: [], signals: false, kinds: {}, group_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
+const model: ContentModel = { languages: ["en"], tiers: [], content_filters: [], signals: false, kinds: {}, entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
 const at = "2026-10-13T00:00:00Z";
 const offer: Offer = { id: "o1", target: { kind: "group", id: "g1" }, key, terms: { amount: "4.99", currency: "USD", renew_hours: 720 }, state: "active", synced: true, revision: 2, updated_at: at };
 const detail: GroupDetail = {
@@ -83,7 +83,7 @@ const detail: GroupDetail = {
 };
 
 it("GroupEditor: its editor sees the membership it sells, though no paywall offers it to them", async () => {
-  const s = server({ "GET /kinds": () => model, "GET /groups/g1": () => detail });
+  const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
   const { container } = render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
   await waitFor(() => expect(container.querySelector('[data-ckui="group-offer"] [data-ckui="current-offer"]')).not.toBeNull());
   const section = container.querySelector<HTMLElement>('[data-ckui="group-offer"]')!;

@@ -38,7 +38,7 @@ type Batch struct {
 	// imported group of an auth_scope kind that names none; without it such
 	// a group fails.
 	ProvisionScopes bool             `json:"provision_scopes,omitempty"`
-	Groups          []GroupRecord    `json:"groups,omitempty"`
+	Groups          []GroupRecord    `json:"entities,omitempty"`
 	Contents        []ContentRecord  `json:"contents,omitempty"`
 	Memberships     []MembershipSet  `json:"memberships,omitempty"`
 	Offers          []OfferRecord    `json:"offers,omitempty"`
@@ -334,7 +334,7 @@ type DeleteRecord struct {
 
 // Sections, in the order a batch writes them.
 const (
-	SectionGroups      = "groups"
+	SectionGroups      = "entities"
 	SectionContents    = "contents"
 	SectionMemberships = "memberships"
 	SectionOffers      = "offers"

@@ -49,10 +49,10 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
       {filters.filters.length ? (
         <ul className="grid divide-y divide-border rounded-lg border border-border">
           {filters.filters.map((x) => (
-            <li key={x.group.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.group.slug} data-visible={x.visible}>
-              <Switch id={`${id}-${x.group.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.group.id, v))} />
-              <Label htmlFor={`${id}-${x.group.id}`} className="min-w-0 flex-1">
-                {x.label || x.group.name}
+            <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
+              <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
+              <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
+                {x.label || x.entity.name}
               </Label>
             </li>
           ))}

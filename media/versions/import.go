@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -92,6 +93,14 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 }
 
 func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentref.ContentRef, f media.File) error {
+	operation, _ := f.Meta[ArchiveOperation].(string)
+	expected, _ := f.Meta[ArchiveSHA256].(string)
+	if operation != "" {
+		digest, ok := layout.BlobDigest(f.Blob)
+		if !ok || hex.EncodeToString(digest) != expected {
+			return permanent{errors.New("archive checksum does not match its publishing declaration")}
+		}
+	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
 		return err
@@ -149,6 +158,7 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		}
 	}
 	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
+	expectedPages := map[string]bool{}
 	for _, e := range entries {
 		body, err := readEntry(e, up.MaxBytes)
 		if err != nil {
@@ -160,6 +170,7 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		}
 		raw := sha256.Sum256(body)
 		sum := hex.EncodeToString(raw[:])
+		expectedPages[sum] = true
 		if have[sum] {
 			continue
 		}
@@ -172,6 +183,39 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			return err
 		}
 		have[sum], names[name] = true, true
+	}
+	if operation != "" {
+		_, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
+			pages := archivePages(k, m)
+			if len(pages) != len(expectedPages) {
+				return permanent{ErrArchiveChanged}
+			}
+			for _, page := range pages {
+				if !expectedPages[page.SHA256] {
+					return permanent{ErrArchiveChanged}
+				}
+			}
+			var receipts map[string]archiveReceipt
+			if existing := m.Meta[archiveReceipts]; existing != nil {
+				b, err := json.Marshal(existing)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(b, &receipts); err != nil {
+					return err
+				}
+			}
+			if receipts == nil {
+				receipts = map[string]archiveReceipt{}
+			}
+			receipts[operation] = archiveReceipt{SHA256: expected, Pages: pages}
+			if m.Meta == nil {
+				m.Meta = map[string]any{}
+			}
+			m.Meta[archiveReceipts] = receipts
+			return nil
+		})
+		return err
 	}
 	return nil
 }

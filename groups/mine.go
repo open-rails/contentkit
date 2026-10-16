@@ -28,7 +28,7 @@ type MyGroup struct {
 
 // MyGroupPage is one page of the viewer's groups.
 type MyGroupPage struct {
-	Groups     []MyGroup `json:"groups"`
+	Groups     []MyGroup `json:"entities"`
 	NextCursor string    `json:"next_cursor,omitempty"`
 }
 

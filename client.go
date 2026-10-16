@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/open-rails/contentkit/internal/gate"
 )
@@ -19,7 +21,7 @@ const inprocessBase = "http://contentkit.inprocess"
 
 // Client is the typed Go client of the HTTP surface: one method per route
 // (client_gen.go, generated from the route catalog), named by its verb and
-// path (PATCH /v1/groups/{id} is PatchGroup). Engine.Client makes one over
+// path (PATCH /v1/entities/{id} is PatchEntity). Engine.Client makes one over
 // the in-process transport, acting as the host; NewClient one for a remote
 // ContentKit. It is safe for concurrent use.
 type Client struct {
@@ -61,6 +63,15 @@ type Error struct {
 	Status  int
 	Code    string
 	Message string
+	// RetryAfter is the server's minimum delay before another attempt.
+	RetryAfter time.Duration
+	// Details retains structured validation information without coupling the
+	// client to one module's error type.
+	Details   json.RawMessage
+	Blobs     []string
+	Field     string
+	RequestID string
+	Retryable bool
 }
 
 func (e *Error) Error() string {
@@ -131,13 +142,39 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if res.StatusCode >= 300 {
 		defer res.Body.Close()
 		var reply struct {
-			Error string `json:"error"`
-			Code  string `json:"code"`
+			Error      string          `json:"error"`
+			Code       string          `json:"code"`
+			RetryAfter int             `json:"retry_after"`
+			Details    json.RawMessage `json:"details"`
+			Blobs      []string        `json:"blobs"`
+			Field      string          `json:"field"`
+			RequestID  string          `json:"request_id"`
+			Retryable  bool            `json:"retryable"`
 		}
 		_ = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&reply)
-		return nil, &Error{Status: res.StatusCode, Code: reply.Code, Message: reply.Error}
+		wait := max(time.Duration(reply.RetryAfter)*time.Second, retryAfter(res.Header))
+		if reply.RequestID == "" {
+			reply.RequestID = res.Header.Get("X-Request-ID")
+		}
+		if reply.Error == "" {
+			reply.Error = http.StatusText(res.StatusCode)
+		}
+		return nil, &Error{Status: res.StatusCode, Code: reply.Code, Message: reply.Error,
+			RetryAfter: max(wait, 0), Details: reply.Details, Blobs: reply.Blobs,
+			Field: reply.Field, RequestID: reply.RequestID, Retryable: reply.Retryable}
 	}
 	return res, nil
+}
+
+func retryAfter(header http.Header) time.Duration {
+	h := header.Get("Retry-After")
+	if seconds, err := strconv.Atoi(h); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if until, err := http.ParseTime(h); err == nil {
+		return max(time.Until(until), 0)
+	}
+	return 0
 }
 
 // expand fills a route path's wildcards: pairs of "{name}" and its escaped

@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -205,17 +206,50 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 // Create creates content items as drafts and returns their ids in order.
 // actor needs root:content:write, or to edit each item's owner group.
 func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInput) ([]string, error) {
-	type prepared struct {
-		ContentInput
-		id       string
-		kind     kinds.Kind
-		creators []Creator
-		versions []VersionInput
+	prepared, err := s.PrepareCreate(ctx, actor, in)
+	if err != nil {
+		return nil, err
 	}
-	preps := make([]prepared, len(in))
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	ids, err := prepared.CreateTx(ctx, tx, in)
+	if err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit(ctx)
+}
+
+type preparedCreateContent struct {
+	ContentInput
+	id       string
+	kind     kinds.Kind
+	creators []Creator
+	versions []VersionInput
+}
+
+// CreateAuthorization is one fully validated, in-process creation plan.
+// PrepareCreate performs permission queries and body processing before a
+// transaction reserves a pool connection. The plan is not serializable and
+// must be used immediately with exactly the inputs that were prepared.
+type CreateAuthorization struct {
+	store *Store
+	actor access.Actor
+	input []byte
+	preps []preparedCreateContent
+}
+
+func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []ContentInput) (*CreateAuthorization, error) {
+	input, err := json.Marshal(in)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	preps := make([]preparedCreateContent, len(in))
 	var owners []string
 	for i, c := range in {
-		p := prepared{ContentInput: c, id: contentref.NewID()}
+		p := preparedCreateContent{ContentInput: c, id: contentref.NewID()}
 		var err error
 		if p.kind, err = s.kind(c.Kind); err != nil {
 			return nil, err
@@ -276,14 +310,26 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		owners = append(owners, c.OwnerGroupID)
 		preps[i] = p
 	}
-	tx, err := s.begin(ctx)
-	if err != nil {
+	if err := s.authorizeCreate(ctx, s.pool, actor, owners); err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
-	if err := s.authorizeCreate(ctx, tx, actor, owners); err != nil {
-		return nil, err
+	return &CreateAuthorization{store: s, actor: actor, input: input, preps: preps}, nil
+}
+
+// CreateTx writes this prepared creation in the caller-owned transaction.
+// It never invokes a body processor or the authorization provider.
+func (a *CreateAuthorization) CreateTx(ctx context.Context, tx pgx.Tx, in []ContentInput) ([]string, error) {
+	if a == nil || a.store == nil || tx == nil {
+		return nil, ErrForbidden
 	}
+	input, err := json.Marshal(in)
+	if err != nil || !bytes.Equal(input, a.input) {
+		return nil, ErrForbidden
+	}
+	return a.store.createPreparedTx(ctx, tx, a.actor, a.preps)
+}
+
+func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Actor, preps []preparedCreateContent) ([]string, error) {
 	ids := make([]string, len(preps))
 	var events []Event
 	for i, p := range preps {
@@ -325,7 +371,7 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 	if err := s.apply(ctx, tx, ids, effects{events: events, codes: true}); err != nil {
 		return nil, err
 	}
-	return ids, tx.Commit(ctx)
+	return ids, nil
 }
 
 // textLanguages are the languages a default or hidden version serves: its
@@ -691,6 +737,20 @@ func (s *Store) syncHiddenVersion(ctx context.Context, tx pgx.Tx, id, kind strin
 // until a reviewer approves it. Rescheduling a scheduled item moves its time;
 // a live item is left as it is.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) error {
+	return s.PublishChecked(ctx, actor, in, nil)
+}
+
+// PublishChecked is Publish with a transaction-local precondition. The check
+// runs after ordinary authorization and content locks, before any publication
+// mutation. It must use tx for database reads and must not open transactions.
+func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Publish, check func(context.Context, pgx.Tx) error) error {
+	// Resolve provider authority before reserving a pool connection: AuthKit
+	// may share this pool. The private context memo lasts only this operation.
+	rights, err := s.staffRights(ctx, actor)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, checkedStaffKey{}, checkedStaff{store: s, rights: rights})
 	ids := make([]string, len(in))
 	byID := map[string][]TextPut{}
 	for i, p := range in {
@@ -704,6 +764,11 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) e
 	now := s.now()
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{expose: true}
+		if check != nil {
+			if err := check(ctx, tx); err != nil {
+				return fx, err
+			}
+		}
 		for _, p := range in {
 			o := got[p.ContentID]
 			switch {

@@ -22,8 +22,8 @@ export interface ContentKitMounts {
   upload?: Mount;
   /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
-  /** Groups. Default `{baseUrl}/v1`. */
-  groups?: string;
+  /** Entities. Default `{baseUrl}/v1`. */
+  entities?: string;
   /** The site's content model. Default `{baseUrl}/v1`. */
   kinds?: string;
   /** User inbox. Default `{baseUrl}/v1/notifications`. */
@@ -36,6 +36,8 @@ export interface ContentKitMounts {
   discovery?: string;
   /** Bulk import (a service's). Default `{baseUrl}/v1`. */
   import?: string;
+  /** Durable archive publishing operations. Default `{baseUrl}/v1`. */
+  publishing?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;

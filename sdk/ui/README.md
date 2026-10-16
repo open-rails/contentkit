@@ -74,7 +74,7 @@ the second `subscribe` / `onChange` argument, or `null` when the scope changed d
 operation. This does not change the operation's result or its authentication.
 
 - **Mounts.** Without `mounts`, modules live under `{baseUrl}/v1`: content,
-  groups and the content model at its root, `/media` (reads, HLS),
+  entities and the content model at its root, `/media` (reads, HLS),
   `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
@@ -87,13 +87,15 @@ operation. This does not change the operation's result or its authentication.
 - **Content modules**, one per resource, each method one route of the
   generated route table with its generated types: `contents`, `catalog`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
-  `moderation`, `groups`, `codes`. Lists take `limit`/`offset` (the review
+  `moderation`, `entities`, `codes`. Lists take `limit`/`offset` (the review
   queue and group listings a `cursor`); `contents.manage` lists what the caller
   manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
   counts what is open; staff lists are `polls.adminList` (`state`, `q`),
-  `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
-  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's,
-  `groups.uploadCover(group, file)` its cover; `client.kinds()` the content model.
+  `comments.adminList` (`contentKind`, `author`); `entities.members(id)` pages
+  an entity's memberships, `entities.ofContent(id)` / `setOfContent` a content's,
+  `entities.uploadImage(entity, "cover", file)` its cover; `client.kinds()` the content model.
+  `contents.manage({kind: "gallery"})` uses `/manage/gallery`; omitting `kind`
+  lists manageable content across kinds at `/manage`.
 - **Images of content and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
@@ -293,7 +295,7 @@ Every card list (`ContentGrid`, `ContentListing`, `ContentRail`,
 the host's badges, drawn over the cover (place them yourself; clicks reach
 the card, and click signals stay intact). Cards carry what badges need:
 `access.level` and `access.tiers` (the effective rule, the same for every
-reader), `version.has_audio`, `viewer.favorited` and `groups`.
+reader), `version.has_audio`, `viewer.favorited` and `entities`.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists

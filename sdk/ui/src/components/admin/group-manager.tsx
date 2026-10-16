@@ -58,7 +58,7 @@ function Manager({ basePath, navigation, ...p }: Inner) {
   const list = useMemo(
     () =>
       p.groupKinds ??
-      Object.entries(kinds?.group_kinds ?? {})
+      Object.entries(kinds?.entity_kinds ?? {})
         .filter(([, k]) => k.owner !== "user")
         .map(([name]) => name)
         .sort(),
@@ -231,7 +231,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & {
             client={client}
             onError={onError}
             renderContent={renderContent}
-            onUseCover={(content) => client.groups.update(group.id, { cover: { content_id: content } })}
+            onUseCover={(content) => client.entities.update(group.id, { cover: { content_id: content } })}
           />
         )}
       </GroupEditor>

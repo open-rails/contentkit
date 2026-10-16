@@ -17,7 +17,7 @@ type ContentModel struct {
 	Languages      []string                   `json:"languages"`
 	Tiers          []string                   `json:"tiers"`
 	Kinds          map[string]kinds.Kind      `json:"kinds"`
-	GroupKinds     map[string]kinds.GroupKind `json:"group_kinds"`
+	GroupKinds     map[string]kinds.GroupKind `json:"entity_kinds"`
 	ContentFilters []kinds.ContentFilter      `json:"content_filters"`
 	// Signals: the site records signals and exposures now. Without, clients
 	// send none and read the model again later: a configured signal plane

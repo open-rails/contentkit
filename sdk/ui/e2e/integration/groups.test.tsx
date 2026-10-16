@@ -33,7 +33,7 @@ describe("groups against the real ContentKit", () => {
       );
     };
   const create = async (kind: string, slug: string, names: ReturnType<typeof name>[], o: { parent_id?: string; scope_id?: string } = {}): Promise<Group> =>
-    (await staff.groups.create([{ kind, slug, names, ...o }]))[0]!;
+    (await staff.entities.create([{ kind, slug, names, ...o }]))[0]!;
 
   it("useGroups: a parent's children by letter bucket, order and page, named in the asked language", async () => {
     const r = run();
@@ -47,7 +47,7 @@ describe("groups against the real ContentKit", () => {
     for (const [g, n] of [[beta, 2], [alpha, 1]] as const) {
       for (let i = 0; i < n; i++) {
         const [c] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r} ${i}` }, versions: [{ languages: ["en"] }] }]);
-        await staff.groups.addMembers(g.id, [{ content_id: c!.id }]);
+        await staff.entities.addMembers(g.id, [{ content_id: c!.id }]);
       }
     }
     await h.recount();
@@ -113,7 +113,7 @@ describe("groups against the real ContentKit", () => {
     const image = result.current.group!.cover!.image!;
     expect(await h.object({ kind: "artist", id: artist.id }, `cover/${image}`)).not.toBeNull();
     const [member] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r}` }, versions: [{ languages: ["en"] }] }]);
-    await staff.groups.addMembers(artist.id, [{ content_id: member!.id }]);
+    await staff.entities.addMembers(artist.id, [{ content_id: member!.id }]);
     await act(() => result.current.update({ cover: { content_id: member!.id } }));
     await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id }), wait);
     await act(() => result.current.update({ cover: {} }));
@@ -125,14 +125,14 @@ describe("groups against the real ContentKit", () => {
     await act(() => result.current.merge(circle.id));
     await waitFor(() => expect(result.current.group?.id).toBe(circle.id), wait);
     expect(result.current.group?.names.map((n) => n.name)).toEqual(expect.arrayContaining([`Circle ${r}`, `A. ${r}`, `Artist ${r}`]));
-    expect((await staff.groups.members(circle.id)).members.map((m) => m.content_id)).toEqual([member!.id]);
+    expect((await staff.entities.members(circle.id)).members.map((m) => m.content_id)).toEqual([member!.id]);
 
     const { result: other } = renderHook(() => useGroup(circle.id), { wrapper: wrap(c, "en") });
     await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
     await act(() => other.current.remove());
     expect(other.current.group).toBeNull();
     expect(other.current.deleted).toMatchObject({ id: circle.id, state: "deleted" });
-    await expect(client(h, cfg, null).groups.get(circle.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(client(h, cfg, null).entities.get(circle.id)).rejects.toMatchObject({ code: "not_found" });
     await act(() => other.current.restore());
     await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
     expect(other.current.deleted).toBeNull();
@@ -171,8 +171,8 @@ describe("groups against the real ContentKit", () => {
     expect(by(voice.id)).toMatchObject({ version_id: ja });
     expect(by(rail.id)).toMatchObject({ position: 1 });
     expect([by(rail.id)?.active_from, by(rail.id)?.active_until].map((t) => Date.parse(t!))).toEqual([Date.parse(from), Date.parse(until)]);
-    expect([...result.current.groups.keys()].sort()).toEqual([artist.id, series.id, voice.id, rail.id].sort());
-    expect(result.current.groups.get(voice.id)).toMatchObject({ kind: "voice_actor", name: `Voice ${r}` });
+    expect([...result.current.entities.keys()].sort()).toEqual([artist.id, series.id, voice.id, rail.id].sort());
+    expect(result.current.entities.get(voice.id)).toMatchObject({ kind: "voice_actor", name: `Voice ${r}` });
     await expect(result.current.set([{ group_id: series.id, version_id: ja }], ["series"])).rejects.toMatchObject({ code: "invalid_request" });
 
     // The rail's members, from its side: another content, an order, a new window, a removal.
@@ -201,9 +201,9 @@ describe("groups against the real ContentKit", () => {
 
   it("useKinds reads the content model; staff access to groups", async () => {
     const { result } = renderHook(() => ({ kinds: useKinds(), staff: useStaffAccess(["groups"] as const) }), { wrapper: wrap(staff) });
-    await waitFor(() => expect(result.current.kinds.kinds?.group_kinds?.artist?.roles).toEqual(["publisher"]), wait);
+    await waitFor(() => expect(result.current.kinds.kinds?.entity_kinds?.artist?.roles).toEqual(["publisher"]), wait);
     expect(result.current.kinds.kinds?.kinds.comic).toMatchObject({ route: "comics", presentation: "reader" });
-    expect(result.current.kinds.kinds?.content_filters).toEqual([{ group: { kind: "tag", slug: "gore" }, default_visible: false, labels: { en: "Gore", ja: "ゴア" } }]);
+    expect(result.current.kinds.kinds?.content_filters).toEqual([{ entity: { kind: "tag", slug: "gore" }, default_visible: false, labels: { en: "Gore", ja: "ゴア" } }]);
     await waitFor(() => expect(result.current.staff.loading).toBe(false), wait);
     expect(result.current.staff.allowed.groups).toBe(true);
     const { result: alice } = renderHook(() => useStaffAccess(["groups"] as const), { wrapper: wrap(client(h, cfg, acc.get("alice"))) });

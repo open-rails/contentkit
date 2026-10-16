@@ -92,8 +92,8 @@ export function GroupPicker({ kind, language, exclude, label, onPick, client, au
   const id = useId();
   const [text, setText] = useState("");
   const [active, setActive] = useState(0);
-  const found = useTypeahead(text, { group_kinds: [kind], display_language: language, limit: 10, client });
-  const results = useMemo(() => found.groups.filter((g) => g.kind === kind && !exclude?.includes(g.id)).slice(0, 8), [found.groups, kind, exclude]);
+  const found = useTypeahead(text, { entity_kinds: [kind], display_language: language, limit: 10, client });
+  const results = useMemo(() => found.entities.filter((g) => g.kind === kind && !exclude?.includes(g.id)).slice(0, 8), [found.entities, kind, exclude]);
   const q = text.trim();
   useEffect(() => setActive(0), [q]);
   const pick = (g: GroupCard) => {
@@ -171,7 +171,7 @@ export function useGroupNames(ids: readonly string[], o: { language?: string; cl
     const ctl = new AbortController();
     const list = key.split(",");
     // A merged group answers as its survivor: keep it under the id asked for.
-    Promise.all(list.map((id) => client.groups.get(id, o.language, ctl.signal).catch(() => null))).then((all) => {
+    Promise.all(list.map((id) => client.entities.get(id, o.language, ctl.signal).catch(() => null))).then((all) => {
       if (!ctl.signal.aborted) setFound(new Map(all.flatMap((g, i) => (g ? [[list[i]!, g] as const] : []))));
     });
     return () => ctl.abort();

@@ -83,6 +83,10 @@ func (m *model) wireTS() []byte {
 		fmt.Fprintf(&b, "export type %s = %s;\n", e.name, union(e.values))
 	}
 	for _, o := range m.sortedObjects() {
+		if len(o.fields) == 0 {
+			fmt.Fprintf(&b, "\nexport type %s = Record<string, never>;\n", o.name)
+			continue
+		}
 		fmt.Fprintf(&b, "\nexport interface %s {\n", o.name)
 		for _, f := range o.fields {
 			t := m.tsType(f.t)

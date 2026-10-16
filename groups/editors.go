@@ -24,7 +24,7 @@ type writer struct {
 
 // As returns the store acting as actor, judged by a. Its reads show actor's
 // standing with sellable groups. Its writes: staff holding
-// access.GroupsWrite in a's root scope (and the engine's own client) write
+// access.EntitiesWrite in a's root scope (and the engine's own client) write
 // anything; anyone else writes only user-owned groups, under the creator
 // rules of CreateGroups and UpdateGroups. Without As a store reads as an
 // anonymous viewer and writes as the host, unchecked.
@@ -48,7 +48,7 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 	if w == nil {
 		return true, nil
 	}
-	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.GroupsWrite)) })
+	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.EntitiesWrite)) })
 	return w.staff, w.err
 }
 

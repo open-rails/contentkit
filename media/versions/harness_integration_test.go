@@ -110,7 +110,7 @@ var siteKinds = kinds.Config{Languages: []string{"en"}, Tiers: []string{"premium
 	},
 	GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags"}, "channel": {Owner: "user", AuthScope: true}}}
 
-// grants are the test auth's permissions: staff holds root:groups:write;
+// grants are the test auth's permissions: staff holds root:entities:write;
 // in a channel's AuthKit scope, its editor holds channel:media:write.
 type grants struct {
 	staff  string
@@ -121,7 +121,7 @@ func (g *grants) Can(context.Context, access.Actor, string) (bool, error) { retu
 
 func (g *grants) CanIn(_ context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error) {
 	if scope == testauth.Scope {
-		return a.ID == g.staff && perm == string(access.GroupsWrite), nil
+		return a.ID == g.staff && perm == string(access.EntitiesWrite), nil
 	}
 	return g.scoped[scope.ID] == a.ID && perm == "channel:media:write", nil
 }
@@ -228,6 +228,8 @@ type siteOptions struct {
 	downloads versions.Downloads
 	// gallery edits the site's gallery kind.
 	gallery func(*kinds.Kind)
+	// mediaGallery adjusts a gallery's media rules before the registry is built.
+	mediaGallery func(*media.Kind)
 }
 
 func newSite(t *testing.T, o siteOptions) *site {
@@ -260,7 +262,15 @@ func newSite(t *testing.T, o siteOptions) *site {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := media.ForContent(mediaKinds(s.tenant, s.svc.Hooks()), siteKinds)
+	mediaConfig := mediaKinds(s.tenant, s.svc.Hooks())
+	if o.mediaGallery != nil {
+		for i := range mediaConfig.Kinds {
+			if mediaConfig.Kinds[i].Name == "gallery" {
+				o.mediaGallery(&mediaConfig.Kinds[i])
+			}
+		}
+	}
+	cfg, err := media.ForContent(mediaConfig, siteKinds)
 	if err != nil {
 		t.Fatal(err)
 	}

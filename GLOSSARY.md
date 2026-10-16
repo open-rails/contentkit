@@ -35,8 +35,33 @@ app restriction does not by itself disable the tenant account.
 ## Content and access
 
 **Catalog**:
-An app's collection of content, versions, groups, taxonomy and publication
+An app's collection of content, versions, entities and publication
 rules. Sharing accounts does not combine catalogs.
+
+**Entity**:
+An app-owned record associated with content, such as an artist, series,
+character, tag or collection. Multiple content items can refer to one entity.
+_Avoid_: Group when referring to ContentKit content associations
+
+**Entity kind**:
+A configured type of entity, defining whether a record is an artist, series,
+character, tag or another app-specific concept.
+
+**Association**:
+A link between content and an entity. An association reuses the entity's
+identity instead of copying its name into every content item.
+
+**Alias**:
+Another known name for the same entity. An alias identifies that entity;
+it does not create a second record.
+
+**Parent scope**:
+The entity that disambiguates a scoped entity, such as the series to which
+a character belongs. The same character name can occur in different series.
+
+**Publishing operation**:
+One durable submission of content, its associations and an archive, tracked
+from acceptance through processing to a ready draft or publication.
 
 **Ownership**:
 An account's relationship to content it created or controls in a particular

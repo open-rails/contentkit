@@ -77,9 +77,9 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if _, rail := alpha.Groups["rail"]; rail {
 		t.Fatal("a group kind without pages is named on cards")
 	}
-	_, page = f.list(host, "", q("/contents", "kind", "gallery", "card_groups", "artist"))
+	_, page = f.list(host, "", q("/contents", "kind", "gallery", "card_entities", "artist"))
 	if g := page.Contents[1].Groups; len(g) != 1 || len(g["artist"]) != 1 {
-		t.Fatalf("card_groups: %+v", g)
+		t.Fatalf("card_entities: %+v", g)
 	}
 
 	t.Run("display language picks the version and text", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestSearchAndTypeahead(t *testing.T) {
 	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
-	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "group_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
+	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "entity_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
 		t.Fatalf("tag typeahead: %+v", ta)
 	}
 }
@@ -475,7 +475,7 @@ func TestSitemapFeed(t *testing.T) {
 		t.Errorf("paged = %v (%q, %q)", got, first.NextCursor, rest.NextCursor)
 	}
 
-	tags := feed("main.test", q("/sitemap/groups", "kind", "tag"))
+	tags := feed("main.test", q("/sitemap/entities", "kind", "tag"))
 	if got := ids(tags); !slices.IsSorted(got) || !reflect.DeepEqual(sorted(got), sorted([]string{f.ids["romance"], f.ids["big-breasts"], f.ids["yaoi"]})) {
 		t.Fatalf("tag sitemap = %v", got)
 	}
@@ -489,14 +489,14 @@ func TestSitemapFeed(t *testing.T) {
 	if yaoi := byID[f.ids["yaoi"]]; len(yaoi.Languages) != 1 || yaoi.Languages[0].Language != "ja" || yaoi.Path != "/ja/tags/"+yaoi.Code+"/yaoi" {
 		t.Fatalf("yaoi %+v", yaoi)
 	}
-	if got := ids(feed("clean.test", q("/sitemap/groups", "kind", "series"))); !reflect.DeepEqual(got, []string{f.ids["saga"]}) {
+	if got := ids(feed("clean.test", q("/sitemap/entities", "kind", "series"))); !reflect.DeepEqual(got, []string{f.ids["saga"]}) {
 		t.Errorf("series on a scoped site = %v", got)
 	}
-	if got := ids(feed("main.test", q("/sitemap/groups", "kind", "artist"))); !reflect.DeepEqual(got, []string{f.ids["alice"]}) {
+	if got := ids(feed("main.test", q("/sitemap/entities", "kind", "artist"))); !reflect.DeepEqual(got, []string{f.ids["alice"]}) {
 		t.Errorf("artists = %v", got)
 	}
-	for _, bad := range []string{q("/sitemap/contents"), q("/sitemap/contents", "kind", "comic"), q("/sitemap/groups", "kind", "rail"),
-		q("/sitemap/groups", "kind", "tag", "cursor", "!"), q("/sitemap/contents", "kind", "gallery", "limit", "0")} {
+	for _, bad := range []string{q("/sitemap/contents"), q("/sitemap/contents", "kind", "comic"), q("/sitemap/entities", "kind", "rail"),
+		q("/sitemap/entities", "kind", "tag", "cursor", "!"), q("/sitemap/contents", "kind", "gallery", "limit", "0")} {
 		if status, code := f.call(http.MethodGet, "main.test", "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
 			t.Errorf("%s: %d %s", bad, status, code)
 		}

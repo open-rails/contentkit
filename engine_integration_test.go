@@ -188,7 +188,7 @@ func TestEngineIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
 		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
 	}
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|EntityRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
@@ -199,7 +199,7 @@ func TestEngineIntegration(t *testing.T) {
 			t.Fatalf("group %d served without its module", g)
 		}
 	}
-	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | DiscoveryRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestEngineIntegration(t *testing.T) {
 	s.call(http.StatusOK, user, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
 	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/contents/"+cid(1)+"/like", nil, nil)
-	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/groups/"+gallery+"/like", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/entities/"+gallery+"/like", nil, nil)
 	g1 := contentref.New(tenant, "gallery", gallery)
 	counts, err := e.content.Counts(ctx, []contentref.ContentRef{g1})
 	if err != nil || counts[g1.Key()] != (content.Counts{Likes: 1, Favorites: 1, CommentCount: 1}) {
@@ -236,10 +236,10 @@ func TestEngineIntegration(t *testing.T) {
 	if totals.Kinds["gallery"].Public != 1 || totals.Kinds["blog"].Public != 1 {
 		t.Fatalf("totals %+v", totals)
 	}
-	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Moonlit"}}}}, nil)
-	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
-	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/groups?kind=tag", nil, nil)
+	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/entities?kind=tag", nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/nowhere/at/all/x", nil, nil)
 
 	// Discovery shares /v1 with content and groups; without a signal plane its

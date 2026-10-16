@@ -65,7 +65,7 @@ var sitemapRoutes = []httpapi.Route[handler]{
 		Query: []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 1000 by default, at most 10000")},
 		Responses: []httpapi.Reply{httpapi.OK(SitemapPage{})}}, Serve: httpapi.H(handler.sitemapContents)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/sitemap/groups", Resource: "discovery", Auth: httpapi.Open,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/sitemap/entities", Resource: "discovery", Auth: httpapi.Open,
 		Doc: "Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.",
 		Query: []httpapi.Param{httpapi.Text("kind", "the group kind; required"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 1000 by default, at most 10000")},

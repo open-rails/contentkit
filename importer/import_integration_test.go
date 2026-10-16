@@ -244,7 +244,7 @@ func TestImportConverges(t *testing.T) {
 	if len(res.Failed) > 0 {
 		t.Fatalf("failures: %+v", res.Failed)
 	}
-	want := map[string]int{"groups": 6, "contents": 4, "memberships": 5, "aliases": 2, "comments": 4, "reactions": 6, "favorites": 2, "polls": 2,
+	want := map[string]int{"entities": 6, "contents": 4, "memberships": 5, "aliases": 2, "comments": 4, "reactions": 6, "favorites": 2, "polls": 2,
 		"votes": 3, "answers": 1}
 	for s, n := range want {
 		if res.Written[s] != n {
@@ -523,7 +523,7 @@ func TestImportRoute(t *testing.T) {
 	}
 	rec := post("importer", b)
 	var res importer.Result
-	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["groups"] != 1 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["entities"] != 1 {
 		t.Fatalf("import: %d %s", rec.Code, rec.Body)
 	}
 	ids := func(actor string, q any) *httptest.ResponseRecorder {
@@ -598,7 +598,7 @@ func TestImportGroupScopes(t *testing.T) {
 			OwnerUserID: "u-1", Avatar: avatar, AuthScope: scope}
 	}
 	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{channel(1, "scope-1"), channel(2, "")}})
-	if res.Written["groups"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
+	if res.Written["entities"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
 		t.Fatalf("result %+v", res)
 	}
 	if got := f.scalar(t, `SELECT owner_user_id || ' ' || avatar || ' ' || auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "u-1 "+avatar+" scope-1" {
@@ -613,7 +613,7 @@ func TestImportGroupScopes(t *testing.T) {
 		t.Fatalf("scope after re-import: %q", got)
 	}
 	res = f.importBatch(t, importer.Batch{Source: "test-legacy", ProvisionScopes: true, Groups: []importer.GroupRecord{channel(2, "")}})
-	if len(res.Failed) > 0 || res.Written["groups"] != 1 {
+	if len(res.Failed) > 0 || res.Written["entities"] != 1 {
 		t.Fatalf("provisioned import %+v", res)
 	}
 }

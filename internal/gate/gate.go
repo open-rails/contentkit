@@ -189,6 +189,13 @@ func Host() access.Actor {
 	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
 }
 
+// IsHost recognizes the engine's in-process authority by its private verified
+// type, never by a caller-supplied subject name.
+func IsHost(a access.Actor) bool {
+	_, ok := a.Verified.(hostVerified)
+	return ok
+}
+
 type siteKey struct{}
 
 // Site is the request host the gate bound to ctx: it picks the site whose

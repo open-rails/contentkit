@@ -70,7 +70,7 @@ var (
 		httpapi.Text("tz", "the IANA time zone of released_on and release dates; UTC by default"),
 		httpapi.Text("view_status", "the signed-in reader's unseen, in_progress or completed contents"),
 	}
-	cardGroups = httpapi.List("card_groups", "the group kinds cards name; every kind with a page by default")
+	cardGroups = httpapi.List("card_entities", "the group kinds cards name; every kind with a page by default")
 	pageParams = []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}
 	sortParam  = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
 	signals    = []string{"not_configured"}
@@ -98,7 +98,7 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Suggests contents and groups while the reader types, tolerating typos and partial words.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the partial query"), httpapi.Text("kind", "only contents of this kind"),
-			httpapi.List("group_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
+			httpapi.List("entity_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
 			[]httpapi.Param{httpapi.Int("limit", "per section: 8 by default, at most 20")}),
 		Responses: []httpapi.Reply{httpapi.OK(Typeahead{})}}, Serve: httpapi.H(handler.typeahead)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/similar", Resource: "discovery", Auth: httpapi.Public,
@@ -180,7 +180,7 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardGroups: list(q.Get("card_groups")),
+	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
 		Cursor: q.Get("cursor"), Limit: limit})
 	h.reply(w, r, page, err)
 }
@@ -192,7 +192,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardGroups: list(q.Get("card_groups")),
+	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
 		Cursor: q.Get("cursor"), Limit: limit}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
@@ -217,13 +217,13 @@ func (h handler) typeahead(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	out, err := h.s.Typeahead(r.Context(), TypeaheadOptions{Reader: readerOf(r), Query: q.Get("q"), Kind: q.Get("kind"),
-		GroupKinds: list(q.Get("group_kinds")), Limit: limit})
+		GroupKinds: list(q.Get("entity_kinds")), Limit: limit})
 	h.reply(w, r, out, err)
 }
 
 func (h handler) recOptions(r *http.Request) (RecommendationOptions, error) {
 	limit, err := intParam(r, "limit")
-	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_groups")), Limit: limit}, err
+	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_entities")), Limit: limit}, err
 }
 
 func (h handler) similar(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +284,7 @@ func (h handler) history(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	page, err := h.s.History(r.Context(), HistoryOptions{Reader: readerOf(r), Kind: q.Get("kind"), Status: q.Get("status"),
-		CardGroups: list(q.Get("card_groups")), Cursor: q.Get("cursor"), Limit: limit})
+		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit})
 	h.reply(w, r, page, err)
 }
 

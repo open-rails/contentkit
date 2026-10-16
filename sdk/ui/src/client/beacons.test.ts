@@ -8,7 +8,7 @@ const site = (signals: boolean) => {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), "http://x").pathname;
     s.sent.push(`${init?.method ?? "GET"} ${path}`);
-    if (path === "/v1/kinds") return Response.json({ languages: ["en"], tiers: [], kinds: {}, group_kinds: {}, content_filters: [], signals: s.up });
+    if (path === "/v1/kinds") return Response.json({ languages: ["en"], tiers: [], kinds: {}, entity_kinds: {}, content_filters: [], signals: s.up });
     if (!s.up) return Response.json({ error: "Signals are unavailable right now; try again later.", code: "unavailable" }, { status: 503 });
     return new Response(null, { status: 204 });
   });

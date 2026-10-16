@@ -32,7 +32,7 @@ type Config struct {
 	Sites          []Site               `json:"sites,omitempty" yaml:"sites"`
 	ContentFilters []ContentFilter      `json:"content_filters,omitempty" yaml:"content_filters"`
 	Kinds          map[string]Kind      `json:"kinds" yaml:"kinds"`
-	GroupKinds     map[string]GroupKind `json:"group_kinds,omitempty" yaml:"group_kinds"`
+	GroupKinds     map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
 }
 
 // Site is one deployment's slice of the catalog, matched by request host.
@@ -56,7 +56,7 @@ type GroupRef struct {
 // ContentFilter is a group viewers may hide; DefaultVisible is the default
 // before a viewer's own override.
 type ContentFilter struct {
-	Group          GroupRef          `json:"group" yaml:"group"`
+	Group          GroupRef          `json:"entity" yaml:"group"`
 	DefaultVisible bool              `json:"default_visible" yaml:"default_visible"`
 	Labels         map[string]string `json:"labels,omitempty" yaml:"labels"`
 }
@@ -64,7 +64,7 @@ type ContentFilter struct {
 // ContentFilterDefault sets the visibility of one declared ContentFilter on
 // a site. Unspecified filters retain their app-wide default.
 type ContentFilterDefault struct {
-	Group   GroupRef `json:"group" yaml:"group"`
+	Group   GroupRef `json:"entity" yaml:"group"`
 	Visible bool     `json:"visible" yaml:"visible"`
 }
 
@@ -89,7 +89,7 @@ type Kind struct {
 	// Segments enables ordered, individually released ranges (chapters).
 	Segments bool `json:"segments,omitempty" yaml:"segments"`
 	// Groups are the group kinds content of this kind may join.
-	Groups     []string             `json:"groups,omitempty" yaml:"groups"`
+	Groups     []string             `json:"entities,omitempty" yaml:"groups"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
@@ -165,7 +165,7 @@ type Locked struct {
 const (
 	ShowDescription = "description" // the content's and versions' descriptions
 	ShowCover       = "cover"
-	ShowGroups      = "groups"
+	ShowGroups      = "entities"
 	ShowAttributes  = "attributes" // the content's and versions' attributes
 	ShowLength      = "length"     // versions' page counts, durations and segments
 	ShowReactions   = "reactions"  // like and dislike counts; locked viewers may react

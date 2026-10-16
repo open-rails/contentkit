@@ -21,7 +21,7 @@ import (
 )
 
 // Interactions target ContentKit's own content items, their versions and
-// groups through /v1/contents/{id}/… and /v1/groups/{id}/…: comments in
+// groups through /v1/contents/{id}/… and /v1/entities/{id}/…: comments in
 // language threads, reactions and favorites; the reader's favorites and
 // reactions come back as cards; counts reach the listing; recent searches
 // are kept, cleared, pruned and erased.
@@ -61,7 +61,7 @@ func TestEngineInteractions(t *testing.T) {
 	tag := func(slug, name string) groups.GroupInput {
 		return groups.GroupInput{Kind: "tag", Slug: slug, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}
 	}
-	s.call(http.StatusCreated, staff, "POST", v+"/groups", []groups.GroupInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
 	moon, rainy, old := string(tags[0].ID), string(tags[1].ID), string(tags[2].ID)
 
 	// Comments join a language's thread; a reply joins its comment's.
@@ -116,23 +116,23 @@ func TestEngineInteractions(t *testing.T) {
 
 	// Groups take reactions, favorites and comments; a merged group answers
 	// as its survivor, a deleted one as nothing.
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+moon+"/like", nil, nil)
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+rainy+"/dislike", nil, nil)
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+moon+"/favorite", nil, nil)
-	s.call(http.StatusCreated, u1, "POST", v+"/groups/"+moon+"/comments", content.CommentInput{Body: "love this tag"}, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+moon+"/like", nil, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+rainy+"/dislike", nil, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+moon+"/favorite", nil, nil)
+	s.call(http.StatusCreated, u1, "POST", v+"/entities/"+moon+"/comments", content.CommentInput{Body: "love this tag"}, nil)
 	var standing content.CommentStanding
-	s.call(http.StatusOK, u1, "GET", v+"/groups/"+moon+"/can-comment", nil, &standing)
+	s.call(http.StatusOK, u1, "GET", v+"/entities/"+moon+"/can-comment", nil, &standing)
 	if !standing.CanComment {
 		t.Fatalf("standing %+v", standing)
 	}
-	s.call(http.StatusBadRequest, u1, "POST", v+"/groups/"+moon+"/like?version="+vid, nil, nil)
-	s.call(http.StatusOK, staff, "POST", v+"/groups/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
-	s.call(http.StatusOK, u2, "POST", v+"/groups/"+old+"/like", nil, &counts)
+	s.call(http.StatusBadRequest, u1, "POST", v+"/entities/"+moon+"/like?version="+vid, nil, nil)
+	s.call(http.StatusOK, staff, "POST", v+"/entities/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
+	s.call(http.StatusOK, u2, "POST", v+"/entities/"+old+"/like", nil, &counts)
 	if *counts.Likes != 2 {
 		t.Fatalf("a like through the merged group %+v", counts)
 	}
-	s.call(http.StatusOK, staff, "DELETE", v+"/groups/"+rainy, nil, nil)
-	s.call(http.StatusNotFound, u2, "POST", v+"/groups/"+rainy+"/like", nil, nil)
+	s.call(http.StatusOK, staff, "DELETE", v+"/entities/"+rainy, nil, nil)
+	s.call(http.StatusNotFound, u2, "POST", v+"/entities/"+rainy+"/like", nil, nil)
 
 	// The reader's reactions and favorites, as cards.
 	var page discovery.InteractionPage

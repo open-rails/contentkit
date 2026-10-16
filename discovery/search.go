@@ -151,7 +151,7 @@ type TypeaheadOptions struct {
 // Typeahead is the suggestions: content cards and groups, best first.
 type Typeahead struct {
 	Contents []Card             `json:"contents"`
-	Groups   []groups.GroupCard `json:"groups"`
+	Groups   []groups.GroupCard `json:"entities"`
 }
 
 // Typeahead suggests contents the reader's listing shows and active groups,

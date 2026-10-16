@@ -7,7 +7,7 @@ const read = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files
 
 it("serves every module under baseUrl unless a mount moves it", () => {
   const one = createContentKitClient({ baseUrl: "/api/contentkit/" });
-  expect(["content", "media", "upload", "codes", "groups", "kinds", "contents"].map((m) => one.url(m as never))).toEqual([
+  expect(["content", "media", "upload", "codes", "entities", "kinds", "contents"].map((m) => one.url(m as never))).toEqual([
     "/api/contentkit/v1",
     "/api/contentkit/v1/media",
     "/api/contentkit/v1/media/upload",

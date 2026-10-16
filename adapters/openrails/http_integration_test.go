@@ -96,8 +96,8 @@ func TestOfferRoutes(t *testing.T) {
 		{"PUT", "/contents/" + c + "/versions/" + v + "/offer", creator, map[string]any{"amount": 1.5}, 200},
 		{"PUT", "/contents/" + owned + "/versions/" + v + "/offer", admin, map[string]any{"amount": "1.50"}, 404},
 		{"PUT", "/contents/" + owned + "/offer", owner, map[string]any{"amount": "2"}, 200},
-		{"PUT", "/groups/" + channel + "/offer", stranger, map[string]any{"amount": "9.99", "renew_hours": 720}, 403},
-		{"PUT", "/groups/" + channel + "/offer", owner, map[string]any{"amount": "9.99", "renew_hours": 720}, 200},
+		{"PUT", "/entities/" + channel + "/offer", stranger, map[string]any{"amount": "9.99", "renew_hours": 720}, 403},
+		{"PUT", "/entities/" + channel + "/offer", owner, map[string]any{"amount": "9.99", "renew_hours": 720}, 200},
 		{"PUT", "/contents/" + uid(404) + "/offer", admin, map[string]any{"amount": "4.99"}, 404},
 		{"DELETE", "/contents/" + c + "/versions/" + v + "/offer", stranger, nil, 403},
 		{"DELETE", "/contents/" + mine + "/versions/" + v + "/offer", stranger, nil, 404},
@@ -135,14 +135,14 @@ func TestJoinAndLibrary(t *testing.T) {
 	postV := w.version(post, nil, "")
 
 	var m offers.GroupJoin
-	if got := a.do("POST", "/groups/"+free+"/join", viewer, nil, &m); got != 409 {
+	if got := a.do("POST", "/entities/"+free+"/join", viewer, nil, &m); got != 409 {
 		t.Fatalf("join without an offer: %d", got)
 	}
 	var o offers.Offer
-	if got := a.do("PUT", "/groups/"+free+"/offer", owner, map[string]any{"amount": "0"}, &o); got != 200 {
+	if got := a.do("PUT", "/entities/"+free+"/offer", owner, map[string]any{"amount": "0"}, &o); got != 200 {
 		t.Fatalf("free offer: %d", got)
 	}
-	if got := a.do("PUT", "/groups/"+paid+"/offer", owner, map[string]any{"amount": "5"}, &o); got != 200 {
+	if got := a.do("PUT", "/entities/"+paid+"/offer", owner, map[string]any{"amount": "5"}, &o); got != 200 {
 		t.Fatalf("paid offer: %d", got)
 	}
 	for _, tc := range []struct {
@@ -150,11 +150,11 @@ func TestJoinAndLibrary(t *testing.T) {
 		as   access.Actor
 		want int
 	}{
-		{"/groups/" + free + "/join", access.Actor{Anonymous: true}, 401},
-		{"/groups/" + paid + "/join", viewer, 409},
-		{"/groups/" + uid(404) + "/join", viewer, 404},
-		{"/groups/" + free + "/join", viewer, 200},
-		{"/groups/" + free + "/join", viewer, 200},
+		{"/entities/" + free + "/join", access.Actor{Anonymous: true}, 401},
+		{"/entities/" + paid + "/join", viewer, 409},
+		{"/entities/" + uid(404) + "/join", viewer, 404},
+		{"/entities/" + free + "/join", viewer, 200},
+		{"/entities/" + free + "/join", viewer, 200},
 	} {
 		if got := a.do("POST", tc.path, tc.as, nil, &m); got != tc.want {
 			t.Errorf("join %s as %s: %d, want %d", tc.path, tc.as.ID, got, tc.want)
@@ -170,7 +170,7 @@ func TestJoinAndLibrary(t *testing.T) {
 	if err != nil || !ds[0].Allowed {
 		t.Fatalf("member: %+v %v", ds, err)
 	}
-	if got := a.do("DELETE", "/groups/"+free+"/join", viewer, nil, &m); got != 200 || m.Member || w.holdsNow(viewer, gk(free)) {
+	if got := a.do("DELETE", "/entities/"+free+"/join", viewer, nil, &m); got != 200 || m.Member || w.holdsNow(viewer, gk(free)) {
 		t.Fatalf("leave: %d %+v", got, m)
 	}
 

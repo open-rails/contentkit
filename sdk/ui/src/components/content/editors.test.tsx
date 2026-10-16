@@ -43,7 +43,7 @@ const model: ContentModel = {
     post: { route: "p", presentation: "post", versions: { languages: "one", hidden: true } },
     comic: { route: "c", presentation: "reader", versions: { languages: "one" }, segments: true },
   },
-  group_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } },
+  entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } },
 };
 
 const at = "2026-10-13T00:00:00Z";
@@ -65,7 +65,7 @@ const content = (o: Partial<Content> = {}): Content => ({
   restrictions: [],
   attributes: {},
   creators: [],
-  groups: [],
+  entities: [],
   versions: [version],
   editor: true,
   revision: 3,
@@ -98,9 +98,9 @@ it("VersionsEditor: a kind whose one version is hidden keeps that version's medi
 it("AccessEditor: members-only defaults to the owner group, and the picker chooses another", async () => {
   const s = server({
     "GET /kinds": () => model,
-    "GET /groups/g-own": () => detail("g-own", "Studio"),
-    "GET /groups/g-other": () => detail("g-other", "Other Club"),
-    "GET /typeahead": () => ({ contents: [], groups: [card("g-other", "Other Club")] }),
+    "GET /entities/g-own": () => detail("g-own", "Studio"),
+    "GET /entities/g-other": () => detail("g-other", "Other Club"),
+    "GET /typeahead": () => ({ contents: [], entities: [card("g-other", "Other Club")] }),
     "PATCH /contents/p1": ({ body }) => content({ access: (body as { access: Content["access"] }).access, revision: 4 }),
   });
   const user = userEvent.setup();

@@ -18,17 +18,17 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Handler serves the groups API (routes): listings and group pages, each
-// with the viewer's standing with sellable groups; creator writes of
-// user-owned groups (As); and staff writes for holders of
-// access.GroupsWrite in a's root scope. Errors are JSON {"error", "code"}:
+// Handler serves the entities API (routes): listings and entity pages, each
+// with the viewer's standing with sellable entities; creator writes of
+// user-owned entities (As); and staff writes for holders of
+// access.EntitiesWrite in a's root scope. Errors are JSON {"error", "code"}:
 // 400 for ErrInvalid, 403 for ErrForbidden, 404 for ErrNotFound, 409 for
 // ErrConflict and ErrLimit (limit_reached), 503 when auth or billing is
 // down and a sanitized 500 otherwise; the cause always reaches
 // Options.Logger.
 func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
-	if err := gate.Check(a, access.GroupsWrite); err != nil {
-		return nil, fmt.Errorf("groups: Handler: %w", err)
+	if err := gate.Check(a, access.EntitiesWrite); err != nil {
+		return nil, fmt.Errorf("entities: Handler: %w", err)
 	}
 	mux := http.NewServeMux()
 	g := &gate.Gate{Auth: a, Log: s.log, Then: func(next http.Handler) http.Handler {
@@ -40,7 +40,7 @@ func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
 	return accessLog(s.log, mux), nil
 }
 
-func init() { httpapi.Register(httpapi.Groups, routes) }
+func init() { httpapi.Register(httpapi.Entities, routes) }
 
 var (
 	language = httpapi.Text("language", "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with")
@@ -49,63 +49,63 @@ var (
 	creates  = []string{httpapi.CodeConflict, httpapi.CodeNotFound, httpapi.CodeLimitReached}
 )
 
-const editors = " Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state."
+const editors = " Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state."
 
 var routes = []httpapi.Route[handler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups", Resource: "groups", Auth: httpapi.Public,
-		Doc: "Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.",
-		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), httpapi.Text("parent", "only children of this group"),
-			httpapi.Text("scope", "only groups scoped by this group"), httpapi.Text("slug", "only the group with this slug"),
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities", Resource: "entities", Auth: httpapi.Public,
+		Doc: "Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.",
+		Query: []httpapi.Param{httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"),
+			httpapi.Text("scope", "only entities scoped by this entity"), httpapi.Text("slug", "only the entity with this slug"),
 			httpapi.Text("letter", "only sort names starting with this letter (a-z), or with anything else (#)"), language,
 			httpapi.Text("content_kind", "count contents of this kind; every kind by default"),
 			httpapi.Text("sort", "name (the default), count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(GroupPage{})}}, Serve: httpapi.H(handler.list)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/groups/{id}", Resource: "groups", Auth: httpapi.Public,
-		Doc:   "An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
+		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/groups", Resource: "groups", Auth: httpapi.User,
-		Doc: "The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.",
-		Query: []httpapi.Param{httpapi.Text("kind", "only groups of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/entities", Resource: "entities", Auth: httpapi.User,
+		Doc: "The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.",
+		Query: []httpapi.Param{httpapi.Text("kind", "only entities of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
 			httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(MyGroupPage{})}}, Serve: httpapi.H(handler.mine)},
-	editor(httpapi.POST, "/groups", "Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []GroupInput{}, httpapi.Created([]Group{}),
+	editor(httpapi.POST, "/entities", "Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []GroupInput{}, httpapi.Created([]Group{}),
 		httpapi.H(handler.create), creates),
-	editor(httpapi.PATCH, "/groups/{id}", "Updates a group's given fields; state restores or deletes it."+editors, GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), creates),
-	editor(httpapi.DELETE, "/groups/{id}", "Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention."+editors, nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
-	staff(httpapi.PUT, "/groups/{id}/names", "Replaces a group's names and aliases.", []Name{}, httpapi.OK([]Name{}),
+	editor(httpapi.PATCH, "/entities/{id}", "Updates a entity's given fields; state restores or deletes it."+editors, GroupUpdate{}, httpapi.OK(Group{}), httpapi.H(handler.update), creates),
+	editor(httpapi.DELETE, "/entities/{id}", "Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention."+editors, nil, httpapi.OK(Group{}), httpapi.H(handler.remove), notFound),
+	staff(httpapi.PUT, "/entities/{id}/names", "Replaces a entity's names and aliases.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.SetNames) }, writes),
-	staff(httpapi.POST, "/groups/{id}/names", "Adds names and aliases to a group; a new canonical name demotes the old one to an alias.", []Name{}, httpapi.OK([]Name{}),
+	staff(httpapi.POST, "/entities/{id}/names", "Adds names and aliases to a entity; a new canonical name demotes the old one to an alias.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.AddNames) }, writes),
-	staff(httpapi.DELETE, "/groups/{id}/names", "Removes names and aliases from a group.", []Name{}, httpapi.OK([]Name{}),
+	staff(httpapi.DELETE, "/entities/{id}/names", "Removes names and aliases from a entity.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.RemoveNames) }, writes),
-	staff(httpapi.POST, "/groups/{id}/edges", "Adds edges from a group.", []EdgeInput{}, httpapi.OK([]Edge{}),
+	staff(httpapi.POST, "/entities/{id}/edges", "Adds edges from a entity.", []EdgeInput{}, httpapi.OK([]Edge{}),
 		func(h handler) http.HandlerFunc { return h.edges(h.s.AddEdges) }, writes),
-	staff(httpapi.DELETE, "/groups/{id}/edges", "Removes edges from a group.", []EdgeInput{}, httpapi.OK([]Edge{}),
+	staff(httpapi.DELETE, "/entities/{id}/edges", "Removes edges from a entity.", []EdgeInput{}, httpapi.OK([]Edge{}),
 		func(h handler) http.HandlerFunc { return h.edges(h.s.RemoveEdges) }, nil),
-	staff(httpapi.POST, "/groups/{id}/merge", "Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects.",
+	staff(httpapi.POST, "/entities/{id}/merge", "Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.",
 		MergeInput{}, httpapi.OK(MergeReport{}), httpapi.H(handler.merge), writes),
-	staff(httpapi.GET, "/groups/{id}/members", "A group's memberships in member order, paged.", nil, httpapi.OK(MemberPage{}), httpapi.H(handler.members), notFound,
+	staff(httpapi.GET, "/entities/{id}/members", "A entity's memberships in member order, paged.", nil, httpapi.OK(MemberPage{}), httpapi.H(handler.members), notFound,
 		httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 500")),
-	staff(httpapi.POST, "/groups/{id}/members", "Adds contents or versions to a group, or updates their position, window and state.", []Membership{}, httpapi.OK(Written{}),
+	staff(httpapi.POST, "/entities/{id}/members", "Adds contents or versions to a entity, or updates their position, window and state.", []Membership{}, httpapi.OK(Written{}),
 		httpapi.H(handler.addMembers), writes),
-	staff(httpapi.DELETE, "/groups/{id}/members", "Removes contents or versions from a group.", []Membership{}, httpapi.OK(Written{}), httpapi.H(handler.removeMembers), nil),
-	staff(httpapi.PUT, "/groups/{id}/members/order", "Orders an ordered group: the listed members first, in list order.", Order{}, httpapi.OK(Written{}),
+	staff(httpapi.DELETE, "/entities/{id}/members", "Removes contents or versions from a entity.", []Membership{}, httpapi.OK(Written{}), httpapi.H(handler.removeMembers), nil),
+	staff(httpapi.PUT, "/entities/{id}/members/order", "Orders an ordered entity: the listed members first, in list order.", Order{}, httpapi.OK(Written{}),
 		httpapi.H(handler.reorder), notFound),
-	staff(httpapi.GET, "/contents/{id}/groups", "A content's memberships, its versions' included, with the groups they name.", nil, httpapi.OK(ContentMemberships{}),
+	staff(httpapi.GET, "/contents/{id}/entities", "A content's memberships, its versions' included, with the entities they name.", nil, httpapi.OK(ContentMemberships{}),
 		httpapi.H(handler.contentGroups), nil, language),
-	staff(httpapi.PUT, "/contents/{id}/groups", "Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default).",
+	staff(httpapi.PUT, "/contents/{id}/entities", "Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).",
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setContentGroups), writes, language),
 }
 
 func editor(method, path, doc string, request any, reply httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string) httpapi.Route[handler] {
-	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "groups", Doc: doc, Auth: httpapi.Editor,
-		Perm: string(access.GroupsWrite), Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
+	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "entities", Doc: doc, Auth: httpapi.Editor,
+		Perm: string(access.EntitiesWrite), Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
 }
 
 func staff(method, path, doc string, request any, reply httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string, query ...httpapi.Param) httpapi.Route[handler] {
-	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "groups", Doc: doc, Auth: httpapi.Staff,
-		Perm: string(access.GroupsWrite), Query: query, Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
+	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "entities", Doc: doc, Auth: httpapi.Staff,
+		Perm: string(access.EntitiesWrite), Query: query, Request: request, Responses: []httpapi.Reply{reply}, Errors: errs}, Serve: serve}
 }
 
 // Written counts the items a write named.
@@ -117,7 +117,7 @@ type Written struct {
 type ContentMemberships struct {
 	ContentID   string       `json:"content_id"`
 	Memberships []Membership `json:"memberships"`
-	Groups      []GroupCard  `json:"groups"`
+	Groups      []GroupCard  `json:"entities"`
 }
 
 type handler struct {

@@ -91,7 +91,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
   const lock = lockLabel(m, card.access, tiers, labels);
   const v = card.version;
   const progress = card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
-  const kinds = groupKinds ?? Object.keys(card.groups);
+  const kinds = groupKinds ?? Object.keys(card.entities);
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const meta = [
     ...v.languages.map(languageName),
@@ -143,10 +143,10 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
           </Badge>
         )}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
-        {kinds.some((k) => card.groups[k]?.length) && (
+        {kinds.some((k) => card.entities[k]?.length) && (
           <ul className="flex flex-wrap gap-1" data-ckui="card-groups">
             {kinds.flatMap((k) =>
-              (card.groups[k] ?? []).slice(0, chips).map((g) => (
+              (card.entities[k] ?? []).slice(0, chips).map((g) => (
                 <li key={`${k}:${g.id}`} data-kind={k}>
                   <Chip url={g.path} name={g.name || g.slug} />
                 </li>

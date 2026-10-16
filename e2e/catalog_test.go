@@ -78,9 +78,9 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 		t.Fatalf("published %+v", post)
 	}
 	f.want(http.StatusOK, anon, "GET", "/contents/"+post.ID+"/versions/"+post.Versions[0].ID, nil, nil)
-	f.want(http.StatusOK, owner, "GET", "/manage/contents?kind=blog&state=published", nil, nil)
+	f.want(http.StatusOK, owner, "GET", "/manage/blog?state=published", nil, nil)
 	var managed []catalog.Content
-	f.want(http.StatusOK, staff, "GET", "/manage/contents?q=hello", nil, &managed)
+	f.want(http.StatusOK, staff, "GET", "/manage?q=hello", nil, &managed)
 	if len(managed) != 1 || managed[0].ID != post.ID {
 		t.Fatalf("managed %+v", managed)
 	}
@@ -241,37 +241,37 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNotFound, staff, "POST", "/moderation/comment/"+uuid.NewString()+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: 1}, nil)
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
 
-	// Groups: public reads, the site's groups' writes behind root:groups:write.
-	f.want(http.StatusForbidden, user, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
-	f.want(http.StatusOK, user, "GET", "/me/groups", nil, nil)
+	// Groups: public reads, the site's groups' writes behind root:entities:write.
+	f.want(http.StatusForbidden, user, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	f.want(http.StatusOK, user, "GET", "/me/entities", nil, nil)
 	name := func(n string) groups.Name { return groups.Name{Language: "en", Kind: groups.NameCanonical, Name: n} }
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
+	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{
 		{Kind: "tag", Slug: "color", Names: []groups.Name{name("Color")}},
 		{Kind: "tag", Slug: "colour", Names: []groups.Name{name("Colour")}},
 		{Kind: "series", Slug: "saga", Names: []groups.Name{name("Saga")}},
 	}, &made)
 	color, colour, saga := string(made[0].ID), string(made[1].ID), string(made[2].ID)
-	f.want(http.StatusConflict, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
+	f.want(http.StatusConflict, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
 	var page groups.GroupPage
-	f.want(http.StatusOK, anon, "GET", "/groups?kind=tag&language=en&sort=name&limit=1", nil, &page)
+	f.want(http.StatusOK, anon, "GET", "/entities?kind=tag&language=en&sort=name&limit=1", nil, &page)
 	if len(page.Groups) != 1 || page.Groups[0].Name != "Color" || page.Groups[0].Path == "" || page.NextCursor == "" {
 		t.Fatalf("groups page %+v", page)
 	}
-	f.want(http.StatusOK, anon, "GET", "/groups/"+color+"?language=en", nil, nil)
-	f.want(http.StatusNotFound, anon, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
-	f.want(http.StatusBadRequest, anon, "GET", "/groups/not-an-id", nil, nil)
-	f.want(http.StatusOK, staff, "PATCH", "/groups/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
-	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/groups/"+color+"/names", []groups.Name{name("Color")}, nil)
+	f.want(http.StatusOK, anon, "GET", "/entities/"+color+"?language=en", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/entities/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
+	f.want(http.StatusBadRequest, anon, "GET", "/entities/not-an-id", nil, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/entities/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/entities/"+color+"/names", []groups.Name{name("Color")}, nil)
 	edges := []groups.EdgeInput{{Relation: "related", To: groups.GroupID(colour)}}
-	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/edges", edges, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/groups/"+color+"/edges", edges, nil)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/groups", groups.ContentGroups{Memberships: []groups.Membership{
+	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+color+"/edges", edges, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/entities", groups.ContentGroups{Memberships: []groups.Membership{
 		{GroupID: groups.GroupID(color)}, {GroupID: groups.GroupID(saga)}, {GroupID: groups.GroupID(colour), VersionID: g1v}}}, nil)
 	var held groups.ContentMemberships
-	f.want(http.StatusOK, staff, "GET", "/contents/"+g1+"/groups?language=en", nil, &held)
+	f.want(http.StatusOK, staff, "GET", "/contents/"+g1+"/entities?language=en", nil, &held)
 	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
 		t.Fatalf("content groups %+v", held)
 	}
@@ -287,15 +287,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	if len(named.Groups) != 3 {
 		t.Fatalf("detail groups %+v", named.Groups)
 	}
-	f.want(http.StatusOK, staff, "POST", "/groups/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)
 	var members groups.MemberPage
-	f.want(http.StatusOK, staff, "GET", "/groups/"+saga+"/members?limit=10", nil, &members)
+	f.want(http.StatusOK, staff, "GET", "/entities/"+saga+"/members?limit=10", nil, &members)
 	if len(members.Members) != 2 || members.Members[0].ContentID != g2 {
 		t.Fatalf("members %+v", members)
 	}
-	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
-	f.want(http.StatusOK, staff, "POST", "/groups/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
 
 	// Offers on content, a version and a sellable group, over a real OpenRails merchant.
 	var offer offers.Offer
@@ -306,15 +306,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/versions/"+g1v+"/offer", map[string]any{"amount": "1.50"}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/versions/"+g1v+"/offer", nil, nil)
-	f.want(http.StatusOK, staff, "PUT", "/groups/"+saga+"/offer", map[string]any{"amount": "9.99"}, nil)
-	f.want(http.StatusConflict, user, "POST", "/groups/"+saga+"/join", nil, nil)
-	f.want(http.StatusOK, user, "DELETE", "/groups/"+saga+"/join", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga+"/offer", nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/offer", map[string]any{"amount": "9.99"}, nil)
+	f.want(http.StatusConflict, user, "POST", "/entities/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, user, "DELETE", "/entities/"+saga+"/join", nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/offer", nil, nil)
 	f.want(http.StatusOK, user, "GET", "/me/library", nil, nil)
 	f.want(http.StatusOK, staff, "GET", "/offers?state=active", nil, nil)
 	f.want(http.StatusForbidden, user, "GET", "/offers", nil, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/offer", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/groups/"+saga, nil, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga, nil, nil)
 
 	discoveryScenario(t, f, g1, user, anon)
 	mediaScenario(t, f, album, albumV, user, anon)

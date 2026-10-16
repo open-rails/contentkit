@@ -3,7 +3,7 @@ import { useContext, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Edit, GroupAccess, GroupDetail, Sale } from "../../client/generated/wire.js";
-import type { GroupImageSlot } from "../../client/groups.js";
+import type { EntityImageSlot } from "../../client/entities.js";
 import { decodeImage, type CropSource } from "../../client/image.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
@@ -119,7 +119,7 @@ export function GroupBanner(p: GroupBannerProps) {
 export interface GroupImageEditorProps {
   group: GroupLike;
   /** The cover, or a user-owned kind's avatar. */
-  slot: GroupImageSlot;
+  slot: EntityImageSlot;
   /** Crop before uploading. Default true. */
   crop?: boolean;
   client?: ContentKitClient;

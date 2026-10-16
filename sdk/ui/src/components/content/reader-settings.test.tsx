@@ -49,7 +49,7 @@ it("saves signed-in filters immediately and retains them when reopened", async (
   let visible = false;
   const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "PUT") visible = JSON.parse(String(init.body)).filters[0].visible;
-    return Response.json({ filters: [{ group: { id: "filter", slug: "furry", name: "Furry" }, label: "Furry", visible, overridden: visible }], include_deleted: false });
+    return Response.json({ filters: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, label: "Furry", visible, overridden: visible }], include_deleted: false });
   });
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: fetcher });
   render(<ContentKitProvider client={client} viewer="reader"><ReaderSettings languages={languages} language="en" onLanguageChange={() => {}} appearance={{ theme: "dark" }} /></ContentKitProvider>);

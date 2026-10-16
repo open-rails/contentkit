@@ -132,25 +132,32 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusCreated, "ed", "POST", "/v1/contents", owned, &c)
 	f.want(http.StatusForbidden, "bob", "POST", "/v1/contents", owned, nil)
 	var list []Content
-	f.want(http.StatusOK, "staff", "GET", "/v1/manage/contents?kind=gallery", nil, &list)
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage/gallery", nil, &list)
 	if len(list) != 2 || list[0].ID != c.ID {
 		t.Fatalf("staff manage %+v", list)
 	}
-	f.want(http.StatusOK, "ed", "GET", "/v1/manage/contents?owner_group="+studio+"&state=draft", nil, &list)
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage/gallery", nil, &list)
+	if len(list) != 2 || list[0].ID != c.ID {
+		t.Fatalf("per-kind manage %+v", list)
+	}
+	f.want(http.StatusNotFound, "staff", "GET", "/v1/manage/unknown", nil, nil)
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage/gallery?kind=movie", nil, nil)
+	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage/gallery", nil, nil)
+	f.want(http.StatusOK, "ed", "GET", "/v1/manage?owner_group="+studio+"&state=draft", nil, &list)
 	if len(list) != 1 || list[0].ID != c.ID || !list[0].Editor {
 		t.Fatalf("editor manage %+v", list)
 	}
-	f.want(http.StatusOK, "carol", "GET", "/v1/manage/contents?state=scheduled", nil, &list)
+	f.want(http.StatusOK, "carol", "GET", "/v1/manage?state=scheduled", nil, &list)
 	if len(list) != 1 || list[0].ID != id {
 		t.Fatalf("creator manage %+v", list)
 	}
-	f.want(http.StatusOK, "staff", "GET", "/v1/manage/contents?q=WORLD", nil, &list)
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?q=WORLD", nil, &list)
 	if len(list) != 1 || list[0].ID != id {
 		t.Fatalf("text search %+v", list)
 	}
-	f.want(http.StatusForbidden, "bob", "GET", "/v1/manage/contents?owner_group="+studio, nil, nil)
-	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage/contents?state=gone", nil, nil)
-	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage/contents", nil, nil)
+	f.want(http.StatusForbidden, "bob", "GET", "/v1/manage?owner_group="+studio, nil, nil)
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?state=gone", nil, nil)
+	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage", nil, nil)
 }
 
 func (f *fixture) doWith(actor, method, target string, headers map[string]string) *httptest.ResponseRecorder {

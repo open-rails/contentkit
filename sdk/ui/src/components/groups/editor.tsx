@@ -57,7 +57,7 @@ export function GroupEditor(p: GroupEditorProps) {
   const g = useGroup(p.id, { client: p.client });
   const languages = p.languages ?? kinds?.languages ?? ["en"];
   const kind = g.group?.kind ?? p.kind;
-  const spec: GroupKind = kinds?.group_kinds?.[kind] ?? {};
+  const spec: GroupKind = kinds?.entity_kinds?.[kind] ?? {};
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-6 text-sm", p.className)} data-ckui="group-editor" data-kind={kind}>
       {children}
@@ -671,7 +671,7 @@ function Edges({ group, g, kinds, labels, onError, client }: { group: GroupDetai
     group.edges.map((e) => (e.from === group.id ? e.to : e.from)),
     { client },
   );
-  const kindsList = Object.keys(kinds?.group_kinds ?? {}).sort();
+  const kindsList = Object.keys(kinds?.entity_kinds ?? {}).sort();
   const [relation, setRelation] = useState("");
   const [kind, setKind] = useState(kindsList[0] ?? group.kind);
   const out = group.edges.filter((e) => e.from === group.id);

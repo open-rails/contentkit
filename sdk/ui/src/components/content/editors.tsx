@@ -146,7 +146,7 @@ function RuleFields({ value, onChange, model, kind, owner, labels, client }: { v
   const id = useId();
   const tiers = model?.tiers ?? [];
   const spec = model?.kinds[kind];
-  const groupKinds = Object.entries(model?.group_kinds ?? {})
+  const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
   // Picked once the model has loaded: its first group kind until one is chosen.
@@ -686,7 +686,7 @@ export function ContentSections({ content, ...p }: Common & { content: Content; 
       <ContentDetailsEditor content={content} {...p} />
       <AccessEditor content={content} {...p} />
       <VersionsEditor content={content} {...p} />
-      {!!spec?.groups?.length && (
+      {!!spec?.entities?.length && (
         <section className="grid gap-3 border-t border-border pt-4" data-ckui="content-groups">
           <MembershipEditor content={content.id} contentKind={content.kind} versions={spec.versions.hidden ? undefined : versions} labels={p.labels} client={p.client} onError={p.onError} />
         </section>

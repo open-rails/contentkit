@@ -37,8 +37,8 @@ const (
 	Media Module = "media"
 	// Codes resolves content codes.
 	Codes Module = "codes"
-	// Groups is group listings, group pages and group writes.
-	Groups Module = "groups"
+	// Entities is entity listings, pages and writes.
+	Entities Module = "entities"
 	// Notifications is the user inbox and the service's publish route.
 	Notifications Module = "notifications"
 	// Kinds is the site's public content model.
@@ -55,10 +55,12 @@ const (
 	Discovery Module = "discovery"
 	// Import is the bulk import.
 	Import Module = "import"
+	// Publishing accepts a complete archive submission and follows its durable lifecycle.
+	Publishing Module = "publishing"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Groups, Notifications, Versions, Offers, Discovery, Import}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Notifications, Versions, Offers, Discovery, Import, Publishing}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
 // content, groups, versions, offers and kinds at its root and the others beneath their own
@@ -80,8 +82,8 @@ func (m Module) Prefix() string {
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
-	return []string{"media", "codes", "groups", "contents", "kinds", "offers", "me", "catalog", "notifications",
-		"search", "typeahead", "recommendations", "release-dates", "signals", "exposures", "import", "sitemap", "stats"}
+	return []string{"media", "codes", "entities", "contents", "kinds", "offers", "me", "catalog", "notifications",
+		"search", "typeahead", "recommendations", "release-dates", "signals", "exposures", "import", "sitemap", "stats", "publishing-operations"}
 }
 
 // Tier is what a route requires of its caller before its handler acts. The
@@ -350,7 +352,7 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
 	case "module:contents":
 		return []string{CodeInternal, CodeUnavailable}
-	case "module:codes", "module:groups", "module:notifications", "module:kinds":
+	case "module:codes", "module:entities", "module:notifications", "module:kinds":
 		return []string{CodeInternal}
 	case "module:versions":
 		return []string{CodeInternal, CodeNotFound, CodeUnavailable}

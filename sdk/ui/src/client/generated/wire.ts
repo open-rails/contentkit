@@ -112,6 +112,12 @@ export interface AnswerRecord {
   updated_at?: string;
 }
 
+export interface Archive {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
 export interface Attribute {
   type: string;
   values?: string[];
@@ -161,7 +167,7 @@ export interface Batch {
   source: string;
   preference_floor?: number;
   provision_scopes?: boolean;
-  groups?: GroupRecord[];
+  entities?: GroupRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
   offers?: OfferRecord[];
@@ -190,7 +196,7 @@ export interface Card {
   language: string;
   cover: PublicRendition[];
   version: CardVersion;
-  groups: Record<string, Chip[]>;
+  entities: Record<string, Chip[]>;
   owner?: GroupCard;
   counts: Counts;
   access: CardAccess;
@@ -328,6 +334,8 @@ export interface CompleteReply {
   size: number;
 }
 
+export type CompleteRequest = Record<string, never>;
+
 export interface Config {
   anonymous: Anonymous;
   comment_max_length: number;
@@ -358,7 +366,7 @@ export interface Content {
   owner_group_id?: string;
   owner?: GroupCard;
   creators: Creator[];
-  groups: GroupSummary[];
+  entities: GroupSummary[];
   versions: Version[];
   views?: number;
   viewer?: ViewerState;
@@ -375,13 +383,13 @@ export interface Content {
 }
 
 export interface ContentFilter {
-  group: GroupRef;
+  entity: GroupRef;
   default_visible: boolean;
   labels?: Record<string, string>;
 }
 
 export interface ContentFilterState {
-  group: GroupCard;
+  entity: GroupCard;
   label: string;
   default_visible: boolean;
   visible: boolean;
@@ -419,14 +427,14 @@ export interface ContentInput {
 export interface ContentMemberships {
   content_id: string;
   memberships: Membership[];
-  groups: GroupCard[];
+  entities: GroupCard[];
 }
 
 export interface ContentModel {
   languages: string[];
   tiers: string[];
   kinds: Record<string, Kind>;
-  group_kinds: Record<string, GroupKind>;
+  entity_kinds: Record<string, GroupKind>;
   content_filters: ContentFilter[];
   signals: boolean;
   avatars?: PresetRule;
@@ -588,6 +596,22 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
+}
+
+export interface EntityReference {
+  id?: string;
+  kind?: string;
+  name?: string;
+  language?: string;
+  scope?: EntityReference;
+}
+
+export interface EntityResolution {
+  id: string;
+  kind: string;
+  name: string;
+  created: boolean;
+  scope?: EntityResolution;
 }
 
 export interface ErrorDetails {
@@ -871,7 +895,7 @@ export interface GroupKind {
 }
 
 export interface GroupPage {
-  groups: GroupCard[];
+  entities: GroupCard[];
   next_cursor?: string;
 }
 
@@ -1001,7 +1025,7 @@ export interface Input {
 
 export interface Interaction {
   content?: Card;
-  group?: GroupCard;
+  entity?: GroupCard;
   value: number;
   at: string;
 }
@@ -1035,7 +1059,7 @@ export interface Kind {
   presentation: string;
   versions: VersionRules;
   segments?: boolean;
-  groups?: string[];
+  entities?: string[];
   attributes?: Record<string, Attribute>;
   sort?: string;
   locked?: Locked;
@@ -1150,7 +1174,7 @@ export interface MyGroup {
 }
 
 export interface MyGroupPage {
-  groups: MyGroup[];
+  entities: MyGroup[];
   next_cursor?: string;
 }
 
@@ -1208,6 +1232,33 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
+}
+
+export interface Operation {
+  id: string;
+  state: "awaiting_upload" | "blocked" | "failed" | "processing" | "published" | "publishing" | "ready" | "review_required" | "scheduled";
+  content_id: string;
+  version_id: string;
+  publish_at?: string;
+  entities: EntityResolution[];
+  progress: Progress;
+  result?: OperationResult;
+  error?: OperationError;
+  upload?: PresignReply;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  field?: string;
+}
+
+export interface OperationResult {
+  path: string;
+  pages: number;
 }
 
 export interface Order {
@@ -1431,6 +1482,12 @@ export interface Preview {
   segments?: number;
 }
 
+export interface Progress {
+  stage: string;
+  completed: number;
+  total: number;
+}
+
 export interface PublicImage {
   from: string;
   preset: string;
@@ -1570,6 +1627,16 @@ export interface Rendition {
   h: number;
 }
 
+export interface Request {
+  content: ContentInput;
+  entities?: EntityReference[];
+  archive: Archive;
+  publish?: "draft" | "when_ready";
+  publish_at?: string;
+  create_missing_entities?: boolean;
+  source?: Source;
+}
+
 export interface RequestReply {
   method: string;
   url: string;
@@ -1690,6 +1757,12 @@ export interface SitemapPage {
   next_cursor?: string;
 }
 
+export interface Source {
+  provider: string;
+  id: string;
+  url?: string;
+}
+
 export interface StagedCopy {
   path: string;
   blob: string;
@@ -1736,7 +1809,7 @@ export interface Totals {
 
 export interface Typeahead {
   contents: Card[];
-  groups: GroupCard[];
+  entities: GroupCard[];
 }
 
 export interface UploadLimits {

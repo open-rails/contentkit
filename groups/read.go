@@ -76,7 +76,7 @@ type GroupCard struct {
 
 // GroupPage is one page of a listing.
 type GroupPage struct {
-	Groups []GroupCard `json:"groups"`
+	Groups []GroupCard `json:"entities"`
 	// NextCursor pages on; empty on the last page.
 	NextCursor string `json:"next_cursor,omitempty"`
 }

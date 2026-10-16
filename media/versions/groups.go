@@ -18,7 +18,7 @@ import (
 )
 
 // A group kind's items, {kind, group}, hold the group's named covers (and a
-// user-owned group's avatars): staff holding root:groups:write edit them,
+// user-owned group's avatars): staff holding root:entities:write edit them,
 // and for a user-owned group its owner and its AuthKit scope's holders of
 // {kind}:media:write or {kind}:settings:manage.
 
@@ -55,7 +55,7 @@ FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Te
 	}
 	staff := false
 	if actor.Person() || actor.Kind == auth.SubjectApplication {
-		if staff, err = gate.Can(ctx, s.o.Auth, actor, string(access.GroupsWrite)); err != nil {
+		if staff, err = gate.Can(ctx, s.o.Auth, actor, string(access.EntitiesWrite)); err != nil {
 			return nil, err
 		}
 	}

@@ -30,15 +30,15 @@ export class OffersClient {
   }
   /** Sells a group: its key opens every member. */
   sellGroup(id: string, terms: Terms): Promise<Offer> {
-    return this.writeGroup(call(this.http, "PUT", "/groups/{id}/offer", { params: { id }, body: terms }));
+    return this.writeGroup(call(this.http, "PUT", "/entities/{id}/offer", { params: { id }, body: terms }));
   }
   withdrawGroup(id: string): Promise<Offer> {
-    return this.writeGroup(call(this.http, "DELETE", "/groups/{id}/offer", { params: { id } }));
+    return this.writeGroup(call(this.http, "DELETE", "/entities/{id}/offer", { params: { id } }));
   }
   /** Joins a free group (or leaves it): its key granted to the caller. */
   async join(id: string, member = true): Promise<GroupJoin> {
     const emit = this.http.captureChanges();
-    const out: GroupJoin = await call(this.http, member ? "POST" : "DELETE", "/groups/{id}/join", { params: { id } });
+    const out: GroupJoin = await call(this.http, member ? "POST" : "DELETE", "/entities/{id}/join", { params: { id } });
     emit({ type: "access.changed" });
     return out;
   }
@@ -61,7 +61,7 @@ export class OffersClient {
   private async writeGroup(p: Promise<Offer>): Promise<Offer> {
     const emit = this.http.captureChanges();
     const out = await p;
-    emit({ type: "groups.changed" });
+    emit({ type: "entities.changed" });
     return out;
   }
 }

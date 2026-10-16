@@ -22,13 +22,19 @@ const GoClientFile = "client_gen.go"
 // goMethod names a route's client method: its HTTP verb, then its path's
 // literal segments in Pascal case, each singular before a wildcard naming
 // one item:
-// PATCH /v1/groups/{id} is PatchGroup, PUT /v1/contents/{id}/versions/{vid}/offer
+// PATCH /v1/entities/{id} is PatchEntity, PUT /v1/contents/{id}/versions/{vid}/offer
 // PutContentVersionOffer.
 func goMethod(r httpapi.Spec) string {
 	name := pascal(strings.ToLower(r.Method))
 	segs := strings.Split(strings.TrimPrefix(r.FullPath(), httpapi.Version+"/"), "/")
 	for i, seg := range segs {
 		if strings.HasPrefix(seg, "{") {
+			// A terminal kind selects a collection, not one item's ID.
+			// Keep it in the method name: /manage and /manage/{kind}
+			// are GetManage and GetManageKind respectively.
+			if seg == "{kind}" && i == len(segs)-1 {
+				name += "Kind"
+			}
 			continue
 		}
 		if i+1 < len(segs) && strings.HasPrefix(segs[i+1], "{") && !strings.HasSuffix(segs[i+1], "...}") {

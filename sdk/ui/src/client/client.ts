@@ -9,7 +9,7 @@ import { PollsClient } from "./content/polls.js";
 import { ReactionsClient } from "./content/reactions.js";
 import type { Batch, Config, ContentModel, RefBody, Result } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
-import { GroupsClient } from "./groups.js";
+import { EntitiesClient } from "./entities.js";
 import { OffersClient } from "./offers.js";
 import { StatsClient } from "./stats.js";
 import { VersionsClient } from "./versions.js";
@@ -49,7 +49,7 @@ export interface ContentKitClient {
   /** The review queue of held comments and content. */
   readonly moderation: ModerationClient;
   /** Groups: listings, pages, staff writes and memberships. */
-  readonly groups: GroupsClient;
+  readonly entities: EntitiesClient;
   /** Lists, search, typeahead, rails, release dates, content filters, history, signals and exposures. */
   readonly discovery: DiscoveryClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
@@ -91,7 +91,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     polls: new PollsClient(h, media),
     bans: new BansClient(h),
     moderation: new ModerationClient(h),
-    groups: new GroupsClient(h, media),
+    entities: new EntitiesClient(h, media),
     discovery: new DiscoveryClient(h),
     versions: new VersionsClient(h),
     offers: new OffersClient(h),

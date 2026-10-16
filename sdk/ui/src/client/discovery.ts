@@ -59,7 +59,7 @@ export interface ReaderQuery {
 
 /** The group kinds cards name; every kind with a page by default. */
 export interface CardQuery {
-  card_groups?: readonly string[];
+  card_entities?: readonly string[];
 }
 
 export interface PageQuery {
@@ -92,13 +92,13 @@ export interface TypeaheadQuery extends ReaderQuery {
   /** Only contents of this kind. */
   kind?: string;
   /** The group kinds suggested; every kind with a page by default. */
-  group_kinds?: readonly string[];
+  entity_kinds?: readonly string[];
   /** Per section: 8 by default, at most 20. */
   limit?: number;
 }
 
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_groups", "group_kinds"]);
+const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {

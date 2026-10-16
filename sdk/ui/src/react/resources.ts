@@ -281,7 +281,7 @@ export class ResourceStore {
       case "ban.lifted":
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
-      case "groups.changed":
+      case "entities.changed":
         this.invalidate((t) => t.type.startsWith("group"));
         break;
       case "contentFilters.changed":
