@@ -106,6 +106,8 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
                   loadMedia={p.loadMedia}
                   groupKinds={p.groupKinds}
                   chips={p.chips}
+                  chipOverflow={p.chipOverflow}
+                  chipFit={p.chipFit}
                   filterEntity={p.filterEntity}
                   entityStyle={p.entityStyle}
                   entityLayout={p.entityLayout}
@@ -224,6 +226,8 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               loadMedia={p.loadMedia}
               groupKinds={p.groupKinds}
               chips={p.chips}
+              chipOverflow={p.chipOverflow}
+              chipFit={p.chipFit}
               filterEntity={p.filterEntity}
               entityStyle={p.entityStyle}
               entityLayout={p.entityLayout}
@@ -319,6 +323,8 @@ export function ContentRail({ title, similar, recommendations, history, group, l
                 loadMedia={p.loadMedia}
                 groupKinds={p.groupKinds}
                 chips={p.chips}
+                chipOverflow={p.chipOverflow}
+                chipFit={p.chipFit}
                 filterEntity={p.filterEntity}
                 entityStyle={p.entityStyle}
                 entityLayout={p.entityLayout}

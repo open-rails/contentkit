@@ -32,7 +32,7 @@ it("shares the public preset aspect across cards unless the host overrides it", 
 
 it("keeps the default card metadata and counts unless the host chooses otherwise", () => {
   const view = render(<ContentCard card={card} labels={{ colored: "Colored", uncensored: "Uncensored" }} />);
-  expect(screen.getByText("English · 24 pages · 2 min")).toBeVisible();
+  expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("English · 24 pages · 2 min");
   expect(screen.getByText("Colored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("Uncensored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("A tag")).toBeVisible();
@@ -84,7 +84,7 @@ it.each([false, []] as const)("omits trait badges when the host disables or sele
   expect(view.container.querySelector('[data-ckui="card-traits"]')).toBeNull();
   expect(screen.queryByText("Colored")).toBeNull();
   expect(screen.queryByText("Uncensored")).toBeNull();
-  expect(screen.getByText("English · 24 pages · 2 min")).toBeVisible();
+  expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("English · 24 pages · 2 min");
 });
 
 it("can show a selected trait as the only metadata without restoring hidden version fields", () => {
@@ -152,4 +152,69 @@ it("makes each card the positioning parent of its hidden labels", () => {
   expect(content.container.querySelector('[data-ckui="content-card"]')?.classList.contains("relative")).toBe(true);
   const post = render(<PostCard card={{ ...card, kind: "post" }} />);
   expect(post.container.querySelector('[data-ckui="post-card"]')?.classList.contains("relative")).toBe(true);
+});
+
+it("leads the meta line with views and ends it with the first named group, dot separated", () => {
+  const video: Card = { ...card, counts: { ...card.counts, views: 26_743 }, entities: { ...card.entities, season: [{ id: "season", slug: "season", name: "A season", path: "/seasons/a" }] } };
+  const view = render(<ContentCard card={video} metadata={{ views: true, languages: false, pages: false, duration: false, groups: ["missing", "season", "series"] }} />);
+  const meta = view.container.querySelector('[data-ckui="card-meta"]')!;
+  expect(meta.textContent).toBe("26.7K26.7K views · A season");
+  expect(meta.querySelector('[data-ckui="card-views"] svg')).not.toBeNull();
+  expect(meta).toHaveClass("line-clamp-2");
+  expect(meta.querySelectorAll('[data-ckui="card-meta-dot"]')).toHaveLength(1);
+  expect(within(meta as HTMLElement).getByRole("link", { name: "A season" })).toHaveAttribute("href", "/seasons/a");
+
+  view.rerender(<ContentCard card={{ ...video, counts: { ...video.counts, views: 0 } }} metadata={{ views: true, languages: false, pages: false, duration: false }} />);
+  expect(view.container.querySelector('[data-ckui="card-meta"]')).toBeNull();
+});
+
+it("counts the chips left out, per breakpoint, only when the host asks", () => {
+  const tags = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, slug: id, name: `Tag ${id}` }));
+  const tagged: Card = { ...card, entities: { tag: tags } };
+  const view = render(<ContentCard card={tagged} groupKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
+  const items = [...view.container.querySelectorAll('[data-ckui="card-groups"] > li')];
+  expect(items.map((li) => li.textContent)).toEqual(["Tag a", "Tag b", "Tag c", "Tag d", "+33 more", "+22 more"]);
+  expect(items.map((li) => li.className)).toEqual(["", "", "", "hidden lg:list-item", "lg:hidden", "hidden lg:list-item"]);
+
+  view.rerender(<ContentCard card={{ ...tagged, entities: { tag: tags.slice(0, 4) } }} groupKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
+  expect([...view.container.querySelectorAll('[data-ckui="card-chip-more"]')].map((li) => [li.textContent, li.className])).toEqual([["+11 more", "lg:hidden"]]);
+
+  view.rerender(<ContentCard card={tagged} groupKinds={["tag"]} chips={3} />);
+  expect(view.container.querySelector('[data-ckui="card-chip-more"]')).toBeNull();
+  expect(view.container.querySelectorAll('[data-ckui="card-groups"] > li')).toHaveLength(3);
+});
+
+it("moves the chips up beside the views when the card names none of the meta groups", () => {
+  const video: Card = { ...card, counts: { ...card.counts, views: 900 }, entities: { tag: card.entities.tag } };
+  const metadata = { views: true, languages: false, pages: false, duration: false, groups: ["series"], groupsFallback: "chips" } as const;
+  const view = render(<ContentCard card={video} groupKinds={["tag"]} metadata={metadata} />);
+  const row = view.container.querySelector('[data-ckui="card-meta-row"]')!;
+  expect(row.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("900900 views");
+  expect(within(row as HTMLElement).getByText("A tag")).toBeVisible();
+  expect(view.container.querySelectorAll('[data-ckui="card-groups"]')).toHaveLength(1);
+
+  view.rerender(<ContentCard card={card} groupKinds={["tag"]} metadata={metadata} />);
+  expect(view.container.querySelector('[data-ckui="card-meta-row"]')).toBeNull();
+  expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("Original");
+  expect(screen.getByText("A tag")).toBeVisible();
+});
+
+it("fits whole chips on one line and counts the rest", () => {
+  const widths = { offsetWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!, clientWidth: Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")! };
+  // Each chip is as wide as its text in 10px letters; the list is 200px.
+  Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get(this: HTMLElement) { return (this.querySelector("a, span:not(.sr-only)")?.textContent ?? "").length * 10; } });
+  Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get() { return 200; } });
+  try {
+    const tags = ["bakunyu", "big ass", "double penetration", "tentacles"].map((name) => ({ id: name, slug: name, name }));
+    const view = render(<ContentCard card={{ ...card, entities: { tag: tags } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
+    const list = view.container.querySelector('[data-ckui="card-groups"]')!;
+    expect(list).toHaveAttribute("data-fit");
+    const seen = [...list.children].filter((li) => !li.classList.contains("invisible")).map((li) => li.querySelector("a, span")?.textContent);
+    expect(seen).toEqual(["bakunyu", "big ass", "+2"]);
+    expect(list.querySelector('[data-ckui="card-chip-more"]')?.textContent).toBe("+22 more");
+    expect(within(list as HTMLElement).getByText("tentacles").closest("li")).toHaveAttribute("aria-hidden", "true");
+  } finally {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", widths.offsetWidth);
+    Object.defineProperty(Element.prototype, "clientWidth", widths.clientWidth);
+  }
 });
