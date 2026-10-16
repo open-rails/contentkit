@@ -141,11 +141,11 @@ func TestEngineInteractions(t *testing.T) {
 		page = discovery.InteractionPage{}
 		s.call(http.StatusOK, a, "GET", v+path, nil, &page)
 	}
-	mine(u1, "/me/reactions?target=groups&kind=tag")
+	mine(u1, "/me/reactions?target=entities&kind=tag")
 	if len(page.Items) != 1 || page.Items[0].Group == nil || page.Items[0].Group.Name != "Moonlit" || page.Items[0].Value != 1 {
 		t.Fatalf("tag reactions %+v", page)
 	}
-	mine(u2, "/me/reactions?target=groups&value=like")
+	mine(u2, "/me/reactions?target=entities&value=like")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("u2's tag likes %+v", page)
 	}
@@ -167,7 +167,7 @@ func TestEngineInteractions(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Content.ID != harbor.ID || page.NextCursor != "" {
 		t.Fatalf("favorites page 2 %+v", page)
 	}
-	mine(u1, "/me/favorites?target=groups")
+	mine(u1, "/me/favorites?target=entities")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("group favorites %+v", page)
 	}
