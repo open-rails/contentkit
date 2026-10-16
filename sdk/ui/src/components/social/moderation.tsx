@@ -280,12 +280,12 @@ function Queue({ loc, view, ...p }: SectionProps) {
           </Button>
         ))}
       </div>
-      <Listing loading={queue.loading} error={queue.error} empty={t("moderation.queueEmpty")} count={queue.items.length} reload={queue.reload}>
+      <Listing loading={queue.loading || queue.loadingMore} error={queue.error} empty={t("moderation.queueEmpty")} count={queue.items.length} reload={queue.items.length && queue.hasMore ? () => void queue.loadMore() : queue.reload}>
         {queue.items.map((it) => (
           <HeldRow key={it.id} item={it} itemHref={p.itemHref} userHref={p.userHref} onResolve={queue.resolve} reload={queue.reload} onError={p.onError} />
         ))}
       </Listing>
-      {queue.hasMore && (
+      {queue.hasMore && !queue.error && (
         <Button variant="outline" className="justify-self-center" disabled={queue.loadingMore} onClick={() => void queue.loadMore()}>
           {t("moderation.loadMore")}
         </Button>
@@ -388,5 +388,13 @@ function Listing(p: { loading: boolean; error?: ContentKitError; empty: string; 
     );
   }
   if (!p.count) return <p className="text-muted-foreground">{p.empty}</p>;
-  return <ul className="grid divide-y divide-border rounded-lg border border-border">{p.children}</ul>;
+  return <>
+    <ul className="grid divide-y divide-border rounded-lg border border-border">{p.children}</ul>
+    {p.error && <div className="grid justify-items-center gap-2">
+      <ErrorLine error={p.error} />
+      <Button size="sm" variant="outline" disabled={p.loading} onClick={p.reload}>
+        {t("common.retry")}
+      </Button>
+    </div>}
+  </>;
 }

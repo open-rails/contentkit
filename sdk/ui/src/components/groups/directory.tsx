@@ -116,9 +116,12 @@ export function GroupDirectory(p: GroupDirectoryProps) {
         </ul>
       )}
       {list.hasMore && (
-        <Button variant="outline" size="sm" className="justify-self-center" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
-          {list.loadingMore ? t("groups.loading") : t("groups.loadMore")}
-        </Button>
+        <div className="grid justify-items-center gap-2">
+          {list.error && <p role="alert" className="text-destructive">{contentError(m, list.error)}</p>}
+          <Button variant="outline" size="sm" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
+            {list.loadingMore ? t("groups.loading") : list.error ? t("common.retry") : t("groups.loadMore")}
+          </Button>
+        </div>
       )}
     </ContentKitUiRoot>
   );

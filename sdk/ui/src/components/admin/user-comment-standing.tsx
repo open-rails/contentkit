@@ -191,9 +191,12 @@ function Recent({ user, client, itemHref, pageSize = 10, onError }: Inner) {
         </ul>
       )}
       {list.hasMore && (
-        <Button variant="outline" className="justify-self-center" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
-          {t("moderation.loadMore")}
-        </Button>
+        <div className="grid justify-items-center gap-2">
+          <ErrorLine error={list.error} />
+          <Button variant="outline" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
+            {list.error ? t("common.retry") : t("moderation.loadMore")}
+          </Button>
+        </div>
       )}
     </section>
   );

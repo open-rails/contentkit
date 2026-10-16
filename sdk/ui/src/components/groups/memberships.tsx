@@ -436,9 +436,12 @@ export function GroupMembers(p: GroupMembersProps) {
         </ul>
       )}
       {members.hasMore && (
-        <Button variant="outline" size="sm" className="justify-self-center" disabled={members.loadingMore} onClick={() => void members.loadMore()}>
-          {t("groups.loadMore")}
-        </Button>
+        <div className="grid justify-items-center gap-2">
+          {members.error && <p role="alert" className="text-destructive">{contentError(m, members.error)}</p>}
+          <Button variant="outline" size="sm" disabled={members.loadingMore} onClick={() => void members.loadMore()}>
+            {members.loadingMore ? t("groups.loading") : members.error ? t("common.retry") : t("groups.loadMore")}
+          </Button>
+        </div>
       )}
       <AddMember spec={spec} labels={p.labels} onAdd={(x) => save.run(() => members.add([x]))} />
       <ErrorLine error={save.error} />

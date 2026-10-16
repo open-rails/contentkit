@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
 import { GroupMembers } from "../groups/memberships.js";
 import { labelOf, type Labels } from "../groups/parts.js";
+import { contentError } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {
@@ -190,9 +191,12 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
         </ul>
       )}
       {groups.hasMore && (
-        <Button variant="outline" size="sm" className="justify-self-center" disabled={groups.loadingMore} onClick={() => void groups.loadMore()}>
-          {groups.loadingMore ? t("groups.loading") : t("groups.loadMore")}
-        </Button>
+        <div className="grid justify-items-center gap-2">
+          {groups.error && <p role="alert" className="text-destructive">{contentError(m, groups.error)}</p>}
+          <Button variant="outline" size="sm" disabled={groups.loadingMore} onClick={() => void groups.loadMore()}>
+            {groups.loadingMore ? t("groups.loading") : groups.error ? t("common.retry") : t("groups.loadMore")}
+          </Button>
+        </div>
       )}
     </div>
   );

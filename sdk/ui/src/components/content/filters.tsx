@@ -115,7 +115,12 @@ export function ReleaseDateIndex({ query = {}, selected, onSelect, client, class
       {dates.loading && !dates.items.length ? (
         <Skeleton className="h-24 w-full" />
       ) : dates.error && !dates.items.length ? (
-        <ErrorLine>{contentError(m, dates.error)}</ErrorLine>
+        <div role="alert" className="grid justify-items-start gap-2">
+          <p className="text-destructive">{contentError(m, dates.error)}</p>
+          <Button size="sm" variant="outline" onClick={dates.reload}>
+            {t("common.retry")}
+          </Button>
+        </div>
       ) : !dates.items.length ? (
         <p className="text-muted-foreground">{t("contents.noDates")}</p>
       ) : (
@@ -141,9 +146,12 @@ export function ReleaseDateIndex({ query = {}, selected, onSelect, client, class
         </ul>
       )}
       {dates.hasMore && (
-        <Button variant="outline" size="sm" className="justify-self-center" disabled={dates.loadingMore} onClick={() => void dates.loadMore()}>
-          {t("contents.loadMore")}
-        </Button>
+        <div className="grid justify-items-center gap-2">
+          {dates.error && <p role="alert" className="text-destructive">{contentError(m, dates.error)}</p>}
+          <Button variant="outline" size="sm" disabled={dates.loadingMore} onClick={() => void dates.loadMore()}>
+            {dates.loadingMore ? t("contents.loading") : dates.error ? t("common.retry") : t("contents.loadMore")}
+          </Button>
+        </div>
       )}
     </ContentKitUiRoot>
   );
