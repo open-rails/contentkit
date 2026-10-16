@@ -121,7 +121,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const onClick = useLink(url, open);
   const lock = lockLabel(m, card.access, tiers, labels);
   const v = card.version;
-  const progress = card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
+  const progress = card.viewer?.completed ? 1 : card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
   const kinds = groupKinds ?? Object.keys(card.entities);
   const entityGroups = kinds.map((kind) => ({ kind, entities: (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).slice(0, chips) })).filter(({ entities }) => entities.length > 0);
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
@@ -188,11 +188,6 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
         {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
-        {card.viewer?.completed && (
-          <Badge variant="secondary" className="justify-self-start">
-            {t("contents.completed")}
-          </Badge>
-        )}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
         {entityStyle === "chips" && entityList}
         {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (

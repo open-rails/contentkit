@@ -134,3 +134,13 @@ it("keeps reading progress above a cover title without changing the default laye
   expect(progress).not.toHaveClass("z-20");
   expect(progress.firstElementChild).toHaveStyle({ width: "50%" });
 });
+
+it.each([{ progress: 5, progress_max: 10 }, { progress: 0, progress_max: 0 }])("shows completed reading with a full thumbnail progress bar and no completion label: %j", (progress) => {
+  const completed: Card = { ...card, viewer: { favorited: false, seen: true, completed: true, ...progress } };
+  const view = render(<ContentCard card={completed} />);
+  const bar = view.container.querySelector('[data-ckui="card-progress"]')!;
+  expect(bar.firstElementChild).toHaveStyle({ width: "100%" });
+  expect(view.container.querySelector('[data-ckui="card-cover"]')).toContainElement(bar);
+  expect(bar).toHaveClass("bottom-0");
+  expect(screen.queryByText(/finished|completed/i)).toBeNull();
+});
