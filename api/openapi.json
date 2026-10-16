@@ -12781,6 +12781,9 @@
           },
           "path": {
             "type": "string"
+          },
+          "position": {
+            "type": "integer"
           }
         },
         "required": [

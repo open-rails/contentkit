@@ -273,6 +273,7 @@ export interface Chip {
   slug: string;
   name: string;
   path?: string;
+  position?: number;
 }
 
 export interface Comment {
