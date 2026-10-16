@@ -297,7 +297,8 @@ const checkTimeout = 10 * time.Second
 // Run waits for the bucket (every job needs it; waiting burns no job
 // attempts), then works jobs until ctx is done. Single-queue workers exit
 // after one task or one idle minute. Running jobs get ShutdownGrace before
-// cancellation.
+// cancellation. A non-nil error may leave jobs unwinding: the caller must not
+// close their database pool until the worker's River client has stopped.
 func (w *Worker) Run(ctx context.Context) error {
 	if w.account != nil {
 		run, cancel := context.WithCancel(ctx)
@@ -355,15 +356,21 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}
-	soft, cancel := context.WithTimeout(context.Background(), w.c.ShutdownGrace)
+	return stopJobs(w.client, w.c.ShutdownGrace, 30*time.Second)
+}
+
+// stopJobs allows a short graceful drain, then interrupts work and waits for
+// River to acknowledge it. Its error must retain the unfinished-work signal.
+func stopJobs(client *river.Client[pgx.Tx], grace, hardLimit time.Duration) error {
+	soft, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	if err := w.client.Stop(soft); err == nil {
+	if err := client.Stop(soft); err == nil {
 		return nil
 	}
-	hard, cancelHard := context.WithTimeout(context.Background(), 30*time.Second)
+	hard, cancelHard := context.WithTimeout(context.Background(), hardLimit)
 	defer cancelHard()
-	if err := w.client.StopAndCancel(hard); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if err := client.StopAndCancel(hard); err != nil {
+		return fmt.Errorf("media-worker: shutdown incomplete: %w", err)
 	}
 	return nil
 }
