@@ -150,7 +150,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   </a>;
   const [article, setArticle] = useState<HTMLElement | null>(null);
   return (
-    <article ref={setArticle} className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+    <article ref={setArticle} className={cn("group/card relative grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
         <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div data-ckui="card-cover-frame" className={coverAspect === undefined ? shape === "landscape" ? "aspect-video" : "aspect-[3/4]" : undefined} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
@@ -252,7 +252,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   const lock = lockLabel(m, card.access, tiers, labels);
   const title = card.title || card.code;
   return (
-    <article className={cn("grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+    <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
       <a href={url} onClick={onClick} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
