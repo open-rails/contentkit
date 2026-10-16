@@ -13,7 +13,7 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
   poster?: PublicPreset | string | null;
   /** The box's "W:H"; default the preset's aspect, else "16:9". */
   aspect?: AspectRatio;
-  /** Density range for picking the poster's width; default the provider's (2–3×). */
+  /** Density range for picking the poster's width; default the provider's (1–3×). */
   density?: DensityRange;
   alt?: string;
   /** Shown without a poster (or when it fails to load); default a muted box with a video icon. */

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { Card } from "../../client/generated/wire.js";
 import { ContentCard } from "./card.js";
+import { createContentKitClient } from "../../client/client.js";
+import { ContentKitProvider } from "../../react/provider.js";
 
 const card: Card = {
   id: "gallery", kind: "gallery", code: "G1", path: "/gallery", title: "A gallery", language: "en", cover: [],
@@ -15,14 +17,54 @@ const card: Card = {
   counts: { likes: 120, favorites: 35 }, access: { allowed: true, level: "public" }, attributes: {},
 };
 
+it("shares the public preset aspect across cards unless the host overrides it", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify([{ kind: "gallery", name: "cover", aspect: "46:65" }]), { headers: { "content-type": "application/json" } }));
+  const client = createContentKitClient({ baseUrl: "https://content.test", fetch });
+  const view = render(<ContentKitProvider client={client}>
+    <ContentCard card={card} loadMedia={false} />
+    <ContentCard card={{ ...card, id: "another" }} aspectRatio="1 / 1" loadMedia={false} />
+  </ContentKitProvider>);
+  await waitFor(() => expect(Number.parseFloat(view.container.querySelector<HTMLElement>('[data-ckui="card-cover-frame"]')?.style.aspectRatio ?? "")).toBeCloseTo(46 / 65));
+  const frames = view.container.querySelectorAll<HTMLElement>('[data-ckui="card-cover-frame"]');
+  expect(frames[1].style.aspectRatio).toBe("1 / 1");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 it("keeps the default card metadata and counts unless the host chooses otherwise", () => {
   const view = render(<ContentCard card={card} labels={{ colored: "Colored", uncensored: "Uncensored" }} />);
   expect(screen.getByText("English · 24 pages · 2 min")).toBeVisible();
   expect(screen.getByText("Colored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("Uncensored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("A tag")).toBeVisible();
+  expect(view.container.querySelector('[data-ckui="card-groups"]')).toHaveAttribute("data-layout", "inline");
+  expect(view.container.querySelector('[data-ckui="card-groups"]')?.tagName).toBe("UL");
+  expect(view.container.querySelector('[data-ckui="card-group-row"]')).toBeNull();
   expect(view.container.querySelector('[data-ckui="card-counts"]')).not.toBeNull();
   expect(view.container.querySelector('[data-ckui="card-cover"]')?.contains(screen.getByRole("link", { name: "A gallery" }))).toBe(false);
+});
+
+it.each(["chips", "text"] as const)("groups %s entities into ordered accessible rows after filtering and limiting each kind", (entityStyle) => {
+  const grouped: Card = { ...card, entities: {
+    artist: [{ id: "first", slug: "first", name: "First artist", path: "/artists/first" }, { id: "second", slug: "second", name: "Second artist" }],
+    ...card.entities,
+  } };
+  const view = render(<ContentCard card={grouped} entityLayout="rows" entityStyle={entityStyle} groupKinds={["series", "missing", "artist", "tag"]} chips={1} filterEntity={(entity, kind) => entity.slug !== "original" && kind !== "tag"} labels={{ series: "Series", artist: "Artists" }} />);
+  const groups = view.container.querySelector('[data-ckui="card-groups"]')!;
+  expect(groups).toHaveAttribute("data-layout", "rows");
+  expect([...groups.children].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
+  const series = screen.getByRole("list", { name: "Series" });
+  const artists = screen.getByRole("list", { name: "Artists" });
+  expect(series).toHaveAttribute("data-ckui", "card-group-row");
+  expect(series).toHaveClass("flex", "flex-wrap");
+  expect(within(series).getAllByRole("listitem")).toHaveLength(1);
+  expect(within(series).getByText("A specific series")).toBeVisible();
+  const artist = within(artists).getByRole("link", { name: "First artist" });
+  expect(artist).toHaveAttribute("href", "/artists/first");
+  expect(artist.classList.contains("border")).toBe(entityStyle === "chips");
+  expect(screen.queryByText(/Original|Second artist|A tag/)).toBeNull();
+
+  view.rerender(<ContentCard card={grouped} entityLayout="rows" groupKinds={["missing"]} />);
+  expect(view.container.querySelector('[data-ckui="card-groups"]')).toBeNull();
 });
 
 it("lets a host show only page count, selected traits and filtered series without losing specific names", () => {

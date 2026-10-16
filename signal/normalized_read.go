@@ -89,6 +89,8 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
 	}
 	// Contexts are immutable receipts. Measurements use the winning event
 	// revision; its earliest trusted receipt fixes the audience across retries.
+	// Bound aggregation fan-out as well as memory. A many-core server's default
+	// can otherwise exhaust the budget on per-stream state for tiny windows.
 	query := fmt.Sprintf(`WITH
 intervals AS (SELECT * FROM contentkit_activity_intervals),
 cohorts AS (SELECT DISTINCT cohort_id,start_at,end_at,audience,tiers FROM intervals),
@@ -165,7 +167,7 @@ FROM normalized WHERE normalized_rate>0 OR invalid_population ORDER BY rank_scor
 		n.PriorWeight, n.Quality.Engagement*n.Quality.EngagementWeight, n.Quality.EngagementWeight,
 		n.Quality.Completion*n.Quality.CompletionWeight, n.Quality.CompletionWeight,
 		n.Quality.Approval*n.Quality.ApprovalWeight, n.Quality.ApprovalWeight, n.Quality.RevisitWeight,
-		opts.RankExpr, finalSettings+", max_execution_time=15, max_memory_usage=268435456")
+		opts.RankExpr, finalSettings+", max_threads=2, max_execution_time=15, max_memory_usage=268435456")
 	if strings.TrimSpace(opts.RankExpr) == "" {
 		return nil, fmt.Errorf("signal: normalized ranking requires a policy expression")
 	}

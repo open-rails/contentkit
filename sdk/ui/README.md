@@ -51,7 +51,7 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   onChange={(change) => queryClient.invalidateQueries({ queryKey: ["media", change.ref.id] })}
   onError={(error, { operation }) => report(operation, error)}
 >
-  <ContentKitUiProvider appearance={{ theme: "inherit" }} language={lang} density={[2, 3]}>
+  <ContentKitUiProvider appearance={{ theme: "inherit" }} language={lang} density={[1, 3]}>
     <App />
   </ContentKitUiProvider>
 </ContentKitProvider>;
@@ -123,7 +123,7 @@ operation. This does not change the operation's result or its authentication.
 - **`ContentKitUiProvider`**: `appearance` (`theme`
   `light`/`dark`/`auto`/`inherit`, `variables` as `--ckui-*`), `language`
   (loads its built-in bundle), `messages` (bundles over it), `t` (host
-  translate hook), `density` (default `[2, 3]`), `inlinePreview` (default true).
+  translate hook), `density` (default `[1, 3]`), `inlinePreview` (default true).
 
 ## Hooks
 
@@ -319,11 +319,12 @@ Plain-text entities sit directly below the cover, followed by other metadata.
   metadata={{ languages: false, traits: ["colored"], duration: false }} />
 ```
 
-Set `grid={{ minCardWidth: 320, mobileColumns: 2 }}` for large covers in a fluid
+Set `grid={{ minCardWidth: 240, mobileColumns: 2, maxColumns: 10 }}` for covers in a fluid
 grid: two columns on small screens, then as many columns as the available
 width supports. This is supported by card grids, daily releases, Popular and
-`ContentRail` previews; an unconfigured rail remains horizontal. There is no
-desktop column ceiling, and other apps keep their existing layout by default.
+`ContentRail` previews; an unconfigured rail remains horizontal. `maxColumns`
+is optional: omit it for no desktop column ceiling. Other apps keep their
+existing layout by default.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists

@@ -30,7 +30,7 @@ export interface ContentKitUiProviderProps {
   messages?: ContentKitUiMessageBundle | readonly ContentKitUiMessageBundle[];
   /** Host translation hook, consulted before the bundles. */
   t?: ContentKitUiTranslate;
-  /** Device-pixel density range images and covers are picked for. Default [2, 3]. */
+  /** Device-pixel density range images and covers are picked for. Default [1, 3]. */
   density?: DensityRange;
   /** Playable videos preview muted inline (hover, or in view on touch). Default true. */
   inlinePreview?: boolean;

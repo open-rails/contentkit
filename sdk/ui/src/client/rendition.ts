@@ -6,10 +6,10 @@ export interface Rendition {
   url: string;
 }
 
-/** Device-pixel density range renditions target: even 1× screens get 2×, 3× phones 3×. */
+/** Device-pixel density range renditions target: native density, up to 3×. */
 export type DensityRange = readonly [min: number, max: number];
 
-export const DEFAULT_DENSITY: DensityRange = [2, 3];
+export const DEFAULT_DENSITY: DensityRange = [1, 3];
 
 /** devicePixelRatio clamped into range. */
 export function densityFor(range: DensityRange = DEFAULT_DENSITY, dpr = typeof devicePixelRatio === "number" ? devicePixelRatio : 1): number {

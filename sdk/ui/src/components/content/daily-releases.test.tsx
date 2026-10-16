@@ -44,6 +44,20 @@ function observeMedia() {
   };
 }
 
+it("forwards ordered entity rows to daily release cards", async () => {
+  observeMedia();
+  const item: Card = { ...card("entities"), entities: {
+    artist: [{ id: "artist", slug: "artist", name: "An artist" }],
+    series: [{ id: "series", slug: "series", name: "A series" }],
+  } };
+  const client = createContentKitClient({ baseUrl: "https://content.test/entity-rows", fetch: async (input) => Response.json(new URL(String(input)).pathname.endsWith("/presets") ? [] : { ...data(), days: [{ date: "2026-10-15", contents: [item] }] }) });
+  const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases entityLayout="rows" groupKinds={["series", "artist"]} /></ContentKitProvider>);
+  await screen.findByText("Gallery entities");
+  expect([...view.container.querySelectorAll('[data-ckui="card-group-row"]')].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
+  expect(within(screen.getByRole("list", { name: "Series" })).getByText("A series")).toBeVisible();
+  expect(within(screen.getByRole("list", { name: "Artist" })).getByText("An artist")).toBeVisible();
+});
+
 it("fetches all day metadata once, reveals 30 newest cards, and expands cached days without fetching", async () => {
   observeMedia();
   const requests: URL[] = [];
@@ -82,7 +96,7 @@ it("fetches all day metadata once, reveals 30 newest cards, and expands cached d
 
 it("does not mount offscreen, unrevealed or collapsed card media", async () => {
   const visible = observeMedia();
-  const client = createContentKitClient({ baseUrl: "https://content.test/media", fetch: async () => Response.json(data()) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/media", fetch: async (input) => Response.json(new URL(String(input)).pathname.endsWith("/presets") ? [] : data()) });
   const user = userEvent.setup();
   const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ time_zone: "America/Denver" }} /></ContentKitProvider>);
   await screen.findByText("Gallery today-1");
@@ -119,6 +133,7 @@ it("refreshes the window when the account changes its content filters", async ()
   const requests: string[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/filters", fetch: async (input, init) => {
     const path = new URL(String(input)).pathname;
+    if (path.endsWith("/presets")) return Response.json([]);
     requests.push(path);
     if (init?.method === "PUT") {
       filtered = true;

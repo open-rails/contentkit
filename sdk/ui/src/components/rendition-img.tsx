@@ -7,7 +7,7 @@ export const DensityContext = createContext<DensityRange>(DEFAULT_DENSITY);
 const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export interface UseRenditionOptions {
-  /** Density range; default the provider's (2–3×). */
+  /** Density range; default the provider's (1–3×). */
   density?: DensityRange;
 }
 

@@ -3,9 +3,12 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useCallback, useContext, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { Card, CardAccess, Chip as EntityChip } from "../../client/generated/wire.js";
+import type { ContentKitClient } from "../../client/client.js";
+import { ratio } from "../../client/aspect.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
+import { usePresets } from "../../react/public.js";
 import { Badge } from "#ckui/ui/badge";
 import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
@@ -15,11 +18,13 @@ import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {
   card: Card;
+  /** Overrides the provider's client for this card's public media configuration. */
+  client?: ContentKitClient;
   /** The card's link; default its canonical path. */
   href?: (card: Card) => string | undefined;
   /** Before the card's link is followed: a click signal. */
   onOpen?: (card: Card) => void;
-  /** Cover shape: "portrait" (3:4, readers) or "landscape" (16:9, players). Default portrait. */
+  /** Fallback cover shape when the server declares no preset aspect. Default portrait (3:4). */
   shape?: "portrait" | "landscape";
   /** A CSS aspect ratio overriding shape, such as "182 / 260". */
   aspectRatio?: CSSProperties["aspectRatio"];
@@ -35,6 +40,8 @@ export interface ContentCardProps {
   filterEntity?: (entity: EntityChip, kind: string) => boolean;
   /** Bordered chips (default) or plain linked text. */
   entityStyle?: "chips" | "text";
+  /** One inline list (default), or a separate row for each group kind. */
+  entityLayout?: "inline" | "rows";
   /** Metadata fields to show; omitted fields keep their defaults. */
   metadata?: CardMetadata;
   /** Show like and favorite totals. Default true. */
@@ -103,8 +110,10 @@ function useLink(url: string | undefined, before?: () => void) {
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, filterEntity, entityStyle = "chips", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
   const m = useMessages();
+  const { presets } = usePresets({ client });
+  const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
   const { t } = m;
   const languageName = useLanguageName();
   const url = href ? href(card) : card.path;
@@ -114,7 +123,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
   const v = card.version;
   const progress = card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
   const kinds = groupKinds ?? Object.keys(card.entities);
-  const entities = kinds.flatMap((kind) => (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).slice(0, chips).map((entity) => ({ kind, entity })));
+  const entityGroups = kinds.map((kind) => ({ kind, entities: (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).slice(0, chips) })).filter(({ entities }) => entities.length > 0);
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
@@ -124,9 +133,17 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
   ].filter(Boolean);
   const title = card.title || card.code;
-  const entityList = entities.length > 0 ? <ul className={cn("flex flex-wrap", entityStyle === "text" ? "gap-x-2 gap-y-1" : "gap-1")} data-ckui="card-groups">
-    {entities.map(({ kind, entity }) => <li key={`${kind}:${entity.id}`} data-kind={kind}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>)}
-  </ul> : null;
+  const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-2 gap-y-1" : "gap-1");
+  const entityItems = (kind: string, entities: EntityChip[]) => entities.map((entity) => <li key={`${kind}:${entity.id}`} data-kind={kind}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>);
+  const entityList = entityGroups.length > 0 ? entityLayout === "rows" ? (
+    <div className="grid gap-1" data-ckui="card-groups" data-layout="rows">
+      {entityGroups.map(({ kind, entities }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities)}</ul>)}
+    </div>
+  ) : (
+    <ul className={entityClassName} data-ckui="card-groups" data-layout="inline">
+      {entityGroups.flatMap(({ kind, entities }) => entityItems(kind, entities))}
+    </ul>
+  ) : null;
   const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
@@ -136,7 +153,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
     <article ref={setArticle} className={cn("group/card grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
         <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
-          <div data-ckui="card-cover-frame" className={aspectRatio === undefined ? shape === "landscape" ? "aspect-video" : "aspect-[3/4]" : undefined} style={aspectRatio === undefined ? undefined : { aspectRatio }}>
+          <div data-ckui="card-cover-frame" className={coverAspect === undefined ? shape === "landscape" ? "aspect-video" : "aspect-[3/4]" : undefined} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
             {loadMedia ? <RenditionImg
               outputs={card.cover}
               alt=""
@@ -226,7 +243,7 @@ function Chip({ url, name, variant = "chips" }: { url?: string; name: string; va
   );
 }
 
-export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "groupKinds" | "filterEntity" | "entityStyle" | "metadata"> {
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "groupKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata"> {
   /** Above the title: the post's channel or author; default its owner group's chip. */
   byline?: ReactNode;
 }
