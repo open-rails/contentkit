@@ -36,6 +36,7 @@ export interface SearchBoxProps {
 }
 
 type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
+const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`;
 
 // Match the keyword index's case, Latin accent and whitespace normalization.
 const prefixText = (text: string) => text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase().trim().replace(/\s+/g, " ");
@@ -95,7 +96,8 @@ export function SearchBox(p: SearchBoxProps) {
   const navigate = useContext(ContentKitContext)?.navigate;
   const [text, setText] = useState(p.defaultValue ?? "");
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
+  // null requests the first result when opening an as-yet-unloaded panel.
+  const [active, setActive] = useState<string | null>();
   const root = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -117,7 +119,14 @@ export function SearchBox(p: SearchBoxProps) {
     ],
     [p.recent, prefix, empty, current, recent.searches, found.contents, found.entities],
   );
-  const selected = visible[active];
+  // History and live suggestions can arrive independently. Track identity so
+  // prepending history never changes what Enter will open.
+  const activeIndex = active === null ? Math.min(0, visible.length - 1) : visible.findIndex((s) => suggestionKey(s) === active);
+  const selected = visible[activeIndex];
+  const activate = (index: number) => {
+    const suggestion = visible[index];
+    setActive(suggestion ? suggestionKey(suggestion) : index >= 0 ? null : undefined);
+  };
   const loading = recent.loading || (!empty && (!current || found.loading));
   const showRecent = empty && p.recent !== false;
   const emptyMessage = empty ? !header && showRecent && !recent.error ? "contents.noRecentSearches" : "contents.searchHint" : "contents.noResults";
@@ -152,7 +161,7 @@ export function SearchBox(p: SearchBoxProps) {
     event.preventDefault();
     input.current?.focus();
     setOpen(false);
-    setActive(-1);
+    setActive(undefined);
   };
   const results = (<>
     {showRecent && (
@@ -173,14 +182,14 @@ export function SearchBox(p: SearchBoxProps) {
     <ul id={`${id}-list`} role="listbox" aria-label={empty ? t("contents.recentSearches") : t("contents.suggestions")} className={cn("grid", header && "gap-2")}>
       {visible.map((s, i) => (
         <li
-          key={s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`}
+          key={suggestionKey(s)}
           id={`${id}-${i}`}
           role="option"
-          aria-selected={i === active}
+          aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : "gap-2 px-2 py-1.5", i === active && "bg-accent text-accent-foreground")}
-          onMouseEnter={() => setActive(i)}
+          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
             go(s);
@@ -249,7 +258,7 @@ export function SearchBox(p: SearchBoxProps) {
           aria-label={t("contents.search")}
           aria-expanded={open}
           aria-controls={`${id}-list`}
-          aria-activedescendant={open && selected ? `${id}-${active}` : undefined}
+          aria-activedescendant={open && selected ? `${id}-${activeIndex}` : undefined}
           aria-autocomplete="list"
           autoComplete="off"
           className={cn("h-9 ps-8", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none md:text-base")}
@@ -258,7 +267,7 @@ export function SearchBox(p: SearchBoxProps) {
           onChange={(e) => {
             setText(e.target.value);
             setOpen(true);
-            setActive(-1);
+            setActive(undefined);
           }}
           onFocus={reveal}
           onClick={reveal}
@@ -266,16 +275,16 @@ export function SearchBox(p: SearchBoxProps) {
             if (e.key === "Escape") {
               e.preventDefault();
               setOpen(false);
-              setActive(-1);
+              setActive(undefined);
               return;
             }
             if (e.key === "ArrowDown") {
               e.preventDefault();
               reveal();
-              setActive((a) => open ? Math.min(visible.length - 1, a + 1) : 0);
+              activate(open ? Math.min(visible.length - 1, activeIndex + 1) : 0);
             } else if (e.key === "ArrowUp" && open) {
               e.preventDefault();
-              setActive((a) => Math.max(-1, a - 1));
+              activate(Math.max(-1, activeIndex - 1));
             }
           }}
         />
@@ -287,7 +296,7 @@ export function SearchBox(p: SearchBoxProps) {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               input.current?.focus();
-              setActive(-1);
+              setActive(undefined);
               if (text) { setText(""); setOpen(true); }
               else setOpen(false);
             }}

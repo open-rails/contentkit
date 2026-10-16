@@ -51,6 +51,28 @@ it("keeps matching guest recents usable without waiting for autocomplete and hid
   expect(onSearch).toHaveBeenCalledExactlyOnceWith("Café questions");
 });
 
+it("keeps the chosen entity selected when slower history arrives above it", async () => {
+  let history: ((response: Response) => void) | undefined;
+  const navigate = vi.fn(), onSearch = vi.fn();
+  const client = createContentKitClient({ baseUrl: "https://content.test/late-prefix-history", fetch: async (url) => {
+    if (String(url).includes("/typeahead")) return Response.json({ contents: [], entities: [{ id: "artist", kind: "artist", name: "Inazuma", slug: "inazuma", path: "/artist" }] });
+    return new Promise<Response>((resolve) => { history = resolve; });
+  } });
+  render(<ContentKitProvider client={client} viewer="alice" navigate={navigate}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
+  const user = userEvent.setup();
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "inaz");
+  const artist = await screen.findByRole("option", { name: /Inazuma.*Artist/ });
+  await user.keyboard("{ArrowDown}");
+  expect(artist).toHaveAttribute("aria-selected", "true");
+  history!(Response.json({ searches: [{ query: "Inazuma art" }] }));
+  await screen.findByRole("option", { name: /Inazuma art/ });
+  expect(artist).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Enter}");
+  expect(navigate).toHaveBeenCalledExactlyOnceWith("/artist");
+  expect(onSearch).not.toHaveBeenCalled();
+});
+
 it("opens an empty recent-search panel on focus, reopens on click, and closes outside or on Escape", async () => {
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async () => Response.json({ searches: [] }) });
   render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={() => {}} /><button>Elsewhere</button></ContentKitProvider>);
