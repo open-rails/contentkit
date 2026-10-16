@@ -36,8 +36,8 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-x-4 gap-y-6";
 
 export interface CardGridLayout {
-  /** Minimum desktop card width in CSS pixels. Cards grow to fill available space. */
-  minCardWidth: number;
+  /** Minimum desktop card width: CSS pixels or a CSS length such as clamp(...). Cards fill the available space. */
+  minCardWidth: number | string;
   /** Maximum desktop columns. Omit to use all available width without a ceiling. */
   maxColumns?: number;
   /** Equal-width columns below the desktop breakpoint. Default 2. */
@@ -47,10 +47,10 @@ export interface CardGridLayout {
 /** Shared by complete lists, release-day sections and grid-style previews. */
 export function cardGridLayout(layout?: CardGridLayout): { className: string; style?: CSSProperties } {
   if (!layout) return { className: GRID };
-  const width = Number.isFinite(layout.minCardWidth) ? Math.max(1, layout.minCardWidth) : 160;
+  const width = typeof layout.minCardWidth === "string" ? layout.minCardWidth.trim() || "160px" : `${Number.isFinite(layout.minCardWidth) ? Math.max(1, layout.minCardWidth) : 160}px`;
   const columns = layout.mobileColumns !== undefined && Number.isFinite(layout.mobileColumns) ? Math.max(1, Math.floor(layout.mobileColumns)) : 2;
   const maximum = layout.maxColumns !== undefined && Number.isFinite(layout.maxColumns) ? Math.max(1, Math.floor(layout.maxColumns)) : undefined;
-  const trackWidth = maximum === undefined ? `${width}px` : `max(${width}px, calc((100% - ${maximum - 1}rem) / ${maximum}))`;
+  const trackWidth = maximum === undefined ? width : `max(${width}, calc((100% - ${maximum - 1}rem) / ${maximum}))`;
   return {
     className: "grid grid-cols-[repeat(var(--ckui-card-mobile-columns),minmax(0,1fr))] gap-x-4 gap-y-6 md:grid-cols-[repeat(auto-fill,minmax(min(100%,var(--ckui-card-min-width)),1fr))]",
     style: { "--ckui-card-min-width": trackWidth, "--ckui-card-mobile-columns": columns } as CSSProperties,

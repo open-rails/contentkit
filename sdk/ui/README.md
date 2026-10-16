@@ -326,6 +326,11 @@ width supports. This is supported by card grids, daily releases, Popular and
 is optional: omit it for no desktop column ceiling. Other apps keep their
 existing layout by default.
 
+`minCardWidth` also accepts a CSS length. For example,
+`grid={{ minCardWidth: "clamp(240px, calc((100% - 9rem) / 10), 360px)" }}`
+keeps the early narrow-screen columns, grows covers toward 360px, and then
+adds columns on ultrawide displays without a ceiling.
+
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
 the open ones and puts the rest behind a counted toggle that loads them on
