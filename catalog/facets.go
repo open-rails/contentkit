@@ -162,10 +162,10 @@ func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs
 	if err := s.markDocuments(ctx, q, ids); err != nil {
 		return err
 	}
-	// Group membership and taxonomy changes are catalog edits too. Advancing
-	// the revision in their own transaction makes optimistic editors and
-	// background publication observe them under the same content-row lock.
-	rows, err := q.Query(ctx, `WITH changed AS (UPDATE `+s.t.items+` SET revision=revision+1, updated_at=clock_timestamp()
+	// Catalog revisions track association changes independently of the imported
+	// source timestamp. Advancing in this transaction lets optimistic editors
+	// and background publication observe them under the same content-row lock.
+	rows, err := q.Query(ctx, `WITH changed AS (UPDATE `+s.t.items+` SET revision=revision+1
  WHERE tenant_id = $1 AND id = ANY($2) RETURNING id, kind) SELECT id,kind FROM changed ORDER BY id`, s.tenant, ids)
 	if err != nil {
 		return err

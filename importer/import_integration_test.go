@@ -105,7 +105,7 @@ func newEngineWith(t *testing.T, mutate func(*contentkit.Config, *contentkit.Dep
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
-	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: contentkit.AllRoutes &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
+	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: e.RouteGroups() &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,13 +309,46 @@ func TestImportConverges(t *testing.T) {
 	edit := catalogBatch()
 	edit.Contents = edit.Contents[:1]
 	edit.Contents[0].Text["en"] = catalog.Text{Title: "First, revised"}
-	revisions := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
+	revisions := func() map[string]int64 {
+		t.Helper()
+		rows, err := f.pool.Query(t.Context(), `SELECT id, revision FROM `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var id string
+			var revision int64
+			if err := rows.Scan(&id, &revision); err != nil {
+				t.Fatal(err)
+			}
+			out[id] = revision
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	oldRevisions := revisions()
 	if res := f.importBatch(t, importer.Batch{Source: edit.Source, Contents: edit.Contents}); len(res.Failed) > 0 || res.Written["contents"] != 1 {
 		t.Fatalf("edit: %+v", res)
 	}
-	now := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
-	if strings.Count(now, ":2") != strings.Count(revisions, ":2")+1 || f.scalar(t, `SELECT title FROM $s.content_text WHERE content_id = $1 AND language = 'en'`, g1) != "First, revised" {
-		t.Errorf("revisions %s -> %s", revisions, now)
+	newRevisions := revisions()
+	if len(newRevisions) != len(oldRevisions) {
+		t.Errorf("content set changed: %v -> %v", oldRevisions, newRevisions)
+	}
+	for id, old := range oldRevisions {
+		want := old
+		if id == g1 {
+			want++
+		}
+		if got := newRevisions[id]; got != want {
+			t.Errorf("content %s revision = %d, want %d", id, got, want)
+		}
+	}
+	if f.scalar(t, `SELECT title FROM $s.content_text WHERE content_id = $1 AND language = 'en'`, g1) != "First, revised" {
+		t.Error("changed record title was not updated")
 	}
 	if f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x") != "22" {
 		t.Errorf("external ids duplicated: %s", f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x"))
