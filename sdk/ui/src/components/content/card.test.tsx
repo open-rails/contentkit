@@ -17,7 +17,9 @@ const card: Card = {
 
 it("keeps the default card metadata and counts unless the host chooses otherwise", () => {
   const view = render(<ContentCard card={card} labels={{ colored: "Colored", uncensored: "Uncensored" }} />);
-  expect(screen.getByText(/English.*Colored.*Uncensored.*24 pages.*2 min/)).toBeVisible();
+  expect(screen.getByText("English · 24 pages · 2 min")).toBeVisible();
+  expect(screen.getByText("Colored")).toHaveAttribute("data-ckui", "card-trait");
+  expect(screen.getByText("Uncensored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("A tag")).toBeVisible();
   expect(view.container.querySelector('[data-ckui="card-counts"]')).not.toBeNull();
   expect(view.container.querySelector('[data-ckui="card-cover"]')?.contains(screen.getByRole("link", { name: "A gallery" }))).toBe(false);
@@ -25,13 +27,30 @@ it("keeps the default card metadata and counts unless the host chooses otherwise
 
 it("lets a host show only page count, selected traits and filtered series without losing specific names", () => {
   const view = render(<ContentCard card={card} groupKinds={["series"]} chips={2} filterEntity={(entity) => entity.slug !== "original"} metadata={{ languages: false, traits: ["colored"], duration: false }} showCounts={false} labels={{ colored: "Colored" }} />);
-  expect(screen.getByText("Colored · 24 pages")).toBeVisible();
+  expect(screen.getByText("Colored")).toHaveAttribute("data-variant", "outline");
+  expect(screen.getByText("24 pages")).toBeVisible();
   expect(screen.queryByText(/English|Uncensored|2 min/)).toBeNull();
   expect(screen.queryByText("Original")).toBeNull();
   expect(screen.queryByText("A tag")).toBeNull();
   expect(screen.getByText("A specific series")).toBeVisible();
   expect(screen.getByText("Original Story")).toBeVisible();
   expect(view.container.querySelector('[data-ckui="card-counts"]')).toBeNull();
+});
+
+it.each([false, []] as const)("omits trait badges when the host disables or selects no traits: %j", (traits) => {
+  const view = render(<ContentCard card={card} metadata={{ traits }} labels={{ colored: "Colored", uncensored: "Uncensored" }} />);
+  expect(view.container.querySelector('[data-ckui="card-traits"]')).toBeNull();
+  expect(screen.queryByText("Colored")).toBeNull();
+  expect(screen.queryByText("Uncensored")).toBeNull();
+  expect(screen.getByText("English · 24 pages · 2 min")).toBeVisible();
+});
+
+it("can show a selected trait as the only metadata without restoring hidden version fields", () => {
+  const view = render(<ContentCard card={card} metadata={{ languages: false, traits: ["colored"], pages: false, duration: false }} labels={{ colored: "Colored" }} />);
+  expect(screen.getByText("Colored")).toHaveAttribute("data-trait", "colored");
+  expect(screen.queryByText(/English|Uncensored|24 pages|2 min/)).toBeNull();
+  view.rerender(<ContentCard card={{ ...card, version: { ...card.version, traits: [] } }} metadata={{ traits: ["colored"] }} labels={{ colored: "Colored" }} />);
+  expect(view.container.querySelector('[data-ckui="card-trait"]')).toBeNull();
 });
 
 it("holds back cover and decoration images while media loading is disabled", () => {
@@ -54,7 +73,7 @@ it("supports a tall cover with one accessible overlay title and plain linked ent
   const entity = screen.getByRole("link", { name: "A specific series" });
   expect(entity).toHaveAttribute("href", "/series");
   expect(entity).not.toHaveClass("border");
-  expect(entity.compareDocumentPosition(screen.getByText("Colored · 24 pages")) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(entity.compareDocumentPosition(screen.getByText("Colored")) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(view.container.querySelector("img[src]")).toBeNull();
   title.addEventListener("click", (event) => event.preventDefault());
   fireEvent.click(title);

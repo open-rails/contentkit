@@ -120,7 +120,6 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
   const meta = [
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
-    ...traits.map((x) => labelOf(labels, x)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
   ].filter(Boolean);
@@ -128,7 +127,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
   const entityList = entities.length > 0 ? <ul className={cn("flex flex-wrap", entityStyle === "text" ? "gap-x-2 gap-y-1" : "gap-1")} data-ckui="card-groups">
     {entities.map(({ kind, entity }) => <li key={`${kind}:${entity.id}`} data-kind={kind}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>)}
   </ul> : null;
-  const titleLink = <a href={url} onClick={onClick} className={cn("font-medium break-words focus-visible:underline", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
+  const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
   </a>;
@@ -168,6 +167,9 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
         {titlePosition === "below" && titleLink}
         {entityStyle === "text" && entityList}
         {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} />}
+        {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
+          {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
+        </div>}
         {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
         {card.viewer?.completed && (
           <Badge variant="secondary" className="justify-self-start">
@@ -214,7 +216,7 @@ export function OwnerChip({ group, href, className, loadMedia = true }: { group:
 
 function Chip({ url, name, variant = "chips" }: { url?: string; name: string; variant?: "chips" | "text" }) {
   const onClick = useLink(url);
-  const cls = variant === "text" ? "text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground";
+  const cls = variant === "text" ? "text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground";
   return url ? (
     <a href={url} onClick={onClick} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
       {name}
