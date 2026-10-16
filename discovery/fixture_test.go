@@ -40,7 +40,7 @@ func siteConfig() kinds.Config {
 			{Name: "clean", Hosts: []string{"clean.test"}, ExcludeRestrictions: []string{"restricted"}},
 		},
 		ContentFilters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}, Labels: map[string]string{"en": "Big breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
 			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, DefaultVisible: true},
 		},
 		Kinds: map[string]kinds.Kind{
@@ -150,7 +150,7 @@ func (f *fixture) group(kind string, slugs ...string) {
 	f.t.Helper()
 	var in []groups.GroupInput
 	for _, s := range slugs {
-		in = append(in, groups.GroupInput{Kind: kind, Slug: s, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(s[:1]) + s[1:]}}})
+		in = append(in, groups.GroupInput{Kind: kind, Slug: s, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(s[:1]) + strings.ReplaceAll(s[1:], "-", " ")}}})
 	}
 	out, err := f.groups.CreateGroups(f.ctx, in)
 	if err != nil {

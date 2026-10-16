@@ -12787,12 +12787,6 @@
           },
           "default_visible": {
             "type": "boolean"
-          },
-          "labels": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
           }
         },
         "required": [

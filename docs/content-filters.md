@@ -12,6 +12,10 @@ them through ContentKit's group API or an explicit import/setup command.
 Declaring a filter does not create groups, seed content or run a database
 migration. The settings UI omits filters whose groups do not exist.
 
+Filter names come from the entity's localized display name, with the same language fallback used on
+entity cards. Keep translations on the entity; filter configuration only
+selects entities and visibility defaults.
+
 ```yaml
 languages: [en]
 kinds:
@@ -25,10 +29,8 @@ group_kinds:
 content_filters:
   - group: {kind: tag, slug: spoilers}
     default_visible: false
-    labels: {en: Spoilers}
   - group: {kind: tag, slug: graphic}
     default_visible: true
-    labels: {en: Graphic scenes}
 sites:
   - name: main
     hosts: [catalog.example.test]

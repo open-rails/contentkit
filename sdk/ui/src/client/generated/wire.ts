@@ -385,7 +385,6 @@ export interface Content {
 export interface ContentFilter {
   entity: GroupRef;
   default_visible: boolean;
-  labels?: Record<string, string>;
 }
 
 export interface ContentFilterState {

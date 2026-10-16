@@ -56,9 +56,8 @@ type GroupRef struct {
 // ContentFilter is a group viewers may hide; DefaultVisible is the default
 // before a viewer's own override.
 type ContentFilter struct {
-	Group          GroupRef          `json:"entity" yaml:"group"`
-	DefaultVisible bool              `json:"default_visible" yaml:"default_visible"`
-	Labels         map[string]string `json:"labels,omitempty" yaml:"labels"`
+	Group          GroupRef `json:"entity" yaml:"group"`
+	DefaultVisible bool     `json:"default_visible" yaml:"default_visible"`
 }
 
 // ContentFilterDefault sets the visibility of one declared ContentFilter on

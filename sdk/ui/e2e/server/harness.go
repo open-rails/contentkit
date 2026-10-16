@@ -80,7 +80,7 @@ var site = func() kinds.Config {
 		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Groups: []string{"tag", "series", "character"}}
 	}
 	return kinds.Config{Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"},
-		ContentFilters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Labels: map[string]string{"en": "Gore", "ja": "ゴア"}}},
+		ContentFilters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}},
 		Kinds: map[string]kinds.Kind{
 			"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"), "channel": item("channel", "reader"),
 			"file": item("file", "reader"), "video": item("v", "player"), "watch": item("watch", "player"), "abr": item("abr", "player"),

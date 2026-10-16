@@ -177,6 +177,25 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	})
 }
 
+func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
+	f := seeded(t)
+	id := groups.GroupID(f.ids["big-breasts"])
+	if err := f.groups.AddNames(f.ctx, []groups.GroupNames{{ID: id, Names: []groups.Name{
+		{Language: "ja", Kind: groups.NameCanonical, Name: "巨乳"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ language, want string }{{"ja", "巨乳"}, {"en", "Big breasts"}} {
+		var result ContentFilters
+		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
+			t.Fatalf("%s: status %d", tc.language, status)
+		}
+		if len(result.Filters) != 2 || result.Filters[0].Label != tc.want || result.Filters[0].Group.Name != tc.want {
+			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Filters)
+		}
+	}
+}
+
 func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	f := seeded(t)
 	const host = "main.test"

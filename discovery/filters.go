@@ -19,8 +19,8 @@ import (
 // ContentFilterState is one configured content filter as the reader has it.
 type ContentFilterState struct {
 	Group groups.GroupCard `json:"entity"`
-	// Label is the configured label in the requested language, else the
-	// group's name.
+	// Label is the entity's display name in the requested language, using the
+	// same language fallback as entity cards.
 	Label          string `json:"label"`
 	DefaultVisible bool   `json:"default_visible"`
 	// Visible is the reader's setting, Overridden whether it is their own.
@@ -158,7 +158,6 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 	for _, c := range cards {
 		byID[string(c.ID)] = c
 	}
-	lang, _ := s.displayLanguage(language)
 	site, _ := s.o.Kinds.SiteFor(gate.Site(ctx))
 	for _, f := range s.o.Kinds.ContentFilters {
 		id := fgs[f.Group]
@@ -166,17 +165,13 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 		if !ok {
 			continue
 		}
-		label := f.Labels[lang]
-		if label == "" {
-			label = g.Name
-		}
 		o, overridden := overrides[id]
 		defaultVisible := site.DefaultVisible(f)
 		visible := defaultVisible
 		if overridden {
 			visible = o != hide
 		}
-		out.Filters = append(out.Filters, ContentFilterState{Group: g, Label: label, DefaultVisible: defaultVisible, Visible: visible, Overridden: overridden})
+		out.Filters = append(out.Filters, ContentFilterState{Group: g, Label: g.Name, DefaultVisible: defaultVisible, Visible: visible, Overridden: overridden})
 	}
 	return out, nil
 }
