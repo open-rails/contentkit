@@ -127,19 +127,7 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	serveEngine := func(e *contentkit.Engine) *httptest.Server {
-		rs, err := e.Routes(contentkit.Routes{Prefix: prefix, Groups: e.RouteGroups()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		mux := http.NewServeMux()
-		for _, r := range rs {
-			path := r.Path
-			if r.Method != "" {
-				path = r.Method + " " + path
-			}
-			mux.Handle(path, r.Handler)
-		}
-		s := httptest.NewServer(mux)
+		s := httptest.NewServer(serve(t, e).h)
 		t.Cleanup(s.Close)
 		return s
 	}
