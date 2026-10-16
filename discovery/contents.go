@@ -68,7 +68,9 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 			period = popularity.DefaultPeriod
 		}
 		window, err = popularity.WindowForPeriod(period, s.now())
-		if err == nil {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", ErrInvalid, err)
+		} else {
 			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
 			srt.raw = sort
 		}
