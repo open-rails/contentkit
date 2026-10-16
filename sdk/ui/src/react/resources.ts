@@ -36,8 +36,7 @@ interface Slot {
   tag: Tag;
   listeners: Set<() => void>;
   entry: Resource<unknown>;
-  fetcher?: Fetcher<unknown>;
-  more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>>;
+  bindings: Map<symbol, Binding>;
   ctl?: AbortController;
   moreCtl?: AbortController;
   /** Bumped by mark(): an optimistic write rolls back only if no newer one started. */
@@ -45,6 +44,13 @@ interface Slot {
   /** Identifies the full read; item patches and appended pages retain it. */
   readVersion: number;
 }
+
+interface Binding {
+  fetcher: Fetcher<unknown>;
+  more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>>;
+}
+
+const activeBinding = (s: Slot) => [...s.bindings.values()].at(-1);
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
 
@@ -64,7 +70,7 @@ export class ResourceStore {
 
   subscribe(key: string, tag: Tag, listener: () => void): () => void {
     let s = this.slots.get(key);
-    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), entry: IDLE, version: 0, readVersion: ++this.version }));
+    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), bindings: new Map(), entry: IDLE, version: 0, readVersion: ++this.version }));
     const slot = s;
     slot.listeners.add(listener);
     return () => {
@@ -83,22 +89,26 @@ export class ResourceStore {
     return (this.slots.get(key)?.entry ?? IDLE) as Resource<T>;
   }
 
-  /** The latest fetchers of a key: its first read, and a list's next page. */
-  bind(key: string, fetcher: Fetcher<unknown>, more?: Slot["more"]): void {
+  /** Registers one subscriber's key-bound fetchers; cleanup releases only it. */
+  bind(key: string, fetcher: Fetcher<unknown>, more?: Binding["more"]): () => void {
     const s = this.slots.get(key);
-    if (s) Object.assign(s, { fetcher, more });
+    if (!s) return () => {};
+    const owner = Symbol();
+    s.bindings.set(owner, { fetcher, more });
+    return () => { s.bindings.delete(owner); };
   }
 
   /** Fetches unless loaded or in flight; force refetches (a list from its first page). */
   load(key: string, force = false): void {
     const s = this.slots.get(key);
-    if (!s?.fetcher || (!force && (s.entry.loaded || s.ctl))) return;
+    const binding = s && activeBinding(s);
+    if (!s || !binding || (!force && (s.entry.loaded || s.ctl))) return;
     s.ctl?.abort();
     s.moreCtl?.abort();
     s.moreCtl = undefined;
     const ctl = (s.ctl = new AbortController());
     this.update(s, { loading: true, loadingMore: false, error: undefined });
-    s.fetcher(ctl.signal).then(
+    binding.fetcher(ctl.signal).then(
       (data) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
@@ -117,12 +127,13 @@ export class ResourceStore {
   /** Appends a list's next page; resolves once it landed. */
   async loadMore(key: string): Promise<void> {
     const s = this.slots.get(key);
+    const binding = s && activeBinding(s);
     const page = s?.entry.data as Page<{ id: string }> | undefined;
-    if (!s?.more || !page || page.next === null || s.moreCtl || s.ctl) return;
+    if (!s || !binding?.more || !page || page.next === null || s.moreCtl || s.ctl) return;
     const ctl = (s.moreCtl = new AbortController());
     this.update(s, { loadingMore: true });
     try {
-      const next = (await s.more(page.next, ctl.signal)) as Page<{ id: string }>;
+      const next = (await binding.more(page.next, ctl.signal)) as Page<{ id: string }>;
       if (s.moreCtl !== ctl) return;
       const cur = s.entry.data as Page<{ id: string }>;
       const seen = new Set(cur.items.map((x) => x.id));

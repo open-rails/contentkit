@@ -64,10 +64,10 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
   const { kinds } = useKinds({ client: p.client });
   const exposure = useExposure(list.items, { surface: p.surface ?? "list", render, client: p.client });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
-  const { hasMore, loadingMore, loadMore } = list;
+  const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
-    if (p.infinite && near && hasMore && !loadingMore) void loadMore();
-  }, [p.infinite, near, hasMore, loadingMore, loadMore]);
+    if (p.infinite && near && hasMore && !loadingMore && !error) void loadMore();
+  }, [p.infinite, near, hasMore, loadingMore, loadMore, error]);
   const tiers = p.tiers ?? kinds?.tiers;
   const layout = cardGridLayout(p.grid);
   return (
@@ -124,9 +124,10 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
         </ol>
       )}
       {list.hasMore && (
-        <div ref={sentinel} className="grid justify-items-center">
+        <div ref={sentinel} className="grid justify-items-center gap-2">
+          {list.error && list.items.length > 0 && <p role="alert" className="text-destructive">{contentError(m, list.error)}</p>}
           <Button variant="outline" size="sm" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
-            {list.loadingMore ? t("contents.loading") : t("contents.loadMore")}
+            {list.loadingMore ? t("contents.loading") : list.error ? t("common.retry") : t("contents.loadMore")}
           </Button>
         </div>
       )}
