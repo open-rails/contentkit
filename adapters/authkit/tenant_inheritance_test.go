@@ -20,7 +20,15 @@ func TestNativeTenantInheritanceAndCredentialBounds(t *testing.T) {
 	roles := authkit.NewRoles(authkit.APIKeys)
 	app := roles.Persona("app", authkit.APIKeys)
 	moderate := app.Declare(ckauthkit.AppPermission(access.CommentsModerate))[0]
-	app.Declare(ckauthkit.AppPermission(access.ContentWrite))
+	contentWrite := app.Declare(ckauthkit.AppPermission(access.ContentWrite))[0]
+	entitiesWrite := app.Declare(ckauthkit.AppPermission(access.EntitiesWrite))[0]
+	pollsWrite := app.Declare(ckauthkit.AppPermission(access.PollsWrite))[0]
+	console := app.Permission("admin-console", "access")
+	app.RequireMFA(console)
+	contentAdmin := []iam.Grant{console, contentWrite, entitiesWrite, pollsWrite, moderate}
+	rootAdmin := roles.Root.Role("content-admin", contentAdmin...)
+	tenantAdmin := roles.Tenant.Role("content-admin", contentAdmin...)
+	appAdmin := app.Role("content-admin", contentAdmin...)
 	roles.Tenant.Declare(ckauthkit.TenantPermission(access.AvatarsWrite))
 	appModerator := app.Role("moderator", moderate)
 	tenantModerator := roles.Tenant.Role("moderator", moderate)
@@ -173,4 +181,82 @@ func TestNativeTenantInheritanceAndCredentialBounds(t *testing.T) {
 			}
 		})
 	}
+
+	// The host's explicit human content bundle follows the same native walk.
+	// Saving a grant before MFA enrollment does not make it usable early.
+	for _, tc := range []struct {
+		name  string
+		group iam.GroupRef
+		role  iam.Role
+		want  []bool
+	}{
+		{"root content admin", iam.RootGroup(), rootAdmin, []bool{true, true, true, true}},
+		{"tenant content admin", tenantGroups[0], tenantAdmin, []bool{true, true, false, false}},
+		{"app content admin", targets[0].group, appAdmin, []bool{true, false, false, false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := authtest.NewUser(t, tenants[0])
+			previousCredential := verify(t, authtest.SignIn(t, tenants[0], user).AccessToken)
+			authtest.GrantRole(t, shared, tc.group, iam.UserSubject(user.ID), tc.role)
+			for _, permission := range []iam.Perm{contentWrite, entitiesWrite, pollsWrite} {
+				allowed, err := shared.Can(ctx, previousCredential.Identity(), targets[0].group, permission)
+				if allowed || !errors.Is(err, iam.ErrTwoFAEnrollmentRequired) {
+					t.Fatalf("pending enrollment %s: %v %v", permission, allowed, err)
+				}
+			}
+			for _, permission := range []access.Permission{access.ContentWrite, access.EntitiesWrite, access.PollsWrite} {
+				allowed, err := targets[0].policy.Authorize(ctx, targets[0].scope, previousCredential, contentkit.PermissionTarget{Permission: permission.String()})
+				if allowed || !errors.Is(err, iam.ErrTwoFAEnrollmentRequired) {
+					t.Fatalf("pending adapter enrollment %s: %v %v", permission, allowed, err)
+				}
+			}
+			credential := verify(t, authtest.SignIn(t, tenants[0], user).AccessToken)
+			check(t, credential, access.ContentWrite, tc.want...)
+			check(t, credential, access.EntitiesWrite, tc.want...)
+			check(t, credential, access.PollsWrite, tc.want...)
+			check(t, credential, access.CommentsModerate, tc.want...)
+			// Even these content administrators do not gain shared avatars.
+			check(t, credential, access.AvatarsWrite, false, false, false, false)
+			for _, permission := range []iam.Perm{roles.Root.Members.Manage, roles.Root.Credentials.Manage} {
+				allowed, err := shared.Can(ctx, credential.Identity(), iam.RootGroup(), permission)
+				if err != nil || allowed {
+					t.Fatalf("content admin gained %s: %v %v", permission, allowed, err)
+				}
+			}
+			if err := shared.RemoveGroupMember(ctx, iam.SystemIdentity(), tc.group, iam.UserSubject(user.ID)); err != nil {
+				t.Fatal(err)
+			}
+			check(t, credential, access.ContentWrite, false, false, false, false)
+			check(t, credential, access.CommentsModerate, false, false, false, false)
+		})
+	}
+
+	t.Run("stored parent wins over caller configuration", func(t *testing.T) {
+		appScope, err := shared.Scope(ctx, targets[0].group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrongParent, err := shared.Scope(ctx, tenantGroups[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := targets[0].scope
+		forged.TenantID = targets[2].scope.TenantID
+		for _, config := range []ckauthkit.AuthorizationConfig{
+			{Scope: forged, Issuer: authtest.Issuer, AppScope: appScope, TenantAdminScope: wrongParent},
+			{Scope: targets[0].scope, Issuer: authtest.Issuer, AppScope: appScope, TenantAdminScope: wrongParent},
+		} {
+			if _, err := ckauthkit.NewAuthorization(ctx, shared, config); err == nil {
+				t.Fatal("forged parent was accepted")
+			}
+		}
+		missing := targets[0].scope
+		missing.AppID = contentkit.NewAppID()
+		missingApp := appScope
+		missingApp.ID = missing.AppID.String()
+		if _, err := ckauthkit.NewAuthorization(ctx, shared, ckauthkit.AuthorizationConfig{Scope: missing, Issuer: authtest.Issuer, AppScope: missingApp}); err == nil {
+			t.Fatal("missing authoritative app group was accepted")
+		}
+	})
+
 }
