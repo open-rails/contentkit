@@ -60,3 +60,16 @@ it("supports a tall cover with one accessible overlay title and plain linked ent
   fireEvent.click(title);
   expect(opened).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "gallery" }));
 });
+
+it("keeps reading progress above a cover title without changing the default layering", () => {
+  const reading: Card = { ...card, viewer: { favorited: false, seen: true, completed: false, progress: 5, progress_max: 10 } };
+  const view = render(<ContentCard card={reading} titlePosition="cover" />);
+  let progress = view.container.querySelector('[data-ckui="card-progress"]')!;
+  expect(progress).toHaveClass("z-20");
+  expect(progress.firstElementChild).toHaveStyle({ width: "50%" });
+  expect(screen.getByRole("link", { name: "A gallery" })).toHaveClass("z-10");
+  view.rerender(<ContentCard card={reading} />);
+  progress = view.container.querySelector('[data-ckui="card-progress"]')!;
+  expect(progress).not.toHaveClass("z-20");
+  expect(progress.firstElementChild).toHaveStyle({ width: "50%" });
+});

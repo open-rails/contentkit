@@ -156,7 +156,7 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", aspectRati
             </span>
           )}
           {progress > 0 && (
-            <span className="absolute inset-x-0 bottom-0 h-1 bg-background/60" data-ckui="card-progress">
+            <span className={cn("absolute inset-x-0 bottom-0 h-1 bg-background/60", titlePosition === "cover" && "z-20")} data-ckui="card-progress">
               <span className="block h-full bg-primary" style={{ width: `${Math.round(progress * 100)}%` }} />
             </span>
           )}
