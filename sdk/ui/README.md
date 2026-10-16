@@ -333,6 +333,11 @@ Use a stable CSS-pixel width for ordinary listing cards. `maxColumns` is an
 explicit opt-in for surfaces that intentionally cap their columns.
 `minCardWidth` also accepts CSS lengths for application-specific layouts.
 
+Custom page-thumbnail or media grids can use the same primitive: call
+`cardGridLayout({ minCardWidth: 280, mobileColumns: 2 })` and apply its
+`className` and `style` to a `ContentKitUiRoot`. This keeps their track widths,
+gaps and responsive behavior identical to content-card lists.
+
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
 the open ones and puts the rest behind a counted toggle that loads them on
