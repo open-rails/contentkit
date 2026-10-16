@@ -3298,7 +3298,7 @@
         "tags": [
           "bans"
         ],
-        "summary": "Whether the caller may comment on a content item or one of its versions, and the ban that stops it.",
+        "summary": "Whether the caller may comment on a content item or one of its versions, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
         "parameters": [
           {
             "name": "id",
@@ -3312,6 +3312,14 @@
             "name": "version",
             "in": "query",
             "description": "one version of the content item; the item itself by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's thread; all languages by default",
             "schema": {
               "type": "string"
             }
@@ -3365,12 +3373,20 @@
         "tags": [
           "bans"
         ],
-        "summary": "Whether the caller may comment on a group, and the ban that stops it.",
+        "summary": "Whether the caller may comment on a group, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's thread; all languages by default",
             "schema": {
               "type": "string"
             }
@@ -12951,6 +12967,9 @@
           },
           "comments": {
             "type": "string"
+          },
+          "count": {
+            "type": "integer"
           },
           "locked": {
             "type": "boolean"

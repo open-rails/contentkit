@@ -253,6 +253,22 @@ func scanComment(row pgx.Row, cm *Comment) (replyTo, userID, anonName *string, d
 	return
 }
 
+// threadPred is shared by the top-level page and its authoritative count.
+// Approved tombstones and the author's unpublished rows remain in both.
+// Args are keyArgs, viewerID and language, in that order.
+func threadPred() string {
+	return keyPred(1) + " AND reply_to_id IS NULL AND " + visiblePred(5) + " AND ($6 = '' OR language = $6)"
+}
+
+// threadCount reads a canonical target already admitted by the caller. It
+// must only be used when that target's comments are visible to the actor.
+func (c *comments) threadCount(ctx context.Context, actor access.Actor, ref contentref.ContentRef, language string) (int, error) {
+	var n int
+	err := c.s.pool.QueryRow(ctx, `SELECT count(*) FROM `+c.s.t.comments+` WHERE `+threadPred(),
+		append(keyArgs(ref.Key()), viewerID(actor), language)...).Scan(&n)
+	return n, err
+}
+
 // list returns the target's published top-level comments (plus the caller's
 // own held/rejected ones) in language ("" for every language), newest-first
 // and paginated, each with reply_count. Requires the target be visible; on
@@ -264,9 +280,9 @@ func (c *comments) list(ctx context.Context, actor access.Actor, target contentr
 		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
-		WHERE `+keyPred(1)+` AND reply_to_id IS NULL AND `+visiblePred(5)+` AND ($8 = '' OR language = $8)
+		WHERE `+threadPred()+`
 		`+orderBy(sort, "likes", "dislikes", "created_at")+`
-		LIMIT $6 OFFSET $7`, append(keyArgs(ref.Key()), viewerID(actor), limit, offset, language)...)
+		LIMIT $7 OFFSET $8`, append(keyArgs(ref.Key()), viewerID(actor), language, limit, offset)...)
 	if err != nil {
 		return nil, err
 	}

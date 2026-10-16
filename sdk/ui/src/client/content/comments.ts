@@ -62,12 +62,12 @@ export class CommentsClient {
     emit({ type: "comment.reacted", id, counts });
     return counts;
   }
-  /** Whether the caller may comment on the item, the ban that stops it, and what it may do to others' comments. */
-  standing(t: Target, signal?: AbortSignal): Promise<CommentStanding> {
-    const o = { params: { id: t.id }, signal };
+  /** Commenting permissions and the authoritative visible top-level count in query.language (all languages by default); hidden/locked threads withhold the count. */
+  standing(t: Target, signal?: AbortSignal, query: { language?: string } = {}): Promise<CommentStanding> {
+    const o = { params: { id: t.id }, signal, query };
     return t.type === "entities"
       ? call(this.http, "GET", "/entities/{id}/can-comment", o)
-      : call(this.http, "GET", "/contents/{id}/can-comment", { ...o, query: { version: t.version } });
+      : call(this.http, "GET", "/contents/{id}/can-comment", { ...o, query: { ...query, version: t.version } });
   }
   /** The newest published comments across the site, with their items; a page may under-fill. */
   latest(q: PageQuery & { language?: string } = {}, signal?: AbortSignal): Promise<FeedItem[]> {

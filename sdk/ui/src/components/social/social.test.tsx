@@ -61,7 +61,7 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   const posted = comment("c9", { body: "hello there", user_id: "alice", author: { id: "alice", username: "alice" } });
   const s = server({
     "GET /contents/v1/comments": () => [comment("c1"), comment("c2", { deleted: true, body: "[deleted]", author: undefined, user_id: undefined }), comment("c3", { user_id: "alice", author: { id: "alice", username: "alice" }, moderation: "held", moderation_reason: "needs a look" })],
-    "GET /contents/v1/can-comment": () => standing(),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count: 99 }),
     "POST /contents/v1/comments": ({ body }) => (expect(body).toEqual({ body: "hello there" }), json(201, posted)),
   });
   const user = userEvent.setup();
@@ -83,6 +83,24 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   expect(await screen.findByText("hello there")).toBeInTheDocument();
   expect(box).toHaveValue("");
   expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
+});
+
+it("Comments: authoritative standing count survives pagination and posts without reloading the list", async () => {
+  let count = 23;
+  const s = server({
+    "GET /contents/v1/comments": () => Array.from({ length: 20 }, (_, i) => comment(`c${i}`)),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count }),
+    "POST /contents/v1/comments": () => { count++; return json(201, comment("new", { body: "fresh post" })); },
+  });
+  const user = userEvent.setup();
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("heading", { name: "23 Comments" })).toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "Add a comment…" }), "fresh post");
+  await user.click(screen.getByRole("button", { name: "Post" }));
+  expect(await screen.findByRole("heading", { name: "24 Comments" })).toBeInTheDocument();
+  expect(screen.getByText("fresh post")).toBeInTheDocument();
+  expect(s.calls.filter((call) => call.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
+  expect(s.calls.filter((call) => call.startsWith("GET /contents/v1/can-comment"))).toHaveLength(2);
 });
 
 it("Comments: only a completed, unpaginated thread supplies an inferred count", async () => {
@@ -121,11 +139,31 @@ it("Comments: a failed read does not claim the thread has zero comments", async 
   expect(screen.queryByRole("heading", { name: "0 Comments" })).toBeNull();
 });
 
+it.each([0, 23])("Comments: an authoritative %s count remains accurate when its list fails", async (count) => {
+  const s = server({
+    "GET /contents/v1/comments": () => json(503, { code: "unavailable" }),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count }),
+  });
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByText("Comments couldn't be loaded.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: `${count} Comments` })).toBeInTheDocument();
+});
+
+it("Comments: hidden comments never render an authoritative or host total", async () => {
+  const s = server({
+    "GET /contents/v1/comments": () => [],
+    "GET /contents/v1/can-comment": () => ({ ...standing({ comments: "hidden" }), count: 99 }),
+  });
+  const view = render(<Comments item={item} count={50} />, { wrapper: wrap(s.client) });
+  await waitFor(() => expect(view.container.querySelector('[data-ckui="comments"]')).toBeNull());
+  expect(screen.queryByRole("heading")).toBeNull();
+});
+
 it("Comments: where the kind's locked view hides them, an unlock note instead of the thread and its count; access arriving loads it", async () => {
   let open = false;
   const s = server({
     "GET /contents/v1/comments": () => (open ? [comment("c1")] : []),
-    "GET /contents/v1/can-comment": () => standing({ locked: !open, can_comment: open }),
+    "GET /contents/v1/can-comment": () => ({ ...standing({ locked: !open, can_comment: open }), count: 99 }),
   });
   const view = (revision: number) => (
     <ContentKitProvider client={s.client} viewer="alice" accessRevision={revision}>

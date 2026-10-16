@@ -28,6 +28,7 @@ export interface Tag {
   type: string;
   readScope?: string;
   target?: Target;
+  language?: string;
   id?: string;
   scope?: string;
 }
@@ -227,14 +228,17 @@ export class ResourceStore {
       case "comment.created": {
         const parent = c.comment.reply_to_id;
         const published = !c.comment.moderation;
-        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && sameTarget(t.target, c.target));
+        const thread = (t: Tag) => sameTarget(t.target, c.target) && (!t.language || t.language === c.comment.language);
+        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && thread(t));
         patch<Page<Comment>>(add, (p) => (p.items.some((x) => x.id === c.comment.id) ? p : { ...p, items: parent ? [...p.items, c.comment] : [c.comment, ...p.items] }));
         if (parent && published) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: x.reply_count + 1 } : x));
         this.invalidate((t) => t.type === "latest" || t.type === "admin-comments");
+        if (!parent) this.invalidate((t) => t.type === "standing" && thread(t));
         break;
       }
       case "comment.updated":
         items<Comment>(comments, (x) => (x.id === c.comment.id ? { ...x, ...c.comment, author: c.comment.author ?? x.author } : x));
+        this.invalidate((t) => t.type === "standing");
         break;
       case "comment.reacted":
         items<Comment>(comments, (x) => (x.id === c.id ? { ...x, ...c.counts } : x));
@@ -249,10 +253,11 @@ export class ResourceStore {
         if (parent) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: Math.max(0, x.reply_count - 1) } : x));
         items<Comment>(["latest"], (x) => (x.id === c.id ? null : x));
         items<Comment & { deleted_at?: string }>(["admin-comments"], (x) => (x.id === c.id ? { ...x, deleted: true, deleted_at: new Date().toISOString() } : x));
+        this.invalidate((t) => t.type === "standing");
         break;
       }
       case "comment.restored":
-        this.invalidate((t) => comments.includes(t.type));
+        this.invalidate((t) => comments.includes(t.type) || t.type === "standing");
         break;
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameTarget(t.target, c.target), () => c.counts);
@@ -274,13 +279,16 @@ export class ResourceStore {
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
         this.invalidate((t) => t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || (t.type === "content-detail" && t.id === c.content.id));
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.content.id);
         break;
       case "content.changed":
         this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "content.deleted":
         items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
         this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted") || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -308,7 +316,7 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases" || t.type === "standing");
         break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases");
@@ -324,7 +332,7 @@ export class ResourceStore {
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
-        if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));
+        if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type) || t.type === "standing");
         else this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
         break;
     }

@@ -798,6 +798,8 @@ func (c *Client) DeleteEntityCommentBan(ctx context.Context, id string, user str
 type GetContentCanCommentQuery struct {
 	// one version of the content item; the item itself by default
 	Version string
+	// only this language's thread; all languages by default
+	Language string
 }
 
 func (q GetContentCanCommentQuery) values() url.Values {
@@ -805,20 +807,37 @@ func (q GetContentCanCommentQuery) values() url.Values {
 	if q.Version != "" {
 		v.Set("version", q.Version)
 	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
 	return v
 }
 
-// GetContentCanComment is GET /v1/contents/{id}/can-comment (public). Whether the caller may comment on a content item or one of its versions, and the ban that stops it.
+// GetContentCanComment is GET /v1/contents/{id}/can-comment (public). Whether the caller may comment on a content item or one of its versions, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
 func (c *Client) GetContentCanComment(ctx context.Context, id string, q GetContentCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on a group, and the ban that stops it.
-func (c *Client) GetEntityCanComment(ctx context.Context, id string) (content.CommentStanding, error) {
+// GetEntityCanCommentQuery is the query of GetEntityCanComment.
+type GetEntityCanCommentQuery struct {
+	// only this language's thread; all languages by default
+	Language string
+}
+
+func (q GetEntityCanCommentQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on a group, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
+func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntityCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 

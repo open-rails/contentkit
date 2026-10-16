@@ -333,6 +333,7 @@ export interface CommentRecord {
 export interface CommentStanding {
   can_comment: boolean;
   comments: string;
+  count?: number;
   locked: boolean;
   ban?: BanNotice;
   anonymous: boolean;

@@ -104,7 +104,7 @@ export function Comments(p: CommentsProps) {
   const ctx = useContext(ContentKitContext);
   const [sort, setSort] = useState<Sort>(p.sort ?? "newest");
   const comments = useComments(p.item, { sort, language: p.language, pageSize: p.pageSize ?? 20, client: p.client });
-  const { standing, reload: reloadStanding } = useCanComment(p.item, { client: p.client });
+  const { standing, reload: reloadStanding } = useCanComment(p.item, { language: p.language, client: p.client });
   const { config } = useContentConfig({ client: p.client });
   const report = useErrorReporter(p.onError);
   const signIn = p.onSignIn ?? ctx?.onSignIn;
@@ -152,9 +152,9 @@ export function Comments(p: CommentsProps) {
   };
   const ban = standing?.ban ?? refusal;
   const canWrite = standing ? standing.can_comment : true;
-  // A partial page is not a total. Until the complete thread is loaded, use
-  // the host's authoritative count or leave the number out of the heading.
-  const count = p.count ?? (!comments.loading && !comments.error && !comments.hasMore ? comments.items.length : undefined);
+  // Standing counts the entire visible thread, even while only page one is
+  // loaded. Older servers can infer a total only after the list is complete.
+  const count = p.count ?? standing?.count ?? (!comments.loading && !comments.error && !comments.hasMore ? comments.items.length : undefined);
   const heading = p.heading === undefined ? (count === undefined ? t("comments.title") : m.plural("comments.count", count)) : p.heading;
 
   if (standing?.comments === "hidden") return null;
