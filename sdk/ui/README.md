@@ -319,17 +319,19 @@ Plain-text entities sit directly below the cover, followed by other metadata.
   metadata={{ languages: false, traits: ["colored"], duration: false }} />
 ```
 
-Set `grid={{ minCardWidth: 240, mobileColumns: 2, maxColumns: 10 }}` for covers in a fluid
-grid: two columns on small screens, then as many columns as the available
-width supports. This is supported by card grids, daily releases, Popular and
-`ContentRail` previews; an unconfigured rail remains horizontal. `maxColumns`
-is optional: omit it for no desktop column ceiling. Other apps keep their
-existing layout by default.
+Card grids use **width-driven tiling**: preserve roughly the same apparent
+card size as the container grows, adding or removing columns to use the
+available space. The application supplies its card-width target; ContentKit
+UI derives the column count. Cards may grow slightly to fill each row.
 
-`minCardWidth` also accepts a CSS length. For example,
-`grid={{ minCardWidth: "clamp(240px, calc((100% - 9rem) / 10), 360px)" }}`
-keeps the early narrow-screen columns, grows covers toward 360px, and then
-adds columns on ultrawide displays without a ceiling.
+For example, `grid={{ minCardWidth: 280, mobileColumns: 2 }}` keeps two columns
+on small screens and a stable 280 CSS-pixel minimum on desktop, with no column
+ceiling. This shared behavior applies to card grids, daily releases, Popular
+and `ContentRail` grid previews; an unconfigured rail remains horizontal.
+
+Use a stable CSS-pixel width for ordinary listing cards. `maxColumns` is an
+explicit opt-in for surfaces that intentionally cap their columns.
+`minCardWidth` also accepts CSS lengths for application-specific layouts.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
