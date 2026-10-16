@@ -1352,8 +1352,8 @@ export interface PageAnalysisMetrics {
   visible_pixels: number;
   opaque_pixels: number;
   foreground_pixels: number;
-  min_rgb: string;
-  max_rgb: string;
+  min_rgb: number[];
+  max_rgb: number[];
 }
 
 export interface PageDecision {

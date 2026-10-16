@@ -1,7 +1,9 @@
 package contract
 
 import (
+	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +12,36 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 )
+
+func TestByteContainersMatchJSONEncoding(t *testing.T) {
+	m := &model{enums: &enumIndex{}}
+	c := &Checker{m: m}
+	for _, tc := range []struct {
+		name, json, schema, typescript string
+		value                          any
+	}{
+		{"fixed byte array", `[1,2,3]`, `{"type":"array","items":{"type":"integer"}}`, "number[]", [3]byte{1, 2, 3}},
+		{"byte slice", `"AQID"`, `{"type":"string"}`, "string", []byte{1, 2, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(tc.value)
+			if err != nil || string(body) != tc.json {
+				t.Fatalf("JSON encoding: %s, %v", body, err)
+			}
+			typ := reflect.TypeOf(tc.value)
+			if err := c.validateJSON(typ, body); err != nil {
+				t.Fatalf("actual JSON rejected: %v", err)
+			}
+			schema, err := marshal(m.schema(typ))
+			if err != nil || string(schema) != tc.schema {
+				t.Fatalf("schema: %s, %v", schema, err)
+			}
+			if got := m.tsType(typ); got != tc.typescript {
+				t.Fatalf("TypeScript: %s, want %s", got, tc.typescript)
+			}
+		})
+	}
+}
 
 func TestGeneratedContractIsFresh(t *testing.T) {
 	if err := Verify(os.DirFS("../..")); err != nil {

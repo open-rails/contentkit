@@ -16349,10 +16349,16 @@
             "type": "integer"
           },
           "min_rgb": {
-            "type": "string"
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
           },
           "max_rgb": {
-            "type": "string"
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
           }
         },
         "required": [

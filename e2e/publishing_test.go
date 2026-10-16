@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/publishing"
 )
@@ -209,6 +211,84 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 	var groups int
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_memberships"}.Sanitize()+" WHERE tenant_id=$1 AND content_id=$2 AND state='active'", env.Tenant, final.ContentID).Scan(&groups); err != nil || groups != 3 {
 		t.Fatalf("resolved groups: %d %v", groups, err)
+	}
+	// Review the actual retained archive sources through the app-bound key.
+	// Excluding one changes the published reader, not the source inventory.
+	review, err := client.GetContentVersionPages(ctx, final.ContentID, final.VersionID)
+	if err != nil || len(review.Pages) != 3 || review.Selected != 3 || review.Revision == "" {
+		t.Fatalf("page review: %+v %v", review, err)
+	}
+	sources := map[string]string{}
+	for _, page := range review.Pages {
+		if page.SourceSHA256 == "" {
+			t.Fatalf("source has no checksum: %+v", page)
+		}
+		sources[page.Path] = page.SourceSHA256
+	}
+	originalRevision, excluded := review.Revision, review.Pages[1].ID
+	review, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{
+		Revision: originalRevision, Pages: []versions.PageReviewChange{{ID: excluded, Mode: "exclude"}},
+	})
+	if err != nil || review.Selected != 2 || len(review.Pages) != 3 || review.Revision == originalRevision {
+		t.Fatalf("exclude page: %+v %v", review, err)
+	}
+	_, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{Revision: originalRevision})
+	var staleReview *contentkit.Error
+	if !errors.As(err, &staleReview) || staleReview.Status != http.StatusConflict {
+		t.Fatalf("stale review accepted: %v", err)
+	}
+	readerNames := func() []string {
+		reply, err := client.GetContentVersionReader(ctx, final.ContentID, final.VersionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reply.Status == http.StatusAccepted {
+			return nil
+		}
+		var plan versions.ReaderPlan
+		if err := reply.Decode(&plan); err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, segment := range plan.Segments {
+			for _, page := range segment.Pages {
+				names = append(names, page.Name)
+			}
+		}
+		return names
+	}
+	eventually(t, "excluded page to leave the published reader", func() bool {
+		names := readerNames()
+		return len(names) == 2 && !slices.Contains(names, excluded)
+	})
+	review, err = client.GetContentVersionPages(ctx, final.ContentID, final.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make([]string, len(review.Pages))
+	for i, page := range review.Pages {
+		order[len(order)-1-i] = page.ID
+	}
+	review, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{
+		Revision: review.Revision, Pages: []versions.PageReviewChange{{ID: excluded, Mode: "include"}}, Order: order,
+	})
+	if err != nil || review.Selected != 3 || len(review.Pages) != 3 {
+		t.Fatalf("restore and reorder: %+v %v", review, err)
+	}
+	for _, page := range review.Pages {
+		if sources[page.Path] != page.SourceSHA256 {
+			t.Fatalf("review changed original source: %+v", page)
+		}
+	}
+	eventually(t, "restored reader order", func() bool { return slices.Equal(readerNames(), order) })
+	checker, err := suiteChecker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{"versions GET /contents/{id}/versions/{version}/pages", "versions PATCH /contents/{id}/versions/{version}/pages"} {
+		if !checker.Served()[route] {
+			t.Fatalf("page review route was not checked: %s", route)
+		}
 	}
 	changed := request
 	changed.Content.Text = map[string]catalog.Text{"en": {Title: "Different input"}}
