@@ -51,7 +51,7 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	blogKind.Groups = []string{"tag"}
 	cfg.Content.Kinds["blog"] = blogKind
 	cfg.Content.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"example.com"}},{Name:"safe",Hosts:[]string{"safe.example"},Kinds:map[string]kinds.KindPolicy{"gallery":{Filters:[]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}},
+		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Kinds: map[string]kinds.KindPolicy{"blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}},
 	}
 	cfg.Media = &MediaConfig{
 		Config:      media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{blog, folder("poll")}},

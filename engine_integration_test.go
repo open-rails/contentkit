@@ -328,10 +328,11 @@ func TestEngineIntegration(t *testing.T) {
 }
 
 // Without ClickHouse, or with one that is down, the engine runs on Postgres
-// alone: its content model says signals are off, lists (popular too),
+// alone: its content model says signals are off, ordinary lists,
 // details and search serve, and signals, exposures and history answer
 // not_configured, or unavailable while a configured plane is down, which
-// fails its probe and is retried in the background.
+// fails its probe and is retried in the background. Popularity has no
+// zero-activity fallback and reports an outage when its plane is configured.
 func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
@@ -375,7 +376,17 @@ func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 				var page struct {
 					Contents []struct{ ID string } `json:"contents"`
 				}
-				if s.call(http.StatusOK, anon, "GET", "/ck/v1/contents?kind=gallery&sort="+sort, nil, &page); len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
+				path := "/ck/v1/contents?kind=gallery&sort=" + sort
+				if sort == "popular" && ch.Addr != "" {
+					s.call(http.StatusServiceUnavailable, anon, "GET", path, nil, nil)
+					continue
+				}
+				s.call(http.StatusOK, anon, "GET", path, nil, &page)
+				if sort == "popular" {
+					if len(page.Contents) != 0 {
+						t.Fatalf("zero-activity popularity list %+v", page)
+					}
+				} else if len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
 					t.Fatalf("%s list %+v", sort, page)
 				}
 			}
