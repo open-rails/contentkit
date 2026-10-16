@@ -6,7 +6,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.30.0
+	github.com/open-rails/authkit v1.31.0
 	github.com/open-rails/contentkit v0.93.0
 	github.com/open-rails/contentkit/adapters/openrails v0.5.3
 	github.com/open-rails/helpers v1.13.0

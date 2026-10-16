@@ -19,7 +19,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.30.0
+	github.com/open-rails/authkit v1.31.0
 	github.com/open-rails/helpers v1.13.0
 	github.com/open-rails/migratekit v1.11.2
 	github.com/prometheus/client_golang v1.24.1
