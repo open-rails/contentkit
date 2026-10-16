@@ -19,8 +19,9 @@ export interface ReadWindow {
 export interface MediaReadOptions extends Omit<ReadOptions, "offset" | "limit"> {
   /**
    * Read in windows of `chunk` files and merge them: the files in
-   * [start, end) get URLs, and windows once read stay loaded (and refreshed)
-   * until the item or options change. Without it, one read of the server's
+   * [start, end) get URLs. Only the requested windows stay active and refresh;
+   * a prior read supplies placeholder metadata while the new range loads.
+   * Without it, one read of the server's
    * default range (or offset and limit).
    */
   window?: ReadWindow;
@@ -70,20 +71,17 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const chunk = window?.chunk ?? READ_CHUNK;
   const base = scope + readKey(ref, { prefix, download, editor }) + (window ? `#${chunk}` : `#${offset ?? 0}:${limit ?? 0}`);
 
-  // Windows once wanted stay loaded until the item or options change.
-  const [total, setTotal] = useState<{ base: string; n?: number }>({ base });
-  const known = total.base === base ? total.n : undefined;
+  // Keep one placeholder, never subscriptions for the reader's visit history.
+  const [previous, setPrevious] = useState<{ base: string; store: typeof store; read: ReadResult | null; n?: number }>({ base, store, read: null });
+  const same = previous.base === base && previous.store === store;
+  if (!same) setPrevious({ base, store, read: null });
+  const known = same ? previous.n : undefined;
   // Until the first read states the total, only the window's first chunk.
   const wanted = window ? chunkOffsets(window.start, window.end, known ?? window.start + 1, chunk) : [];
-  const [kept, setKept] = useState<{ base: string; offsets: number[] }>({ base, offsets: [] });
-  const prior = kept.base === base ? kept.offsets : [];
-  if (window && (kept.base !== base || wanted.some((w) => !prior.includes(w)))) {
-    setKept({ base, offsets: [...new Set([...prior, ...wanted])].sort((a, b) => a - b) });
-  }
-  const offsets = window ? (prior.length ? prior : wanted.length ? wanted : [0]) : [offset ?? 0];
+  const offsets = window ? (wanted.length ? wanted : [0]) : [offset ?? 0];
   const windows = useMemo(
     () => offsets.map((off) => ({ offset: off, limit: window ? chunk : limit })),
-    // offsets is derived from the stable kept list
+    // Window identity depends on its values, not the caller's array identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [offsets.join(","), window ? chunk : limit],
   );
@@ -119,9 +117,15 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   }, [store, fetching, keys, asked]);
 
   const merged = useMemo(() => mergeReads(entries.map((e) => e.read)), [entries]);
+  const failed = entries.some((e) => !!e.error);
   useEffect(() => {
-    if (window && merged && merged.total !== known) setTotal({ base, n: merged.total });
-  }, [window, merged, known, base]);
+    const read = failed ? null : merged;
+    if (window && (failed || merged || (entries.length && entries.every((e) => e.loaded)))) {
+      setPrevious((prev) => prev.base === base && prev.store === store && prev.read === read ? prev : {
+        base, store, read, n: merged?.total ?? (prev.base === base && prev.store === store ? prev.n : undefined),
+      });
+    }
+  }, [!!window, merged, failed, entries, base, store]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => {
     if (given !== undefined) setRequested({ base, given });
@@ -147,7 +151,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   else if (!entries.length) read = given ?? null;
   else {
     const loaded = entries.every((e) => e.loaded);
-    read = merged ?? (loaded ? null : (given ?? null));
+    read = merged ?? (loaded ? null : (given ?? (window && same && !failed ? previous.read : null)));
     loading = entries.some((e) => e.loading || !e.loaded);
     error = entries.find((e) => e.error)?.error;
   }

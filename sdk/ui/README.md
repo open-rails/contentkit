@@ -191,8 +191,14 @@ One read per item and options, shared by every hook showing it. It reads
 again shortly before the URLs expire, waits out `rate_limited`, polls while
 uploads process (editor reads, every 2.5 s; `poll`), and reloads after any
 commit through the same client. `window` splits a long item into reads of
-`chunk` files (default 50) merged into one result; windows once read stay
-loaded. `refresh()` joins a read in flight (a player's grant refresh);
+`chunk` files (default 50) merged into one result. Only the requested windows
+stay active and refresh. Leaving a window releases its subscription, timer and
+unused in-flight request; revisiting it obtains a fresh read. One prior result
+supplies placeholder metadata while the next range loads, then is replaced.
+That placeholder is discarded after an error or item, client or account-scope
+change. There is no passive window cache. An explicitly requested large range
+(such as an entire editor folder) still reads every window in that range.
+`refresh()` joins a read in flight (a player's grant refresh);
 `reload()` restarts it. `read` shows a host's read until `reload()`.
 
 ### useMediaFolder
