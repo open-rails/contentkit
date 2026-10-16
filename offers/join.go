@@ -16,7 +16,7 @@ type GroupJoin struct {
 }
 
 // Join grants actor each group's key free, through Billing: a sellable group
-// whose active offer is free (amount 0). A viewer already holding the key
+// whose active offer is free (amount 0). Internal entities cannot be joined. A viewer already holding the key
 // costs no grant. A group without a free offer is ErrNotJoinable.
 func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
 	targets, err := s.groupTargets(ctx, actor, groups)
@@ -109,5 +109,17 @@ func (s *Service) groupTargets(ctx context.Context, actor access.Actor, groups [
 	for i, g := range groups {
 		targets[i] = Target{Kind: GroupTarget, ID: g}
 	}
-	return targets, s.resolve(ctx, s.pool, targets)
+	if err := s.resolve(ctx, s.pool, targets); err != nil {
+		return nil, err
+	}
+	visible, err := s.publicGroups(ctx, groups)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range groups {
+		if !visible[id] {
+			return nil, ErrNotFound
+		}
+	}
+	return targets, nil
 }

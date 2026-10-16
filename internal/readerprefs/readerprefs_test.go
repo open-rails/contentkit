@@ -19,7 +19,7 @@ func TestGuestOverrides(t *testing.T) {
 		{name: "empty", header: []string{""}},
 		{name: "choices", header: []string{`{"filters":[{"group_id":"one","visible":true},{"group_id":"two","visible":false}]}`}, want: map[string]bool{"one": true, "two": false}},
 		{name: "defaults", header: []string{`{"filters":[]}`}, want: map[string]bool{}},
-		{name: "unknown entity", header: []string{`{"filters":[{"group_id":"other","visible":true}]}`}, bad: true},
+		{name: "another domain entity", header: []string{`{"filters":[{"group_id":"other","visible":true}]}`}, want: map[string]bool{}},
 		{name: "duplicate", header: []string{`{"filters":[{"group_id":"one","visible":true},{"group_id":"one","visible":false}]}`}, bad: true},
 		{name: "missing visibility", header: []string{`{"filters":[{"group_id":"one"}]}`}, bad: true},
 		{name: "null visibility", header: []string{`{"filters":[{"group_id":"one","visible":null}]}`}, bad: true},

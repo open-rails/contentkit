@@ -165,7 +165,7 @@ describe("discovery against the real ContentKit", () => {
     const c = client(h, cfg, reader);
     const { result } = renderHook(() => ({ filters: useContentFilters({ language: "en" }), list: useContents({ kind: "comic", groups: [t.id] }) }), { wrapper: wrap(c, { viewer: reader.id }) });
     await waitFor(() => expect(result.current.filters.filters?.filters.map((f) => f.entity.slug)).toEqual(["gore"]), wait);
-    expect(result.current.filters.filters!.filters[0]).toMatchObject({ label: "Gore", default_visible: false, visible: false, overridden: false });
+    expect(result.current.filters.filters!.filters[0]).toMatchObject({ entity: { name: "Gore" }, default_visible: false, visible: false, overridden: false });
     await waitFor(() => expect(result.current.list.items.map((x) => x.id)).toEqual([plain!.id]), wait);
 
     await act(() => result.current.filters.setVisible(gore.id, true));

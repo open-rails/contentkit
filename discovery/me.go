@@ -113,7 +113,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 	limit := pageLimit(o.Limit, 24)
 	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
-	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active')`, s.t.groups)
+	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.groups)
 	if o.Target == TargetContents {
 		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind}); err != nil {
 			return out, err

@@ -73,7 +73,7 @@ func (run *batchRun) group(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, g.ExternalID, err
 	}
-	in := groups.ImportGroup{ID: groups.GroupID(id), Kind: g.Kind, Slug: g.Slug, State: groups.State(g.State), Attributes: g.Attributes,
+	in := groups.ImportGroup{ID: groups.GroupID(id), Kind: g.Kind, Slug: g.Slug, Internal: g.Internal, State: groups.State(g.State), Attributes: g.Attributes,
 		OwnerUserID: g.OwnerUserID, AuthScope: g.AuthScope, Names: g.Names, Text: g.Text, Code: g.Code, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
 	if g.Avatar != "" {
 		in.Avatar = &groups.Avatar{Image: g.Avatar}

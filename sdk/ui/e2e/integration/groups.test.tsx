@@ -203,7 +203,7 @@ describe("groups against the real ContentKit", () => {
     const { result } = renderHook(() => ({ kinds: useKinds(), staff: useStaffAccess(["groups"] as const) }), { wrapper: wrap(staff) });
     await waitFor(() => expect(result.current.kinds.kinds?.entity_kinds?.artist?.roles).toEqual(["publisher"]), wait);
     expect(result.current.kinds.kinds?.kinds.comic).toMatchObject({ route: "comics", presentation: "reader" });
-    expect(result.current.kinds.kinds?.content_filters).toEqual([{ entity: { kind: "tag", slug: "gore" }, default_visible: false, labels: { en: "Gore", ja: "ゴア" } }]);
+    expect(result.current.kinds.kinds).not.toHaveProperty("content_filters");
     await waitFor(() => expect(result.current.staff.loading).toBe(false), wait);
     expect(result.current.staff.allowed.groups).toBe(true);
     const { result: alice } = renderHook(() => useStaffAccess(["groups"] as const), { wrapper: wrap(client(h, cfg, acc.get("alice"))) });

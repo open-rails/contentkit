@@ -1,6 +1,6 @@
 // Package kindsroute serves the site's public content model: the part of
-// kinds.Config clients render kinds, groups and content filters with.
-// Restrictions, sites and token claims stay on the server.
+// kinds.Config clients render content and entity kinds with.
+// Domain policy, restrictions and token claims stay on the server.
 package kindsroute
 
 import (
@@ -14,11 +14,10 @@ import (
 
 // ContentModel is the public part of kinds.Config.
 type ContentModel struct {
-	Languages      []string                   `json:"languages"`
-	Tiers          []string                   `json:"tiers"`
-	Kinds          map[string]kinds.Kind      `json:"kinds"`
-	GroupKinds     map[string]kinds.GroupKind `json:"entity_kinds"`
-	ContentFilters []kinds.ContentFilter      `json:"content_filters"`
+	Languages  []string                   `json:"languages"`
+	Tiers      []string                   `json:"tiers"`
+	Kinds      map[string]kinds.Kind      `json:"kinds"`
+	GroupKinds map[string]kinds.GroupKind `json:"entity_kinds"`
 	// Signals: the site records signals and exposures now. Without, clients
 	// send none and read the model again later: a configured signal plane
 	// that is down comes back (history, similar and recommendations answer
@@ -33,7 +32,7 @@ type ContentModel struct {
 // Public is c's public part, with empty lists and maps rather than null and
 // each kind's locked view spelled out.
 func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, GroupKinds: c.GroupKinds, ContentFilters: c.ContentFilters,
+	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, GroupKinds: c.GroupKinds,
 		Signals: signals, Avatars: avatars}
 	for name, k := range c.Kinds {
 		l := k.LockedView()
@@ -51,9 +50,6 @@ func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentMode
 	}
 	if m.GroupKinds == nil {
 		m.GroupKinds = map[string]kinds.GroupKind{}
-	}
-	if m.ContentFilters == nil {
-		m.ContentFilters = []kinds.ContentFilter{}
 	}
 	return m
 }
@@ -83,7 +79,7 @@ func init() { httpapi.Register(httpapi.Kinds, routes) }
 
 var routes = []httpapi.Route[*server]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
+		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
 }
 

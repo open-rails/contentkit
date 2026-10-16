@@ -162,11 +162,10 @@ export class ReaderPreferencesClient {
       pending = this.browser.pending(account)!;
       if (pending && !pending.filtersDone) {
         if (generation !== this.generation) return;
-        const inventory = await this.http.request<ContentFilters>(`${this.http.mount("discovery")}/content-filters`, { guestPreferences: false });
-        if (generation !== this.generation) return;
-        const known = new Set(inventory.filters.map((f) => f.entity.id));
+        // Registration initializes account-wide choices. Only the server knows
+        // which saved entities are toggleable on another domain or now stale.
         await call<"POST", "/me/content-filters/initialize", ContentFilters>(this.http, "POST", "/me/content-filters/initialize", {
-          body: { account_id: account, filters: pending.filters.filter((f) => known.has(f.group_id)), include_deleted: false } satisfies ContentFiltersUpdate & { account_id: string },
+          body: { account_id: account, filters: [...pending.filters], include_deleted: false } satisfies ContentFiltersUpdate & { account_id: string },
         });
         if (generation !== this.generation) return;
         this.browser.complete(account, "filters");

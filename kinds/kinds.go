@@ -1,5 +1,5 @@
 // Package kinds is the site's content model as configuration: content kinds,
-// group kinds, tiers, restrictions, site scopes and content filters. One
+// entity kinds, tiers, restrictions and domain visibility policies. One
 // Config drives storage, routes, media kinds, search and URLs (ContentKit #117).
 package kinds
 
@@ -23,59 +23,57 @@ var (
 	languageRE = regexp.MustCompile(`^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$`)
 )
 
-// Config is the site's content model.
+// Config is the application's content model.
 type Config struct {
-	Languages      []string             `json:"languages" yaml:"languages"`
-	Tiers          []string             `json:"tiers,omitempty" yaml:"tiers"`
-	TokenClaims    []string             `json:"token_claims,omitempty" yaml:"token_claims"`
-	Restrictions   []string             `json:"restrictions,omitempty" yaml:"restrictions"`
-	Sites          []Site               `json:"sites,omitempty" yaml:"sites"`
-	ContentFilters []ContentFilter      `json:"content_filters,omitempty" yaml:"content_filters"`
-	Kinds          map[string]Kind      `json:"kinds" yaml:"kinds"`
-	GroupKinds     map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
+	Languages    []string             `json:"languages" yaml:"languages"`
+	Tiers        []string             `json:"tiers,omitempty" yaml:"tiers"`
+	TokenClaims  []string             `json:"token_claims,omitempty" yaml:"token_claims"`
+	Restrictions []string             `json:"restrictions,omitempty" yaml:"restrictions"`
+	Domains      []Domain             `json:"domains,omitempty" yaml:"domains"`
+	Kinds        map[string]Kind      `json:"kinds" yaml:"kinds"`
+	GroupKinds   map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
 }
 
-// Site is one deployment's slice of the catalog, matched by request host.
-// The first site is the default for unmatched hosts.
-type Site struct {
-	Name                string     `json:"name" yaml:"name"`
-	Hosts               []string   `json:"hosts" yaml:"hosts"`
-	ExcludeRestrictions []string   `json:"exclude_restrictions,omitempty" yaml:"exclude_restrictions"`
-	RequireGroups       []GroupRef `json:"require_groups,omitempty" yaml:"require_groups"`
-	// ContentFilterDefaults override app defaults for this entrypoint. A
-	// reader's explicit saved preference still wins; these are not access rules.
-	ContentFilterDefaults []ContentFilterDefault `json:"content_filter_defaults,omitempty" yaml:"content_filter_defaults"`
+// Domain is one entrypoint's catalog policy, matched by request host.
+// The first domain is the default for unmatched hosts. Entities absent from
+// Filters are shown and cannot be toggled by readers.
+type Domain struct {
+	Name                string   `json:"name" yaml:"name"`
+	Hosts               []string `json:"hosts" yaml:"hosts"`
+	ExcludeRestrictions []string `json:"exclude_restrictions,omitempty" yaml:"exclude_restrictions"`
+	// RequireGroups admits only content carrying every named entity. It is
+	// an access boundary, including direct reads, and never a reader toggle.
+	RequireGroups []GroupRef `json:"require_entities,omitempty" yaml:"require_entities"`
+	// RequireKinds limits required entities to these content kinds; empty means every kind.
+	RequireKinds []string        `json:"require_kinds,omitempty" yaml:"require_kinds"`
+	Filters      []ContentFilter `json:"filters,omitempty" yaml:"filters"`
 }
 
-// GroupRef names a group by kind and slug.
+// GroupRef names an entity by kind and canonical slug.
 type GroupRef struct {
 	Kind string `json:"kind" yaml:"kind"`
 	Slug string `json:"slug" yaml:"slug"`
 }
 
-// ContentFilter is a group viewers may hide; DefaultVisible is the default
-// before a viewer's own override.
+// ContentFilter defines this domain's visibility for one entity. A nil
+// UserToggle allows reader overrides. Internal and required entities are
+// never reader-toggleable, irrespective of UserToggle.
 type ContentFilter struct {
-	Group          GroupRef `json:"entity" yaml:"group"`
-	DefaultVisible bool     `json:"default_visible" yaml:"default_visible"`
+	Group      GroupRef `json:"entity" yaml:"entity"`
+	Visible    bool     `json:"visible" yaml:"visible"`
+	UserToggle *bool    `json:"user_toggle,omitempty" yaml:"user_toggle,omitempty"`
 }
 
-// ContentFilterDefault sets the visibility of one declared ContentFilter on
-// a site. Unspecified filters retain their app-wide default.
-type ContentFilterDefault struct {
-	Group   GroupRef `json:"entity" yaml:"group"`
-	Visible bool     `json:"visible" yaml:"visible"`
-}
+// Toggleable reports whether this rule permits reader overrides. The caller
+// must additionally exclude internal and domain-required entities.
+func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.UserToggle }
 
-// DefaultVisible resolves a filter's default for this site before any saved
-// reader override. It does not change RequireGroups or other access rules.
-func (s Site) DefaultVisible(filter ContentFilter) bool {
-	for _, d := range s.ContentFilterDefaults {
-		if d.Group == filter.Group {
-			return d.Visible
-		}
-	}
-	return filter.DefaultVisible
+// Requires reports whether ref is a hard inclusion rule for this domain.
+func (d Domain) Requires(ref GroupRef) bool { return slices.Contains(d.RequireGroups, ref) }
+
+// RequiresKind reports whether required entities apply to a content kind.
+func (d Domain) RequiresKind(kind string) bool {
+	return len(d.RequireKinds) == 0 || slices.Contains(d.RequireKinds, kind)
 }
 
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
@@ -410,35 +408,53 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%w: group %s/%s names an unknown group kind or no slug", ErrInvalid, r.Kind, r.Slug)
 		}
 	}
-	filters := map[GroupRef]bool{}
-	for _, f := range c.ContentFilters {
-		if filters[f.Group] {
-			return fmt.Errorf("%w: content filter %s/%s is repeated", ErrInvalid, f.Group.Kind, f.Group.Slug)
+	domains := map[string]bool{}
+	hosts := map[string]bool{}
+	for i, d := range c.Domains {
+		if d.Name == "" || (len(d.Hosts) == 0 && i > 0) {
+			return fmt.Errorf("%w: domain %d needs a name and hosts", ErrInvalid, i)
 		}
-		filters[f.Group] = true
-	}
-	sites := map[string]bool{}
-	for i, s := range c.Sites {
-		if s.Name == "" || (len(s.Hosts) == 0 && i > 0) {
-			return fmt.Errorf("%w: site %d needs a name and hosts", ErrInvalid, i)
+		if domains[d.Name] {
+			return fmt.Errorf("%w: domain name %q is repeated", ErrInvalid, d.Name)
 		}
-		if sites[s.Name] {
-			return fmt.Errorf("%w: site name %q is repeated", ErrInvalid, s.Name)
-		}
-		sites[s.Name] = true
-		defaults := map[GroupRef]bool{}
-		for _, d := range s.ContentFilterDefaults {
-			if !filters[d.Group] {
-				return fmt.Errorf("%w: site %s default names undeclared content filter %s/%s", ErrInvalid, s.Name, d.Group.Kind, d.Group.Slug)
+		domains[d.Name] = true
+		for _, h := range d.Hosts {
+			host := domainHost(h)
+			if host == "" || hosts[host] {
+				return fmt.Errorf("%w: domain host %q is empty or repeated", ErrInvalid, h)
 			}
-			if defaults[d.Group] {
-				return fmt.Errorf("%w: site %s default repeats content filter %s/%s", ErrInvalid, s.Name, d.Group.Kind, d.Group.Slug)
-			}
-			defaults[d.Group] = true
+			hosts[host] = true
 		}
-		for _, r := range s.ExcludeRestrictions {
+		filters := map[GroupRef]bool{}
+		for _, f := range d.Filters {
+			if filters[f.Group] {
+				return fmt.Errorf("%w: domain %s repeats content filter %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+			}
+			filters[f.Group] = true
+			if d.Requires(f.Group) && !f.Visible {
+				return fmt.Errorf("%w: domain %s both requires and hides entity %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+			}
+		}
+		if len(d.RequireKinds) > 0 && len(d.RequireGroups) == 0 {
+			return fmt.Errorf("%w: domain %s require_kinds needs require_entities", ErrInvalid, d.Name)
+		}
+		requireKinds := map[string]bool{}
+		for _, kind := range d.RequireKinds {
+			if _, ok := c.Kinds[kind]; !ok || requireKinds[kind] {
+				return fmt.Errorf("%w: domain %s has unknown or repeated required content kind %q", ErrInvalid, d.Name, kind)
+			}
+			requireKinds[kind] = true
+		}
+		required := map[GroupRef]bool{}
+		for _, r := range d.RequireGroups {
+			if required[r] {
+				return fmt.Errorf("%w: domain %s repeats required entity %s/%s", ErrInvalid, d.Name, r.Kind, r.Slug)
+			}
+			required[r] = true
+		}
+		for _, r := range d.ExcludeRestrictions {
 			if !slices.Contains(c.Restrictions, r) {
-				return fmt.Errorf("%w: site %s excludes unknown restriction %q", ErrInvalid, s.Name, r)
+				return fmt.Errorf("%w: domain %s excludes unknown restriction %q", ErrInvalid, d.Name, r)
 			}
 		}
 	}
@@ -447,11 +463,11 @@ func (c Config) Validate() error {
 
 func (c Config) groupRefs() []GroupRef {
 	var out []GroupRef
-	for _, s := range c.Sites {
-		out = append(out, s.RequireGroups...)
-	}
-	for _, f := range c.ContentFilters {
-		out = append(out, f.Group)
+	for _, d := range c.Domains {
+		out = append(out, d.RequireGroups...)
+		for _, f := range d.Filters {
+			out = append(out, f.Group)
+		}
 	}
 	return out
 }
@@ -546,24 +562,24 @@ func (c Config) Routes() map[string]string {
 	return out
 }
 
-// SiteFor returns the site serving host, ignoring case and port; the first
-// site when none matches. Host is the request host, not an authority selector.
-func (c Config) SiteFor(host string) (Site, bool) {
-	host = siteHost(host)
-	for _, s := range c.Sites {
+// DomainFor returns the domain serving host, ignoring case and port; the first
+// domain when none matches. Host is the request host, not an authority selector.
+func (c Config) DomainFor(host string) (Domain, bool) {
+	host = domainHost(host)
+	for _, s := range c.Domains {
 		for _, h := range s.Hosts {
-			if siteHost(h) == host {
+			if domainHost(h) == host {
 				return s, true
 			}
 		}
 	}
-	if len(c.Sites) > 0 {
-		return c.Sites[0], true
+	if len(c.Domains) > 0 {
+		return c.Domains[0], true
 	}
-	return Site{}, false
+	return Domain{}, false
 }
 
-func siteHost(host string) string {
+func domainHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}

@@ -31,6 +31,8 @@ export interface MembershipEditorProps {
   content: string;
   /** Its kind: the group kinds it joins. */
   contentKind: string;
+  /** Staff lookup, including internal classifications. */
+  management?: boolean;
   /** Its versions, for version-level memberships (voice actors, version-only tags). */
   versions?: readonly VersionChoice[];
   /** Only these group kinds; default every kind its kind joins. */
@@ -142,6 +144,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
               </ul>
             )}
             <GroupPicker
+              management={p.management}
               kind={kind}
               language={p.language}
               label={t("memberships.add", { kind: label })}

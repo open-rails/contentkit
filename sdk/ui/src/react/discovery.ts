@@ -228,7 +228,7 @@ export interface UseContentFilters {
   setIncludeDeleted: (include: boolean) => Promise<ContentFilters>;
 }
 
-/** Configured filters: browser choices for guests, server choices for accounts. */
+/** Current-domain toggles: browser choices for guests, server choices for accounts. */
 export function useContentFilters(o: { language?: string; client?: ContentKitClient } = {}): UseContentFilters {
   const { client, store, scope, viewer, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
@@ -259,8 +259,9 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
         if (!source) throw new ContentKitError("invalid_request", "Content filters have not loaded.");
         const allowed = new Set(source.filters.map((f) => f.entity.id));
         if (update.filters.some((f) => !allowed.has(f.group_id))) throw new ContentKitError("invalid_request", "This content filter is not configured.");
-        browser.setFilters(update.filters);
-        return applyGuest(source, update.filters);
+        const merged = [...browser.snapshot().filters.filter((f) => !allowed.has(f.group_id)), ...update.filters];
+        browser.setFilters(merged);
+        return applyGuest(source, merged);
       }
       setInflight((n) => n + 1);
       try {
@@ -310,26 +311,31 @@ const NONE: Pick<UseTypeahead, "contents" | "entities"> = { contents: [], entiti
 /** Suggestions while the reader types: debounced, the stale ones abandoned. */
 export function useTypeahead(
   text: string,
-  o: Omit<TypeaheadQuery, "q"> & { debounce?: number; minLength?: number; client?: ContentKitClient } = {},
+  o: Omit<TypeaheadQuery, "q"> & { debounce?: number; minLength?: number; client?: ContentKitClient; management?: boolean } = {},
 ): UseTypeahead {
-  const { client, language } = useContentScope(o.client);
-  const { debounce = 150, minLength = 1, client: _own, ...rest } = o;
+  const { client, language, scope: viewerScope } = useContentScope(o.client);
+  const { debounce = 150, minLength = 1, client: _own, management = false, ...rest } = o;
+  const scope = JSON.stringify([viewerScope, management]);
   const q = text.trim();
   const query = useMemo(() => ({ display_language: language, ...rest, q }), [language, q, JSON.stringify(rest)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [state, setState] = useState<UseTypeahead>({ ...NONE, query: "", loading: false });
+  const [state, setState] = useState<UseTypeahead & { scope: string }>({ ...NONE, query: "", loading: false, scope });
   useEffect(() => {
     if (q.length < minLength) {
-      setState({ ...NONE, query: "", loading: false });
+      setState({ ...NONE, query: "", loading: false, scope });
       return;
     }
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => ({ ...(s.scope === scope ? s : { ...NONE, query: "" }), loading: true, scope }));
     const ctl = new AbortController();
     const timer = setTimeout(() => {
-      client.discovery.typeahead(query, ctl.signal).then(
-        (r) => setState({ contents: r.contents, entities: r.entities, query: q, loading: false }),
+      const request = management
+        ? client.entities.manage({ q, kind: query.entity_kinds?.[0], language: query.display_language, limit: query.limit ?? 10 }, ctl.signal)
+          .then((page) => ({ contents: [], entities: page.entities }))
+        : client.discovery.typeahead(query, ctl.signal);
+      request.then(
+        (r) => { if (!ctl.signal.aborted) setState({ contents: r.contents, entities: r.entities, query: q, loading: false, scope }); },
         (e) => {
           const error = toContentKitError(e);
-          if (error.code !== "aborted") setState({ ...NONE, query: q, loading: false, error });
+          if (!ctl.signal.aborted && error.code !== "aborted") setState({ ...NONE, query: q, loading: false, error, scope });
         },
       );
     }, debounce);
@@ -337,8 +343,8 @@ export function useTypeahead(
       clearTimeout(timer);
       ctl.abort();
     };
-  }, [client, query, q, debounce, minLength]);
-  return state;
+  }, [client, query, q, debounce, minLength, management, scope]);
+  return state.scope === scope ? state : { ...NONE, query: "", loading: q.length >= minLength };
 }
 
 const beacons = new WeakMap<ContentKitClient, Beacons>();

@@ -34,14 +34,19 @@ func siteConfig() kinds.Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"},
-		Sites: []kinds.Site{
-			{Name: "main", Hosts: []string{"main.test"}},
-			{Name: "gay", Hosts: []string{"gay.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}},
-			{Name: "clean", Hosts: []string{"clean.test"}, ExcludeRestrictions: []string{"restricted"}},
-		},
-		ContentFilters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, DefaultVisible: true},
+		Domains: []kinds.Domain{
+			{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+			}},
+			{Name: "gay", Hosts: []string{"gay.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, Filters: []kinds.ContentFilter{
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+			}},
+			{Name: "clean", Hosts: []string{"clean.test"}, ExcludeRestrictions: []string{"restricted"}, Filters: []kinds.ContentFilter{
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+				{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+			}},
 		},
 		Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},

@@ -677,7 +677,7 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
 }
 
 /** Every editor section of an existing content: details, access and price, versions, groups. */
-export function ContentSections({ content, ...p }: Common & { content: Content; media?: boolean; className?: string }) {
+export function ContentSections({ content, ...p }: Common & { content: Content; media?: boolean; className?: string; management?: boolean }) {
   const languageName = useLanguageName();
   const versions = useMemo(() => content.versions.map((v) => ({ id: v.id, label: versionLabel(v, languageName, p.labels) })), [content.versions, languageName, p.labels]);
   const { spec } = useKind(content.kind, p.client);
@@ -688,7 +688,7 @@ export function ContentSections({ content, ...p }: Common & { content: Content; 
       <VersionsEditor content={content} {...p} />
       {!!spec?.entities?.length && (
         <section className="grid gap-3 border-t border-border pt-4" data-ckui="content-groups">
-          <MembershipEditor content={content.id} contentKind={content.kind} versions={spec.versions.hidden ? undefined : versions} labels={p.labels} client={p.client} onError={p.onError} />
+          <MembershipEditor management={p.management} content={content.id} contentKind={content.kind} versions={spec.versions.hidden ? undefined : versions} labels={p.labels} client={p.client} onError={p.onError} />
         </section>
       )}
     </div>

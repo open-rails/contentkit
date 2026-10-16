@@ -123,6 +123,8 @@ type Group struct {
 	ID   GroupID `json:"id"`
 	Kind string  `json:"kind"`
 	Slug string  `json:"slug"`
+	// Internal marks a classification used by policy rather than public metadata.
+	Internal bool `json:"internal"`
 	// ScopeID is the group the slug is unique within (a character's series).
 	ScopeID     GroupID        `json:"scope_id,omitempty"`
 	ParentID    GroupID        `json:"parent_id,omitempty"`

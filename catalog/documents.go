@@ -70,7 +70,7 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.moderation, c.published_snapshot -> $3, t.title, t.aliases,
  ARRAY(SELECT coalesce((SELECT n.name FROM `+s.t.groupNames+` n WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name'
    ORDER BY n.language = $3 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug)
-  FROM `+s.t.groups+` g WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND g.id IN (
+  FROM `+s.t.groups+` g WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id IN (
    SELECT unnest(f.group_ids) FROM `+s.t.facets+` f WHERE f.tenant_id = c.tenant_id AND f.content_id = c.id) ORDER BY g.kind, g.slug)
  FROM `+s.t.items+` c LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3
  WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'`, s.tenant, ids, language, kind, s.defaultLanguage())

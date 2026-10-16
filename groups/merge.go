@@ -103,6 +103,9 @@ func (s *Store) mergeable(ctx context.Context, q Querier, src, dst Group) error 
 	if src.Kind != dst.Kind {
 		return fmt.Errorf("%w: cannot merge a %s into a %s", ErrConflict, src.Kind, dst.Kind)
 	}
+	if src.Internal != dst.Internal {
+		return fmt.Errorf("%w: internal and public groups cannot be merged; change their classification explicitly first", ErrConflict)
+	}
 	if s.cfg.GroupKinds[src.Kind].Owner == "user" {
 		return fmt.Errorf("%w: %s groups are owned by users and never merged", ErrConflict, src.Kind)
 	}

@@ -282,6 +282,7 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, status int, id s
 		writeErr(w, err)
 		return
 	}
+	v.management = r.Method != http.MethodGet && r.Method != http.MethodHead
 	got, err := s.Contents(r.Context(), v, []string{id})
 	if err != nil {
 		writeErr(w, err)
@@ -319,8 +320,8 @@ func (s *Store) handleTotals(w http.ResponseWriter, r *http.Request) {
 	if h, _, ok := strings.Cut(host, ":"); ok {
 		host = h
 	}
-	site, _ := s.cfg.SiteFor(strings.ToLower(host))
-	q.Site = site.Name
+	site, _ := s.cfg.DomainFor(strings.ToLower(host))
+	q.Domain = site.Name
 	t, err := s.Totals(r.Context(), q)
 	switch {
 	case errors.Is(err, ErrInvalid):
@@ -574,6 +575,7 @@ func (s *Store) respondVersion(w http.ResponseWriter, r *http.Request, status in
 		writeErr(w, err)
 		return
 	}
+	v.management = true
 	got, err := s.Contents(r.Context(), v, []string{r.PathValue("id")})
 	if err != nil {
 		writeErr(w, err)
@@ -639,6 +641,9 @@ func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 	var v *Viewer
 	if err == nil {
 		v, err = s.viewer(r, ViewerOptions{})
+		if v != nil {
+			v.management = true
+		}
 	}
 	var got []*Content
 	if err == nil {

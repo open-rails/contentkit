@@ -25,8 +25,8 @@ it("retains the separate deleted-content option without an empty-filter message"
   expect(screen.queryByText("This site has no content filters.")).toBeNull();
 });
 
-it("keeps configured filters visible and saves reader changes", async () => {
-  const filter = { entity: { id: "filter-group", slug: "explicit", name: "Explicit content" }, label: "Explicit content", visible: false, overridden: false };
+it("uses localized entity names and saves the domain’s offered filters", async () => {
+  const filter = { entity: { id: "filter-group", slug: "explicit", name: "Explicit content" }, label: "Obsolete override", visible: false, overridden: false };
   const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "PUT") return Response.json({ filters: [{ ...filter, visible: true, overridden: true }], include_deleted: false });
     return Response.json({ filters: [filter], include_deleted: false });
@@ -70,4 +70,17 @@ it("lets guests save filters locally and responds to another tab without authent
   window.dispatchEvent(new StorageEvent("storage", { key, newValue: next }));
   await waitFor(() => expect(toggle).not.toBeChecked());
   await waitFor(() => expect(screen.queryByText("Visible item")).toBeNull());
+});
+
+
+it("retains guest choices for entities offered only on another domain", async () => {
+  const filter = { entity: { id: "here", slug: "here", name: "Current domain" }, default_visible: true, visible: true, overridden: false };
+  const client = createContentKitClient({ baseUrl: "https://content.test/domain-preferences", fetch: async () => Response.json({ filters: [filter], include_deleted: false }) });
+  client.preferences.browser.setFilters([{ group_id: "other-domain", visible: false }]);
+  render(<ContentKitProvider client={client} viewer={null}><ContentFilterSettings includeDeleted={false} /></ContentKitProvider>);
+  await userEvent.setup().click(await screen.findByRole("switch", { name: "Current domain" }));
+  expect(client.preferences.browser.snapshot().filters).toEqual([
+    { group_id: "here", visible: false },
+    { group_id: "other-domain", visible: false },
+  ]);
 });

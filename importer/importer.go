@@ -81,6 +81,9 @@ type GroupRecord struct {
 	ID   string `json:"id,omitempty"`
 	Kind string `json:"kind"`
 	Slug string `json:"slug"`
+	// Internal classifications can drive domain policy but never public metadata.
+	// Omission preserves an existing entity's classification; new entities are public.
+	Internal *bool `json:"internal,omitempty"`
 	// Scope is the group a scoped kind's slug is unique within.
 	Scope  *Ref `json:"scope,omitempty"`
 	Parent *Ref `json:"parent,omitempty"`

@@ -31,6 +31,10 @@ const (
 // ListOptions filters, orders and pages List. Only active groups are listed.
 type ListOptions struct {
 	Kind string
+	// Query matches a name, alias or slug for management selectors.
+	Query string
+	// IncludeInternal is a trusted management read; As stores require staff.
+	IncludeInternal bool
 	// Parent keeps the children of one group (sub-series of a series).
 	Parent GroupID
 	// Scope keeps the groups scoped by one group (characters of a series).
@@ -57,6 +61,7 @@ type GroupCard struct {
 	ID           GroupID `json:"id"`
 	Kind         string  `json:"kind"`
 	Slug         string  `json:"slug"`
+	Internal     bool    `json:"internal"`
 	ScopeID      GroupID `json:"scope_id,omitempty"`
 	ParentID     GroupID `json:"parent_id,omitempty"`
 	Name         string  `json:"name"`
@@ -145,6 +150,15 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	c.args["language"], c.args["count_language"] = lang, c.pathLang
 	where := []string{"g.tenant_id = @tenant", "g.state = 'active'"}
+	if !opts.IncludeInternal {
+		where = append(where, "NOT g.internal")
+	}
+	if query := strings.TrimSpace(opts.Query); query != "" {
+		c.args["query"] = query
+		where = append(where, fmt.Sprintf(`(strpos(%[1]s.contentkit_keyword_normalize(g.slug), %[1]s.contentkit_keyword_normalize(@query)) > 0
+ OR EXISTS (SELECT 1 FROM %[2]s query_name WHERE query_name.tenant_id = g.tenant_id AND query_name.group_id = g.id
+ AND strpos(query_name.normalized, %[1]s.contentkit_keyword_normalize(@query)) > 0))`, s.qs, s.table("content_group_names")))
+	}
 	if ids != nil {
 		where, c.args["ids"] = append(where, "g.id = ANY(@ids::text[])"), ids
 	}
@@ -199,8 +213,15 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 	}
 	c.args["limit"] = c.limit + 1
-	c.sql = fmt.Sprintf(`SELECT g.id, g.kind, g.slug, g.scope_id, coalesce(g.parent_id, ''), coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s
+	scope, parent := "g.scope_id", "coalesce(g.parent_id, '')"
+	if !opts.IncludeInternal {
+		visibleLink := func(column string) string {
+			return fmt.Sprintf("CASE WHEN EXISTS (SELECT 1 FROM %s link WHERE link.tenant_id=g.tenant_id AND link.id=g.%s AND NOT link.internal) THEN g.%s ELSE '' END", s.table("content_groups"), column, column)
+		}
+		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
+	}
+	c.sql = fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[10]s, %[11]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s g
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
@@ -212,7 +233,7 @@ LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %[5]s gc
   WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%[7]s) cc ON true
 WHERE %[8]s ORDER BY %[9]s LIMIT @limit`,
 		s.table("content_groups"), s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		s.table("content_group_counts"), sortName, countKind, strings.Join(where, " AND "), order)
+		s.table("content_group_counts"), sortName, countKind, strings.Join(where, " AND "), order, scope, parent)
 	return c, nil
 }
 
@@ -228,7 +249,7 @@ func (s *Store) cards(ctx context.Context, q Querier, c cardQuery) (GroupPage, e
 		var g GroupCard
 		var code, slug, avatar, name string
 		if err := rows.Scan(&g.ID, &g.Kind, &g.Slug, &g.ScopeID, &g.ParentID, &g.Name, &g.NameLanguage, &code, &slug, &g.Cover, &avatar, &g.Count,
-			&g.Attributes, &g.CreatedAt, &name); err != nil {
+			&g.Attributes, &g.CreatedAt, &name, &g.Internal); err != nil {
 			return page, err
 		}
 		if g.Attributes == nil {
@@ -274,6 +295,9 @@ func (s *Store) path(kind, code, slug, language string) string {
 // avatar, count and, for a sellable kind, its sale to the store's viewer
 // (As).
 func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
+	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
+		return GroupPage{}, err
+	}
 	c, err := s.compile(opts, nil)
 	if err != nil {
 		return GroupPage{Groups: []GroupCard{}}, err
@@ -295,6 +319,8 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 
 // CardOptions resolve Cards.
 type CardOptions struct {
+	// IncludeInternal is a trusted management read; As stores require staff.
+	IncludeInternal bool
 	// Language resolves names and paths as ListOptions.Language does.
 	Language string
 	// Covers fills covers' and avatars' renditions in one call; chips leave
@@ -305,11 +331,14 @@ type CardOptions struct {
 // Cards returns the active groups among ids as cards, resolved as List
 // resolves them, in no particular order.
 func (s *Store) Cards(ctx context.Context, ids []GroupID, o CardOptions) ([]GroupCard, error) {
+	if err := s.requireInternalRead(ctx, o.IncludeInternal); err != nil {
+		return nil, err
+	}
 	want, err := uniqueIDs(ids)
 	if err != nil || len(want) == 0 {
 		return []GroupCard{}, err
 	}
-	c, err := s.compile(ListOptions{Language: o.Language}, want)
+	c, err := s.compile(ListOptions{Language: o.Language, IncludeInternal: o.IncludeInternal}, want)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +369,33 @@ const maxMergeHops = 8
 // children, edges, counts and sale, resolved for language as List does. A merged
 // group answers with its survivor; a deleted one is ErrNotFound.
 func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupDetail, error) {
+	return s.detail(ctx, id, language, false)
+}
+
+// ManagementDetail includes internal classifications and requires staff on an
+// As-bound store. Public Detail remains public even for an administrator.
+func (s *Store) ManagementDetail(ctx context.Context, id GroupID, language string) (GroupDetail, error) {
+	if err := s.requireInternalRead(ctx, true); err != nil {
+		return GroupDetail{}, err
+	}
+	return s.detail(ctx, id, language, true)
+}
+
+func (s *Store) requireInternalRead(ctx context.Context, include bool) error {
+	if !include {
+		return nil
+	}
+	staff, err := s.staff(ctx)
+	if err != nil {
+		return err
+	}
+	if !staff {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (s *Store) detail(ctx context.Context, id GroupID, language string, includeInternal bool) (GroupDetail, error) {
 	var d GroupDetail
 	if err := validateID(id); err != nil {
 		return d, err
@@ -351,7 +407,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 				return err
 			}
 			g, ok := found[id]
-			if !ok || g.State == StateDeleted || hop == maxMergeHops {
+			if !ok || g.State == StateDeleted || (!includeInternal && g.Internal) || hop == maxMergeHops {
 				return ErrNotFound
 			}
 			if g.State == StateMerged {
@@ -361,7 +417,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 			d.Group = g
 			break
 		}
-		c, err := s.compile(ListOptions{Language: language}, []string{string(id)})
+		c, err := s.compile(ListOptions{Language: language, IncludeInternal: includeInternal}, []string{string(id)})
 		if err != nil {
 			return err
 		}
@@ -370,6 +426,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 			return errors.Join(err, ErrNotFound)
 		}
 		card := self.Groups[0]
+		d.ParentID, d.ScopeID = card.ParentID, card.ScopeID
 		d.Name, d.NameLanguage, d.Code, d.Path = card.Name, card.NameLanguage, card.Code, card.Path
 		names, err := s.names(ctx, q, []string{string(id)})
 		if err != nil {
@@ -388,7 +445,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 			}
 		}
 		if len(links) > 0 {
-			if c, err = s.compile(ListOptions{Language: language}, links); err != nil {
+			if c, err = s.compile(ListOptions{Language: language, IncludeInternal: includeInternal}, links); err != nil {
 				return err
 			}
 			linked, err := s.cards(ctx, q, c)
@@ -404,7 +461,7 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 				}
 			}
 		}
-		if c, err = s.compile(ListOptions{Parent: id, Language: language, Limit: 200}, nil); err != nil {
+		if c, err = s.compile(ListOptions{Parent: id, Language: language, Limit: 200, IncludeInternal: includeInternal}, nil); err != nil {
 			return err
 		}
 		children, err := s.cards(ctx, q, c)
@@ -415,6 +472,23 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 		if d.Edges, err = s.edges(ctx, q, []string{string(id)}); err != nil {
 			return err
 		}
+		if !includeInternal {
+			links := make([]string, 0, len(d.Edges)*2)
+			for _, edge := range d.Edges {
+				links = append(links, string(edge.From), string(edge.To))
+			}
+			groups, err := s.byIDs(ctx, q, links)
+			if err != nil {
+				return err
+			}
+			edges := d.Edges[:0]
+			for _, edge := range d.Edges {
+				if !groups[edge.From].Internal && !groups[edge.To].Internal {
+					edges = append(edges, edge)
+				}
+			}
+			d.Edges = edges
+		}
 		counts, err := s.counts(ctx, q, []string{string(id)})
 		if d.Counts = counts[id]; d.Counts == nil {
 			d.Counts = []Count{}
@@ -424,7 +498,11 @@ func (s *Store) Detail(ctx context.Context, id GroupID, language string) (GroupD
 	if err != nil {
 		return d, err
 	}
-	shows := []shown{{kind: d.Kind, id: d.ID, cover: d.Cover, avatar: &d.Avatar, access: &d.Access}}
+	self := shown{kind: d.Kind, id: d.ID, cover: d.Cover, avatar: &d.Avatar}
+	if !d.Internal {
+		self.access = &d.Access
+	}
+	shows := []shown{self}
 	for _, g := range append([]*GroupCard{d.Parent, d.Scope}, pointers(d.Children)...) {
 		if g != nil {
 			shows = append(shows, cardShown(g))

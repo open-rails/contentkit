@@ -215,7 +215,7 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	}
 	ghits, err := s.o.Hub.Typeahead(ctx, text, hub.TypeaheadOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: kinds, Limit: limit,
 		Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.groups +
-			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active')`}})
+			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`}})
 	if err != nil {
 		return out, err
 	}

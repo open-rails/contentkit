@@ -14,7 +14,7 @@ import { Switch } from "#ckui/ui/switch";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 
 export interface ContentFilterSettingsProps {
-  /** Labels and group names in this language; default the provider's. */
+  /** Entity names in this language; default the provider's. */
   language?: string;
   /** Offer listing deleted content the reader holds. Default true. */
   includeDeleted?: boolean;
@@ -51,7 +51,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
             <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
               <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
               <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
-                {x.label || x.entity.name}
+                {x.entity.name || x.entity.slug}
               </Label>
             </li>
           ))}

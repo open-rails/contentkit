@@ -149,6 +149,20 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	if err != nil {
 		return nil, err
 	}
+	excluded, err := uniqueIDs("exclude_groups", f.ExcludeGroups)
+	if err != nil {
+		return nil, err
+	}
+	selected := append(append(append([]string{}, required...), excluded...), owners...)
+	if len(selected) > 0 {
+		var internal bool
+		if err := s.o.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = ANY($2::text[]) AND internal)`, s.o.Tenant, selected).Scan(&internal); err != nil {
+			return nil, err
+		}
+		if internal {
+			return nil, fmt.Errorf("%w: internal entities cannot be used in public filters", ErrInvalid)
+		}
+	}
 	// A channel's feed shows its editors the channel's drafts too.
 	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
 		Requested: required})
@@ -173,10 +187,8 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	if len(required) > 0 {
 		q.and("f.group_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": required})
 	}
-	if gs, err := uniqueIDs("exclude_groups", f.ExcludeGroups); err != nil {
-		return nil, err
-	} else if len(gs) > 0 {
-		q.and("NOT (f.group_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": gs})
+	if len(excluded) > 0 {
+		q.and("NOT (f.group_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
 	}
 	if len(owners) > 0 {
 		q.and("f.owner_group_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})

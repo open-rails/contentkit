@@ -18,6 +18,8 @@ export const groups: typeof en = {
     noMatch: "일치하는 항목이 없습니다.",
   },
   groupEditor: {
+    internal: "내부 용도로만 사용",
+    internalHint: "공개 페이지, 검색, 읽기 설정에서 숨겨집니다. 관리자는 이 항목을 도메인 규칙에 사용할 수 있습니다.",
     uploadAvatar: "아바타 업로드",
     removeAvatar: "아바타 삭제",
     images: "이미지",

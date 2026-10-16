@@ -173,12 +173,13 @@ export class DiscoveryClient {
   releases(q: DailyReleasesQuery = {}, signal?: AbortSignal): Promise<DailyReleases> {
     return call(this.http, "GET", "/releases", { query: query(q) as never, signal });
   }
+  /** Only the current domain's reader-toggleable entities, named in the requested language. */
   async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
     const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
     this.http.acceptGuestFilters(result.filters);
     return result;
   }
-  /** Replaces the reader's filter settings; every read applies them. */
+  /** Replaces this domain's reader settings; other domains' choices remain intact. */
   async setContentFilters(update: ContentFiltersUpdate, language?: string): Promise<ContentFilters> {
     const emit = this.http.captureChanges();
     const out: ContentFilters = await call(this.http, "PUT", "/me/content-filters", { query: { language }, body: update });

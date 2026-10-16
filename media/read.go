@@ -391,6 +391,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		o.Limit = r.o.DefaultLimit
 	}
 	o.Limit = min(o.Limit, r.o.MaxLimit)
+	if o.Editor {
+		ctx = resolve.WithEditorRead(ctx)
+	}
 	g, err := r.Grant(ctx, ref, actor)
 	if err != nil {
 		return nil, nil, err

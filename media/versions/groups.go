@@ -25,6 +25,7 @@ import (
 // groupRight is what one actor may do with one group's item.
 type groupRight struct {
 	active, editor, staff bool
+	internal              bool
 	owner                 string
 }
 
@@ -32,7 +33,7 @@ type groupRight struct {
 // right to edit its media.
 func (s *Service) groupRights(ctx context.Context, actor access.Actor, kind string, ids []string) (map[string]groupRight, error) {
 	out := map[string]groupRight{}
-	rows, err := s.o.Pool.Query(ctx, `SELECT id, state = 'active', coalesce(owner_user_id, ''), coalesce(auth_scope, '')
+	rows, err := s.o.Pool.Query(ctx, `SELECT id, state = 'active', internal, coalesce(owner_user_id, ''), coalesce(auth_scope, '')
 FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Tenant, kind, ids)
 	if err != nil {
 		return nil, err
@@ -40,11 +41,12 @@ FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Te
 	type row struct {
 		id, owner, scope string
 		active           bool
+		internal         bool
 	}
 	var found []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.active, &r.owner, &r.scope); err != nil {
+		if err := rows.Scan(&r.id, &r.active, &r.internal, &r.owner, &r.scope); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -61,11 +63,11 @@ FROM `+s.t.groups+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.Te
 	}
 	userOwned := s.o.Kinds.GroupKinds[kind].Owner == "user"
 	for _, r := range found {
-		right := groupRight{active: r.active, staff: staff, owner: r.owner}
+		right := groupRight{active: r.active, internal: r.internal, staff: staff, owner: r.owner}
 		switch {
 		case staff:
 			right.editor = true
-		case userOwned:
+		case userOwned && !r.internal:
 			if right.editor, err = gate.GroupEditor(ctx, s.o.Auth, actor, r.owner, r.scope, access.GroupMediaWrite(kind), access.GroupSettingsManage(kind)); err != nil {
 				return nil, err
 			}
@@ -95,7 +97,7 @@ func (s *Service) resolveGroups(ctx context.Context, refs []contentref.ContentRe
 		}
 	}
 	for _, ref := range refs {
-		if r, ok := rights[ref.ContentKind][ref.ContentID]; ok && r.active {
+		if r, ok := rights[ref.ContentKind][ref.ContentID]; ok && r.active && (!r.internal || r.staff && resolve.EditorRead(ctx)) {
 			out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.editor}
 		}
 	}

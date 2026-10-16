@@ -37,7 +37,7 @@ type TotalsQuery struct {
 	Languages []string
 	// Site is the site whose scope applies (its name); empty is the first
 	// site. The HTTP route takes it from the request's host.
-	Site string
+	Domain string
 }
 
 // Total sizes one kind. Public counts what an anonymous visitor's listing
@@ -69,7 +69,7 @@ type totalsKey struct{ site, kind string }
 // the last good one serves while reloads fail, for up to a day.
 func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 	out := Totals{Kinds: map[string]Total{}}
-	site, err := s.site(q.Site)
+	site, err := s.site(q.Domain)
 	if err != nil {
 		return out, err
 	}
@@ -98,17 +98,17 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 	return out, nil
 }
 
-func (s *Store) site(name string) (kinds.Site, error) {
+func (s *Store) site(name string) (kinds.Domain, error) {
 	if name == "" {
-		site, _ := s.cfg.SiteFor("")
+		site, _ := s.cfg.DomainFor("")
 		return site, nil
 	}
-	for _, site := range s.cfg.Sites {
+	for _, site := range s.cfg.Domains {
 		if site.Name == name {
 			return site, nil
 		}
 	}
-	return kinds.Site{}, invalid("unknown site %q", name)
+	return kinds.Domain{}, invalid("unknown site %q", name)
 }
 
 func (s *Store) totalsLanguages(in []string) ([]string, error) {
@@ -185,10 +185,10 @@ func (s *Store) loadTotals(ctx context.Context, keys []totalsKey) (map[totalsKey
 // filter groups. Audiences are access.AudiencesSQL's: a free row opens to
 // anyone and every tier, a tier row to its tiers, others to nobody. Versions collapse to
 // their content item, once per language and once per kind.
-func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []string) (map[string]Total, error) {
+func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []string) (map[string]Total, error) {
 	refs := append([]kinds.GroupRef{}, site.RequireGroups...)
-	for _, f := range s.cfg.ContentFilters {
-		if !site.DefaultVisible(f) {
+	for _, f := range site.Filters {
+		if !f.Visible {
 			refs = append(refs, f.Group)
 		}
 	}
@@ -201,16 +201,22 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []st
 		out[k] = Total{Tiers: zeroTiers(s.cfg.Tiers), Languages: map[string]LanguageTotal{}}
 	}
 	require, hidden := []string{}, []string{}
+	missingRequired := false
 	for _, r := range site.RequireGroups {
 		id, ok := ids[r]
 		if !ok {
-			return out, nil // a required group that does not exist admits nothing
+			missingRequired = true
+			continue // Only the required content kinds are excluded.
 		}
-		require = append(require, id)
+		require = append(require, id.id)
 	}
-	for _, f := range s.cfg.ContentFilters {
-		if id, ok := ids[f.Group]; ok && !site.DefaultVisible(f) {
-			hidden = append(hidden, id)
+	for _, f := range site.Filters {
+		id, ok := ids[f.Group]
+		if !ok && !f.Visible && !f.Toggleable() {
+			return out, nil
+		}
+		if ok && !f.Visible {
+			hidden = append(hidden, id.id)
 		}
 	}
 	audiences, args, err := access.AudiencesSQL("f", s.accessG.Tiers())
@@ -218,7 +224,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []st
 		return nil, err
 	}
 	named := pgx.NamedArgs{"tenant": s.tenant, "kinds": kindNames, "now": s.now(), "exclude": orEmpty(site.ExcludeRestrictions),
-		"require": require, "hidden": hidden}
+		"require": require, "require_kinds": orEmpty(site.RequireKinds), "require_missing": missingRequired, "hidden": hidden}
 	for k, v := range args {
 		named[k] = v
 	}
@@ -227,7 +233,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []st
  CROSS JOIN LATERAL unnest(f.languages) AS l(language)
  CROSS JOIN LATERAL unnest(`+audiences+`) AS au(audience)
  WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND f.live_from <= @now AND f.listing IN ('listed', 'members')
-  AND NOT (f.restrictions && @exclude::text[]) AND f.group_ids @> @require::text[] AND NOT (f.group_ids && @hidden::text[])
+  AND NOT (f.restrictions && @exclude::text[]) AND ((cardinality(@require_kinds::text[]) > 0 AND NOT (f.kind = ANY(@require_kinds::text[]))) OR (NOT @require_missing::boolean AND f.group_ids @> @require::text[])) AND NOT (f.group_ids && @hidden::text[])
 ) a GROUP BY GROUPING SETS ((a.kind, a.audience, a.language), (a.kind, a.audience))`, named)
 	if err != nil {
 		return nil, err
@@ -295,10 +301,10 @@ func NewTotalsClient(baseURL string, hc *http.Client) (*TotalsClient, error) {
 func (c *TotalsClient) Close() { c.totals.Close() }
 
 // Totals reads the remote's totals as Store.Totals answers them, in the site
-// the remote derives from its host: q.Kinds is required and q.Site empty.
+// the remote derives from its host: q.Kinds is required and q.Domain empty.
 func (c *TotalsClient) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 	out := Totals{Kinds: map[string]Total{}}
-	if len(q.Kinds) == 0 || q.Site != "" {
+	if len(q.Kinds) == 0 || q.Domain != "" {
 		return out, invalid("TotalsClient needs kinds and no site")
 	}
 	languages := []string{}

@@ -30,7 +30,7 @@ export interface UseKinds {
   reload: () => void;
 }
 
-/** The site's content model (GET /v1/kinds): languages, tiers, kinds, group kinds and content filters; one read per client. */
+/** The site's content model (GET /v1/kinds): languages, tiers, kinds and entity kinds; one read per client. */
 export function useKinds(o: { client?: ContentKitClient } = {}): UseKinds {
   const { client, store } = useContentScope(o.client);
   const r = useResource<ContentModel>(store, keyOf("kinds"), { type: "kinds" }, (s) => client.kinds(s));
@@ -59,19 +59,17 @@ export interface GroupFilter {
 }
 
 /** Active groups with name, path, cover and count, a cursor page at a time. */
-export function useGroups(f: GroupFilter = {}, o: { client?: ContentKitClient } = {}): UseList<GroupCard> {
+export function useGroups(f: GroupFilter = {}, o: { client?: ContentKitClient; management?: boolean } = {}): UseList<GroupCard> {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = f.language ?? provided;
   const size = f.pageSize ?? 50;
   return useList(
     store,
-    keyOf("groups", scope, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size),
+    keyOf("groups", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size),
     { type: "groups" },
     async (cursor, signal) => {
-      const page = await client.entities.list(
-        { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, cursor: cursor as string | undefined, limit: size },
-        signal,
-      );
+      const query = { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, cursor: cursor as string | undefined, limit: size };
+      const page = await (o.management ? client.entities.manage(query, signal) : client.entities.list(query, signal));
       return { items: page.entities, next: page.next_cursor ?? null };
     },
   );
@@ -104,7 +102,7 @@ export interface UseGroup {
 }
 
 /** One group: its page for anyone; create, edit, names, edges, cover, merge, delete and restore for staff (root:groups:write). null creates. */
-export function useGroup(id: string | null | undefined, o: { language?: string; initial?: GroupDetail; client?: ContentKitClient } = {}): UseGroup {
+export function useGroup(id: string | null | undefined, o: { language?: string; initial?: GroupDetail; client?: ContentKitClient; management?: boolean } = {}): UseGroup {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
   const [created, setCreated] = useState<string | null>(null);
@@ -115,8 +113,8 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
     setMerged(null);
     setDeleted(null);
   }, [id]);
-  const key = gid && !deleted ? keyOf("group", scope, gid, language) : null;
-  const r = useResource<GroupDetail>(store, key, { type: "group", id: gid ?? undefined }, (s) => client.entities.get(gid!, language, s), { initial: o.initial });
+  const key = gid && !deleted ? keyOf("group", scope, o.management, gid, language) : null;
+  const r = useResource<GroupDetail>(store, key, { type: "group", id: gid ?? undefined }, (s) => o.management ? client.entities.getForManagement(gid!, language, s) : client.entities.get(gid!, language, s), { initial: o.initial });
   const guarded = useGuarded();
   const [inflight, setInflight] = useState(0);
   const run = useCallback(

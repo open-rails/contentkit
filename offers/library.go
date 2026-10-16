@@ -42,7 +42,8 @@ type LibraryPage struct {
 
 // Library lists the content actor holds a content or version key of: the
 // keys under the tenant's content prefix, from the request's one billing
-// read. Deleted content is listed too.
+// read. Deleted content is listed too, within the current domain's hard
+// visibility boundary.
 func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuery) (LibraryPage, error) {
 	if q.Limit <= 0 {
 		q.Limit = 20
@@ -73,11 +74,18 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	if len(ids) == 0 {
 		return page, nil
 	}
+	exclude, required, blocked, requireKinds, missingRequired, missingHard, err := s.libraryDomain(ctx)
+	if err != nil {
+		return LibraryPage{}, err
+	}
+	scoped := missingRequired || missingHard || len(exclude) > 0 || len(required) > 0 || len(blocked) > 0
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state = 'deleted' OR c.deleted_at IS NOT NULL, coalesce(t.title, ''), coalesce(t.language, '')
 		FROM `+s.t.items+` c LEFT JOIN LATERAL (SELECT title, language FROM `+s.t.text+` x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
 			ORDER BY x.language = $3 DESC, array_position($4::text[], x.language), x.language LIMIT 1) t ON true
 		WHERE c.tenant_id = $1 AND c.id = ANY($2) AND ($5 = '' OR c.id < $5)
-		ORDER BY c.id DESC LIMIT $6`, s.tenant, ids, q.Language, s.languages(), q.Cursor, q.Limit+1)
+  AND NOT $10::boolean AND (NOT $11::boolean OR EXISTS (SELECT 1 FROM `+s.t.facets+` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id
+   AND NOT (f.restrictions && $7::text[]) AND ((cardinality($12::text[]) > 0 AND NOT (f.kind = ANY($12::text[]))) OR (NOT $13::boolean AND f.group_ids @> $8::text[])) AND NOT (f.group_ids && $9::text[])))
+		ORDER BY c.id DESC LIMIT $6`, s.tenant, ids, q.Language, s.languages(), q.Cursor, q.Limit+1, exclude, required, blocked, missingHard, scoped, requireKinds, missingRequired)
 	if err != nil {
 		return LibraryPage{}, err
 	}

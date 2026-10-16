@@ -14,11 +14,11 @@ import (
 
 func TestContentFilterEntrypointDefaults(t *testing.T) {
 	cfg := siteConfig()
-	cfg.Sites = []kinds.Site{
-		{Name: "main", Hosts: []string{"main.test"}},
-		{Name: "alternate", Hosts: []string{"alternate.test"}, ContentFilterDefaults: []kinds.ContentFilterDefault{
-			{Group: cfg.ContentFilters[0].Group, Visible: true},
-			{Group: cfg.ContentFilters[1].Group, Visible: false},
+	cfg.Domains = []kinds.Domain{
+		{Name: "main", Hosts: []string{"main.test"}, Filters: cfg.Domains[0].Filters},
+		{Name: "alternate", Hosts: []string{"alternate.test"}, Filters: []kinds.ContentFilter{
+			{Group: cfg.Domains[0].Filters[0].Group, Visible: true},
+			{Group: cfg.Domains[0].Filters[1].Group, Visible: false},
 		}},
 		{Name: "strict", Hosts: []string{"strict.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}},
 	}

@@ -83,16 +83,18 @@ export interface GroupPickerProps {
   onPick: (group: GroupCard) => void;
   client?: ContentKitClient;
   autoFocus?: boolean;
+  /** Staff lookup, including internal entities. Requires entity-management permission. */
+  management?: boolean;
   className?: string;
 }
 
 /** A typeahead over one kind's groups (GET /v1/typeahead). */
-export function GroupPicker({ kind, language, exclude, label, onPick, client, autoFocus, className }: GroupPickerProps) {
+export function GroupPicker({ kind, language, exclude, label, onPick, client, autoFocus, className, management }: GroupPickerProps) {
   const { t } = useMessages();
   const id = useId();
   const [text, setText] = useState("");
   const [active, setActive] = useState(0);
-  const found = useTypeahead(text, { entity_kinds: [kind], display_language: language, limit: 10, client });
+  const found = useTypeahead(text, { entity_kinds: [kind], display_language: language, limit: 10, client, management });
   const results = useMemo(() => found.entities.filter((g) => g.kind === kind && !exclude?.includes(g.id)).slice(0, 8), [found.entities, kind, exclude]);
   const q = text.trim();
   useEffect(() => setActive(0), [q]);
@@ -162,7 +164,7 @@ export function GroupPicker({ kind, language, exclude, label, onPick, client, au
 }
 
 /** Groups read by id, for names where only ids are at hand (edges); a missing or deleted one is left out. */
-export function useGroupNames(ids: readonly string[], o: { language?: string; client?: ContentKitClient } = {}): ReadonlyMap<string, GroupDetail> {
+export function useGroupNames(ids: readonly string[], o: { language?: string; client?: ContentKitClient; management?: boolean } = {}): ReadonlyMap<string, GroupDetail> {
   const client = useContentKitClient(o.client);
   const [found, setFound] = useState<ReadonlyMap<string, GroupDetail>>(new Map());
   const key = [...new Set(ids)].sort().join(",");
@@ -171,10 +173,10 @@ export function useGroupNames(ids: readonly string[], o: { language?: string; cl
     const ctl = new AbortController();
     const list = key.split(",");
     // A merged group answers as its survivor: keep it under the id asked for.
-    Promise.all(list.map((id) => client.entities.get(id, o.language, ctl.signal).catch(() => null))).then((all) => {
+    Promise.all(list.map((id) => (o.management ? client.entities.getForManagement(id, o.language, ctl.signal) : client.entities.get(id, o.language, ctl.signal)).catch(() => null))).then((all) => {
       if (!ctl.signal.aborted) setFound(new Map(all.flatMap((g, i) => (g ? [[list[i]!, g] as const] : []))));
     });
     return () => ctl.abort();
-  }, [key, client, o.language]);
+  }, [key, client, o.language, o.management]);
   return found;
 }

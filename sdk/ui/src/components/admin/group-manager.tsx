@@ -5,6 +5,7 @@ import type { ContentModel, Membership } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useGroups, useKinds, type GroupSort } from "../../react/groups.js";
+import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
@@ -111,7 +112,7 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
   const language = languages.includes(languageParam) ? languageParam : languages[0];
   const filters: { letter?: string; sort?: GroupSort; language?: string } = { letter, sort: sort === "name" ? undefined : sort, language: language === languages[0] ? undefined : language };
   const filter = (next: Partial<typeof filters>) => loc.go(kind, { ...filters, ...next });
-  const groups = useGroups({ kind, letter, sort, language, contentKind, pageSize }, { client });
+  const groups = useGroups({ kind, letter, sort, language, contentKind, pageSize }, { client, management: true });
   const label = labelOf(labels, kind);
   return (
     <div className="grid gap-4" data-ckui="group-list" data-kind={kind}>
@@ -179,6 +180,7 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
                   {g.name || g.slug}
                 </button>
                 <span className="text-xs text-muted-foreground">{g.slug}</span>
+                {g.internal && <Badge variant="secondary" className="justify-self-start">{t("groupEditor.internal")}</Badge>}
               </div>
               <span className="text-sm text-muted-foreground tabular-nums" title={t("groupManager.count")}>
                 {new Intl.NumberFormat(m.language).format(g.count)}
@@ -201,6 +203,7 @@ function Create({ loc, kind, client, labels, onError }: Ctx) {
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
       <GroupEditor
+        management
         id={null}
         kind={kind}
         labels={labels}
@@ -217,6 +220,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & {
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
       <GroupEditor
+        management
         id={id}
         kind={kind}
         labels={labels}

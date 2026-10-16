@@ -12,12 +12,11 @@ func doujins() Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"},
-		Sites: []Site{
-			{Name: "main", Hosts: []string{"doujins.com"}},
+		Domains: []Domain{
+			{Name: "main", Hosts: []string{"doujins.com"}, Filters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}}},
 			{Name: "gay", Hosts: []string{"doujins.gay"}, RequireGroups: []GroupRef{{"tag", "yaoi"}}},
 			{Name: "moe", Hosts: []string{"hmovie-moe.us"}, ExcludeRestrictions: []string{"restricted"}},
 		},
-		ContentFilters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}},
 		Kinds: map[string]Kind{
 			"gallery": {Route: "g", Presentation: "reader", Segments: true, Locked: &Locked{Show: []string{ShowCover, ShowGroups}, Preview: &Preview{Pages: 3}},
 				Versions:   VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
@@ -47,9 +46,9 @@ func TestValidate(t *testing.T) {
 		},
 		"duplicate route":     func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "g"} },
 		"claim not a tier":    func(c *Config) { c.TokenClaims = []string{"gold"} },
-		"unknown restriction": func(c *Config) { c.Sites[2].ExcludeRestrictions = []string{"nsfw"} },
+		"unknown restriction": func(c *Config) { c.Domains[2].ExcludeRestrictions = []string{"nsfw"} },
 		"bad presentation":    func(c *Config) { k := c.Kinds["blog"]; k.Presentation = "page"; c.Kinds["blog"] = k },
-		"filter group kind":   func(c *Config) { c.ContentFilters[0].Group.Kind = "genre" },
+		"filter group kind":   func(c *Config) { c.Domains[0].Filters[0].Group.Kind = "genre" },
 		"enum without values": func(c *Config) { c.Kinds["gallery"].Attributes["format"] = Attribute{Type: "enum"} },
 		"cap on a site kind":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", MaxPerOwner: 3} },
 		"negative cap":        func(c *Config) { c.GroupKinds["channel"] = GroupKind{Owner: "user", MaxPerOwner: -1} },
@@ -127,68 +126,57 @@ func TestLockedView(t *testing.T) {
 	}
 }
 
-func TestSiteFor(t *testing.T) {
+func TestDomainFor(t *testing.T) {
 	c := doujins()
-	if s, _ := c.SiteFor("doujins.gay"); s.Name != "gay" {
+	if s, _ := c.DomainFor("doujins.gay"); s.Name != "gay" {
 		t.Fatalf("doujins.gay -> %s", s.Name)
 	}
-	if s, _ := c.SiteFor("localhost"); s.Name != "main" {
+	if s, _ := c.DomainFor("localhost"); s.Name != "main" {
 		t.Fatalf("unmatched host -> %s, want the first site", s.Name)
 	}
 }
 
-func TestSiteContentFilterDefaults(t *testing.T) {
+func TestDomainContentFilters(t *testing.T) {
 	c := doujins()
-	filter := c.ContentFilters[0]
-	c.Sites[1].ContentFilterDefaults = []ContentFilterDefault{{Group: filter.Group, Visible: true}}
+	off := false
+	c.Domains[1].Filters = []ContentFilter{{Group: GroupRef{"tag", "gore"}, Visible: false, UserToggle: &off}}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		host string
-		want bool
-	}{
-		{"doujins.com", false},
-		{"DOUJINS.GAY:443", true},
-		{"doujins.gay", true},
-		{"unknown.test:8080", false},
-		{"", false},
-	} {
-		site, _ := c.SiteFor(tc.host)
-		if got := site.DefaultVisible(filter); got != tc.want {
-			t.Errorf("host %q default %t, want %t", tc.host, got, tc.want)
-		}
+	if !c.Domains[0].Filters[0].Toggleable() {
+		t.Fatal("omitted user_toggle must allow overrides")
 	}
-	if c.ContentFilters[0].DefaultVisible {
-		t.Fatal("site resolution changed the app default")
+	if c.Domains[1].Filters[0].Toggleable() {
+		t.Fatal("false user_toggle must lock the rule")
 	}
-	c.Sites[1].ContentFilterDefaults[0].Visible = false
-	filter.DefaultVisible = true
-	if c.Sites[1].DefaultVisible(filter) {
-		t.Fatal("an explicit false site default was lost")
+	if d, _ := c.DomainFor("DOUJINS.GAY:443"); d.Name != "gay" || len(d.Filters) != 1 {
+		t.Fatalf("domain: %+v", d)
 	}
-	if !(Site{}).DefaultVisible(filter) {
-		t.Fatal("a site without an override did not retain the app default")
+	if d, _ := c.DomainFor("unknown.test"); d.Name != "main" {
+		t.Fatalf("fallback: %+v", d)
 	}
 }
 
-func TestRejectInvalidContentFilterDefaults(t *testing.T) {
+func TestRejectInvalidDomainFilters(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
-		"undeclared filter": func(c *Config) {
-			c.Sites[0].ContentFilterDefaults = []ContentFilterDefault{{Group: GroupRef{"tag", "missing"}}}
+		"repeated filter":                func(c *Config) { c.Domains[0].Filters = append(c.Domains[0].Filters, c.Domains[0].Filters[0]) },
+		"repeated domain":                func(c *Config) { c.Domains[1].Name = c.Domains[0].Name },
+		"unknown required kind":          func(c *Config) { c.Domains[1].RequireKinds = []string{"missing"} },
+		"repeated required kind":         func(c *Config) { c.Domains[1].RequireKinds = []string{"gallery", "gallery"} },
+		"required kind without entities": func(c *Config) { c.Domains[0].RequireKinds = []string{"gallery"} },
+		"repeated host":                  func(c *Config) { c.Domains[1].Hosts = []string{"DOUJINS.COM:443"} },
+		"required and hidden": func(c *Config) {
+			c.Domains[1].Filters = []ContentFilter{{Group: GroupRef{"tag", "yaoi"}, Visible: false}}
 		},
-		"repeated default": func(c *Config) {
-			d := ContentFilterDefault{Group: c.ContentFilters[0].Group}
-			c.Sites[0].ContentFilterDefaults = []ContentFilterDefault{d, d}
+		"repeated required": func(c *Config) {
+			c.Domains[1].RequireGroups = append(c.Domains[1].RequireGroups, c.Domains[1].RequireGroups[0])
 		},
-		"repeated filter":    func(c *Config) { c.ContentFilters = append(c.ContentFilters, c.ContentFilters[0]) },
-		"repeated site name": func(c *Config) { c.Sites[1].Name = c.Sites[0].Name },
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := doujins()
 			mutate(&c)
 			if err := c.Validate(); !errors.Is(err, ErrInvalid) {
-				t.Fatalf("got %v, want ErrInvalid", err)
+				t.Fatalf("got %v", err)
 			}
 		})
 	}

@@ -66,8 +66,8 @@ func TestGuestContentFiltersApplyWithoutAccountRows(t *testing.T) {
 	}
 	// A hard entrypoint restriction still applies even when local preferences
 	// request content outside it.
-	if w := f.guestCall(http.MethodGet, "gay.test", "", q("/contents", "kind", "gallery"), header, nil, &page); w.Code != http.StatusOK || len(page.Contents) != 0 {
-		t.Fatalf("hard site scope: %d %+v", w.Code, page)
+	if w := f.guestCall(http.MethodGet, "gay.test", "", q("/contents", "kind", "gallery"), header, nil, &page); w.Code != http.StatusOK || len(page.Contents) != 1 || page.Contents[0].ID != f.cid(3) {
+		t.Fatalf("hard domain scope: %d %+v", w.Code, page)
 	}
 	// An independent guest request has defaults, not the previous guest's data.
 	if w := f.guestCall(http.MethodGet, "main.test", "", "/content-filters", "", nil, &settings); w.Code != http.StatusOK || settings.Filters[0].Visible || settings.Filters[0].Overridden {
@@ -84,7 +84,7 @@ func TestGuestContentFiltersApplyWithoutAccountRows(t *testing.T) {
 
 func TestGuestContentFiltersValidateAndIgnoreHeaderForAccounts(t *testing.T) {
 	f := seeded(t)
-	for _, header := range []string{`no`, `null`, `{"filters":[{"group_id":"unknown","visible":true}]}`, `{"filters":[{"group_id":"` + f.ids["yaoi"] + `","visible":true},{"group_id":"` + f.ids["yaoi"] + `","visible":false}]}`, `{"filters":[],"include_deleted":true}`} {
+	for _, header := range []string{`no`, `null`, `{"filters":[{"group_id":"` + f.ids["yaoi"] + `","visible":true},{"group_id":"` + f.ids["yaoi"] + `","visible":false}]}`, `{"filters":[],"include_deleted":true}`} {
 		for _, path := range []string{"/content-filters", "/contents?kind=gallery", "/search?q=alpha"} {
 			w := f.guestCall(http.MethodGet, "main.test", "", path, header, nil, nil)
 			if w.Code != http.StatusBadRequest {

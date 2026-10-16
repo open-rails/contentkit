@@ -1,23 +1,14 @@
-# Content filters and entrypoint defaults
+# Domain content rules and reader filters
 
-Content filters are an app's configurable reading preferences. They hide tagged
-content from ordinary discovery lists and searches; they do not revoke access
-or prevent opening a direct content URL. A tag's own page can still show its
-explicitly requested content. Actual access rules, `require_groups` and
-`exclude_restrictions` continue to apply independently.
+A domain is a hostname entrypoint into one app's catalog. Host aliases can share
+one policy. The first domain is the fallback for unknown hosts and in-process
+calls without a request hostname. Hosts and trusted reverse proxies must preserve
+the original Host; choosing a domain never changes account tenancy or grants.
 
-Declare filters in the content model (`Config.Content`). Each filter names an
-active, unscoped group by kind and slug. The groups must already exist: create
-them through ContentKit's group API or an explicit import/setup command.
-Declaring a filter does not create groups, seed content or run a database
-migration. The settings UI omits filters whose groups do not exist.
-
-Filter names come from the entity's localized display name, with the same language fallback used on
-entity cards. Keep translations on the entity; filter configuration only
-selects entities and visibility defaults.
+Each domain declares its own filters. There is no global available-filter list:
 
 ```yaml
-languages: [en]
+languages: [en, ja]
 kinds:
   gallery:
     route: g
@@ -26,84 +17,100 @@ kinds:
     groups: [tag]
 group_kinds:
   tag: {route: tags}
-content_filters:
-  - group: {kind: tag, slug: spoilers}
-    default_visible: false
-  - group: {kind: tag, slug: graphic}
-    default_visible: true
-sites:
+domains:
   - name: main
     hosts: [catalog.example.test]
-  - name: alternate
-    hosts: [alternate.example.test]
-    content_filter_defaults:
-      - {group: {kind: tag, slug: spoilers}, visible: true}
-      - {group: {kind: tag, slug: graphic}, visible: false}
+    filters:
+      - entity: {kind: tag, slug: spoilers}
+        visible: false
+      - entity: {kind: tag, slug: restricted}
+        visible: false
+        user_toggle: false
+  - name: gay
+    hosts: [doujins.gay, www.doujins.gay]
+    require_kinds: [gallery]
+    require_entities:
+      - {kind: tag, slug: yaoi}
+    filters:
+      - entity: {kind: tag, slug: gore}
+        visible: false
 ```
 
-An unspecified site default inherits the app's `default_visible`. An explicit
-`visible: false` overrides an app default of `true`. Filter references and site
-names must be unique; a site default must name a declared content filter.
-Host matching ignores case and port. The first site is the fallback for
-unmatched hosts and for in-process calls without a request host.
+Applications may load this policy from their own configuration and pass it to
+ContentKit; Doujins and Hentai0 use `content_filters.domains` in `config.yaml`
+and `config.example.yaml`. Structural content kinds remain in the content model.
 
-For an ordinary reader, visibility is resolved in this order:
+## Meaning of each rule
 
-1. The app's default.
-2. The matched site's override, if any.
-3. The reader's explicit override, saved to their account or supplied by an anonymous browser.
+- An entity omitted from a domain's filters is allowed and has no user toggle.
+- `visible` is the default visibility of content associated with the entity.
+- `user_toggle` defaults to true. A reader may change an optional filter.
+- `visible: false` with `user_toggle: false` is a hard exclusion: matching
+  content cannot be listed, searched, opened directly or served as media on
+  that domain, including to a signed-in staff account through public routes.
+- `visible: true` with `user_toggle: false` allows the content and offers no
+  toggle. It does not require content to have that entity.
+- Every entry under `require_entities` must be associated with a content item
+  for the item to be accessible. Optional `require_kinds` limits these
+  requirements to named content kinds; omit it to cover every kind. Required
+  entities are not reader toggles. Requiring Yaoi for galleries excludes every
+  gallery without Yaoi on Doujins.gay while keeping blog posts available.
 
-Saved overrides belong to the account within this app, so an explicit choice
-continues to win when that person visits another entrypoint of the same app.
-It does not become a preference in another app sharing the tenant account.
-Anonymous readers can keep choices in local storage and send them with each
-request in the `ContentKit-Reader-Preferences` header:
+A soft hidden filter affects ordinary listings and search, not direct links or
+an explicitly requested entity page. Hard rules always apply. Contradictory
+required/hidden rules and invalid references must be rejected at configuration
+validation rather than silently broadening access.
 
-```json
-{"filters": [{"group_id": "configured-entity-id", "visible": false}]}
-```
+## Entity names and internal entities
 
-The header changes only soft content filters. It grants no access, does not
-change the entrypoint's restrictions, and never writes an anonymous account
-row. It is limited to 8 KiB and 128 filters; malformed values, duplicate IDs
-and IDs that are not configured filters return `400 invalid_request`.
-Authenticated readers always use their account settings, even when a request
-carries the header. Hosts must allow this header in their CORS policy.
+Create referenced entities before enabling hard rules. An unresolved hard
+exclusion or requirement fails closed; missing optional filters are omitted.
 
-`GET /v1/content-filters` is public and returns the current site's `default_visible`, the
-effective `visible` value and whether it was `overridden`. Saving uses
-`PUT /v1/me/content-filters`; its `filters` list replaces the saved overrides.
-Omit a filter from that list to reset it to the current site's default. For
-example, the following resets all filter overrides and disables the separate
-include-deleted preference:
+References use stable entity kind and slug. Display names, translated names and
+aliases belong to the entity record, never the filter policy. The settings UI
+uses the entity's localized display name and normal language fallback.
 
-```json
-{"filters": [], "include_deleted": false}
-```
+An entity marked `internal` is available to authorized management APIs, imports
+and publishing, but is absent from public entity lookup, lists, search,
+autocomplete and content metadata. Its names must not contribute to public
+content search documents. Existing identity and alias resolution still reuse
+it during authorized publishing.
 
-After a new account registers, `POST /v1/me/content-filters/initialize` can
-adopt its guest choices. Its body includes `account_id`, `filters` and
-`include_deleted`. The account ID must match the authenticated account;
-mismatches return `403 forbidden`. Initialization inserts only if no saved
-settings exist, so retries and delayed callbacks cannot replace account
-choices, including an explicit reset to defaults. Ordinary sign-in must load
-account preferences instead of initializing them from the browser.
+Internal entities are never user-toggleable, even if a rule requests it.
+Consequently a hidden internal entity is a fixed domain exclusion. Hentai0 can
+use an internal `restricted` entity hidden on hmovie-moe.us and allowed on
+hentai0.com, while its label remains invisible on both public sites.
 
-Before attaching persisted guest choices, fetch `GET /v1/content-filters`
-without the header and discard choices whose IDs are no longer configured.
-This keeps old browser storage from making catalog requests invalid after a
-filter is removed. Language remains a separate account profile preference;
-hosts can persist guest language in the same browser store and adopt it on
-registration through their account profile adapter.
+## Reader preferences
 
-Lists, searches and recommendations share the catalog's resolved preferences.
-Public catalog totals use site defaults, independent of any reader's saved
-overrides, and cache separately by site. Direct URLs and sitemaps retain their
-existing access/site rules; soft preferences do not make content private.
+`GET /v1/content-filters` is public and returns only the current domain's
+available public toggles, with localized entities and effective/default values.
+Hard policy and internal entity references are not exposed through `/v1/kinds`.
 
-The server derives the entrypoint from the request host already bound by its
-route gate. Hosts and trusted development/reverse proxies must preserve the
-original `Host` when routing these requests to the app. Do not add a query
-parameter or arbitrary forwarded header that changes this selection. The app's
-tenant/app authorization binding stays fixed: choosing a hostname never
-selects a different tenant or grants permissions.
+Signed-in readers save choices using `PUT /v1/me/content-filters`. Replacing the
+current domain's choices must preserve choices that belong to other domains.
+Preferences apply only to currently offered toggles; they cannot override fixed
+rules, requirements or omitted entities.
+
+Guests keep choices in localStorage and send only applicable overrides in
+`ContentKit-Reader-Preferences`. The bounded header never grants access or
+changes the host-selected domain. Stale entries cannot weaken current policy.
+Authenticated requests use account preferences instead of the guest header.
+
+After registration, `POST /v1/me/content-filters/initialize` adopts the guest's
+choices only when the authenticated account has no saved preferences. This
+includes valid choices saved for other domains of the same app; stale or
+unknown entities are discarded. An existing account's login never overwrites
+its preferences with guest state.
+Both server and SDK preserve choices across domains while honoring each
+domain's current controls. Language remains a separate account preference.
+
+## Upgrading an existing reader deployment
+
+Apply the schema migration before starting this version. Readers and media workers from before
+internal entities were introduced do not understand that flag: drain them
+before activating internal markers or converting public entities to
+internal. A host backfill must retain any old restriction flags while an old
+reader still serves requests. Normal task startup can migrate after stopping
+the old stack; a live switchover needs the schema first and marker activation
+after the reader change.

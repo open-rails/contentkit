@@ -266,12 +266,16 @@ func TestEngineInteractions(t *testing.T) {
 // A content item's comments setting closes or hides its comments, and the
 // request's site scope applies to direct reads and interactions: content a
 // site excludes is not found there.
-func TestEngineCommentsSettingAndSiteScope(t *testing.T) {
+func TestEngineCommentsSettingAndDomainScope(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
-	cfg.Content.Sites = []kinds.Site{{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, ExcludeRestrictions: []string{"restricted"}}}
+	locked := false
+	cfg.Content.Domains = []kinds.Domain{
+		{Name: "main", Hosts: []string{"example.com"}},
+		{Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}},
+	}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
 	if err != nil {
 		t.Fatal(err)
@@ -334,12 +338,22 @@ func TestEngineCommentsSettingAndSiteScope(t *testing.T) {
 	s.call(http.StatusOK, staff, "PATCH", item, catalog.ContentPatch{Comments: ptr(content.CommentsOpen)}, nil)
 	s.call(http.StatusCreated, u1, "POST", item+"/comments", content.CommentInput{Body: "open again"}, nil)
 
-	// A site that excludes restricted content does not find it, directly
-	// or through interactions; the main site does.
-	r := create(catalog.ContentInput{Restrictions: []string{"restricted"}})
+	// An internal entity can impose a domain boundary without becoming a
+	// public tag. The boundary applies to staff using public routes too.
+	var restricted []groups.Group
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{{
+		Kind: "tag", Slug: "restricted", Internal: true,
+		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Restricted"}},
+	}}, &restricted)
+	r := create(catalog.ContentInput{})
+	s.call(http.StatusOK, staff, "PUT", v+"/contents/"+r.ID+"/entities", groups.ContentGroups{
+		Memberships: []groups.Membership{{GroupID: restricted[0].ID}},
+	}, nil)
 	main, safe := "http://example.com"+v+"/contents/"+r.ID, "http://safe.example"+v+"/contents/"+r.ID
 	s.call(http.StatusOK, u1, "GET", main, nil, nil)
 	s.call(http.StatusOK, u1, "POST", main+"/like", nil, nil)
+	s.call(http.StatusNotFound, staff, "GET", safe, nil, nil)
+	s.call(http.StatusNotFound, u1, "GET", v+"/entities/"+string(restricted[0].ID), nil, nil)
 	for _, call := range []struct{ method, path string }{{"GET", ""}, {"GET", "/comments"}, {"POST", "/like"}, {"GET", "/reaction"},
 		{"POST", "/favorite"}, {"GET", "/can-comment"}} {
 		s.call(http.StatusNotFound, u1, call.method, safe+call.path, nil, nil)

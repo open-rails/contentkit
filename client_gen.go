@@ -24,7 +24,7 @@ import (
 	"github.com/open-rails/helpers/notify"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
 func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
 	var out kindsroute.ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
@@ -1521,6 +1521,98 @@ func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (gr
 	return out, err
 }
 
+// GetManageEntitiesQuery is the query of GetManageEntities.
+type GetManageEntitiesQuery struct {
+	// only entities of this kind
+	Kind string
+	// only children of this entity
+	Parent string
+	// only entities scoped by this entity
+	Scope string
+	// only the entity with this slug
+	Slug string
+	// match a canonical name, alias or slug
+	Q string
+	// only sort names starting with this letter
+	Letter string
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+	// count contents of this kind
+	ContentKind string
+	// name, count or newest
+	Sort string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: at most 200
+	Limit int
+}
+
+func (q GetManageEntitiesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Parent != "" {
+		v.Set("parent", q.Parent)
+	}
+	if q.Scope != "" {
+		v.Set("scope", q.Scope)
+	}
+	if q.Slug != "" {
+		v.Set("slug", q.Slug)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Letter != "" {
+		v.Set("letter", q.Letter)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.ContentKind != "" {
+		v.Set("content_kind", q.ContentKind)
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetManageEntities is GET /v1/manage/entities (staff). Lists active entities for administration, including internal classifications that are never exposed by public reads.
+func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (groups.GroupPage, error) {
+	var out groups.GroupPage
+	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageEntityQuery is the query of GetManageEntity.
+type GetManageEntityQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q GetManageEntityQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetManageEntity is GET /v1/manage/entities/{id} (staff). An entity's administration view, including internal classifications and their relationships.
+func (c *Client) GetManageEntity(ctx context.Context, id string, q GetManageEntityQuery) (groups.GroupDetail, error) {
+	var out groups.GroupDetail
+	err := c.call(ctx, http.MethodGet, expand("/v1/manage/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
 // GetMeEntitiesQuery is the query of GetMeEntities.
 type GetMeEntitiesQuery struct {
 	// only entities of this kind
@@ -1883,7 +1975,7 @@ func (c *Client) DeleteEntityOffer(ctx context.Context, id string) (offers.Offer
 	return out, err
 }
 
-// PostEntityJoin is POST /v1/entities/{id}/join (user). Joins a group free to join: grants the viewer its key.
+// PostEntityJoin is POST /v1/entities/{id}/join (user). Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.
 func (c *Client) PostEntityJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
 	var out offers.GroupJoin
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
@@ -1921,7 +2013,7 @@ func (q GetMeLibraryQuery) values() url.Values {
 	return v
 }
 
-// GetMeLibrary is GET /v1/me/library (user). The content the viewer bought, newest first, deleted content included.
+// GetMeLibrary is GET /v1/me/library (user). The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.
 func (c *Client) GetMeLibrary(ctx context.Context, q GetMeLibraryQuery) (offers.LibraryPage, error) {
 	var out offers.LibraryPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/library", q.values(), nil, &out)

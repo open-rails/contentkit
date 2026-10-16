@@ -197,12 +197,12 @@ func IsHost(a access.Actor) bool {
 	return ok
 }
 
-type siteKey struct{}
+type domainKey struct{}
 
-// Site is the request host the gate bound to ctx: it picks the site whose
-// scope every read applies (kinds.Config.SiteFor). "" outside a request.
-func Site(ctx context.Context) string {
-	s, _ := ctx.Value(siteKey{}).(string)
+// Domain is the request host the gate bound to ctx: it picks the domain whose
+// scope every read applies (kinds.Config.DomainFor). "" outside a request.
+func Domain(ctx context.Context) string {
+	s, _ := ctx.Value(domainKey{}).(string)
 	return s
 }
 
@@ -254,7 +254,7 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), siteKey{}, r.Host)
+		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), domainKey{}, r.Host)
 		if a.Anonymous {
 			ctx = readerprefs.WithHeader(ctx, r.Header.Values(readerprefs.Header))
 		}

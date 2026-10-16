@@ -10,6 +10,7 @@ import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup, useKinds, type UseGroup } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
+import { Switch } from "#ckui/ui/switch";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
 import { Input } from "#ckui/ui/input";
@@ -27,6 +28,8 @@ import { GroupPicker, labelOf, useGroupNames, type GroupLike, type Labels } from
 export interface GroupEditorProps {
   /** The group edited; null creates one of `kind`. */
   id: string | null;
+  /** Staff management, including internal entities and their visibility setting. */
+  management?: boolean;
   /** The kind a new group is created as. */
   kind: string;
   /** Languages names and text are written in; default the content model's. */
@@ -54,7 +57,7 @@ export interface GroupEditorProps {
 export function GroupEditor(p: GroupEditorProps) {
   const { t } = useMessages();
   const { kinds, loading: kindsLoading } = useKinds({ client: p.client });
-  const g = useGroup(p.id, { client: p.client });
+  const g = useGroup(p.id, { client: p.client, management: p.management });
   const languages = p.languages ?? kinds?.languages ?? ["en"];
   const kind = g.group?.kind ?? p.kind;
   const spec: GroupKind = kinds?.entity_kinds?.[kind] ?? {};
@@ -90,13 +93,13 @@ export function GroupEditor(p: GroupEditorProps) {
   const group = g.group;
   return root(
     <>
-      <Head group={group} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      <Details key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
+      <Head management={p.management} group={group} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
+      <Details management={p.management} key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
       <Names group={group} g={g} languages={languages} onError={p.onError} />
       <Texts key={group.id} group={group} g={g} languages={languages} onError={p.onError} />
-      <Images group={group} spec={spec} onError={p.onError} client={p.client} />
+      <Images management={p.management} group={group} spec={spec} onError={p.onError} client={p.client} />
       {spec.sellable && <Membership group={group} onError={p.onError} client={p.client} />}
-      <Edges group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
+      <Edges management={p.management} group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(group)}
     </>,
   );
@@ -155,7 +158,9 @@ function Head({
   onDeleted,
   onError,
   client,
+  management,
 }: {
+  management?: boolean;
   group: GroupDetail;
   g: UseGroup;
   labels?: Labels;
@@ -185,6 +190,7 @@ function Head({
         open={merging}
         onOpenChange={setMerging}
         group={group}
+        management={management}
         client={client}
         onMerge={async (into) => {
           const report = await g.merge(into.id);
@@ -226,12 +232,13 @@ export interface GroupMergeDialogProps {
   group: GroupDetail;
   /** Merges into the chosen group: memberships, names, edges and children move, its code redirects. */
   onMerge: (into: GroupCard) => Promise<MergeReport>;
+  management?: boolean;
   language?: string;
   client?: ContentKitClient;
 }
 
 /** Picks a group of the same kind and merges this one into it, after typing the confirmation word. */
-export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language, client }: GroupMergeDialogProps) {
+export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language, client, management }: GroupMergeDialogProps) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
@@ -263,7 +270,7 @@ export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language,
             </Button>
           </div>
         ) : (
-          <GroupPicker kind={group.kind} language={language} exclude={[group.id]} label={t("groupEditor.mergeTarget")} onPick={setInto} client={client} autoFocus />
+          <GroupPicker management={management} kind={group.kind} language={language} exclude={[group.id]} label={t("groupEditor.mergeTarget")} onPick={setInto} client={client} autoFocus />
         )}
         <div className="grid gap-1.5">
           <Label htmlFor={`${id}-typed`}>{t("admin.typeToConfirm", { word: typed })}</Label>
@@ -300,7 +307,7 @@ export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language,
 }
 
 /** A parent or scope: the chosen group with a change and a clear, or a picker. */
-function GroupField({ label, kind, value, onChange, exclude, required, client }: { label: string; kind: string; value: GroupLike | null; onChange: (g: GroupLike | null) => void; exclude?: string[]; required?: boolean; client?: ContentKitClient }) {
+function GroupField({ label, kind, value, onChange, exclude, required, client, management }: { management?: boolean; label: string; kind: string; value: GroupLike | null; onChange: (g: GroupLike | null) => void; exclude?: string[]; required?: boolean; client?: ContentKitClient }) {
   const { t } = useMessages();
   return (
     <div className="grid gap-1.5" data-ckui="group-field">
@@ -318,13 +325,13 @@ function GroupField({ label, kind, value, onChange, exclude, required, client }:
           </Button>
         </div>
       ) : (
-        <GroupPicker kind={kind} label={label} exclude={exclude} onPick={onChange} client={client} />
+        <GroupPicker management={management} kind={kind} label={label} exclude={exclude} onPick={onChange} client={client} />
       )}
     </div>
   );
 }
 
-function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, client }: GroupEditorProps & { spec: GroupKind; languages: readonly string[]; g: UseGroup }) {
+function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, client, management }: GroupEditorProps & { spec: GroupKind; languages: readonly string[]; g: UseGroup }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
@@ -332,6 +339,7 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   const [names, setNames] = useState<Record<string, string>>({});
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
+  const [internal, setInternal] = useState(false);
   const [parent, setParent] = useState<GroupLike | null>(null);
   const [scope, setScope] = useState<GroupLike | null>(null);
   const declared = spec.attributes ?? {};
@@ -353,7 +361,7 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
     }
     const given: Name[] = languages.filter((l) => names[l]?.trim()).map((l) => ({ language: l, kind: "name", name: names[l]!.trim() }));
     const made = await create.run(() =>
-      g.create({ kind, slug: slug.trim(), names: given, parent_id: parent?.id, scope_id: scope?.id, attributes: Object.keys(attributes).length ? attributes : undefined }),
+      g.create({ kind, slug: slug.trim(), ...(management ? { internal } : {}), names: given, parent_id: parent?.id, scope_id: scope?.id, attributes: Object.keys(attributes).length ? attributes : undefined }),
     );
     if (made) onCreated?.(made);
   };
@@ -386,8 +394,9 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
           }}
         />
       </div>
-      {spec.scoped_by && <GroupField label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
-      {spec.parent && <GroupField label={t("groupEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} client={client} />}
+      {spec.scoped_by && <GroupField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
+      {spec.parent && <GroupField management={management} label={t("groupEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} client={client} />}
+      {management && <InternalField id={`${id}-internal`} checked={internal} onChange={setInternal} />}
       <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
       {invalid && <ErrorLine>{invalid}</ErrorLine>}
       {create.error && <ErrorLine>{contentError(m, create.error)}</ErrorLine>}
@@ -398,16 +407,29 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   );
 }
 
-function Details({ group, spec, g, labels, onError, client }: { group: GroupDetail; spec: GroupKind; g: UseGroup; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+function InternalField({ id, checked, onChange }: { id: string; checked: boolean; onChange: (value: boolean) => void }) {
+  const { t } = useMessages();
+  return (
+    <div className="flex items-start gap-3">
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+      <div className="grid gap-1">
+        <Label htmlFor={id}>{t("groupEditor.internal")}</Label>
+        <p className="text-xs text-muted-foreground">{t("groupEditor.internalHint")}</p>
+      </div>
+    </div>
+  );
+}
+
+function Details({ group, spec, g, labels, onError, client, management }: { management?: boolean; group: GroupDetail; spec: GroupKind; g: UseGroup; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
   const declared = spec.attributes ?? {};
   const [form, setForm, settle] = useSeeded(
-    () => ({ slug: group.slug, parent: (group.parent ?? null) as GroupLike | null, scope: (group.scope ?? null) as GroupLike | null, attrs: formOf(declared, group.attributes) }),
+    () => ({ slug: group.slug, internal: group.internal ?? false, parent: (group.parent ?? null) as GroupLike | null, scope: (group.scope ?? null) as GroupLike | null, attrs: formOf(declared, group.attributes) }),
     group.revision,
   );
-  const { slug, parent, scope, attrs } = form;
+  const { slug, internal, parent, scope, attrs } = form;
   const edit = (patch: Partial<typeof form>) => {
     setSaved(false);
     setForm((f) => ({ ...f, ...patch }));
@@ -432,6 +454,7 @@ function Details({ group, spec, g, labels, onError, client }: { group: GroupDeta
     const done = await save.run(() =>
       g.update({
         slug: slug.trim(),
+        ...(management ? { internal } : {}),
         attributes,
         ...(spec.parent ? { parent_id: parent?.id ?? "" } : {}),
         ...(spec.scoped_by && scope ? { scope_id: scope.id } : {}),
@@ -455,8 +478,9 @@ function Details({ group, spec, g, labels, onError, client }: { group: GroupDeta
           <Label htmlFor={`${id}-slug`}>{t("groupEditor.slug")}</Label>
           <Input id={`${id}-slug`} className="h-8" required value={slug} onChange={(e) => setSlug(e.target.value)} />
         </div>
-        {spec.scoped_by && <GroupField label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
-        {spec.parent && <GroupField label={t("groupEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} exclude={[group.id]} client={client} />}
+        {spec.scoped_by && <GroupField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
+        {spec.parent && <GroupField management={management} label={t("groupEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} exclude={[group.id]} client={client} />}
+        {management && <InternalField id={`${id}-internal`} checked={internal} onChange={(value) => edit({ internal: value })} />}
         <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
@@ -628,7 +652,7 @@ function Texts({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
   );
 }
 
-function Images({ group, spec, onError, client }: { group: GroupDetail; spec: GroupKind; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+function Images({ group, spec, onError, client, management }: { management?: boolean; group: GroupDetail; spec: GroupKind; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const { t } = useMessages();
   const c = group.cover;
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
@@ -637,8 +661,8 @@ function Images({ group, spec, onError, client }: { group: GroupDetail; spec: Gr
       <p className="text-muted-foreground" data-ckui="cover-mode">
         {t(mode === "image" ? "groupEditor.coverImage" : mode === "content" ? "groupEditor.coverContent" : "groupEditor.coverAuto")}
       </p>
-      <GroupImageEditor group={group} slot="cover" client={client} onError={onError} />
-      {spec.owner === "user" && <GroupImageEditor group={group} slot="avatar" client={client} onError={onError} />}
+      <GroupImageEditor management={management} group={group} slot="cover" client={client} onError={onError} />
+      {spec.owner === "user" && <GroupImageEditor management={management} group={group} slot="avatar" client={client} onError={onError} />}
     </Section>
   );
 }
@@ -663,13 +687,13 @@ function Membership({ group, onError, client }: { group: GroupDetail; onError?: 
 
 const RELATION = /^[a-z][a-z0-9_]*$/;
 
-function Edges({ group, g, kinds, labels, onError, client }: { group: GroupDetail; g: UseGroup; kinds: ContentModel | null; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+function Edges({ group, g, kinds, labels, onError, client, management }: { management?: boolean; group: GroupDetail; g: UseGroup; kinds: ContentModel | null; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
   const save = useAction("group.save", onError);
   const partners = useGroupNames(
     group.edges.map((e) => (e.from === group.id ? e.to : e.from)),
-    { client },
+    { client, management },
   );
   const kindsList = Object.keys(kinds?.entity_kinds ?? {}).sort();
   const [relation, setRelation] = useState("");
@@ -727,6 +751,7 @@ function Edges({ group, g, kinds, labels, onError, client }: { group: GroupDetai
         )}
         {valid && (
           <GroupPicker
+            management={management}
             key={kind}
             kind={kind}
             label={t("groupEditor.edgeTarget")}

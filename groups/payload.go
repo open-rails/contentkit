@@ -70,7 +70,11 @@ type shown struct {
 }
 
 func cardShown(g *GroupCard) shown {
-	return shown{kind: g.Kind, id: g.ID, cover: g.Cover, avatar: &g.Avatar, access: &g.Access}
+	out := shown{kind: g.Kind, id: g.ID, cover: g.Cover, avatar: &g.Avatar}
+	if !g.Internal {
+		out.access = &g.Access
+	}
+	return out
 }
 
 // fill resolves the covers (contents' in language) and the user-owned

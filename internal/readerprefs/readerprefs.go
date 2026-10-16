@@ -20,8 +20,9 @@ func WithHeader(ctx context.Context, values []string) context.Context {
 	return context.WithValue(ctx, key{}, append([]string(nil), values...))
 }
 
-// Overrides validates the request's guest choices against this app's configured
-// filters. Missing filters keep their entrypoint defaults.
+// Overrides validates guest choices and applies only this domain's allowed
+// filters. Choices from other domains and obsolete or locked filters are
+// ignored; missing filters retain this domain's defaults.
 func Overrides(ctx context.Context, allowed map[string]bool) (map[string]bool, error) {
 	values, _ := ctx.Value(key{}).([]string)
 	if len(values) == 0 {
@@ -51,14 +52,18 @@ func Overrides(ctx context.Context, allowed map[string]bool) (map[string]bool, e
 		return nil, fmt.Errorf("at most 128 guest content filters")
 	}
 	out := make(map[string]bool, len(input.Filters))
+	seen := map[string]bool{}
 	for _, f := range input.Filters {
-		if !allowed[f.GroupID] || f.Visible == nil {
-			return nil, fmt.Errorf("guest content filter must name a configured entity and visibility")
+		if f.GroupID == "" || f.Visible == nil {
+			return nil, fmt.Errorf("guest content filter must name an entity and visibility")
 		}
-		if _, duplicate := out[f.GroupID]; duplicate {
+		if seen[f.GroupID] {
 			return nil, fmt.Errorf("guest content filter is set twice")
 		}
-		out[f.GroupID] = *f.Visible
+		seen[f.GroupID] = true
+		if allowed[f.GroupID] {
+			out[f.GroupID] = *f.Visible
+		}
 	}
 	return out, nil
 }

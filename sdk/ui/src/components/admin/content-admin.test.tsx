@@ -9,7 +9,7 @@ import { ContentKitProvider } from "../../react/index.js";
 import { ContentAdmin } from "./content-admin.js";
 
 const model: ContentModel = {
-  languages: ["en", "ja"], tiers: [], signals: true, content_filters: [],
+  languages: ["en", "ja"], tiers: [], signals: true,
   kinds: {
     article: { route: "articles", presentation: "post", versions: { languages: "one" } },
     video: { route: "videos", presentation: "video", versions: { languages: "one" } },
@@ -29,6 +29,7 @@ function server(kinds = model, reply?: (url: URL) => Response | undefined) {
     if (answer) return answer;
     const path = url.pathname.replace(/^\/v1/, "");
     if (path === "/kinds") return json(kinds);
+    if (path === "/manage/entities") return json({ entities: [] });
     if (path === "/manage" || path.startsWith("/manage/") || path === "/polls/admin") return json([]);
     if (path === "/stats/activity") return json({ days: [] });
     if (path === "/stats/top") return json({ contents: [] });
@@ -151,7 +152,7 @@ it("composes the native group and moderation managers without loading other sect
   await user.click(nav().getByRole("button", { name: "Comment moderation" }));
   expect(await screen.findByLabelText("Words to ban")).toBeVisible();
   expect(paths(s)).toContain("/moderation/banned-words");
-  expect(paths(s).some((p) => p.startsWith("/manage") || p === "/polls/admin" || p.startsWith("/stats/"))).toBe(false);
+  expect(paths(s).some((p) => (p.startsWith("/manage") && p !== "/manage/entities") || p === "/polls/admin" || p.startsWith("/stats/"))).toBe(false);
 });
 
 it("passes nested routes and filters through the host navigation adapter", async () => {

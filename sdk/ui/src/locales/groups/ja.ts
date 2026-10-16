@@ -18,6 +18,8 @@ export const groups: typeof en = {
     noMatch: "一致するものはありません。",
   },
   groupEditor: {
+    internal: "内部利用のみ",
+    internalHint: "公開ページ、検索、閲覧設定には表示されません。スタッフはドメインルールでこのエンティティを使用できます。",
     uploadAvatar: "アバターをアップロード",
     removeAvatar: "アバターを削除",
     images: "画像",

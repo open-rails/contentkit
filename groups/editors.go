@@ -54,7 +54,7 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 
 // edits reports whether the non-staff writer edits g.
 func (w *writer) edits(ctx context.Context, s *Store, g Group) (bool, error) {
-	if s.cfg.GroupKinds[g.Kind].Owner != "user" {
+	if g.Internal || s.cfg.GroupKinds[g.Kind].Owner != "user" {
 		return false, nil
 	}
 	return gate.GroupEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.GroupSettingsManage(g.Kind))
@@ -97,8 +97,8 @@ func (s *Store) creator(ctx context.Context, inputs []GroupInput) (string, error
 			return "", fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, kind)
 		case gk.Owner != "user":
 			return "", fmt.Errorf("%w: %s groups are the site's", ErrForbidden, kind)
-		case in.ID != "" || in.AuthScope != "":
-			return "", fmt.Errorf("%w: only staff choose a group's id or auth scope", ErrForbidden)
+		case in.ID != "" || in.AuthScope != "" || in.Internal:
+			return "", fmt.Errorf("%w: only staff choose a group's id, auth scope or internal classification", ErrForbidden)
 		case in.OwnerUserID != "" && in.OwnerUserID != a.AccountID():
 			return "", fmt.Errorf("%w: a person creates only groups of their own", ErrForbidden)
 		}

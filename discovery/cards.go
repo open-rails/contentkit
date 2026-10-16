@@ -290,6 +290,10 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {
 		return err
 	}
+	internal, err := s.internalAccessGroups(ctx, items, ds)
+	if err != nil {
+		return err
+	}
 	var keys []string
 	now := s.o.Now()
 	for i, d := range ds {
@@ -298,10 +302,19 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 			a.Level, a.Tiers = r.Level, r.Tiers
 		}
 		for _, k := range d.Sell {
-			a.Sell = append(a.Sell, k.String())
+			if k.Kind() != access.KeyGroup || !internal[k.Group()] {
+				a.Sell = append(a.Sell, k.String())
+			}
 		}
 		if d.Requires != nil {
-			a.Requires = d.Requires.String()
+			if d.Requires.Kind() == access.KeyGroup && internal[d.Requires.Group()] {
+				a.Sell = nil
+			} else {
+				a.Requires = d.Requires.String()
+			}
+		}
+		if internal[items[i].Rule.Group] && (a.Level == access.GroupLevel || a.Level == access.GroupPPV) {
+			a.Level = access.PPV
 		}
 		rows[i].Access = a
 	}

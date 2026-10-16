@@ -118,6 +118,8 @@ export function GroupBanner(p: GroupBannerProps) {
 
 export interface GroupImageEditorProps {
   group: GroupLike;
+  /** Read the entity through the staff management API, including internal entities. */
+  management?: boolean;
   /** The cover, or a user-owned kind's avatar. */
   slot: EntityImageSlot;
   /** Crop before uploading. Default true. */
@@ -128,9 +130,9 @@ export interface GroupImageEditorProps {
 }
 
 /** A group's cover or avatar for its editors: pick (and crop) an image, upload it and select it; or go back to none (a cover: automatic). */
-export function GroupImageEditor({ group, slot, crop = true, client, onError, className }: GroupImageEditorProps) {
+export function GroupImageEditor({ group, slot, crop = true, client, onError, className, management }: GroupImageEditorProps) {
   const { t } = useMessages();
-  const g = useGroup(group.id, { client });
+  const g = useGroup(group.id, { client, management });
   const input = useRef<HTMLInputElement>(null);
   const save = useAction("group.save", onError);
   const [source, setSource] = useState<CropSource | null>(null);

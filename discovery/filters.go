@@ -18,11 +18,8 @@ import (
 
 // ContentFilterState is one configured content filter as the reader has it.
 type ContentFilterState struct {
-	Group groups.GroupCard `json:"entity"`
-	// Label is the entity's display name in the requested language, using the
-	// same language fallback as entity cards.
-	Label          string `json:"label"`
-	DefaultVisible bool   `json:"default_visible"`
+	Group          groups.GroupCard `json:"entity"`
+	DefaultVisible bool             `json:"default_visible"`
 	// Visible is the reader's setting, Overridden whether it is their own.
 	Visible    bool `json:"visible"`
 	Overridden bool `json:"overridden"`
@@ -35,7 +32,7 @@ type ContentFilters struct {
 	IncludeDeleted bool `json:"include_deleted"`
 }
 
-// ContentFiltersUpdate replaces the reader's settings.
+// ContentFiltersUpdate replaces only the current domain's reader settings.
 type ContentFiltersUpdate struct {
 	Filters        []FilterSetting `json:"filters"`
 	IncludeDeleted bool            `json:"include_deleted"`
@@ -62,19 +59,36 @@ const (
 	hide = "hide"
 )
 
-// filterGroups resolves the configured filters' groups to their ids.
+// filterGroups resolves this domain's reader-toggleable, public entities.
+// Required entities and internal entities never become user preferences.
 func (s *Service) filterGroups(ctx context.Context) (map[kinds.GroupRef]string, error) {
+	domain, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
+	return s.filterGroupsForDomains(ctx, []kinds.Domain{domain})
+}
+
+// Registration adopts preferences from every domain, even when its current
+// response only exposes this domain's controls.
+func (s *Service) filterGroupsForDomains(ctx context.Context, domains []kinds.Domain) (map[kinds.GroupRef]string, error) {
 	out := map[kinds.GroupRef]string{}
-	fs := s.o.Kinds.ContentFilters
-	if len(fs) == 0 {
+	var refs []kinds.GroupRef
+	seen := map[kinds.GroupRef]bool{}
+	for _, domain := range domains {
+		for _, f := range domain.Filters {
+			if f.Toggleable() && !domain.Requires(f.Group) && !seen[f.Group] {
+				refs = append(refs, f.Group)
+				seen[f.Group] = true
+			}
+		}
+	}
+	if len(refs) == 0 {
 		return out, nil
 	}
-	ks, ss := make([]string, len(fs)), make([]string, len(fs))
-	for i, f := range fs {
-		ks[i], ss[i] = f.Group.Kind, f.Group.Slug
+	ks, ss := make([]string, len(refs)), make([]string, len(refs))
+	for i, r := range refs {
+		ks[i], ss[i] = r.Kind, r.Slug
 	}
 	rows, err := s.o.Pool.Query(ctx, `SELECT g.id, g.kind, g.slug FROM `+s.t.groups+` g JOIN unnest($2::text[], $3::text[]) AS r(kind, slug)
- ON g.kind = r.kind AND g.slug = r.slug WHERE g.tenant_id = $1 AND g.state = 'active' AND g.scope_id = ''`, s.o.Tenant, ks, ss)
+ ON g.kind = r.kind AND g.slug = r.slug WHERE g.tenant_id = $1 AND g.state = 'active' AND g.scope_id = '' AND NOT g.internal`, s.o.Tenant, ks, ss)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +125,8 @@ func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, 
 }
 
 // ContentFilters is the current reader's content filters: every
-// configured filter whose group exists, labeled in language. Defaults come
-// from the request's site; outside a request the first site's defaults apply.
+// current-domain toggle whose public entity exists, named in language.
+// Outside a request, the first domain applies.
 func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, language string) (ContentFilters, error) {
 	out := ContentFilters{Filters: []ContentFilterState{}}
 	if language != "" {
@@ -158,32 +172,33 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 	for _, c := range cards {
 		byID[string(c.ID)] = c
 	}
-	site, _ := s.o.Kinds.SiteFor(gate.Site(ctx))
-	for _, f := range s.o.Kinds.ContentFilters {
+	domain, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
+	for _, f := range domain.Filters {
 		id := fgs[f.Group]
 		g, ok := byID[id]
 		if !ok {
 			continue
 		}
 		o, overridden := overrides[id]
-		defaultVisible := site.DefaultVisible(f)
+		defaultVisible := f.Visible
 		visible := defaultVisible
 		if overridden {
 			visible = o != hide
 		}
-		out.Filters = append(out.Filters, ContentFilterState{Group: g, Label: g.Name, DefaultVisible: defaultVisible, Visible: visible, Overridden: overridden})
+		out.Filters = append(out.Filters, ContentFilterState{Group: g, DefaultVisible: defaultVisible, Visible: visible, Overridden: overridden})
 	}
 	return out, nil
 }
 
-// SetContentFilters replaces the signed-in reader's settings; each names a
-// configured filter's group.
+// SetContentFilters replaces this domain's settings without deleting choices
+// for other domains; each entry names a current, user-toggleable entity.
 func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersUpdate) error {
 	return s.setContentFilters(ctx, actor, u, false)
 }
 
 // InitializeContentFilters adopts a new account's guest choices only when no
-// account settings exist. Retries and delayed registration callbacks cannot
+// account settings exist, using the union of all domains' public toggles.
+// Stale and never-toggleable choices are ignored. Retries cannot
 // overwrite settings the account has already saved.
 func (s *Service) InitializeContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersInitialization) error {
 	if u.AccountID == "" {
@@ -199,7 +214,13 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, u C
 	if !actor.Member() {
 		return fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
-	fgs, err := s.filterGroups(ctx)
+	var fgs map[kinds.GroupRef]string
+	var err error
+	if initialize {
+		fgs, err = s.filterGroupsForDomains(ctx, s.o.Kinds.Domains)
+	} else {
+		fgs, err = s.filterGroups(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -210,6 +231,9 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, u C
 	overrides := map[string]string{}
 	for _, f := range u.Filters {
 		if !valid[f.GroupID] {
+			if initialize {
+				continue
+			}
 			return fmt.Errorf("%w: group %q is not a content filter", ErrInvalid, f.GroupID)
 		}
 		if _, dup := overrides[f.GroupID]; dup {
@@ -224,12 +248,19 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, u C
 	if err != nil {
 		return err
 	}
-	conflict := `DO UPDATE SET overrides = EXCLUDED.overrides, include_deleted = EXCLUDED.include_deleted, updated_at = now()`
+	// Replace only this domain's choices. Preferences belonging to another
+	// domain survive both setting a filter and resetting this domain.
+	validIDs := make([]string, 0, len(valid))
+	for id := range valid {
+		validIDs = append(validIDs, id)
+	}
+	conflict := `DO UPDATE SET overrides = (saved.overrides - $5::text[]) || EXCLUDED.overrides, include_deleted = EXCLUDED.include_deleted, updated_at = now()`
+	args := []any{s.o.Tenant, actor.AccountID(), raw, u.IncludeDeleted, validIDs}
 	if initialize {
 		conflict = `DO NOTHING`
+		args = args[:4]
 	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` (tenant_id, user_id, overrides, include_deleted, updated_at) VALUES ($1, $2, $3, $4, now())
- ON CONFLICT (tenant_id, user_id) `+conflict,
-		s.o.Tenant, actor.AccountID(), raw, u.IncludeDeleted)
+	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved (tenant_id, user_id, overrides, include_deleted, updated_at) VALUES ($1, $2, $3, $4, now())
+ ON CONFLICT (tenant_id, user_id) `+conflict, args...)
 	return err
 }

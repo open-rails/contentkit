@@ -40,7 +40,7 @@ it("validates stale stored filters before sending anonymous requests and never s
   client.preferences.configure("existing");
   await client.discovery.list();
   expect(calls.at(-1)?.preferences).toBeNull();
-  expect(client.preferences.browser.snapshot().filters).toEqual([{ group_id: "filter", visible: true }]);
+  expect(client.preferences.browser.snapshot().filters).toEqual([{ group_id: "filter", visible: true }, { group_id: "obsolete", visible: true }]);
 });
 
 it("refreshes configured IDs when a database reset invalidates a previously accepted guest filter", async () => {
@@ -60,7 +60,7 @@ it("refreshes configured IDs when a database reset invalidates a previously acce
   await expect(client.discovery.list()).resolves.toEqual({ contents: [] });
   expect(headers).toHaveLength(3);
   expect(headers[2]).toBeNull();
-  expect(client.preferences.browser.snapshot().filters).toEqual([]);
+  expect(client.preferences.browser.snapshot().filters).toEqual([{ group_id: "filter", visible: true }]);
 });
 
 it("inherits only an explicit new registration and keeps guest data separate from existing accounts", async () => {
@@ -199,4 +199,35 @@ it("does not share anonymous preferences between server-rendered requests", () =
   const two = createContentKitClient({ baseUrl: "/server-render" }).preferences;
   one.browser.setLanguage("es");
   expect(two.browser.snapshot().language).toBeUndefined();
+});
+
+
+it("inherits every domain's saved filter choices and keeps them pending until the server accepts them", async () => {
+  let fail = true;
+  const attempts: unknown[] = [];
+  const urls: string[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/all-domain-registration", fetch: async (input, init) => {
+    urls.push(String(input));
+    attempts.push(JSON.parse(String(init?.body)));
+    return fail ? Response.json({ code: "unavailable", error: "Retry" }, { status: 503 }) : Response.json(inventory);
+  } });
+  const filters = [
+    { group_id: "current", visible: true },
+    { group_id: "other-domain", visible: false },
+    { group_id: "stale", visible: true },
+  ];
+  client.preferences.browser.setFilters(filters);
+  await client.preferences.inheritAfterRegistration("new");
+  client.preferences.configure("new", { load: async () => null, save: async () => {} });
+  await vi.waitFor(() => expect(client.preferences.snapshot().error?.code).toBe("unavailable"));
+  expect(client.preferences.snapshot().pending).toBe(true);
+  expect(client.preferences.browser.pending("new")?.filters).toEqual(filters);
+  fail = false;
+  await client.preferences.retry();
+  expect(client.preferences.snapshot().pending).toBe(false);
+  expect(attempts).toEqual([
+    { account_id: "new", filters, include_deleted: false },
+    { account_id: "new", filters, include_deleted: false },
+  ]);
+  expect(urls.every((url) => url.endsWith("/me/content-filters/initialize"))).toBe(true);
 });

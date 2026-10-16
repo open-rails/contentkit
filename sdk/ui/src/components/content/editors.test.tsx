@@ -37,7 +37,6 @@ const wrap = (client: ContentKitClient) =>
 const model: ContentModel = {
   languages: ["en"],
   tiers: [],
-  content_filters: [],
   signals: false,
   kinds: {
     post: { route: "p", presentation: "post", versions: { languages: "one", hidden: true } },
@@ -73,7 +72,7 @@ const content = (o: Partial<Content> = {}): Content => ({
   updated_at: at,
   ...o,
 });
-const card = (id: string, name: string): GroupCard => ({ id, kind: "channel", slug: name.toLowerCase(), name, count: 0, attributes: {}, created_at: at });
+const card = (id: string, name: string): GroupCard => ({ id, internal: false, kind: "channel", slug: name.toLowerCase(), name, count: 0, attributes: {}, created_at: at });
 const detail = (id: string, name: string): GroupDetail => ({
   ...card(id, name),
   state: "active",

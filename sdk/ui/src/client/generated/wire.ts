@@ -382,14 +382,8 @@ export interface Content {
   deleted_at?: string;
 }
 
-export interface ContentFilter {
-  entity: GroupRef;
-  default_visible: boolean;
-}
-
 export interface ContentFilterState {
   entity: GroupCard;
-  label: string;
   default_visible: boolean;
   visible: boolean;
   overridden: boolean;
@@ -440,7 +434,6 @@ export interface ContentModel {
   tiers: string[];
   kinds: Record<string, Kind>;
   entity_kinds: Record<string, GroupKind>;
-  content_filters: ContentFilter[];
   signals: boolean;
   avatars?: PresetRule;
 }
@@ -798,6 +791,7 @@ export interface Group {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   state: "active" | "deleted" | "merged";
@@ -824,6 +818,7 @@ export interface GroupCard {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   name: string;
@@ -842,6 +837,7 @@ export interface GroupDetail {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   state: "active" | "deleted" | "merged";
@@ -873,6 +869,7 @@ export interface GroupInput {
   id?: string;
   kind: string;
   slug: string;
+  internal?: boolean;
   scope_id?: string;
   parent_id?: string;
   attributes?: Record<string, unknown>;
@@ -916,6 +913,7 @@ export interface GroupRecord {
   id?: string;
   kind: string;
   slug: string;
+  internal?: boolean;
   scope?: Ref;
   parent?: Ref;
   state?: string;
@@ -933,11 +931,6 @@ export interface GroupRecord {
   updated_at?: string;
 }
 
-export interface GroupRef {
-  kind: string;
-  slug: string;
-}
-
 export interface GroupSummary {
   id: string;
   kind: string;
@@ -949,6 +942,7 @@ export interface GroupSummary {
 
 export interface GroupUpdate {
   slug?: string;
+  internal?: boolean;
   scope_id?: string;
   parent_id?: string;
   state?: "active" | "deleted" | "merged";
@@ -1166,6 +1160,7 @@ export interface MyGroup {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   name: string;

@@ -57,3 +57,20 @@ it("puts an optional management kind in the route and keeps other filters in the
   expect(urls.map((url) => url.searchParams.has("kind"))).toEqual([false, false]);
   expect(Object.fromEntries(urls[1]!.searchParams)).toEqual({ q: "winter", state: "draft", language: "en" });
 });
+
+
+it("uses authenticated entity management routes without leaking into public listing reads", async () => {
+  const paths: string[] = [];
+  const client = createContentKitClient({ baseUrl: "/ck", mounts: { entities: "https://metadata.example/v1" }, fetch: async (input) => {
+    paths.push(String(input));
+    return Response.json({ entities: [] });
+  } });
+  await client.entities.manage({ kind: "tag", q: "restricted", limit: 10 });
+  await client.entities.getForManagement("restricted-id", "ja");
+  await client.entities.list({ kind: "tag" });
+  expect(paths).toEqual([
+    "https://metadata.example/v1/manage/entities?kind=tag&q=restricted&limit=10",
+    "https://metadata.example/v1/manage/entities/restricted-id?language=ja",
+    "https://metadata.example/v1/entities?kind=tag",
+  ]);
+});

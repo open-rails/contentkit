@@ -160,7 +160,7 @@ FROM %[1]s g
 CROSS JOIN LATERAL (SELECT ARRAY(SELECT x.l FROM unnest(@d_langs::text[]) AS x(l) WHERE EXISTS (SELECT 1 FROM %[2]s f
  WHERE f.tenant_id = g.tenant_id AND f.group_ids @> ARRAY[g.id] AND f.languages @> ARRAY[x.l] AND %[4]s)) AS languages) l
 JOIN %[3]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
-WHERE g.tenant_id = @d_tenant AND g.kind = @d_kind AND g.state = 'active' AND g.id > @d_after AND cardinality(l.languages) > 0
+WHERE g.tenant_id = @d_tenant AND g.kind = @d_kind AND g.state = 'active' AND NOT g.internal AND g.id > @d_after AND cardinality(l.languages) > 0
 ORDER BY g.id LIMIT @d_limit`, s.t.groups, s.t.facets, s.t.codes, pred)
 	})
 }

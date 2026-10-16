@@ -689,6 +689,10 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   at `basePath/{kind}/{id}` with `GroupEditor` and `GroupMembers`. Props:
   `groupKinds` (default the model's site-owned ones), `kinds`, `labels`,
   `contentKind`, `renderContent`, `pageSize`. `useGroupManagerAccess()`.
+  Its staff listing includes internal entities, with an “Internal use only”
+  setting in the editor. Public directories and search never include those
+  entities. Use `management` on a standalone `GroupEditor` or `GroupPicker`
+  to opt into the same staff API; ordinary user-owned editors stay public.
 
   ```tsx
   <GroupManager client={contentkit} basePath="/admin/groups" navigation={nav} labels={{ artist: "Artists" }} />
@@ -821,7 +825,11 @@ the host owns search-page navigation.
 Render these under `ContentKitProvider` with `viewer={null}` for guests. Guest
 language choices and filter overrides are stored per app in localStorage and
 shared across tabs. Account filter choices come from ContentKit's database;
-account languages use the provider's `languagePreference` adapter:
+account languages use the provider's `languagePreference` adapter. Each domain
+only offers its configured, user-toggleable entities; internal classifications
+and required or locked rules never appear in reader settings. Labels use the
+entities' localized names. Saving this domain's settings preserves choices for
+entities offered by other domains.
 
 ```tsx
 <ContentKitProvider

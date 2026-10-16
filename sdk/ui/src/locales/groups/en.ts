@@ -17,6 +17,8 @@ export const groups = {
     noMatch: "No match.",
   },
   groupEditor: {
+    internal: "Internal use only",
+    internalHint: "Hidden from public pages, search and reader settings. Staff can use this entity in domain rules.",
     uploadAvatar: "Upload avatar",
     removeAvatar: "Remove avatar",
     images: "Images",

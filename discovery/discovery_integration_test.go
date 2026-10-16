@@ -190,7 +190,7 @@ func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
 		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
 			t.Fatalf("%s: status %d", tc.language, status)
 		}
-		if len(result.Filters) != 2 || result.Filters[0].Label != tc.want || result.Filters[0].Group.Name != tc.want {
+		if len(result.Filters) != 2 || result.Filters[0].Group.Name != tc.want {
 			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Filters)
 		}
 	}
@@ -203,8 +203,8 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
-	if len(filters.Filters) != 2 || filters.Filters[0].Label != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
-		filters.Filters[1].Label != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
+	if len(filters.Filters) != 2 || filters.Filters[0].Group.Name != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
+		filters.Filters[1].Group.Name != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {

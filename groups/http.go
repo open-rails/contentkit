@@ -64,6 +64,11 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
 		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
+	staff(httpapi.GET, "/manage/entities", "Lists active entities for administration, including internal classifications that are never exposed by public reads.", nil, httpapi.OK(GroupPage{}), httpapi.H(handler.manageList), nil,
+		httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
+		httpapi.Text("slug", "only the entity with this slug"), httpapi.Text("q", "match a canonical name, alias or slug"), httpapi.Text("letter", "only sort names starting with this letter"), language,
+		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name, count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
+	staff(httpapi.GET, "/manage/entities/{id}", "An entity's administration view, including internal classifications and their relationships.", nil, httpapi.OK(GroupDetail{}), httpapi.H(handler.manageDetail), notFound, language),
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/entities", Resource: "entities", Auth: httpapi.User,
 		Doc: "The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.",
 		Query: []httpapi.Param{httpapi.Text("kind", "only entities of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
@@ -228,11 +233,23 @@ func reply(w http.ResponseWriter, status int, v any, err error) {
 func pathID(r *http.Request) GroupID { return GroupID(r.PathValue("id")) }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {
+	h.listEntities(w, r, false)
+}
+
+func (h handler) manageList(w http.ResponseWriter, r *http.Request) {
+	h.listEntities(w, r, true)
+}
+
+func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management bool) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	page, err := h.as(r).List(r.Context(), ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
+	opts := ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
 		Slug: q.Get("slug"), Letter: q.Get("letter"), Language: q.Get("language"), ContentKind: q.Get("content_kind"),
-		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Limit: limit})
+		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Limit: limit, IncludeInternal: management}
+	if management {
+		opts.Query = q.Get("q")
+	}
+	page, err := h.as(r).List(r.Context(), opts)
 	reply(w, http.StatusOK, page, err)
 }
 
@@ -246,6 +263,11 @@ func (h handler) mine(w http.ResponseWriter, r *http.Request) {
 
 func (h handler) detail(w http.ResponseWriter, r *http.Request) {
 	d, err := h.as(r).Detail(r.Context(), pathID(r), r.URL.Query().Get("language"))
+	reply(w, http.StatusOK, d, err)
+}
+
+func (h handler) manageDetail(w http.ResponseWriter, r *http.Request) {
+	d, err := h.as(r).ManagementDetail(r.Context(), pathID(r), r.URL.Query().Get("language"))
 	reply(w, http.StatusOK, d, err)
 }
 
@@ -446,7 +468,7 @@ func (s *Store) contentMemberships(ctx context.Context, contentID, language stri
 			return nil
 		})
 	}
-	c, err := s.compile(ListOptions{Language: language, Limit: 200}, ids)
+	c, err := s.compile(ListOptions{Language: language, Limit: 200, IncludeInternal: true}, ids)
 	if err != nil {
 		return out, err
 	}

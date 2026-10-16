@@ -37,6 +37,9 @@ type MyGroupPage struct {
 // key of (Options.Sales), filtered, ordered and paged as List.
 func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyGroupPage, error) {
 	out := MyGroupPage{Groups: []MyGroup{}}
+	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
+		return out, err
+	}
 	v := s.viewer()
 	if !v.Member() {
 		return out, fmt.Errorf("%w: only a signed-in person has groups", ErrForbidden)

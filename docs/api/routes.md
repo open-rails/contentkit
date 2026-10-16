@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (167). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`, publishing `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (169). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`, publishing `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -14,7 +14,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute. |
+| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute. |
 
 ## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 
@@ -146,6 +146,8 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 |---|---|---|---|---|---|
 | GET | `/v1/entities` | public | — | 200 `GroupPage` | Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged. Query: `kind`, `parent`, `scope`, `slug`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
 | GET | `/v1/entities/{id}` | public | — | 200 `GroupDetail` | An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor. Query: `language`. |
+| GET | `/v1/manage/entities` | staff `root:entities:write` | — | 200 `GroupPage` | Lists active entities for administration, including internal classifications that are never exposed by public reads. Query: `kind`, `parent`, `scope`, `slug`, `q`, `letter`, `language`, `content_kind`, `sort`, `cursor`, `limit`. |
+| GET | `/v1/manage/entities/{id}` | staff `root:entities:write` | — | 200 `GroupDetail` | An entity's administration view, including internal classifications and their relationships. Query: `language`. |
 | GET | `/v1/me/entities` | user | — | 200 `MyGroupPage` | The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them. Query: `kind`, `language`, `sort`, `cursor`, `limit`. |
 | POST | `/v1/entities` | editor `root:entities:write` | `GroupInput[]` | 201 `Group[]` | Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
 | PATCH | `/v1/entities/{id}` | editor `root:entities:write` | `GroupUpdate` | 200 `Group` | Updates a entity's given fields; state restores or deletes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state. |
@@ -194,9 +196,9 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | DELETE | `/v1/contents/{id}/versions/{vid}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write. |
 | PUT | `/v1/entities/{id}/offer` | editor `root:offers:write` | `Terms` | 200 `Offer` | Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
 | DELETE | `/v1/entities/{id}/offer` | editor `root:offers:write` | — | 200 `Offer` | Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write. |
-| POST | `/v1/entities/{id}/join` | user | — | 200 `GroupJoin` | Joins a group free to join: grants the viewer its key. |
+| POST | `/v1/entities/{id}/join` | user | — | 200 `GroupJoin` | Joins a public group free to join: grants the viewer its key. Internal entities are not joinable. |
 | DELETE | `/v1/entities/{id}/join` | user | — | 200 `GroupJoin` | Leaves a group joined free; a bought membership stays. |
-| GET | `/v1/me/library` | user | — | 200 `LibraryPage` | The content the viewer bought, newest first, deleted content included. Query: `language`, `cursor`, `limit`. |
+| GET | `/v1/me/library` | user | — | 200 `LibraryPage` | The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary. Query: `language`, `cursor`, `limit`. |
 | GET | `/v1/offers` | staff `root:offers:write` | — | 200 `OfferPage` | Offers, newest first, with their OpenRails sync state. Query: `state`, `unsynced`, `cursor`, `limit`. |
 
 ## Discovery: lists, search, similar and recommended contents, release dates, content filters, history and signals (`/v1`)

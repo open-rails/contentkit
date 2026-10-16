@@ -14,7 +14,7 @@ func TestMigrationChains(t *testing.T) {
 		files fs.FS
 		want  []string
 	}{
-		{"postgres", Postgres, []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql"}},
+		{"postgres", Postgres, []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql"}},
 		{"clickhouse", ClickHouse, []string{"0001_baseline.up.sql"}},
 		{"accounts", Accounts, []string{"0001_account_bindings.up.sql", "0002_notification_merchants.up.sql", "0003_media.up.sql", "0004_avatar_placement.up.sql", "0005_erasure_completion.up.sql"}},
 	} {

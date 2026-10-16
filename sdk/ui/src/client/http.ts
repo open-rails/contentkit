@@ -118,9 +118,12 @@ export class Http {
 
   acceptGuestFilters(filters: readonly { entity: { id: string } }[]): void {
     this.filterIDs = new Set(filters.map((f) => f.entity.id));
-    const saved = this.browserPreferences.snapshot().filters;
-    const valid = saved.filter((f) => this.filterIDs!.has(f.group_id));
-    if (valid.length !== saved.length) this.browserPreferences.setFilters(valid);
+    // Other domains may offer different entities. Keep their saved choices,
+    // but send only the current domain's public, configurable filters.
+  }
+
+  private guestFilters() {
+    return this.browserPreferences.snapshot().filters.filter((f) => this.filterIDs?.has(f.group_id));
   }
 
   private async validateGuestFilters(): Promise<void> {
@@ -155,7 +158,7 @@ export class Http {
     const lang = this.o.language?.();
     if (lang) headers.set("Accept-Language", lang);
     if (this.viewer === null && guestPreferences) {
-      const filters = this.browserPreferences.snapshot().filters;
+      const filters = this.guestFilters();
       if (filters.length) headers.set("ContentKit-Reader-Preferences", JSON.stringify({ filters }));
     }
     if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
@@ -179,7 +182,7 @@ export class Http {
         this.filterIDs = undefined;
         await this.validateGuestFilters();
         if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
-        const filters = this.browserPreferences.snapshot().filters;
+        const filters = this.guestFilters();
         const current = filters.length ? JSON.stringify({ filters }) : null;
         if (current !== old) return this.request(url, { method, body, signal, blob, keepalive, guestPreferences, retryGuestPreferences: false });
       }

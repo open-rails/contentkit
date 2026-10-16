@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
+        "summary": "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
         "responses": {
           "200": {
             "description": "OK",
@@ -6768,6 +6768,190 @@
         ]
       }
     },
+    "/v1/manage/entities": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Lists active entities for administration, including internal classifications that are never exposed by public reads.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only entities of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "parent",
+            "in": "query",
+            "description": "only children of this entity",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "only entities scoped by this entity",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "only the entity with this slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "match a canonical name, alias or slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "letter",
+            "in": "query",
+            "description": "only sort names starting with this letter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_kind",
+            "in": "query",
+            "description": "count contents of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name, count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/manage/entities/{id}": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "An entity's administration view, including internal classifications and their relationships.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/me/entities": {
       "get": {
         "tags": [
@@ -8615,7 +8799,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "Joins a group free to join: grants the viewer its key.",
+        "summary": "Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.",
         "parameters": [
           {
             "name": "id",
@@ -8711,7 +8895,7 @@
         "tags": [
           "offers"
         ],
-        "summary": "The content the viewer bought, newest first, deleted content included.",
+        "summary": "The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.",
         "parameters": [
           {
             "name": "language",
@@ -12779,29 +12963,11 @@
           "updated_at"
         ]
       },
-      "ContentFilter": {
-        "type": "object",
-        "properties": {
-          "entity": {
-            "$ref": "#/components/schemas/GroupRef"
-          },
-          "default_visible": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "entity",
-          "default_visible"
-        ]
-      },
       "ContentFilterState": {
         "type": "object",
         "properties": {
           "entity": {
             "$ref": "#/components/schemas/GroupCard"
-          },
-          "label": {
-            "type": "string"
           },
           "default_visible": {
             "type": "boolean"
@@ -12815,7 +12981,6 @@
         },
         "required": [
           "entity",
-          "label",
           "default_visible",
           "visible",
           "overridden"
@@ -12987,12 +13152,6 @@
               "$ref": "#/components/schemas/GroupKind"
             }
           },
-          "content_filters": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ContentFilter"
-            }
-          },
           "signals": {
             "type": "boolean"
           },
@@ -13005,7 +13164,6 @@
           "tiers",
           "kinds",
           "entity_kinds",
-          "content_filters",
           "signals"
         ]
       },
@@ -14083,6 +14241,9 @@
           "slug": {
             "type": "string"
           },
+          "internal": {
+            "type": "boolean"
+          },
           "scope_id": {
             "type": "string"
           },
@@ -14132,6 +14293,7 @@
           "id",
           "kind",
           "slug",
+          "internal",
           "state",
           "attributes",
           "created_at",
@@ -14174,6 +14336,9 @@
           },
           "slug": {
             "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
           },
           "scope_id": {
             "type": "string"
@@ -14218,6 +14383,7 @@
           "id",
           "kind",
           "slug",
+          "internal",
           "name",
           "count",
           "attributes",
@@ -14235,6 +14401,9 @@
           },
           "slug": {
             "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
           },
           "scope_id": {
             "type": "string"
@@ -14339,6 +14508,7 @@
           "id",
           "kind",
           "slug",
+          "internal",
           "state",
           "attributes",
           "created_at",
@@ -14363,6 +14533,9 @@
           },
           "slug": {
             "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
           },
           "scope_id": {
             "type": "string"
@@ -14501,6 +14674,9 @@
           "slug": {
             "type": "string"
           },
+          "internal": {
+            "type": "boolean"
+          },
           "scope": {
             "$ref": "#/components/schemas/Ref"
           },
@@ -14560,21 +14736,6 @@
           }
         }
       },
-      "GroupRef": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "slug"
-        ]
-      },
       "GroupSummary": {
         "type": "object",
         "properties": {
@@ -14609,6 +14770,9 @@
         "properties": {
           "slug": {
             "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
           },
           "scope_id": {
             "type": "string"
@@ -15343,6 +15507,9 @@
           "slug": {
             "type": "string"
           },
+          "internal": {
+            "type": "boolean"
+          },
           "scope_id": {
             "type": "string"
           },
@@ -15401,6 +15568,7 @@
           "id",
           "kind",
           "slug",
+          "internal",
           "name",
           "count",
           "attributes",

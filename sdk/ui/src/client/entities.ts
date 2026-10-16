@@ -23,6 +23,8 @@ import { call, type RouteQuery } from "./route.js";
 
 /** GET /entities filters, as the route names them. */
 export type EntityQuery = RouteQuery<"GET", "/entities">;
+/** Staff entity listing, including internal entities. */
+export type ManageEntityQuery = RouteQuery<"GET", "/manage/entities">;
 /** GET /me/entities filters. */
 export type MyEntityQuery = RouteQuery<"GET", "/me/entities">;
 /** An entity's image slots: every kind's cover, a user-owned kind's avatar. */
@@ -39,6 +41,14 @@ export class EntitiesClient {
 
   list(q: EntityQuery = {}, signal?: AbortSignal): Promise<GroupPage> {
     return call(this.http, "GET", "/entities", { query: q, signal });
+  }
+  /** Staff listing, including internal entities hidden from public discovery. */
+  manage(q: ManageEntityQuery = {}, signal?: AbortSignal): Promise<GroupPage> {
+    return call(this.http, "GET", "/manage/entities", { query: q, signal });
+  }
+  /** Staff detail, including internal entities. */
+  getForManagement(id: string, language?: string, signal?: AbortSignal): Promise<GroupDetail> {
+    return call(this.http, "GET", "/manage/entities/{id}", { params: { id }, query: { language }, signal });
   }
   /** A merged group answers with its survivor. */
   get(id: string, language?: string, signal?: AbortSignal): Promise<GroupDetail> {
