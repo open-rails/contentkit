@@ -76,6 +76,12 @@ it("fetches all day metadata once, reveals 30 newest cards, and expands cached d
   expect(screen.queryByText("Gallery yesterday-11")).toBeNull();
   expect(screen.queryByText("Gallery older-1")).toBeNull();
   expect(view.container.querySelectorAll('[data-ckui="release-day"]')).toHaveLength(3);
+  const headings = screen.getAllByRole("heading", { level: 2 });
+  expect(headings).toHaveLength(3);
+  for (const heading of headings) {
+    expect(heading.textContent).not.toMatch(/\b\d+ items?\b/);
+    expect(heading.textContent).toBe(heading.querySelector("time")?.textContent);
+  }
   const request = requests.find((url) => url.pathname === "/v1/releases")!;
   expect(request.searchParams.get("days")).toBe("10");
   expect(request.searchParams.get("kind")).toBe("gallery");

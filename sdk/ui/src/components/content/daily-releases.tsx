@@ -75,7 +75,6 @@ function ReleaseDaySection({ day, initial, step, cardProps: p }: { day: ReleaseD
         <Button id={`${id}-heading`} type="button" variant="ghost" className="h-auto w-full justify-start gap-3 px-0 py-3 text-start text-lg font-semibold" aria-expanded={open} aria-controls={`${id}-contents`} onClick={toggle}>
           <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className={cn("size-5 shrink-0 transition-transform duration-200 motion-reduce:transition-none", !open && "-rotate-90")} aria-hidden />
           <time dateTime={day.date}>{label}</time>
-          <span className="ml-auto shrink-0 text-sm font-normal text-muted-foreground">{m.plural("contents.items", day.contents.length)}</span>
         </Button>
       </h2>
       <div id={`${id}-contents`} role="region" aria-labelledby={`${id}-heading`} aria-hidden={!open} inert={!open} className={cn("grid transition-[grid-template-rows,opacity] duration-250 ease-out motion-reduce:transition-none", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
