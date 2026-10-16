@@ -3,7 +3,7 @@ import "../../test/dom.js";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { Card } from "../../client/generated/wire.js";
-import { ContentCard } from "./card.js";
+import { ContentCard, PostCard } from "./card.js";
 import { createContentKitClient } from "../../client/client.js";
 import { ContentKitProvider } from "../../react/provider.js";
 
@@ -143,4 +143,13 @@ it.each([{ progress: 5, progress_max: 10 }, { progress: 0, progress_max: 0 }])("
   expect(view.container.querySelector('[data-ckui="card-cover"]')).toContainElement(bar);
   expect(bar).toHaveClass("bottom-0");
   expect(screen.queryByText(/finished|completed/i)).toBeNull();
+});
+
+// Their screen-reader labels are absolutely placed; a card that is not their
+// positioning parent lets them escape a scrolling rail and widen the page.
+it("makes each card the positioning parent of its hidden labels", () => {
+  const content = render(<ContentCard card={card} />);
+  expect(content.container.querySelector('[data-ckui="content-card"]')?.classList.contains("relative")).toBe(true);
+  const post = render(<PostCard card={{ ...card, kind: "post" }} />);
+  expect(post.container.querySelector('[data-ckui="post-card"]')?.classList.contains("relative")).toBe(true);
 });
