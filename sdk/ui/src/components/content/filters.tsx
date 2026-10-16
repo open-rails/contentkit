@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { useContext, useId } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
+import type { GroupCard } from "../../client/generated/wire.js";
 import type { ReleaseDatesQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
@@ -14,6 +15,14 @@ import { Switch } from "#ckui/ui/switch";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 
+/** Counts for one concrete listing selection, keyed by content kind and entity.
+ * Only rows offered by the current domain's filter inventory are displayed. */
+export interface ContentFilterCount {
+  content_kind: string;
+  entity: Pick<GroupCard, "id">;
+  count: number;
+}
+
 export interface ContentFilterSettingsProps {
   /** Content kinds to show. Omitted displays every configured kind. */
   kinds?: readonly string[];
@@ -21,6 +30,8 @@ export interface ContentFilterSettingsProps {
   labels?: Labels;
   /** Entity names in this language; default the provider's. */
   language?: string;
+  /** Currently excluded matches in this listing/day; omitted shows no counts. */
+  counts?: readonly ContentFilterCount[];
   /** Offer listing deleted content the reader holds. Default true. */
   includeDeleted?: boolean;
   client?: ContentKitClient;
@@ -60,6 +71,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
                 <Switch id={`${id}-${kind}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(kind, x.entity.id, v))} />
                 <Label htmlFor={`${id}-${kind}-${x.entity.id}`} className="min-w-0 flex-1">
                   {x.entity.name || x.entity.slug}
+                  {p.counts !== undefined && <span className="tabular-nums">: {new Intl.NumberFormat(m.language).format(p.counts.find((entry) => entry.content_kind === kind && entry.entity.id === x.entity.id)?.count ?? 0)}</span>}
                 </Label>
               </li>
             ))}

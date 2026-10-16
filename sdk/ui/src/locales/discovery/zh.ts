@@ -2,11 +2,22 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    filterTitle: "内容筛选",
+    filterDescription: "选择你想看到的内容。",
     savingPreferences: "正在保存偏好设置…",
     preferencesNotSaved: "偏好设置尚未保存。",
     title: "阅读设置",
     description: "选择语言和要显示的内容。",
     filters: "显示内容：",
+  },
+  releases: {
+    premiumMore_one: "还有 {count} 项",
+    premiumMore_other: "还有 {count} 项",
+    premiumHint: "会员专属预览 · 点击查看",
+    filteredMore_one: "已筛除 {count} 项",
+    filteredMore_other: "已筛除 {count} 项",
+    manageFilters: "更改内容筛选",
+    filterContext: "{date}的筛选结果。一项内容可能符合多个筛选条件。",
   },
   contents: {
     showMore: "显示更多",

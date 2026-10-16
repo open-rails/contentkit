@@ -2,11 +2,22 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    filterTitle: "Inhaltsfilter",
+    filterDescription: "Wähle die Inhalte, die du sehen möchtest.",
     savingPreferences: "Deine Einstellungen werden gespeichert…",
     preferencesNotSaved: "Deine Einstellungen wurden noch nicht gespeichert.",
     title: "Leseeinstellungen",
     description: "Wähle deine Sprache und die angezeigten Inhalte.",
     filters: "Inhalte anzeigen:",
+  },
+  releases: {
+    premiumMore_one: "{count} weiterer Eintrag",
+    premiumMore_other: "{count} weitere Einträge",
+    premiumHint: "Vorschauen für Mitglieder · Zum Ansehen klicken",
+    filteredMore_one: "{count} Eintrag ausgefiltert",
+    filteredMore_other: "{count} Einträge ausgefiltert",
+    manageFilters: "Inhaltsfilter ändern",
+    filterContext: "Filter für {date}. Ein Eintrag kann mehreren Filtern entsprechen.",
   },
   contents: {
     showMore: "Mehr anzeigen",

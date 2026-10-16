@@ -2,11 +2,22 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    filterTitle: "콘텐츠 필터",
+    filterDescription: "표시할 콘텐츠를 선택하세요.",
     savingPreferences: "환경설정을 저장하는 중…",
     preferencesNotSaved: "환경설정이 아직 저장되지 않았습니다.",
     title: "열람 설정",
     description: "언어와 표시할 콘텐츠를 선택하세요.",
     filters: "표시할 콘텐츠:",
+  },
+  releases: {
+    premiumMore_one: "{count}개 더 보기",
+    premiumMore_other: "{count}개 더 보기",
+    premiumHint: "회원 전용 미리보기 · 클릭하여 보기",
+    filteredMore_one: "{count}개 필터링됨",
+    filteredMore_other: "{count}개 필터링됨",
+    manageFilters: "콘텐츠 필터 변경",
+    filterContext: "{date}의 필터입니다. 하나의 콘텐츠가 여러 필터에 해당할 수 있습니다.",
   },
   contents: {
     showMore: "더 보기",

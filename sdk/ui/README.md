@@ -362,6 +362,25 @@ properties (`href`, `decorate`, `groupKinds`, `tiers`, and so on) remain availab
 For a custom layout, `useDailyReleases(query)` exposes the same shared read and
 `client.discovery.releases(query)` exposes the typed request directly.
 
+Opt into `collapsePremium` to replace a day's locked tier previews with one
+counted tile at their first original position. Opening it restores their order
+within the existing card budget; **Show more** still controls the rest. This
+only reveals previews and never grants access. Native layout/reveal animations
+respect reduced motion, and keyboard activation focuses the first revealed
+card. `summaryLabels.premium(count)` and `.filtered(count)` can supply a host's
+nouns; the shared defaults use localized item labels.
+
+Each day's `filtered_count` is a distinct-content total hidden only by the
+reader's toggleable preferences. A filtered tile opens `ContentFilterDialog`
+with `filtered_entities` counts for that day and the same configured controls
+as `ReaderSettings`. Per-entity counts may overlap; they must not be added to
+compute the total. Changing a preference refreshes the feed and counts while
+the dialog remains open. Hard domain rules and internal classifications are
+never controls or count labels. A day with only filtered items remains visible.
+For custom interfaces, pass selection-specific `counts` to
+`ContentFilterSettings` or the controlled `ContentFilterDialog`; omit `counts`
+for ordinary settings without listing totals.
+
 `published_within` filters a listing by publication age independently of its
 ranking window. For example, `{ sort: "popular:7d", published_within: "7d" }`
 ranks only content published during the past seven days.
