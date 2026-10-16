@@ -40,14 +40,14 @@ func (f *fixture) guestCall(method, host, user, path, header string, body any, o
 
 func TestGuestContentFiltersApplyWithoutAccountRows(t *testing.T) {
 	f := seeded(t)
-	choice := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}, {GroupID: f.ids["yaoi"], Visible: false}}}
-	raw, _ := json.Marshal(choice.Filters)
-	header := `{"filters":` + string(raw) + `}`
+	choice := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: false}}}}
+	raw, _ := json.Marshal(choice.Kinds)
+	header := `{"kinds":` + string(raw) + `}`
 	var settings ContentFilters
 	if w := f.guestCall(http.MethodGet, "main.test", "", "/content-filters", header, nil, &settings); w.Code != http.StatusOK || !slices.Contains(w.Header().Values("Vary"), readerprefs.Header) {
 		t.Fatalf("guest settings: %d %s", w.Code, w.Body)
 	}
-	if len(settings.Filters) != 2 || !settings.Filters[0].Visible || !settings.Filters[0].Overridden || settings.Filters[1].Visible || !settings.Filters[1].Overridden || settings.IncludeDeleted {
+	if len(settings.Kinds["gallery"]) != 2 || !settings.Kinds["gallery"][0].Visible || !settings.Kinds["gallery"][0].Overridden || settings.Kinds["gallery"][1].Visible || !settings.Kinds["gallery"][1].Overridden || settings.IncludeDeleted {
 		t.Fatalf("guest choices: %+v", settings)
 	}
 	var page ContentPage
@@ -70,7 +70,7 @@ func TestGuestContentFiltersApplyWithoutAccountRows(t *testing.T) {
 		t.Fatalf("hard domain scope: %d %+v", w.Code, page)
 	}
 	// An independent guest request has defaults, not the previous guest's data.
-	if w := f.guestCall(http.MethodGet, "main.test", "", "/content-filters", "", nil, &settings); w.Code != http.StatusOK || settings.Filters[0].Visible || settings.Filters[0].Overridden {
+	if w := f.guestCall(http.MethodGet, "main.test", "", "/content-filters", "", nil, &settings); w.Code != http.StatusOK || settings.Kinds["gallery"][0].Visible || settings.Kinds["gallery"][0].Overridden {
 		t.Fatalf("guest state leaked: %d %+v", w.Code, settings)
 	}
 	var rows int
@@ -92,13 +92,13 @@ func TestGuestContentFiltersValidateAndIgnoreHeaderForAccounts(t *testing.T) {
 			}
 		}
 	}
-	update := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}, {GroupID: f.ids["yaoi"], Visible: false}}}
+	update := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: false}}}}
 	if err := f.svc.SetContentFilters(f.ctx, access.Actor{ID: "reader"}, update); err != nil {
 		t.Fatal(err)
 	}
 	var settings ContentFilters
 	w := f.guestCall(http.MethodGet, "main.test", "reader", "/content-filters", "malformed guest state", nil, &settings)
-	if w.Code != http.StatusOK || !settings.Filters[0].Visible || settings.Filters[1].Visible {
+	if w.Code != http.StatusOK || !settings.Kinds["gallery"][0].Visible || settings.Kinds["gallery"][1].Visible {
 		t.Fatalf("account authority: %d %+v", w.Code, settings)
 	}
 	var page ContentPage
@@ -110,12 +110,12 @@ func TestGuestContentFiltersValidateAndIgnoreHeaderForAccounts(t *testing.T) {
 
 func TestInitializeContentFiltersPreservesExistingSettings(t *testing.T) {
 	f := seeded(t)
-	first := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}}}
-	second := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: false}}}
+	first := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}}}}
+	second := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: false}}}}
 	var settings ContentFilters
 	for _, body := range []ContentFiltersUpdate{first, second} {
-		w := f.guestCall(http.MethodPost, "main.test", "new-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Filters: body.Filters}, &settings)
-		if w.Code != http.StatusOK || !settings.Filters[0].Visible {
+		w := f.guestCall(http.MethodPost, "main.test", "new-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Kinds: guestKinds(map[string][]FilterSetting{"gallery": body.Kinds["gallery"]})}, &settings)
+		if w.Code != http.StatusOK || !settings.Kinds["gallery"][0].Visible {
 			t.Fatalf("initialize replay overwrote first choice: %d %+v", w.Code, settings)
 		}
 	}
@@ -124,14 +124,14 @@ func TestInitializeContentFiltersPreservesExistingSettings(t *testing.T) {
 	if err := f.svc.SetContentFilters(f.ctx, access.Actor{ID: "existing-account"}, ContentFiltersUpdate{}); err != nil {
 		t.Fatal(err)
 	}
-	w := f.guestCall(http.MethodPost, "main.test", "existing-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "existing-account", Filters: first.Filters}, &settings)
-	if w.Code != http.StatusOK || settings.Filters[0].Visible || settings.Filters[0].Overridden {
+	w := f.guestCall(http.MethodPost, "main.test", "existing-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "existing-account", Kinds: guestKinds(map[string][]FilterSetting{"gallery": first.Kinds["gallery"]})}, &settings)
+	if w.Code != http.StatusOK || settings.Kinds["gallery"][0].Visible || settings.Kinds["gallery"][0].Overridden {
 		t.Fatalf("saved defaults overwritten: %d %+v", w.Code, settings)
 	}
-	if w := f.guestCall(http.MethodPost, "main.test", "", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Filters: first.Filters}, nil); w.Code != http.StatusUnauthorized {
+	if w := f.guestCall(http.MethodPost, "main.test", "", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Kinds: guestKinds(map[string][]FilterSetting{"gallery": first.Kinds["gallery"]})}, nil); w.Code != http.StatusUnauthorized {
 		t.Fatalf("guest initialization: %d", w.Code)
 	}
-	if w := f.guestCall(http.MethodPost, "main.test", "other-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Filters: first.Filters}, nil); w.Code != http.StatusForbidden {
+	if w := f.guestCall(http.MethodPost, "main.test", "other-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{AccountID: "new-account", Kinds: guestKinds(map[string][]FilterSetting{"gallery": first.Kinds["gallery"]})}, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("cross-account initialization: %d %s", w.Code, w.Body)
 	}
 	if w := f.guestCall(http.MethodPost, "main.test", "other-account", "/me/content-filters/initialize", "", ContentFiltersInitialization{}, nil); w.Code != http.StatusBadRequest {
@@ -147,7 +147,7 @@ func TestInitializeContentFiltersPreservesExistingSettings(t *testing.T) {
 	errs := make(chan error, 2)
 	for _, body := range []ContentFiltersUpdate{first, second} {
 		wg.Go(func() {
-			errs <- f.svc.InitializeContentFilters(f.ctx, access.Actor{ID: "race-account"}, ContentFiltersInitialization{AccountID: "race-account", Filters: body.Filters})
+			errs <- f.svc.InitializeContentFilters(f.ctx, access.Actor{ID: "race-account"}, ContentFiltersInitialization{AccountID: "race-account", Kinds: guestKinds(map[string][]FilterSetting{"gallery": body.Kinds["gallery"]})})
 		})
 	}
 	wg.Wait()

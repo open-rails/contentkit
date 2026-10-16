@@ -100,6 +100,11 @@ func (s *Store) mergeable(ctx context.Context, q Querier, src, dst Group) error 
 	if src.State != StateActive || dst.State != StateActive {
 		return fmt.Errorf("%w: both groups must be active", ErrConflict)
 	}
+	after := src
+	after.State = StateMerged
+	if err := s.checkPolicyBinding(src, after); err != nil {
+		return err
+	}
 	if src.Kind != dst.Kind {
 		return fmt.Errorf("%w: cannot merge a %s into a %s", ErrConflict, src.Kind, dst.Kind)
 	}

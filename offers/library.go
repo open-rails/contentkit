@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/domainpolicy"
 )
 
 // LibraryQuery pages a viewer's library.
@@ -74,18 +75,25 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	if len(ids) == 0 {
 		return page, nil
 	}
-	exclude, required, blocked, requireKinds, missingRequired, missingHard, err := s.libraryDomain(ctx)
+	policies, err := s.libraryDomain(ctx)
 	if err != nil {
 		return LibraryPage{}, err
 	}
-	scoped := missingRequired || missingHard || len(exclude) > 0 || len(required) > 0 || len(blocked) > 0
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state = 'deleted' OR c.deleted_at IS NOT NULL, coalesce(t.title, ''), coalesce(t.language, '')
-		FROM `+s.t.items+` c LEFT JOIN LATERAL (SELECT title, language FROM `+s.t.text+` x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
-			ORDER BY x.language = $3 DESC, array_position($4::text[], x.language), x.language LIMIT 1) t ON true
-		WHERE c.tenant_id = $1 AND c.id = ANY($2) AND ($5 = '' OR c.id < $5)
-  AND NOT $10::boolean AND (NOT $11::boolean OR EXISTS (SELECT 1 FROM `+s.t.facets+` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id
-   AND NOT (f.restrictions && $7::text[]) AND ((cardinality($12::text[]) > 0 AND NOT (f.kind = ANY($12::text[]))) OR (NOT $13::boolean AND f.group_ids @> $8::text[])) AND NOT (f.group_ids && $9::text[])))
-		ORDER BY c.id DESC LIMIT $6`, s.tenant, ids, q.Language, s.languages(), q.Cursor, q.Limit+1, exclude, required, blocked, missingHard, scoped, requireKinds, missingRequired)
+	hard := domainpolicy.Policies{}
+	for kind, p := range policies {
+		if p.MissingHard || p.MissingRequired || len(p.Required) > 0 || len(p.Blocked) > 0 {
+			hard[kind] = p
+		}
+	}
+	scope, args := hard.SQL("f", "library_domain")
+	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.tenant, ids, q.Language, s.languages(), q.Cursor, q.Limit+1
+	domainClause := "true"
+	if len(hard) > 0 {
+		domainClause = `(NOT (c.kind=ANY(@library_domain_kinds::text[])) OR EXISTS(SELECT 1 FROM ` + s.t.facets + ` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND ` + scope + `))`
+	}
+	rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,coalesce(t.title,''),coalesce(t.language,'')
+ FROM `+s.t.items+` c LEFT JOIN LATERAL(SELECT title,language FROM `+s.t.text+` x WHERE x.tenant_id=c.tenant_id AND x.content_id=c.id ORDER BY x.language=@language DESC,array_position(@languages::text[],x.language),x.language LIMIT 1)t ON true
+ WHERE c.tenant_id=@tenant AND c.id=ANY(@ids::text[]) AND (@cursor='' OR c.id<@cursor) AND `+domainClause+` ORDER BY c.id DESC LIMIT @limit`, args)
 	if err != nil {
 		return LibraryPage{}, err
 	}

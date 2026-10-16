@@ -3,9 +3,66 @@
 ContentKit exposes raw named metrics (`signal.ContentMetrics`, `Metrics`,
 `Popular`) and a host-selected ranking policy (`popularity.Policy`). A policy is
 a named version with fixed, bounded weights and priors. Hosts configure only the
-name: `popularity.ByName(name)` at startup (default `v1`; an unknown name is an
-error, never a silent default) and every cache key carries it. Changing a weight
-or prior is a new name, never an edit of an existing one.
+name: `popularity.ByName(name)` at startup (an unknown name is an error,
+never a silent default) and every cache key carries it. Public discovery defaults
+to `v2`; an explicitly selected `v1` is still respected. The generic
+`popularity.ByName("")` helper retains `v1` for existing library callers.
+Changing a weight or prior is a new name, never an edit of an existing one.
+`Policy.Algorithm` identifies the scoring family independently of that version
+name. Copying `PolicyV2` to a newly named, tuned policy therefore preserves
+eligible-population normalization.
+
+## Current discovery ranking (`PolicyV2`)
+
+V2 replaces raw viewer reach with participation in the eligible audience. It
+retains approval, completion, return visits and reading engagement relative to
+the selected version's length. Public and premium content therefore compete
+on audience participation and quality rather than absolute traffic.
+
+Each gallery's immutable publication/access history defines availability
+segments. For each segment, `U` is its distinct full readers and `N` is the
+observed active population eligible to open it, in the same interval, app,
+content kind, domain and language. Paid readers browsing free content still
+contribute to the paid eligible population. Registered-account totals and
+current subscription counts are not historical audience measurements.
+
+```
+raw_participation = U / N
+reach = U / (N + 20)
+segment_score = reach * (1 + .35*engage + .25*finish + .40*approve + .10*revisit)
+score = sum(available_duration * segment_score) / sum(available_duration)
+```
+
+The extra 20 eligible non-readers are a modest reliability heuristic, not a
+confidence interval. Ten readers among 100 eligible subjects produce 8.33%
+adjusted participation; 10,000 among 100,000 produce 9.998%. One of one produces
+4.76%, rather than 100%. Raw participation is exposed separately. Quality is
+also calculated within each segment before averaging its full score; pooling
+raw viewers across segments would bring back the large-audience bias.
+
+An access change splits a gallery's history. Earlier paid observations retain
+their original audience even after the gallery becomes free. Weights use
+availability duration, never audience size. Editions share one work-level
+population and duration; a public edition makes the work publicly accessible,
+while tier-only editions use their distinct union of eligible tiers. The
+initial normalization supports public and configured-tier access, not inferred
+PPV or group-specific eligibility.
+
+The browser requests bounded batches from `POST /activity-contexts` when a
+view or display actually begins. A signed receipt binds the subject, target,
+version, server timestamp and access snapshot. Revisions reuse that receipt;
+client-provided premium flags cannot set the cohort. Preview consumption is
+excluded from full readership. Host media keys sign a separate activity
+purpose; non-media hosts can provide an `ActivitySigner`. Missing signing
+configuration is explicit legacy mode, not an ephemeral generated key.
+
+Before instrumentation there is no trustworthy historical access classification.
+V2 uses a common measured interval for every candidate. If the requested window
+has no trusted coverage at all, the entire query explicitly falls back to v1;
+it never mixes old raw scores and normalized scores item by item. The response's
+`ranking` names the effective policy, mode, requested interval and covered
+interval. Each normalized card also carries score, raw participation and
+adjusted participation. Displayed view and reaction counts remain raw counts.
 
 ## Inputs (per work, per window)
 
@@ -41,6 +98,25 @@ window; `all` has no age cutoff. Pair `sort=popular:7d&published_within=7d` for
 this week's popular releases. Cursors retain the first page's cutoff so a
 midnight boundary cannot move older or newly published works into that scroll.
 This pins publication eligibility, not a snapshot of scores or later edits.
+
+The shared `PopularContentGrid` and `popularQuery` helper use the selected
+activity window without adding a publication-age cutoff. Their four tabs mean
+activity in the past 7, 90 or 365 days, or all time. Old galleries can therefore
+trend again. A host can explicitly supply `published_within` when it wants a
+separate list of popular recent releases.
+
+Historical activity windows use the same endpoint and ranking policy:
+
+```http
+GET /contents?kind=gallery&sort=popular&activity_from=2026-04-01&activity_until=2026-05-01
+```
+
+Both UTC dates are required: the start is inclusive and the end is exclusive.
+Use literal `sort=popular`, not a named-period suffix. The kind is required.
+Reader visibility and filters still apply before pagination; a cursor is bound
+to its kind and date interval. An empty activity window returns no results,
+rather than falling back to all-time activity. The SDK equivalent is
+`client.discovery.list(popularBetween("2026-04-01", "2026-05-01", {kind: "gallery"}))`.
 
 **Feedback** is each subject's current preference: one replaceable event per
 subject × work × axis (`EventID` fixed, `Revision` = mutation time), counted on

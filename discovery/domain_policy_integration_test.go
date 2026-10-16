@@ -19,20 +19,19 @@ import (
 func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	cfg := siteConfig()
 	locked, toggle := false, true
-	cfg.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}},
-		{Name: "gay", Hosts: []string{"gay.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
-		}},
-		// An explicit fixed rule remains hard after its marker is renamed.
-		{Name: "safe", Hosts: []string{"safe.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}},
-		{Name: "other", Hosts: []string{"other.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}},
-		// Even an explicit true cannot expose an internal classification.
-		{Name: "implicit", Hosts: []string{"implicit.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}},
+	cfg.Domains = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+	}}, "video": {Filters: []kinds.ContentFilter{
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+	}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
+	}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "video": {Filters: []kinds.ContentFilter{
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
+	}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "safe", Hosts: []string{"safe.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}}}, {Name: "other", Hosts: []string{"other.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}}}, {Name: "implicit", Hosts: []string{"implicit.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}}}},
 	}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "big-breasts", "yaoi", "gore", "restricted")
@@ -67,7 +66,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	}
 	for _, host := range []string{"gay.test", "safe.test", "implicit.test"} {
 		var settings ContentFilters
-		if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, &settings); status != http.StatusOK || len(settings.Filters) != 0 {
+		if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, &settings); status != http.StatusOK || len(settings.Kinds["gallery"]) != 0 {
 			t.Fatalf("locked/internal/required controls exposed on %s: %d %+v", host, status, settings)
 		}
 	}
@@ -116,12 +115,12 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	// Saving another domain cannot erase main's choice and vice versa.
 	save := func(host string, filters []FilterSetting) {
 		t.Helper()
-		if status, _ := f.call(http.MethodPut, host, "reader", "/me/content-filters", ContentFiltersUpdate{Filters: filters}, nil); status != http.StatusOK {
+		if status, _ := f.call(http.MethodPut, host, "reader", "/me/content-filters", ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": filters}}, nil); status != http.StatusOK {
 			t.Fatalf("save %s: %d", host, status)
 		}
 	}
-	save("main.test", []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}})
-	save("other.test", []FilterSetting{{GroupID: f.ids["gore"], Visible: false}})
+	save("main.test", []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}})
+	save("other.test", []FilterSetting{{EntityID: f.ids["gore"], Visible: false}})
 	assertList("main.test", "reader", 1, 2, 3, 4, 5, 6, 7)
 	assertList("other.test", "reader", 1, 2, 3, 5, 7)
 	save("main.test", nil)
@@ -143,9 +142,9 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	}
 	// A renamed hard marker must not silently widen the domain.
 	renamed := "renamed-restricted"
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["restricted"]), Slug: &renamed}}); err != nil {
-		t.Fatal(err)
-	}
+	// Simulate a pre-existing broken reference; normal taxonomy writes now
+	// reject invalidating hard policy bindings.
+	f.exec(`UPDATE {s}.content_groups SET slug=$2 WHERE id=$1`, f.ids["restricted"], renamed)
 	assertList("safe.test", "")
 	r = httptest.NewRequest(http.MethodGet, "/contents/"+f.cid(1), nil)
 	r.Host = "safe.test"

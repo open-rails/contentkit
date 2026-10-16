@@ -55,6 +55,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     E2E_MINIO_PORT: String(minioPort),
     E2E_GATEWAY_PORT: String(gatewayPort),
     E2E_WORKER_PORT: String(workerPort),
+    ...(process.env.CKUI_E2E_CH_ADDR ? { CKUI_E2E_CH_DATABASE: project.replaceAll("-", "_") } : {}),
   };
   const dc = (...args: string[]) =>
     execFileSync("docker", ["compose", "-p", project, "-f", compose, ...args], { env: composeEnv, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });

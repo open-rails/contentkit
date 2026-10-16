@@ -33,7 +33,7 @@ export interface ContentKitProviderProps {
 export function ContentKitProvider({ client, viewer, language, languagePreference, accessRevision, onSignIn, urls, navigate, onChange, onError, children }: ContentKitProviderProps) {
   const browser = client.preferences.browser;
   const preferences = useSyncExternalStore(browser.subscribe, browser.snapshot, browser.snapshot);
-  const readScope = JSON.stringify({ viewer, language, accessRevision, guestFilters: viewer === null ? preferences.filters : undefined });
+  const readScope = JSON.stringify({ viewer, language, accessRevision, guestFilters: viewer === null ? { kinds: preferences.kinds, legacy_filters: preferences.legacy_filters } : undefined });
   useLayoutEffect(() => { client.preferences.configure(viewer, languagePreference); }, [client, viewer, languagePreference]);
   useLayoutEffect(() => { client.setReadScope(readScope); }, [client, readScope]);
   const changed = useRef(onChange);

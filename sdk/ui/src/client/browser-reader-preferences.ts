@@ -1,8 +1,14 @@
 import type { FilterSetting } from "./generated/wire.js";
 
+/** Explicit visibility or a reset that follows the current domain default. */
+export type ReaderFilterChoice = { entity_id: string; visible: boolean; default?: never } | { entity_id: string; default: true; visible?: never };
+export type ReaderFilterKinds = Record<string, readonly ReaderFilterChoice[]>;
+
 export interface GuestReaderPreferences {
   language?: string;
-  filters: readonly FilterSetting[];
+  kinds: ReaderFilterKinds;
+  /** Choices saved before content kinds were introduced. Explicit kind choices win. */
+  legacy_filters: readonly FilterSetting[];
 }
 
 export interface PendingReaderPreferences extends GuestReaderPreferences {
@@ -14,7 +20,7 @@ export interface PendingReaderPreferences extends GuestReaderPreferences {
 }
 
 type Document = GuestReaderPreferences & { registrations: readonly PendingReaderPreferences[] };
-const EMPTY: Document = Object.freeze({ filters: Object.freeze([]), registrations: Object.freeze([]) });
+const EMPTY: Document = Object.freeze({ kinds: Object.freeze({}), legacy_filters: Object.freeze([]), registrations: Object.freeze([]) });
 
 function language(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 64) return;
@@ -24,10 +30,44 @@ function language(value: unknown): string | undefined {
 function filters(value: unknown): FilterSetting[] {
   if (!Array.isArray(value)) return [];
   const entries = new Map<string, boolean>();
-  for (const row of value.slice(0, 100)) {
-    if (row && typeof row.group_id === "string" && row.group_id.length > 0 && row.group_id.length <= 128 && typeof row.visible === "boolean") entries.set(row.group_id, row.visible);
+  for (const row of value) {
+    if (row && typeof (row.entity_id ?? row.group_id) === "string" && (row.entity_id ?? row.group_id).length > 0 && (row.entity_id ?? row.group_id).length <= 128 && typeof row.visible === "boolean") entries.set(row.entity_id ?? row.group_id, row.visible);
   }
-  return [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([group_id, visible]) => ({ group_id, visible }));
+  return [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([entity_id, visible]) => ({ entity_id, visible }));
+}
+
+function scopedFilters(value: unknown): ReaderFilterChoice[] {
+  if (!Array.isArray(value)) return [];
+  const entries = new Map<string, ReaderFilterChoice>();
+  for (const row of value) {
+    const id = row?.entity_id;
+    if (typeof id !== "string" || !id || id.length > 128) continue;
+    if (row.default === true && row.visible === undefined) entries.set(id, { entity_id: id, default: true });
+    else if (row.default === undefined && typeof row.visible === "boolean") entries.set(id, { entity_id: id, visible: row.visible });
+  }
+  return [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([, row]) => row);
+}
+
+function kinds(value: unknown): ReaderFilterKinds {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([kind]) => /^[a-z][a-z0-9_]*$/.test(kind))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, value]) => [kind, scopedFilters(value)]));
+}
+
+function choices(value: Record<string, unknown>) {
+  return { kinds: kinds(value.kinds), legacy_filters: filters(value.legacy_filters ?? value.filters) };
+}
+
+function hasChoices(value: GuestReaderPreferences): boolean {
+  return value.legacy_filters.length > 0 || Object.values(value.kinds).some((rows) => rows.length > 0);
+}
+
+function freezeChoices(value: GuestReaderPreferences): GuestReaderPreferences {
+  return { language: value.language,
+    kinds: Object.freeze(Object.fromEntries(Object.entries(value.kinds).map(([kind, rows]) => [kind, Object.freeze(rows.map((f) => Object.freeze({ ...f })))]))),
+    legacy_filters: Object.freeze(value.legacy_filters.map((f) => Object.freeze({ ...f }))) };
 }
 
 function decode(raw: string | null): Document {
@@ -39,11 +79,11 @@ function decode(raw: string | null): Document {
     if (Array.isArray(value.registrations)) {
       for (const entry of value.registrations.slice(0, 20)) {
         if (!entry || typeof entry.account !== "string" || !entry.account || entry.account.length > 128 || registrations.some((r) => r.account === entry.account)) continue;
-        registrations.push({ account: entry.account, language: language(entry.language), filters: filters(entry.filters), languageDone: entry.languageDone === true, filtersDone: entry.filtersDone === true,
+        registrations.push({ account: entry.account, language: language(entry.language), ...choices(entry), languageDone: entry.languageDone === true, filtersDone: entry.filtersDone === true,
           languageObserved: entry.languageObserved === true, initialLanguage: entry.initialLanguage === null ? null : language(entry.initialLanguage) });
       }
     }
-    return { language: language(value.language), filters: filters(value.filters), registrations };
+    return { language: language(value.language), ...choices(value), registrations };
   } catch { return EMPTY; }
 }
 
@@ -76,9 +116,9 @@ export class BrowserReaderPreferences {
     this.save({ ...this.value, language: next });
   }
 
-  setFilters(value: readonly FilterSetting[]): void {
+  setFilters(value: ReaderFilterKinds): void {
     this.sync();
-    this.save({ ...this.value, filters: filters(value) });
+    this.save({ ...this.value, kinds: kinds(value) });
   }
 
   pending(account: string): PendingReaderPreferences | undefined {
@@ -91,11 +131,11 @@ export class BrowserReaderPreferences {
     this.sync();
     if (!account || account.length > 128) throw new Error("contentkit: registration account is required");
     if (this.pending(account)) return;
-    if (!this.value.language && !this.value.filters.length) return;
+    if (!this.value.language && !hasChoices(this.value)) return;
     if (this.value.registrations.length >= 20) throw new Error("contentkit: too many pending preference registrations");
     this.save({ ...this.value, registrations: [...this.value.registrations, {
-      account, language: this.value.language, filters: this.value.filters,
-      languageDone: !this.value.language, filtersDone: !this.value.filters.length,
+      account, language: this.value.language, kinds: this.value.kinds, legacy_filters: this.value.legacy_filters,
+      languageDone: !this.value.language, filtersDone: !hasChoices(this.value),
     }] });
   }
 
@@ -130,11 +170,11 @@ export class BrowserReaderPreferences {
   }
 
   private replace(next: Document): void {
-    const encoded = JSON.stringify({ language: next.language, filters: next.filters, registrations: next.registrations });
+    const encoded = JSON.stringify({ language: next.language, kinds: next.kinds, legacy_filters: next.legacy_filters, registrations: next.registrations });
     if (encoded === this.encoded) return;
     this.encoded = encoded;
-    this.value = Object.freeze({ ...next, filters: Object.freeze(next.filters.map((f) => Object.freeze({ ...f }))), registrations: Object.freeze(next.registrations.map((r) => Object.freeze({ ...r, filters: Object.freeze(r.filters.map((f) => Object.freeze({ ...f }))) }))) });
-    const publicValue = { language: this.value.language, filters: this.value.filters };
+    this.value = Object.freeze({ ...freezeChoices(next), registrations: Object.freeze(next.registrations.map((r) => Object.freeze({ ...r, ...freezeChoices(r) }))) });
+    const publicValue = { language: this.value.language, kinds: this.value.kinds, legacy_filters: this.value.legacy_filters };
     if (JSON.stringify(publicValue) !== JSON.stringify(this.publicValue)) this.publicValue = Object.freeze(publicValue);
     for (const listener of this.listeners) { try { listener(); } catch { /* Observers do not own persistence. */ } }
   }

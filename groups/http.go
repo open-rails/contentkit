@@ -212,6 +212,10 @@ func fail(w http.ResponseWriter, err error) {
 		status, code = http.StatusServiceUnavailable, httpapi.CodeUnavailable
 	}
 	msg := httpapi.Message(code)
+	var binding *policyBindingError
+	if errors.As(err, &binding) {
+		msg = binding.Error()
+	}
 	var ce constraintError
 	if code == httpapi.CodeInvalidRequest && !errors.As(err, &ce) {
 		msg = httpapi.Rule(err, code)

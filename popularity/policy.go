@@ -46,13 +46,24 @@ type Priors struct {
 	RevisitWeight    float64
 }
 
+// Algorithm is the meaning of the ranking, independent of its policy version
+// name. A newly named or tuned normalized policy retains its algorithm.
+type Algorithm string
+
+const (
+	AlgorithmViewerReach        Algorithm = "viewer_reach"
+	AlgorithmEligiblePopulation Algorithm = "eligible_population"
+)
+
 // Policy is one named, immutable ranking. Changing a weight or prior is a new
 // name, never an edit of an existing one: configuration and cache keys carry
 // the name.
 type Policy struct {
-	Name    string
-	Weights Weights
-	Priors  Priors
+	Name string
+	// Empty preserves the original viewer-reach algorithm for callers.
+	Algorithm Algorithm
+	Weights   Weights
+	Priors    Priors
 }
 
 // PolicyV1 is the qualified policy: weights and priors selected by the judged
@@ -68,10 +79,20 @@ var PolicyV1 = Policy{
 	},
 }
 
+// PolicyV2 normalizes each historical access interval by its active eligible
+// population. Its twenty pseudo-eligible nonreaders are a modest reliability
+// heuristic, not a statistical confidence interval. Quality keeps v1's bounds.
+var PolicyV2 = func() Policy {
+	p := PolicyV1
+	p.Name = "v2"
+	p.Algorithm = AlgorithmEligiblePopulation
+	return p
+}()
+
 // DefaultName is the policy a host gets when it configures none.
 const DefaultName = "v1"
 
-var policies = map[string]Policy{PolicyV1.Name: PolicyV1}
+var policies = map[string]Policy{PolicyV1.Name: PolicyV1, PolicyV2.Name: PolicyV2}
 
 // ByName resolves a configured policy. Unknown names are errors so a host
 // refuses to start rather than ranking under a silent default.
@@ -101,6 +122,9 @@ func (p Policy) Validate() error {
 	if p.Name == "" {
 		return fmt.Errorf("popularity: policy needs a name")
 	}
+	if p.Algorithm != "" && p.Algorithm != AlgorithmViewerReach && p.Algorithm != AlgorithmEligiblePopulation {
+		return fmt.Errorf("popularity: unknown algorithm %q", p.Algorithm)
+	}
 	for _, w := range []struct {
 		name string
 		v    float64
@@ -120,6 +144,9 @@ func (p Policy) Validate() error {
 	return nil
 }
 
+// Normalized reports whether this policy uses event-time eligible populations.
+func (p Policy) Normalized() bool { return p.Algorithm == AlgorithmEligiblePopulation }
+
 // MaxQuality is the largest multiplier the quality terms can reach.
 func (p Policy) MaxQuality() float64 {
 	return 1 + p.Weights.Engagement + p.Weights.Completion + p.Weights.Approval + p.Weights.Revisit
@@ -127,6 +154,13 @@ func (p Policy) MaxQuality() float64 {
 
 // Score ranks one work's window metrics. Works without a view score 0.
 func (p Policy) Score(m signal.ContentMetrics) float64 {
+	if p.Normalized() {
+		n := m.Normalization
+		if n == nil {
+			return 0
+		}
+		return n.Rate + p.Weights.Engagement*n.Engagement + p.Weights.Completion*n.Completion + p.Weights.Approval*n.Approval + p.Weights.Revisit*n.Revisit
+	}
 	viewers := float64(m.Viewers)
 	views := float64(m.Views)
 	if views == 0 || viewers == 0 {
@@ -145,6 +179,10 @@ func (p Policy) Score(m signal.ContentMetrics) float64 {
 // columns for signal.PopularOptions.RankExpr. Parameters are rendered as
 // literals; nothing user-controlled reaches it.
 func (p Policy) RankExpr() string {
+	if p.Normalized() {
+		return fmt.Sprintf("normalized_rate + %s*normalized_engagement + %s*normalized_completion + %s*normalized_approval + %s*normalized_revisit",
+			lit(p.Weights.Engagement), lit(p.Weights.Completion), lit(p.Weights.Approval), lit(p.Weights.Revisit))
+	}
 	return fmt.Sprintf(`log10(1 + toFloat64(viewers)) * (1
  + %s * ((toFloat64(viewer_engagement_sum) + %s) / (toFloat64(viewers) + %s))
  + %s * ((toFloat64(completers) + %s) / (toFloat64(viewers) + %s))

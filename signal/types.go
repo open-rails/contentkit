@@ -75,6 +75,10 @@ func (s Subject) Validate() error {
 // stay separate signals.
 const TypeView = "view"
 
+// TypePreview retains restricted preview telemetry without counting it as a
+// full gallery read, completion or popularity vote.
+const TypePreview = "preview"
+
 // Signal is one logical source event: a consumption session, reaction, click,
 // rating. Identity is (tenant, content ref, subject, Type, EventID):
 // re-delivering the same identity never adds another event, whatever its
@@ -124,6 +128,10 @@ type Signal struct {
 
 	// Payload holds bounded context, JSON-encoded at rest.
 	Payload map[string]any
+
+	// Access is a trusted access snapshot at the event's observation time. Nil
+	// marks legacy events whose audience cannot be inferred retroactively.
+	Access *AccessContext
 }
 
 func (s Signal) validate(tenant string) error {
@@ -143,6 +151,9 @@ func (s Signal) validate(tenant string) error {
 		return fmt.Errorf("signal: OccurredAt is required (immutable source time)")
 	}
 	if err := checkIdentifiers("Subject", s.Subject.Key(), "Type", s.Type, "EventID", s.EventID); err != nil {
+		return err
+	}
+	if err := s.Access.validate(); err != nil {
 		return err
 	}
 	return checkLen("Resume", s.Resume, MaxResumeBytes)
@@ -218,6 +229,8 @@ func (s ExposureStage) validate() error {
 type Placement struct {
 	ContentRef
 	Position uint32
+	// Access preserves the trusted eligibility decision made when rendered.
+	Access *AccessContext
 }
 
 // Exposure is one result list at one stage: the cumulative set of placements
@@ -258,6 +271,9 @@ func (e Exposure) validate(tenant string) error {
 	for i, p := range e.Shown {
 		if err := checkRef(tenant, p.ContentRef); err != nil {
 			return fmt.Errorf("exposure: placement %d: %w", i, err)
+		}
+		if err := p.Access.validate(); err != nil {
+			return err
 		}
 		if p.Position == 0 {
 			return fmt.Errorf("exposure: placement %d: Position is required (1-based)", i)
@@ -430,7 +446,8 @@ type ContentMetrics struct {
 	// Value in the window is > 0 / < 0.
 	PositiveSubjects uint64
 	NegativeSubjects uint64
-	SignalCounts     map[string]uint64 // canonical events per type
+	SignalCounts     map[string]uint64     // canonical events per type
+	Normalization    *NormalizationMetrics `json:"normalization,omitempty"`
 }
 
 // Window is a literal range of whole UTC calendar days, [From, To). A zero
@@ -565,6 +582,9 @@ type PopularOptions struct {
 	// events, value_sum, positive_subjects,
 	// negative_subjects.
 	RankExpr string
+	// Normalization adds trusted event-time eligible-population observations
+	// and catalog availability intervals to a named normalized ranking.
+	Normalization *NormalizationOptions
 }
 
 // PopularHit is one ranked work from Popular. Only works with at least one

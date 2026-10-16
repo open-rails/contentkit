@@ -1,5 +1,6 @@
+import type { ReaderFilterKinds } from "./browser-reader-preferences.js";
 import { ContentKitError, toContentKitError } from "./errors.js";
-import type { ContentFilters, ContentFiltersUpdate } from "./generated/wire.js";
+import type { ContentFilters } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
 
@@ -31,6 +32,7 @@ export class ReaderPreferencesClient {
   private syncingGeneration = -1;
   private state: ReaderPreferenceState = Object.freeze({ loading: false, saving: false, pending: false });
   private readonly listeners = new Set<() => void>();
+  private readonly identityListeners = new Set<() => void>();
   private stopBrowser?: () => void;
   private guestValue: string;
 
@@ -40,6 +42,12 @@ export class ReaderPreferencesClient {
   }
 
   readonly snapshot = (): ReaderPreferenceState => this.state;
+  /** Current authenticated subject, null for a guest, undefined while unresolved. */
+  readonly identity = (): string | null | undefined => this.viewer;
+  readonly subscribeIdentity = (listener: () => void): (() => void) => {
+    this.identityListeners.add(listener);
+    return () => void this.identityListeners.delete(listener);
+  };
   readonly subscribe = (listener: () => void): (() => void) => {
     if (!this.listeners.size) {
       this.stopBrowser = this.browser.subscribe(this.browserChanged);
@@ -59,8 +67,10 @@ export class ReaderPreferencesClient {
   configure(viewer: string | null | undefined, adapter?: LanguagePreference): void {
     this.http.setViewer(viewer);
     if (viewer === this.viewer && adapter === this.adapter) return;
+    const identityChanged = viewer !== this.viewer;
     this.viewer = viewer;
     this.adapter = adapter;
+    if (identityChanged) for (const listener of this.identityListeners) listener();
     const generation = ++this.generation;
     this.accountLanguage = undefined;
     this.failure = undefined;
@@ -68,6 +78,13 @@ export class ReaderPreferencesClient {
     this.loading = !!viewer && !!adapter;
     this.refresh();
     if (viewer) void this.activate(generation).catch(() => {});
+  }
+
+  /** Save an anonymous edit atomically after checking the current domain's wire limits. */
+  setGuestFilters(kinds: ReaderFilterKinds): void {
+    if (this.viewer !== null) throw new ContentKitError("invalid_request", "Guest preferences are only available while signed out.");
+    this.http.validateGuestPreferences({ ...this.browser.snapshot(), kinds });
+    this.browser.setFilters(kinds);
   }
 
   async setLanguage(language: string): Promise<void> {
@@ -165,7 +182,7 @@ export class ReaderPreferencesClient {
         // Registration initializes account-wide choices. Only the server knows
         // which saved entities are toggleable on another domain or now stale.
         await call<"POST", "/me/content-filters/initialize", ContentFilters>(this.http, "POST", "/me/content-filters/initialize", {
-          body: { account_id: account, filters: [...pending.filters], include_deleted: false } satisfies ContentFiltersUpdate & { account_id: string },
+          body: { account_id: account, kinds: pending.kinds, legacy_filters: [...pending.legacy_filters], include_deleted: false },
         });
         if (generation !== this.generation) return;
         this.browser.complete(account, "filters");

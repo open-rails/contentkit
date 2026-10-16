@@ -24,11 +24,34 @@ export interface Activity {
   days: ActivityDay[];
 }
 
+export interface ActivityContext {
+  content_id: string;
+  version_id?: string;
+  token: string;
+  occurred_at: string;
+}
+
+export interface ActivityContexts {
+  enabled: boolean;
+  contexts: ActivityContext[];
+}
+
+export interface ActivityContextsInput {
+  session?: string;
+  language?: string;
+  targets: ActivityTarget[];
+}
+
 export interface ActivityDay {
   date: string;
   views: number;
   viewers: number;
   users: number;
+}
+
+export interface ActivityTarget {
+  content_id: string;
+  version_id?: string;
 }
 
 export interface AdminComment {
@@ -203,6 +226,7 @@ export interface Card {
   viewer?: ViewerState;
   published_at?: string;
   attributes: Record<string, unknown>;
+  ranking?: ContentRanking;
 }
 
 export interface CardAccess {
@@ -390,18 +414,19 @@ export interface ContentFilterState {
 }
 
 export interface ContentFilters {
-  filters: ContentFilterState[];
+  kinds: Record<string, ContentFilterState[]>;
   include_deleted: boolean;
 }
 
 export interface ContentFiltersInitialization {
   account_id: string;
-  filters: FilterSetting[];
+  kinds: Record<string, GuestFilterSetting[]>;
+  legacy_filters?: FilterSetting[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
-  filters: FilterSetting[];
+  kinds: Record<string, FilterSetting[]>;
   include_deleted: boolean;
 }
 
@@ -441,6 +466,7 @@ export interface ContentModel {
 export interface ContentPage {
   contents: Card[];
   next_cursor?: string;
+  ranking?: RankingInfo;
 }
 
 export interface ContentPatch {
@@ -451,6 +477,12 @@ export interface ContentPatch {
   attributes?: Record<string, unknown>;
   creators?: Creator[];
   revision?: number;
+}
+
+export interface ContentRanking {
+  score: number;
+  participation: number;
+  adjusted_participation: number;
 }
 
 export interface ContentRecord {
@@ -765,7 +797,7 @@ export interface FileInfo {
 }
 
 export interface FilterSetting {
-  group_id: string;
+  entity_id: string;
   visible: boolean;
 }
 
@@ -966,6 +998,12 @@ export interface GroupsText {
   language: string;
   description?: string;
   sort_key?: string;
+}
+
+export interface GuestFilterSetting {
+  entity_id: string;
+  visible?: boolean;
+  default?: boolean;
 }
 
 export interface HeldItem {
@@ -1317,6 +1355,8 @@ export interface Pending {
 export interface Placement {
   content_id: string;
   position: number;
+  version_id?: string;
+  activity_token?: string;
 }
 
 export interface PlanPage {
@@ -1534,6 +1574,15 @@ export interface RankedContent {
   value: number;
 }
 
+export interface RankingInfo {
+  policy: string;
+  mode: string;
+  requested_from?: string;
+  requested_until?: string;
+  covered_from?: string;
+  covered_until?: string;
+}
+
 export interface ReactionCounts {
   likes?: number;
   dislikes?: number;
@@ -1730,6 +1779,7 @@ export interface SignalInput {
   render_id?: string;
   surface?: string;
   position?: number;
+  activity_token?: string;
 }
 
 export interface SignalRecord {

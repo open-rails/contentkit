@@ -5,7 +5,7 @@ one policy. The first domain is the fallback for unknown hosts and in-process
 calls without a request hostname. Hosts and trusted reverse proxies must preserve
 the original Host; choosing a domain never changes account tenancy or grants.
 
-Each domain declares its own filters. There is no global available-filter list:
+Every domain scopes its requirements and filters by content kind:
 
 ```yaml
 languages: [en, ja]
@@ -15,102 +15,130 @@ kinds:
     presentation: reader
     versions: {languages: one}
     groups: [tag]
+  blog:
+    route: blog
+    presentation: post
+    versions: {languages: one}
 group_kinds:
   tag: {route: tags}
 domains:
   - name: main
     hosts: [catalog.example.test]
-    filters:
-      - entity: {kind: tag, slug: spoilers}
-        visible: false
-      - entity: {kind: tag, slug: restricted}
-        visible: false
-        user_toggle: false
+    gallery:
+      filters:
+        - {entity: {kind: tag, slug: spoilers}, visible: false}
+        - {entity: {kind: tag, slug: restricted}, visible: false, user_toggle: false}
   - name: gay
     hosts: [doujins.gay, www.doujins.gay]
-    require_kinds: [gallery]
-    require_entities:
-      - {kind: tag, slug: yaoi}
-    filters:
-      - entity: {kind: tag, slug: gore}
-        visible: false
+    gallery:
+      require_entities: [{kind: tag, slug: yaoi}]
+      filters:
+        - {entity: {kind: tag, slug: yuri}, visible: false}
+        - {entity: {kind: tag, slug: futanari}, visible: false}
+        - {entity: {kind: tag, slug: furry}, visible: false}
 ```
 
-Applications may load this policy from their own configuration and pass it to
-ContentKit; Doujins and Hentai0 use `content_filters.domains` in `config.yaml`
-and `config.example.yaml`. Structural content kinds remain in the content model.
+The top-level `kinds` defines the content model. Within each domain, content
+kind names such as `gallery` directly contain that kind's policy; no inner
+`kinds` wrapper is needed. A kind omitted from a domain is unfiltered:
+these gallery rules do not affect blog posts. There is no global filter list
+or separate `require_kinds` switch.
 
-## Meaning of each rule
+`name` and `hosts` are reserved for domain metadata and cannot be content kind
+names. ContentKit rejects them during configuration validation.
 
-- An entity omitted from a domain's filters is allowed and has no user toggle.
-- `visible` is the default visibility of content associated with the entity.
+Applications may load policy from their own configuration and pass it to
+ContentKit. Doujins and Hentai0 use `content_filters.domains` in `config.yaml`
+and `config.example.yaml`; their structural content models stay separate.
+
+## Rules within a content kind
+
+- An entity omitted from that kind's filters is allowed and has no user toggle.
+- `visible` is the default visibility of matching content of that kind.
 - `user_toggle` defaults to true. A reader may change an optional filter.
 - `visible: false` with `user_toggle: false` is a hard exclusion: matching
   content cannot be listed, searched, opened directly or served as media on
-  that domain, including to a signed-in staff account through public routes.
-- `visible: true` with `user_toggle: false` allows the content and offers no
+  that domain, including to staff using public routes.
+- `visible: true` with `user_toggle: false` permits matching content without a
   toggle. It does not require content to have that entity.
-- Every entry under `require_entities` must be associated with a content item
-  for the item to be accessible. Optional `require_kinds` limits these
-  requirements to named content kinds; omit it to cover every kind. Required
-  entities are not reader toggles. Requiring Yaoi for galleries excludes every
-  gallery without Yaoi on Doujins.gay while keeping blog posts available.
+- Every `require_entities` entry must be associated with the content item.
+  Requirements combine with AND and are never reader toggles. Requiring Yaoi
+  under `gallery` excludes non-Yaoi galleries while leaving blogs unaffected.
 
-A soft hidden filter affects ordinary listings and search, not direct links or
-an explicitly requested entity page. Hard rules always apply. Contradictory
-required/hidden rules and invalid references must be rejected at configuration
-validation rather than silently broadening access.
+Soft hidden filters affect ordinary discovery, not direct links or an
+explicitly requested entity page. Hard rules apply to direct access too.
+Contradictory required/hidden rules and invalid content/entity kinds fail
+configuration validation. Mixed-kind queries apply each item's own policy.
+
+Hard rules also deny new media authorizations through the app. The stock media
+gateway validates signed capabilities without reading the catalog: previously
+issued private-media URLs remain valid until expiry, and public preview assets
+remain public. Domain filtering is not instant revocation of already issued
+media capabilities.
 
 ## Entity names and internal entities
 
 Create referenced entities before enabling hard rules. An unresolved hard
-exclusion or requirement fails closed; missing optional filters are omitted.
+exclusion or requirement fails closed for its content kind; missing optional
+filters are omitted.
 
-References use stable entity kind and slug. Display names, translated names and
-aliases belong to the entity record, never the filter policy. The settings UI
-uses the entity's localized display name and normal language fallback.
+References use stable entity kind and slug, written directly in configuration.
+Display names, translated names and aliases belong to the entity record. The
+settings UI uses those names and normal language fallback.
 
 An entity marked `internal` is available to authorized management APIs, imports
-and publishing, but is absent from public entity lookup, lists, search,
-autocomplete and content metadata. Its names must not contribute to public
-content search documents. Existing identity and alias resolution still reuse
-it during authorized publishing.
+and publishing, but is absent from public lookup, lists, search, autocomplete
+and content metadata across all content kinds. Its names do not contribute to
+public search documents. Authorized publishing still resolves its identity and
+aliases.
 
-Internal entities are never user-toggleable, even if a rule requests it.
-Consequently a hidden internal entity is a fixed domain exclusion. Hentai0 can
-use an internal `restricted` entity hidden on hmovie-moe.us and allowed on
-hentai0.com, while its label remains invisible on both public sites.
+Internal entities never become user toggles. Hentai0 can fix an internal
+`restricted` entity hidden under `video` on hmovie-moe.us and allow it on
+hentai0.com. The entity's metadata remains private on both domains; marking an
+entity internal alone does not hide its associated content everywhere.
 
 ## Reader preferences
 
-`GET /v1/content-filters` is public and returns only the current domain's
-available public toggles, with localized entities and effective/default values.
-Hard policy and internal entity references are not exposed through `/v1/kinds`.
+`GET /v1/content-filters` returns the current domain's available public toggles,
+grouped by content kind in `kinds`, with localized entities and effective/default
+values. Hard policy and internal references are not exposed through `/v1/kinds`.
 
-Signed-in readers save choices using `PUT /v1/me/content-filters`. Replacing the
-current domain's choices must preserve choices that belong to other domains.
-Preferences apply only to currently offered toggles; they cannot override fixed
-rules, requirements or omitted entities.
+Signed-in readers save choices through `PUT /v1/me/content-filters`:
 
-Guests keep choices in localStorage and send only applicable overrides in
-`ContentKit-Reader-Preferences`. The bounded header never grants access or
-changes the host-selected domain. Stale entries cannot weaken current policy.
-Authenticated requests use account preferences instead of the guest header.
+```json
+{"kinds":{"gallery":[{"entity_id":"<entity-id>","visible":false}]},"include_deleted":false}
+```
 
-After registration, `POST /v1/me/content-filters/initialize` adopts the guest's
-choices only when the authenticated account has no saved preferences. This
-includes valid choices saved for other domains of the same app; stale or
-unknown entities are discarded. An existing account's login never overwrites
-its preferences with guest state.
-Both server and SDK preserve choices across domains while honoring each
-domain's current controls. Language remains a separate account preference.
+Only the kinds present in the update are replaced, and only their currently
+toggleable domain choices are affected. Omitted kinds and other domains are
+preserved. An empty kind array resets that kind's current-domain choices.
+The same entity can be hidden for galleries and shown for another content kind.
+Preferences cannot override fixed rules, requirements or unconfigured entities.
 
-## Upgrading an existing reader deployment
+Guests keep the same scoped choices in localStorage and send a bounded
+`ContentKit-Reader-Preferences` header. The header does not grant access or
+choose the domain. Signed-in requests use account preferences instead.
 
-Apply the schema migration before starting this version. Readers and media workers from before
-internal entities were introduced do not understand that flag: drain them
-before activating internal markers or converting public entities to
-internal. A host backfill must retain any old restriction flags while an old
-reader still serves requests. Normal task startup can migrate after stopping
-the old stack; a live switchover needs the schema first and marker activation
-after the reader change.
+After registration, `POST /v1/me/content-filters/initialize` adopts valid guest
+choices only when the authenticated account has no saved preferences. It
+validates choices across all the app's domains and kinds. Ordinary login never
+overwrites an account with guest preferences. Language remains a separate
+account preference.
+
+Existing unscoped browser and database choices are retained as a fallback for
+configured kinds. Explicit scoped values win. Resetting a kind records a
+scoped default so an older unscoped value cannot unexpectedly reappear.
+
+## Upgrading an existing deployment
+
+Replace domain-level `filters`, `require_entities` and `require_kinds` with
+policies directly under `domains[]`, keyed by content kind (for example,
+`domains[].gallery`). Apply schema migrations before starting a
+new reader. Readers and media workers from before internal entities were
+introduced do not understand that flag: drain them before activating internal
+markers or converting public entities to internal. A host backfill must retain
+old restriction flags while an old reader still serves requests.
+
+Normal task startup can migrate after stopping the old stack. A live cutover
+requires schema preparation and coordinated reader/worker replacement before
+internal marker activation; see the host's production rollout instructions.

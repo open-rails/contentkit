@@ -11,9 +11,14 @@ import { Button } from "#ckui/ui/button";
 import { Label } from "#ckui/ui/label";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { Switch } from "#ckui/ui/switch";
+import { labelOf, type Labels } from "../groups/parts.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 
 export interface ContentFilterSettingsProps {
+  /** Content kinds to show. Omitted displays every configured kind. */
+  kinds?: readonly string[];
+  /** Display labels for content-kind sections, when more than one is shown. */
+  labels?: Labels;
   /** Entity names in this language; default the provider's. */
   language?: string;
   /** Offer listing deleted content the reader holds. Default true. */
@@ -42,21 +47,25 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
     return root(<Skeleton className="h-24 w-full" />);
   }
   const filters = f.filters;
-  if (!filters.filters.length && p.includeDeleted === false) return null;
+  const groups = Object.entries(filters.kinds).filter(([kind, rows]) => rows.length && (!p.kinds || p.kinds.includes(kind)));
+  if (!groups.length && p.includeDeleted === false) return null;
   return root(
     <>
-      {filters.filters.length ? (
-        <ul className="grid divide-y divide-border rounded-lg border border-border">
-          {filters.filters.map((x) => (
-            <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
-              <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
-              <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
-                {x.entity.name || x.entity.slug}
-              </Label>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {groups.map(([kind, rows]) => (
+        <section key={kind} className="grid gap-2" data-content-kind={kind}>
+          {groups.length > 1 && <h4 className="font-medium">{labelOf(p.labels, kind)}</h4>}
+          <ul className="grid divide-y divide-border rounded-lg border border-border">
+            {rows.map((x) => (
+              <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-kind={kind} data-slug={x.entity.slug} data-visible={x.visible}>
+                <Switch id={`${id}-${kind}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(kind, x.entity.id, v))} />
+                <Label htmlFor={`${id}-${kind}-${x.entity.id}`} className="min-w-0 flex-1">
+                  {x.entity.name || x.entity.slug}
+                </Label>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
       {p.includeDeleted !== false && ctx?.viewer !== null && (
         <div className="flex items-center gap-3">
           <Switch id={`${id}-deleted`} checked={filters.include_deleted} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setIncludeDeleted(v))} />

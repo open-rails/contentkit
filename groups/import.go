@@ -147,6 +147,9 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		if in[i].Internal == nil {
 			r.Internal = g.Internal
 		}
+		if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: r.Kind, Slug: r.Slug, ScopeID: GroupID(r.ScopeID), State: State(r.State), Internal: r.Internal}); err != nil {
+			return err
+		}
 		switch {
 		case g.Kind != r.Kind:
 			return fmt.Errorf("%w: group %s is a %s, not a %s", ErrInvalid, r.ID, g.Kind, r.Kind)

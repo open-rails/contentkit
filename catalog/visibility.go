@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/readerprefs"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -54,13 +55,8 @@ type Viewer struct {
 	staff          bool
 	management     bool
 	filter         *access.Filter
-	exclude        []string
-	require        []string
-	requireKinds   []string
-	requireMissing bool
-	hardMissing    bool
-	hidden         []string
-	blocked        []string
+	policies       domainpolicy.Policies
+	hidden         map[string][]string
 	includeDeleted bool
 	editorGroups   []string
 	// asked are owner groups whose editorship this request already checked.
@@ -71,7 +67,7 @@ type Viewer struct {
 // (one billing read, fail-closed when unavailable), the site's required groups
 // and the viewer's content filters (config defaults merged with their own).
 func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
-	v := &Viewer{s: s, actor: o.Actor, language: o.Language, mode: o.Mode, now: s.now(), blocked: []string{}}
+	v := &Viewer{s: s, actor: o.Actor, language: o.Language, mode: o.Mode, now: s.now()}
 	if v.mode == "" {
 		v.mode = access.Lock
 	}
@@ -84,8 +80,6 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		}
 	}
 	v.domain, _ = s.cfg.DomainFor(o.Host)
-	v.exclude = append([]string{}, v.domain.ExcludeRestrictions...)
-	v.requireKinds = append([]string{}, v.domain.RequireKinds...)
 	rights, err := s.staffRights(ctx, o.Actor)
 	if err != nil {
 		// A read shows what the rule shows anyone; staff extras wait.
@@ -97,77 +91,50 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		return nil, err
 	}
 	v.filter = f
-	refs := append([]kinds.GroupRef{}, v.domain.RequireGroups...)
-	for _, f := range v.domain.Filters {
-		refs = append(refs, f.Group)
-	}
-	ids, err := s.groupIDs(ctx, refs)
+	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, v.domain)
 	if err != nil {
 		return nil, err
 	}
-	v.require = []string{}
-	for _, r := range v.domain.RequireGroups {
-		g, ok := ids[r]
-		if !ok {
-			v.requireMissing = true
-			continue
-		}
-		v.require = append(v.require, g.id)
-	}
-	hidden, allowed := map[string]bool{}, map[string]bool{}
-	for _, f := range v.domain.Filters {
-		g, ok := ids[f.Group]
-		if !ok {
-			if !f.Visible && !f.Toggleable() {
-				v.hardMissing = true
-			}
-			continue
-		}
-		toggle := f.Toggleable() && !g.internal && !v.domain.Requires(f.Group)
-		if toggle {
-			allowed[g.id] = true
-			hidden[g.id] = !f.Visible
-		} else if !f.Visible {
-			v.blocked = append(v.blocked, g.id)
+	allowed := map[string]map[string]bool{}
+	for kind, p := range v.policies {
+		allowed[kind] = map[string]bool{}
+		for id := range p.Toggles {
+			allowed[kind][id] = true
 		}
 	}
+	values := map[string]string{}
 	if o.Actor.Member() {
 		var raw []byte
-		err := s.pool.QueryRow(ctx, `SELECT overrides, include_deleted FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
+		err := s.pool.QueryRow(ctx, `SELECT overrides,include_deleted FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
-		var overrides map[string]string
 		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &overrides); err != nil {
+			if err := json.Unmarshal(raw, &values); err != nil {
 				return nil, err
 			}
 		}
-		for id, choice := range overrides {
-			if allowed[id] {
-				hidden[id] = choice == "hide"
-			}
-		}
 	} else if o.Actor.Anonymous {
-		overrides, err := readerprefs.Overrides(ctx, allowed)
+		choices, err := readerprefs.Overrides(ctx, allowed)
 		if err != nil {
 			return nil, invalid("%s", err)
 		}
-		for id, visible := range overrides {
-			hidden[id] = !visible
+		for key, value := range choices {
+			values[key] = value
 		}
 	}
-	for _, id := range o.Requested {
-		delete(hidden, id)
-	}
-	v.hidden = []string{}
-	for id, h := range hidden {
-		if h {
-			v.hidden = append(v.hidden, id)
+	v.hidden = map[string][]string{}
+	for kind, p := range v.policies {
+		for id, defaultVisible := range p.Toggles {
+			visible, overridden := readerprefs.Stored(values, kind, id)
+			if !overridden {
+				visible = defaultVisible
+			}
+			if !visible && !slices.Contains(o.Requested, id) {
+				v.hidden[kind] = append(v.hidden[kind], id)
+			}
 		}
 	}
-	slices.Sort(v.hidden)
-	slices.Sort(v.blocked)
 	v.editorGroups = []string{}
 	if len(o.EditorGroups) > 0 && !v.staff {
 		got := s.readEditors(ctx, o.Actor, o.EditorGroups)
@@ -180,38 +147,6 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		slices.Sort(v.editorGroups)
 	}
 	return v, nil
-}
-
-// groupIDs resolves active groups by kind and slug (unscoped ones).
-type domainGroup struct {
-	id       string
-	internal bool
-}
-
-func (s *Store) groupIDs(ctx context.Context, refs []kinds.GroupRef) (map[kinds.GroupRef]domainGroup, error) {
-	out := map[kinds.GroupRef]domainGroup{}
-	if len(refs) == 0 {
-		return out, nil
-	}
-	ks, ss := make([]string, len(refs)), make([]string, len(refs))
-	for i, r := range refs {
-		ks[i], ss[i] = r.Kind, r.Slug
-	}
-	rows, err := s.pool.Query(ctx, `SELECT g.kind, g.slug, g.id, g.internal FROM `+s.t.groups+` g JOIN unnest($2::text[], $3::text[]) AS r(kind, slug)
- ON g.kind = r.kind AND g.slug = r.slug WHERE g.tenant_id = $1 AND g.state = 'active' AND g.scope_id = ''`, s.tenant, ks, ss)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r kinds.GroupRef
-		var g domainGroup
-		if err := rows.Scan(&r.Kind, &r.Slug, &g.id, &g.internal); err != nil {
-			return nil, err
-		}
-		out[r] = g
-	}
-	return out, rows.Err()
 }
 
 // editable reports an owner group the request already knows the viewer
@@ -285,7 +220,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		opens, accessArgs = "false", nil
 	}
 	versions := slices.Sorted(maps.Keys(v.filter.Versions()))
-	args := pgx.NamedArgs{"cv_now": v.now, "cv_exclude": v.exclude, "cv_require": v.require, "cv_require_kinds": v.requireKinds, "cv_hidden": v.hidden, "cv_blocked": v.blocked,
+	args := pgx.NamedArgs{"cv_now": v.now,
 		"cv_language": v.language, "cv_owned": v.filter.Contents(), "cv_owned_versions": versions,
 		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorGroups,
 		"cv_include_deleted": v.includeDeleted}
@@ -293,7 +228,14 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		args[k] = a
 	}
 	live := f("live_from") + " <= @cv_now::timestamptz"
-	scope := v.domainSQL(alias, "cv")
+	scope, scopeArgs := v.policies.SQL(alias, "cv_domain")
+	for k, a := range scopeArgs {
+		args[k] = a
+	}
+	soft, softArgs := domainpolicy.HiddenSQL(v.hidden, alias, "cv_hidden")
+	for k, a := range softArgs {
+		args[k] = a
+	}
 	if v.staff {
 		return scope, args
 	}
@@ -301,7 +243,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	if v.mode == access.Hide {
 		listed += " AND " + opens
 	}
-	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND NOT (" + f("group_ids") + " && @cv_hidden::text[]) AND " + listed + ")"
+	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft + " AND " + listed + ")"
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
@@ -318,25 +260,9 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // language and a reader's content filters do not apply. Args are pgx named
 // args prefixed ci_.
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
-	f := func(col string) string { return alias + "." + col }
-	return "(NOT " + f("deleted") + " AND " + f("live_from") + " <= @ci_now::timestamptz AND " + f("listing") + " = 'listed' AND " + v.domainSQL(alias, "ci") + ")",
-		pgx.NamedArgs{"ci_now": v.now, "ci_exclude": v.exclude, "ci_require": v.require, "ci_require_kinds": v.requireKinds, "ci_blocked": v.blocked}
-}
-
-// domainSQL applies fixed exclusions to all content, and required entities
-// only to the optional set of content kinds declared by the domain.
-func (v *Viewer) domainSQL(alias, prefix string) string {
-	if v.hardMissing {
-		return "false"
-	}
-	required := alias + ".group_ids @> @" + prefix + "_require::text[]"
-	if v.requireMissing {
-		required = "false"
-	}
-	if len(v.requireKinds) > 0 {
-		required = "(NOT (" + alias + ".kind = ANY(@" + prefix + "_require_kinds::text[])) OR (" + required + "))"
-	}
-	return "(NOT (" + alias + ".restrictions && @" + prefix + "_exclude::text[]) AND " + required + " AND NOT (" + alias + ".group_ids && @" + prefix + "_blocked::text[]))"
+	scope, args := v.policies.SQL(alias, "ci_domain")
+	args["ci_now"] = v.now
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + alias + ".listing = 'listed' AND " + scope + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.
@@ -357,32 +283,7 @@ type facetRow struct {
 
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
 
-func (v *Viewer) inScope(r facetRow) bool {
-	if v.hardMissing {
-		return false
-	}
-	for _, x := range r.restrictions {
-		if slices.Contains(v.exclude, x) {
-			return false
-		}
-	}
-	for _, g := range r.groupIDs {
-		if slices.Contains(v.blocked, g) {
-			return false
-		}
-	}
-	if v.domain.RequiresKind(r.kind) {
-		if v.requireMissing {
-			return false
-		}
-		for _, g := range v.require {
-			if !slices.Contains(r.groupIDs, g) {
-				return false
-			}
-		}
-	}
-	return true
-}
+func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.groupIDs) }
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {

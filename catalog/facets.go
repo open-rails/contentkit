@@ -102,6 +102,9 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		s.tenant, ids, string(data)); err != nil {
 		return err
 	}
+	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
+		return err
+	}
 	return s.markDocuments(ctx, q, ids)
 }
 

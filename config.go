@@ -322,6 +322,9 @@ type Deps struct {
 	// over an embedded engine or the remote client): held keys, offers' products
 	// and prices, free grants. Nil holds no keys and sells nothing.
 	Billing access.Billing
+	// ActivitySigner optionally signs event-time audience receipts for apps
+	// without media. Media apps reuse their persistent delivery signer.
+	ActivitySigner discovery.ActivitySigner
 	// Scopes provisions and retires the AuthKit groups of auth_scope group
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.

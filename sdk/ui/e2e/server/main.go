@@ -29,21 +29,27 @@ import (
 )
 
 type config struct {
-	addr, origin       string // the app, API, bucket and /__test origin
-	mediaAddr          string // the fault proxy; its origin is the registry's BaseURL
-	gateway            string // media-gateway behind the fault proxy
-	dsn                string
-	s3Endpoint, bucket string
-	s3Key, s3Secret    string
-	tokenKey           string // media-gateway's MEDIA_GATEWAY_TOKEN_KEY
-	kinds, static      string
-	lifetime, idle     time.Duration
-	stdin              bool
-	teardown           []string
+	signalAddr, signalUser, signalPassword, signalDatabase, signalCluster string
+	addr, origin                                                          string // the app, API, bucket and /__test origin
+	mediaAddr                                                             string // the fault proxy; its origin is the registry's BaseURL
+	gateway                                                               string // media-gateway behind the fault proxy
+	dsn                                                                   string
+	s3Endpoint, bucket                                                    string
+	s3Key, s3Secret                                                       string
+	tokenKey                                                              string // media-gateway's MEDIA_GATEWAY_TOKEN_KEY
+	kinds, static                                                         string
+	lifetime, idle                                                        time.Duration
+	stdin                                                                 bool
+	teardown                                                              []string
 }
 
 func main() {
 	var c config
+	flag.StringVar(&c.signalAddr, "signal-addr", os.Getenv("CKUI_E2E_CH_ADDR"), "optional native ClickHouse address for the signal integration lane")
+	flag.StringVar(&c.signalUser, "signal-user", os.Getenv("CKUI_E2E_CH_USER"), "ClickHouse fixture user")
+	flag.StringVar(&c.signalPassword, "signal-password", os.Getenv("CKUI_E2E_CH_PASSWORD"), "ClickHouse fixture password")
+	flag.StringVar(&c.signalDatabase, "signal-database", os.Getenv("CKUI_E2E_CH_DATABASE"), "owned ClickHouse fixture database")
+	flag.StringVar(&c.signalCluster, "signal-cluster", os.Getenv("CKUI_E2E_CH_CLUSTER"), "optional ClickHouse fixture cluster")
 	flag.StringVar(&c.addr, "addr", "127.0.0.1:4790", "listen address of the app origin")
 	flag.StringVar(&c.origin, "origin", "", "public app origin (default http://localhost:<port>)")
 	flag.StringVar(&c.mediaAddr, "media-addr", "127.0.0.1:4791", "listen address of the fault proxy (the media origin)")

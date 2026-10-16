@@ -50,7 +50,7 @@ func (r ErasureReport) Complete() bool {
 }
 
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
-var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures"}
+var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "population_observations"}
 
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.

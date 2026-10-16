@@ -71,7 +71,8 @@ type Config struct {
 	// or GroupCandidateLimit when larger); a larger limit is clamped, so a
 	// listing ends there. It bounds the rows one read returns and one cache
 	// entry holds. Must be at least GroupCandidateLimit.
-	MaxDepth int
+	MaxDepth     int
+	Availability AvailabilityProvider
 }
 
 // Ranker applies one policy to one tenant's signal plane.
@@ -83,6 +84,9 @@ type Ranker struct {
 	cacheTTL        time.Duration
 	groupCandidates int
 	maxDepth        int
+	availability    AvailabilityProvider
+	scope           signal.ActivityScope
+	normalization   *signal.NormalizationOptions
 }
 
 // New validates the policy and returns the Ranker.
@@ -94,7 +98,7 @@ func New(cfg Config) (*Ranker, error) {
 		return nil, err
 	}
 	r := &Ranker{source: cfg.Source, policy: cfg.Policy, catalog: cfg.Catalog, cache: cfg.Cache, cacheTTL: cfg.CacheTTL,
-		groupCandidates: cfg.GroupCandidateLimit, maxDepth: cfg.MaxDepth}
+		groupCandidates: cfg.GroupCandidateLimit, maxDepth: cfg.MaxDepth, availability: cfg.Availability}
 	if r.cacheTTL <= 0 {
 		r.cacheTTL = DefaultCacheTTL
 	}
@@ -148,6 +152,11 @@ type GroupHit struct {
 // global and read in power-of-two prefixes, so a few cache entries per window
 // serve every reader; hosts page by asking for offset+limit and slicing.
 func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
+	result, err := r.PopularResult(ctx, contentKind, window, limit)
+	return result.Hits, err
+}
+
+func (r *Ranker) popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
 	}
@@ -162,7 +171,7 @@ func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.
 	key := r.cacheKey("popular", contentKind, window.String(), strconv.Itoa(depth))
 	var out []Hit
 	if !r.cached(ctx, key, &out) {
-		hits, err := r.source.Popular(ctx, contentKind, signal.PopularOptions{Window: window, Limit: depth, RankExpr: r.policy.RankExpr()})
+		hits, err := r.source.Popular(ctx, contentKind, signal.PopularOptions{Window: window, Limit: depth, RankExpr: r.policy.RankExpr(), Normalization: r.normalization})
 		if err != nil {
 			return nil, err
 		}
@@ -198,6 +207,32 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 	}
 	if err := window.Validate(); err != nil {
 		return nil, err
+	}
+	if r.policy.Normalized() {
+		q, window, _, err := r.query(ctx, contentKind, window)
+		if err != nil {
+			return nil, err
+		}
+		if !q.policy.Normalized() {
+			return q.Candidates(ctx, contentKind, ids, window)
+		}
+		wanted := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			wanted[id] = true
+		}
+		n := *q.normalization
+		n.Availability.Intervals = nil
+		for _, interval := range q.normalization.Availability.Intervals {
+			if wanted[interval.ContentID] {
+				n.Availability.Intervals = append(n.Availability.Intervals, interval)
+			}
+		}
+		hits, err := q.source.Popular(ctx, contentKind, signal.PopularOptions{Window: window, Limit: len(ids), RankExpr: q.policy.RankExpr(), Normalization: &n})
+		out := make([]Hit, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, Hit{ContentID: h.ContentID, Score: h.Score, ContentMetrics: h.ContentMetrics})
+		}
+		return out, err
 	}
 	refs := make([]signal.ContentRef, 0, len(ids))
 	for _, id := range ids {
@@ -315,10 +350,12 @@ func sortHits(hits []Hit) {
 func (r *Ranker) cacheKey(parts ...string) string {
 	// New validates every float in Policy, so this fixed shape always encodes.
 	body, _ := json.Marshal(struct {
-		Tenant string
-		Policy Policy
-		Parts  []string
-	}{r.source.Tenant(), r.policy, parts})
+		Tenant        string
+		Policy        Policy
+		Parts         []string
+		Scope         signal.ActivityScope
+		Normalization *signal.NormalizationOptions
+	}{r.source.Tenant(), r.policy, parts, r.scope, r.normalization})
 	return fmt.Sprintf("contentkit:popularity:%x", sha256.Sum256(body))
 }
 

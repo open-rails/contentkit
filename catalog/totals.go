@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/helpers/cache"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -186,13 +187,7 @@ func (s *Store) loadTotals(ctx context.Context, keys []totalsKey) (map[totalsKey
 // anyone and every tier, a tier row to its tiers, others to nobody. Versions collapse to
 // their content item, once per language and once per kind.
 func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []string) (map[string]Total, error) {
-	refs := append([]kinds.GroupRef{}, site.RequireGroups...)
-	for _, f := range site.Filters {
-		if !f.Visible {
-			refs = append(refs, f.Group)
-		}
-	}
-	ids, err := s.groupIDs(ctx, refs)
+	policies, err := domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, site)
 	if err != nil {
 		return nil, err
 	}
@@ -200,31 +195,27 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []
 	for _, k := range kindNames {
 		out[k] = Total{Tiers: zeroTiers(s.cfg.Tiers), Languages: map[string]LanguageTotal{}}
 	}
-	require, hidden := []string{}, []string{}
-	missingRequired := false
-	for _, r := range site.RequireGroups {
-		id, ok := ids[r]
-		if !ok {
-			missingRequired = true
-			continue // Only the required content kinds are excluded.
-		}
-		require = append(require, id.id)
-	}
-	for _, f := range site.Filters {
-		id, ok := ids[f.Group]
-		if !ok && !f.Visible && !f.Toggleable() {
-			return out, nil
-		}
-		if ok && !f.Visible {
-			hidden = append(hidden, id.id)
+	hidden := map[string][]string{}
+	for kind, p := range policies {
+		for id, visible := range p.Toggles {
+			if !visible {
+				hidden[kind] = append(hidden[kind], id)
+			}
 		}
 	}
+	hard, hardArgs := policies.SQL("f", "totals_domain")
+	soft, softArgs := domainpolicy.HiddenSQL(hidden, "f", "totals_hidden")
 	audiences, args, err := access.AudiencesSQL("f", s.accessG.Tiers())
 	if err != nil {
 		return nil, err
 	}
-	named := pgx.NamedArgs{"tenant": s.tenant, "kinds": kindNames, "now": s.now(), "exclude": orEmpty(site.ExcludeRestrictions),
-		"require": require, "require_kinds": orEmpty(site.RequireKinds), "require_missing": missingRequired, "hidden": hidden}
+	named := pgx.NamedArgs{"tenant": s.tenant, "kinds": kindNames, "now": s.now()}
+	for k, v := range hardArgs {
+		named[k] = v
+	}
+	for k, v := range softArgs {
+		named[k] = v
+	}
 	for k, v := range args {
 		named[k] = v
 	}
@@ -233,7 +224,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []
  CROSS JOIN LATERAL unnest(f.languages) AS l(language)
  CROSS JOIN LATERAL unnest(`+audiences+`) AS au(audience)
  WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND f.live_from <= @now AND f.listing IN ('listed', 'members')
-  AND NOT (f.restrictions && @exclude::text[]) AND ((cardinality(@require_kinds::text[]) > 0 AND NOT (f.kind = ANY(@require_kinds::text[]))) OR (NOT @require_missing::boolean AND f.group_ids @> @require::text[])) AND NOT (f.group_ids && @hidden::text[])
+  AND `+hard+` AND `+soft+`
 ) a GROUP BY GROUPING SETS ((a.kind, a.audience, a.language), (a.kind, a.audience))`, named)
 	if err != nil {
 		return nil, err

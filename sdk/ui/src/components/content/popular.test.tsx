@@ -12,14 +12,14 @@ const card = (id: string): Card => ({ id, kind: "gallery", code: id, path: `/${i
 const model = { languages: ["en"], tiers: [], kinds: {}, entity_kinds: {} };
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
-it("pairs every selected popularity period with its publication-age filter", async () => {
+it("selects the activity window without excluding older publications", async () => {
   const requests: URL[] = [];
   const changed = vi.fn();
   const client = createContentKitClient({ baseUrl: "https://content.test/popular", fetch: async (input) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/kinds")) return Response.json(model);
     requests.push(url);
-    return Response.json({ contents: [card(url.searchParams.get("published_within") ?? "missing")] });
+    return Response.json({ contents: [card(url.searchParams.get("sort")?.split(":")[1] ?? "missing")] });
   } });
   render(<ContentKitProvider client={client} viewer={null}><PopularContentGrid query={{ kind: "gallery" }} onPeriodChange={changed} /></ContentKitProvider>);
   await screen.findByText("Gallery 7d");
@@ -34,7 +34,7 @@ it("pairs every selected popularity period with its publication-age filter", asy
     await screen.findByText(`Gallery ${period}`);
     const request = requests.filter((url) => url.pathname.endsWith("/contents")).at(-1)!;
     expect(request.searchParams.get("sort")).toBe(`popular:${period}`);
-    expect(request.searchParams.get("published_within")).toBe(period);
+    expect(request.searchParams.has("published_within")).toBe(false);
     expect(changed).toHaveBeenLastCalledWith(period);
   }
   expect(screen.queryByRole("combobox", { name: "Language" })).toBeNull();
@@ -62,5 +62,20 @@ it("loads the next cursor when the shared grid's end reaches the viewport", asyn
   const request = requests.find((url) => url.searchParams.has("cursor"))!;
   expect(request.searchParams.get("cursor")).toBe("next-page");
   expect(request.searchParams.get("sort")).toBe("popular:7d");
-  expect(request.searchParams.get("published_within")).toBe("7d");
+  expect(request.searchParams.has("published_within")).toBe(false);
+});
+
+it("allows an explicit publication-age filter independently of the activity window", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/recent-popular", fetch: async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/kinds")) return Response.json(model);
+    requests.push(url);
+    return Response.json({ contents: [card("older-window")] });
+  } });
+  render(<ContentKitProvider client={client} viewer={null}><PopularContentGrid period="7d" query={{ published_within: "90d" }} /></ContentKitProvider>);
+  await screen.findByText("Gallery older-window");
+  const request = requests.find((url) => url.pathname.endsWith("/contents"))!;
+  expect(request.searchParams.get("sort")).toBe("popular:7d");
+  expect(request.searchParams.get("published_within")).toBe("90d");
 });

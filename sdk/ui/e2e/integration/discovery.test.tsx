@@ -164,14 +164,14 @@ describe("discovery against the real ContentKit", () => {
     const reader = await h.user();
     const c = client(h, cfg, reader);
     const { result } = renderHook(() => ({ filters: useContentFilters({ language: "en" }), list: useContents({ kind: "comic", groups: [t.id] }) }), { wrapper: wrap(c, { viewer: reader.id }) });
-    await waitFor(() => expect(result.current.filters.filters?.filters.map((f) => f.entity.slug)).toEqual(["gore"]), wait);
-    expect(result.current.filters.filters!.filters[0]).toMatchObject({ entity: { name: "Gore" }, default_visible: false, visible: false, overridden: false });
+    await waitFor(() => expect(result.current.filters.filters?.kinds.comic?.map((f) => f.entity.slug)).toEqual(["gore"]), wait);
+    expect(result.current.filters.filters!.kinds.comic![0]).toMatchObject({ entity: { name: "Gore" }, default_visible: false, visible: false, overridden: false });
     await waitFor(() => expect(result.current.list.items.map((x) => x.id)).toEqual([plain!.id]), wait);
 
-    await act(() => result.current.filters.setVisible(gore.id, true));
-    expect(result.current.filters.filters!.filters[0]).toMatchObject({ visible: true, overridden: true });
+    await act(() => result.current.filters.setVisible("comic", gore.id, true));
+    expect(result.current.filters.filters!.kinds.comic![0]).toMatchObject({ visible: true, overridden: true });
     await waitFor(() => expect(result.current.list.items.map((x) => x.id).sort()).toEqual([plain!.id, gory!.id].sort()), wait);
-    await act(() => result.current.filters.save({ filters: [], include_deleted: false }));
+    await act(() => result.current.filters.save({ kinds: { comic: [] }, include_deleted: false }));
     await waitFor(() => expect(result.current.list.items.map((x) => x.id)).toEqual([plain!.id]), wait);
   });
 

@@ -14,13 +14,13 @@ import (
 
 func TestContentFilterEntrypointDefaults(t *testing.T) {
 	cfg := siteConfig()
-	cfg.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}, Filters: cfg.Domains[0].Filters},
-		{Name: "alternate", Hosts: []string{"alternate.test"}, Filters: []kinds.ContentFilter{
-			{Group: cfg.Domains[0].Filters[0].Group, Visible: true},
-			{Group: cfg.Domains[0].Filters[1].Group, Visible: false},
-		}},
-		{Name: "strict", Hosts: []string{"strict.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}},
+	cfg.Domains = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: cfg.Domains[0].Kinds["gallery"].Filters}, "video": {Filters: cfg.Domains[0].Kinds["gallery"].Filters}}}, {Name: "alternate", Hosts: []string{"alternate.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+		{Group: cfg.Domains[0].Kinds["gallery"].Filters[0].Group, Visible: true},
+		{Group: cfg.Domains[0].Kinds["gallery"].Filters[1].Group, Visible: false},
+	}}, "video": {Filters: []kinds.ContentFilter{
+		{Group: cfg.Domains[0].Kinds["gallery"].Filters[0].Group, Visible: true},
+		{Group: cfg.Domains[0].Kinds["gallery"].Filters[1].Group, Visible: false},
+	}}}}, {Name: "strict", Hosts: []string{"strict.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "video": {RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}},
 	}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "big-breasts", "yaoi")
@@ -54,10 +54,10 @@ func TestContentFilterEntrypointDefaults(t *testing.T) {
 		if status, _ := f.call(http.MethodGet, host, "reader", "/content-filters", nil, &got); status != http.StatusOK {
 			t.Fatalf("settings %s: %d", host, status)
 		}
-		if len(got.Filters) != 2 {
+		if len(got.Kinds["gallery"]) != 2 {
 			t.Fatalf("settings %s: %+v", host, got)
 		}
-		if a, b := got.Filters[0], got.Filters[1]; a.DefaultVisible != defaultBig || b.DefaultVisible != defaultYaoi ||
+		if a, b := got.Kinds["gallery"][0], got.Kinds["gallery"][1]; a.DefaultVisible != defaultBig || b.DefaultVisible != defaultYaoi ||
 			a.Visible != visibleBig || b.Visible != visibleYaoi || a.Overridden != overridden || b.Overridden != overridden {
 			t.Fatalf("settings %s: %+v", host, got)
 		}
@@ -94,7 +94,7 @@ func TestContentFilterEntrypointDefaults(t *testing.T) {
 		}
 	}
 	checkTotals()
-	update := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}, {GroupID: f.ids["yaoi"], Visible: true}}}
+	update := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: true}}}}
 	if status, _ := f.call(http.MethodPut, "alternate.test", "reader", "/me/content-filters", update, nil); status != http.StatusOK {
 		t.Fatalf("save overrides: %d", status)
 	}
@@ -103,13 +103,13 @@ func TestContentFilterEntrypointDefaults(t *testing.T) {
 	settings("main.test", false, true, true, true, true)
 	settings("alternate.test", true, false, true, true, true)
 	// An explicit false also wins over a site's true default.
-	update.Filters[0].Visible = false
+	update.Kinds["gallery"][0].Visible = false
 	if status, _ := f.call(http.MethodPut, "main.test", "reader", "/me/content-filters", update, nil); status != http.StatusOK {
 		t.Fatalf("hide override: %d", status)
 	}
 	assertList("alternate.test", "reader", 1, 3)
 	checkTotals()
-	if status, _ := f.call(http.MethodPut, "alternate.test", "reader", "/me/content-filters", ContentFiltersUpdate{}, nil); status != http.StatusOK {
+	if status, _ := f.call(http.MethodPut, "alternate.test", "reader", "/me/content-filters", ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": {}}}, nil); status != http.StatusOK {
 		t.Fatalf("reset: %d", status)
 	}
 	assertList("main.test", "reader", 1, 3)

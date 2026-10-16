@@ -496,6 +496,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if err != nil {
 				return err
 			}
+			if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: row.Kind, Slug: row.Slug, ScopeID: GroupID(row.ScopeID), State: State(row.State), Internal: row.Internal}); err != nil {
+				return err
+			}
 			row.Ordinal = i
 			rows = append(rows, row)
 			if moved {

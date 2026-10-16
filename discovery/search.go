@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -88,6 +89,17 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
 		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
+		if name, period, _ := strings.Cut(o.Sort, ":"); err == nil && name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
+			if period == "" {
+				period = popularity.DefaultPeriod
+			}
+			window, windowErr := popularity.WindowForPeriod(period, s.now())
+			if windowErr != nil {
+				return empty, windowErr
+			}
+			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+			srt.raw = o.Sort
+		}
 		if err != nil {
 			return empty, err
 		}
@@ -106,7 +118,12 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 			return empty, err
 		}
 		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
-		return ContentPage{Contents: cards, NextCursor: next}, err
+		for i := range cards {
+			if ranking, ok := srt.rankings[cards[i].ID]; ok {
+				cards[i].Ranking = &ranking
+			}
+		}
+		return ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {

@@ -122,13 +122,13 @@ it("refreshes the window when the account changes its content filters", async ()
     requests.push(path);
     if (init?.method === "PUT") {
       filtered = true;
-      return Response.json({ filters: [], include_deleted: false });
+      return Response.json({ kinds: { gallery: [] }, include_deleted: false });
     }
     return Response.json({ ...data(), days: filtered ? [] : data().days });
   } });
   render(<ContentKitProvider client={client} viewer="reader"><DailyReleases /></ContentKitProvider>);
   await screen.findByText("Gallery today-1");
-  await act(async () => { await client.discovery.setContentFilters({ filters: [], include_deleted: false }); });
+  await act(async () => { await client.discovery.setContentFilters({ kinds: { gallery: [] }, include_deleted: false }); });
   expect(await screen.findByText("Nothing here yet.")).toBeVisible();
   expect(requests.filter((path) => path.endsWith("/releases"))).toHaveLength(2);
 });

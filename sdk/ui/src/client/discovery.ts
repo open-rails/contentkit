@@ -1,4 +1,7 @@
 import type {
+  ActivityContexts,
+  ActivityContextsInput,
+  ActivityTarget,
   ContentFilters,
   ContentFiltersUpdate,
   ContentPage,
@@ -70,13 +73,24 @@ export interface PageQuery {
   limit?: number;
 }
 
-export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & { sort?: ListSort };
+export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & {
+  sort?: ListSort;
+  /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
+  activity_from?: string;
+  /** Exclusive UTC date (YYYY-MM-DD); requires activity_from, kind and sort=popular. */
+  activity_until?: string;
+};
 export type PopularPeriod = "7d" | "90d" | "365d" | "all";
-export type PopularQuery = Omit<ContentQuery, "sort" | "published_within">;
+export type PopularQuery = Omit<ContentQuery, "sort" | "activity_from" | "activity_until">;
 
-/** Match the popularity score window and publication age window. */
+/** Rank activity in the selected window; publication age is an optional separate filter. */
 export function popularQuery(period: PopularPeriod = "7d", filters: PopularQuery = {}): ContentQuery {
-  return { ...filters, sort: `popular:${period}`, published_within: period };
+  return { ...filters, sort: `popular:${period}` };
+}
+
+/** Rank activity between two UTC dates: from inclusive, until exclusive. */
+export function popularBetween(from: string, until: string, filters: PopularQuery & { kind: string }): ContentQuery {
+  return { ...filters, sort: "popular", activity_from: from, activity_until: until };
 }
 
 export type SearchQuery = ContentFilterQuery &
@@ -176,7 +190,7 @@ export class DiscoveryClient {
   /** Only the current domain's reader-toggleable entities, named in the requested language. */
   async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
     const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
-    this.http.acceptGuestFilters(result.filters);
+    this.http.acceptGuestFilters(result.kinds);
     return result;
   }
   /** Replaces this domain's reader settings; other domains' choices remain intact. */
@@ -195,6 +209,11 @@ export class DiscoveryClient {
     const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/me/history", { query: o });
     emit({ type: "history.changed" });
+  }
+  /** Capture server-owned access and eligibility at an observation's start. */
+  activityContexts(targets: readonly ActivityTarget[], session?: string, language = this.http.language()): Promise<ActivityContexts> {
+    const body: ActivityContextsInput = { targets: [...targets], session, language };
+    return call(this.http, "POST", "/activity-contexts", { body });
   }
   /** Views and clicks; signed out, of the session named. */
   signals(signals: SignalInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {

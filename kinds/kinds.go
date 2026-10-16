@@ -35,18 +35,21 @@ type Config struct {
 }
 
 // Domain is one entrypoint's catalog policy, matched by request host.
-// The first domain is the default for unmatched hosts. Entities absent from
-// Filters are shown and cannot be toggled by readers.
+// The first domain is the default for unmatched hosts. An omitted content
+// kind has no domain filtering. YAML puts kind policies beside name and hosts;
+// JSON retains an explicit kinds object.
 type Domain struct {
-	Name                string   `json:"name" yaml:"name"`
-	Hosts               []string `json:"hosts" yaml:"hosts"`
-	ExcludeRestrictions []string `json:"exclude_restrictions,omitempty" yaml:"exclude_restrictions"`
-	// RequireGroups admits only content carrying every named entity. It is
-	// an access boundary, including direct reads, and never a reader toggle.
-	RequireGroups []GroupRef `json:"require_entities,omitempty" yaml:"require_entities"`
-	// RequireKinds limits required entities to these content kinds; empty means every kind.
-	RequireKinds []string        `json:"require_kinds,omitempty" yaml:"require_kinds"`
-	Filters      []ContentFilter `json:"filters,omitempty" yaml:"filters"`
+	Name  string                `json:"name" yaml:"name"`
+	Hosts []string              `json:"hosts" yaml:"hosts"`
+	Kinds map[string]KindPolicy `json:"kinds,omitempty" yaml:"-"`
+}
+
+// KindPolicy is the visibility policy for one content kind on one domain.
+// Required entities form a hard AND boundary; reader filters are optional
+// unless user_toggle is false or the entity is internal.
+type KindPolicy struct {
+	RequireGroups []GroupRef      `json:"require_entities,omitempty" yaml:"require_entities"`
+	Filters       []ContentFilter `json:"filters,omitempty" yaml:"filters"`
 }
 
 // GroupRef names an entity by kind and canonical slug.
@@ -68,13 +71,8 @@ type ContentFilter struct {
 // must additionally exclude internal and domain-required entities.
 func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.UserToggle }
 
-// Requires reports whether ref is a hard inclusion rule for this domain.
-func (d Domain) Requires(ref GroupRef) bool { return slices.Contains(d.RequireGroups, ref) }
-
-// RequiresKind reports whether required entities apply to a content kind.
-func (d Domain) RequiresKind(kind string) bool {
-	return len(d.RequireKinds) == 0 || slices.Contains(d.RequireKinds, kind)
-}
+// Requires reports whether ref is a hard inclusion rule for this content kind.
+func (p KindPolicy) Requires(ref GroupRef) bool { return slices.Contains(p.RequireGroups, ref) }
 
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
 type Kind struct {
@@ -361,6 +359,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, k := range c.Kinds {
+		if name == "name" || name == "hosts" {
+			return fmt.Errorf("%w: content kind %q is reserved for domain metadata", ErrInvalid, name)
+		}
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: kind %q", ErrInvalid, name)
 		}
@@ -425,36 +426,26 @@ func (c Config) Validate() error {
 			}
 			hosts[host] = true
 		}
-		filters := map[GroupRef]bool{}
-		for _, f := range d.Filters {
-			if filters[f.Group] {
-				return fmt.Errorf("%w: domain %s repeats content filter %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+		for kind, policy := range d.Kinds {
+			if _, ok := c.Kinds[kind]; !ok {
+				return fmt.Errorf("%w: domain %s names unknown content kind %q", ErrInvalid, d.Name, kind)
 			}
-			filters[f.Group] = true
-			if d.Requires(f.Group) && !f.Visible {
-				return fmt.Errorf("%w: domain %s both requires and hides entity %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+			filters := map[GroupRef]bool{}
+			for _, f := range policy.Filters {
+				if filters[f.Group] {
+					return fmt.Errorf("%w: domain %s kind %s repeats filter %s/%s", ErrInvalid, d.Name, kind, f.Group.Kind, f.Group.Slug)
+				}
+				filters[f.Group] = true
+				if policy.Requires(f.Group) && !f.Visible {
+					return fmt.Errorf("%w: domain %s kind %s both requires and hides entity %s/%s", ErrInvalid, d.Name, kind, f.Group.Kind, f.Group.Slug)
+				}
 			}
-		}
-		if len(d.RequireKinds) > 0 && len(d.RequireGroups) == 0 {
-			return fmt.Errorf("%w: domain %s require_kinds needs require_entities", ErrInvalid, d.Name)
-		}
-		requireKinds := map[string]bool{}
-		for _, kind := range d.RequireKinds {
-			if _, ok := c.Kinds[kind]; !ok || requireKinds[kind] {
-				return fmt.Errorf("%w: domain %s has unknown or repeated required content kind %q", ErrInvalid, d.Name, kind)
-			}
-			requireKinds[kind] = true
-		}
-		required := map[GroupRef]bool{}
-		for _, r := range d.RequireGroups {
-			if required[r] {
-				return fmt.Errorf("%w: domain %s repeats required entity %s/%s", ErrInvalid, d.Name, r.Kind, r.Slug)
-			}
-			required[r] = true
-		}
-		for _, r := range d.ExcludeRestrictions {
-			if !slices.Contains(c.Restrictions, r) {
-				return fmt.Errorf("%w: domain %s excludes unknown restriction %q", ErrInvalid, d.Name, r)
+			required := map[GroupRef]bool{}
+			for _, r := range policy.RequireGroups {
+				if required[r] {
+					return fmt.Errorf("%w: domain %s kind %s repeats required entity %s/%s", ErrInvalid, d.Name, kind, r.Kind, r.Slug)
+				}
+				required[r] = true
 			}
 		}
 	}
@@ -464,9 +455,11 @@ func (c Config) Validate() error {
 func (c Config) groupRefs() []GroupRef {
 	var out []GroupRef
 	for _, d := range c.Domains {
-		out = append(out, d.RequireGroups...)
-		for _, f := range d.Filters {
-			out = append(out, f.Group)
+		for _, p := range d.Kinds {
+			out = append(out, p.RequireGroups...)
+			for _, f := range p.Filters {
+				out = append(out, f.Group)
+			}
 		}
 	}
 	return out

@@ -35,18 +35,19 @@ app restriction does not by itself disable the tenant account.
 ## Content and access
 
 **Domain**:
-A hostname through which readers enter an app's catalog, with its own content
-requirements and available reader filters. Aliases may share one domain policy.
+A hostname through which readers enter an app's catalog, with requirements and
+reader filters scoped to each content kind. Aliases may share one domain policy.
 _Avoid_: Site when referring to hostname-specific catalog policy
 
 **Domain requirement**:
-An entity that every applicable content item must be associated with on a
-domain, regardless of reader preferences. A requirement can cover all content
-or selected content kinds.
+An entity that every item of a configured content kind must be associated with
+on a domain, regardless of reader preferences. Other content kinds are unaffected.
 
 **Reader filter**:
-A domain-offered choice to show or hide content associated with an entity.
-A domain may fix that choice instead of allowing readers to change it.
+A domain-offered choice to show or hide one content kind associated with an
+entity. A domain may fix that choice instead of allowing readers to change it.
+Preferences distinguish the content kind and entity, so hiding a tag in one
+kind does not hide it in another.
 
 **Internal entity**:
 An entity used for catalog administration or access policy whose identity,

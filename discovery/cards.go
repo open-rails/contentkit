@@ -21,6 +21,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
+	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -51,6 +52,15 @@ type Card struct {
 	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
 	Attributes  map[string]any       `json:"attributes"`
+	// Ranking is present for a population-normalized popular result. Raw
+	// participation is retained alongside its single reliability adjustment.
+	Ranking *ContentRanking `json:"ranking,omitempty"`
+}
+
+type ContentRanking struct {
+	Score                 float64 `json:"score"`
+	Participation         float64 `json:"participation"`
+	AdjustedParticipation float64 `json:"adjusted_participation"`
 }
 
 // CardVersion is the version a card shows; Code selects it on the card's
@@ -111,7 +121,8 @@ type CardAccess struct {
 type ContentPage struct {
 	Contents []Card `json:"contents"`
 	// NextCursor pages on; empty on the last page.
-	NextCursor string `json:"next_cursor,omitempty"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+	Ranking    *popularity.RankingInfo `json:"ranking,omitempty"`
 }
 
 // cardOptions shape hydration.

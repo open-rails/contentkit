@@ -16,11 +16,7 @@ func TestDomainRequiredEntitiesCanBeLimitedToContentKinds(t *testing.T) {
 	required := []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}
 	locked := false
 	cfg.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}},
-		{Name: "scoped", Hosts: []string{"scoped.test"}, RequireGroups: required, RequireKinds: []string{"gallery"}},
-		{Name: "all", Hosts: []string{"all.test"}, RequireGroups: required},
-		{Name: "missing", Hosts: []string{"missing.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}, RequireKinds: []string{"gallery"}},
-		{Name: "missing-hard", Hosts: []string{"missing-hard.test"}, RequireGroups: required, RequireKinds: []string{"gallery"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}},
+		{Name: "main", Hosts: []string{"main.test"}}, {Name: "scoped", Hosts: []string{"scoped.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: required}}}, {Name: "all", Hosts: []string{"all.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: required}, "video": {RequireGroups: required}, "blog": {RequireGroups: required}}}, {Name: "missing", Hosts: []string{"missing.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, {Name: "missing-hard", Hosts: []string{"missing-hard.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}, RequireGroups: required}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}}},
 	}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "yaoi")

@@ -2056,6 +2056,13 @@ func (c *Client) GetOffers(ctx context.Context, q GetOffersQuery) (offers.OfferP
 	return out, err
 }
 
+// PostActivityContexts is POST /v1/activity-contexts (public). Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.
+func (c *Client) PostActivityContexts(ctx context.Context, body discovery.ActivityContextsInput) (discovery.ActivityContexts, error) {
+	var out discovery.ActivityContexts
+	err := c.call(ctx, http.MethodPost, "/v1/activity-contexts", nil, body, &out)
+	return out, err
+}
+
 // GetReleasesQuery is the query of GetReleases.
 type GetReleasesQuery struct {
 	// only this content kind
@@ -2195,6 +2202,10 @@ type GetContentsQuery struct {
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
+	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
+	ActivityFrom string
+	// custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular
+	ActivityUntil string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2256,6 +2267,12 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if len(q.CardEntities) > 0 {
 		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.ActivityFrom != "" {
+		v.Set("activity_from", q.ActivityFrom)
+	}
+	if q.ActivityUntil != "" {
+		v.Set("activity_until", q.ActivityUntil)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)

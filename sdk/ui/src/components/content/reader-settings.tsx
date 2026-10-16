@@ -11,7 +11,7 @@ import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "#ckui/ui/dialog";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
-import { ContentFilterSettings } from "./filters.js";
+import { ContentFilterSettings, type ContentFilterSettingsProps } from "./filters.js";
 import { ErrorLine, useAction } from "../social/parts.js";
 import type { ReaderPreferenceState } from "../../client/reader-preferences.js";
 
@@ -20,6 +20,9 @@ const noPreferences = () => EMPTY_PREFERENCES;
 const noSubscription = () => () => {};
 
 export interface ReaderSettingsProps {
+  /** Content kinds offered in this dialog; omitted shows all configured kinds. */
+  kinds?: ContentFilterSettingsProps["kinds"];
+  labels?: ContentFilterSettingsProps["labels"];
   languages: readonly { value: string; label: string }[];
   /** The current language, controlled by the host. */
   language: string;
@@ -72,7 +75,7 @@ export function ReaderSettings(p: ReaderSettingsProps) {
                 </SelectContent>
               </Select>
             </div>
-            {client && <ReaderFilters language={p.language} client={client} onError={p.onError} />}
+            {client && <ReaderFilters language={p.language} kinds={p.kinds} labels={p.labels} client={client} onError={p.onError} />}
             {(state.pending || save.pending) && !state.error && <p className="text-sm text-muted-foreground" role="status">{t("readerSettings.savingPreferences")}</p>}
             <ErrorLine>{state.error || save.error ? t("readerSettings.preferencesNotSaved") : null}</ErrorLine>
             {state.error && preferences && <Button type="button" variant="outline" onClick={() => { void save.run(() => preferences.retry()); }}>{t("common.retry")}</Button>}
@@ -83,11 +86,11 @@ export function ReaderSettings(p: ReaderSettingsProps) {
   );
 }
 
-function ReaderFilters(p: Pick<ReaderSettingsProps, "language" | "client" | "onError">) {
+function ReaderFilters(p: Pick<ReaderSettingsProps, "language" | "client" | "onError" | "kinds" | "labels">) {
   const { t } = useMessages();
   const id = useId();
   const { filters } = useContentFilters({ language: p.language, client: p.client });
-  if (filters?.filters.length === 0) return null;
+  if (filters && !Object.entries(filters.kinds).some(([kind, rows]) => rows.length && (!p.kinds || p.kinds.includes(kind)))) return null;
   return (
     <section aria-labelledby={id} className="grid gap-3">
       <h3 id={id} className="font-medium">{t("readerSettings.filters")}</h3>

@@ -41,7 +41,10 @@ func (s *Service) RefreshPopularity(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			hits, err := s.o.Hub.Popular(ctx, kind, signal.PopularOptions{Window: window, Limit: PopularityDepth, RankExpr: s.o.Policy.RankExpr()})
+			// Facets retain raw counts/ratings and the legacy fallback. The v2
+			// ranking is request-scoped by domain/language and read live through
+			// the bounded Ranker; it cannot be one global facet score.
+			hits, err := s.o.Hub.Popular(ctx, kind, signal.PopularOptions{Window: window, Limit: PopularityDepth, RankExpr: popularity.PolicyV1.RankExpr()})
 			if err != nil {
 				return err
 			}

@@ -242,10 +242,10 @@ func (st *Store) attributionUnattributed(ctx context.Context, page *AttributionP
 func (st *Store) stageRenders(ctx context.Context, tenant string, opts AttributionOptions, cur attributionCursor, limit int) ([]AttributedRender, bool, error) {
 	pred, args := st.exposurePredicate(tenant, opts)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10, c.11
+	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10, c.11, c.12
 FROM (
     SELECT render_id,
-        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, content_kinds, content_ids, content_version_ids, positions, occurred_at), version) AS c
+        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts), version) AS c
     FROM %s.exposures
     WHERE %s`, st.db, pred)
 	if cur.Render != "" {
@@ -270,8 +270,9 @@ FROM (
 			kind, key            string
 			kinds, ids, versions []string
 			positions            []uint32
+			contexts             []string
 		)
-		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &kinds, &ids, &versions, &positions, &r.OccurredAt); err != nil {
+		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &kinds, &ids, &versions, &positions, &r.OccurredAt, &contexts); err != nil {
 			return nil, false, fmt.Errorf("signal: attribution scan: %w", err)
 		}
 		if key != "" {
@@ -282,7 +283,13 @@ FROM (
 			if i < len(versions) {
 				version = versions[i]
 			}
-			r.Shown = append(r.Shown, Placement{ContentRef: contentref.NewVersion(tenant, kinds[i], ids[i], version), Position: positions[i]})
+			p := Placement{ContentRef: contentref.NewVersion(tenant, kinds[i], ids[i], version), Position: positions[i]}
+			if i < len(contexts) && contexts[i] != "" {
+				if err := json.Unmarshal([]byte(contexts[i]), &p.Access); err != nil {
+					return nil, false, err
+				}
+			}
+			r.Shown = append(r.Shown, p)
 		}
 		out = append(out, r)
 	}

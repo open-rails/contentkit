@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -48,8 +49,16 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		ids := make([]string, len(e.Shown))
 		versions := make([]string, len(e.Shown))
 		positions := make([]uint32, len(e.Shown))
+		contexts := make([]string, len(e.Shown))
 		for j, p := range e.Shown {
 			kinds[j], ids[j], versions[j], positions[j] = p.ContentKind, p.ContentID, p.Version(), p.Position
+			if p.Access != nil {
+				encoded, err := json.Marshal(p.Access)
+				if err != nil {
+					return err
+				}
+				contexts[j] = string(encoded)
+			}
 		}
 		kind, key := "", ""
 		if e.Subject != (Subject{}) {
@@ -58,18 +67,18 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		// Keep the erasure predicate in the INSERT statement. The client-side
 		// fenced lookup is only an optimization; an in-flight writer may resume
 		// after EraseSubjects records its ledger row.
-		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at")
+		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at, ? AS access_contexts")
 		args = append(args, tenant, e.RenderID, string(e.Stage), e.Revision, e.QueryID, surface, e.Ranker, e.Language,
-			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC())
+			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC(), contexts)
 	}
 	if len(rows) == 0 {
 		return nil
 	}
 	insert := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
- content_kinds, content_ids, content_version_ids, positions, occurred_at)
+ content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
-       content_kinds, content_ids, content_version_ids, positions, occurred_at
+       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts
 FROM (%s) AS incoming
 WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {

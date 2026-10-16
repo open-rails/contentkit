@@ -4688,6 +4688,22 @@
             }
           },
           {
+            "name": "activity_from",
+            "in": "query",
+            "description": "custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activity_until",
+            "in": "query",
+            "description": "custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "description": "the previous page's next_cursor",
@@ -9023,6 +9039,55 @@
         ]
       }
     },
+    "/v1/activity-contexts": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivityContextsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityContexts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/releases": {
       "get": {
         "tags": [
@@ -11724,6 +11789,64 @@
           "days"
         ]
       },
+      "ActivityContext": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "content_id",
+          "token",
+          "occurred_at"
+        ]
+      },
+      "ActivityContexts": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "contexts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityContext"
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "contexts"
+        ]
+      },
+      "ActivityContextsInput": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityTarget"
+            }
+          }
+        }
+      },
       "ActivityDay": {
         "type": "object",
         "properties": {
@@ -11746,6 +11869,17 @@
           "viewers",
           "users"
         ]
+      },
+      "ActivityTarget": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        }
       },
       "AdminComment": {
         "type": "object",
@@ -12327,6 +12461,9 @@
           "attributes": {
             "type": "object",
             "additionalProperties": {}
+          },
+          "ranking": {
+            "$ref": "#/components/schemas/ContentRanking"
           }
         },
         "required": [
@@ -12989,10 +13126,13 @@
       "ContentFilters": {
         "type": "object",
         "properties": {
-          "filters": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ContentFilterState"
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ContentFilterState"
+              }
             }
           },
           "include_deleted": {
@@ -13000,7 +13140,7 @@
           }
         },
         "required": [
-          "filters",
+          "kinds",
           "include_deleted"
         ]
       },
@@ -13010,7 +13150,16 @@
           "account_id": {
             "type": "string"
           },
-          "filters": {
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/GuestFilterSetting"
+              }
+            }
+          },
+          "legacy_filters": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FilterSetting"
@@ -13024,10 +13173,13 @@
       "ContentFiltersUpdate": {
         "type": "object",
         "properties": {
-          "filters": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FilterSetting"
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/FilterSetting"
+              }
             }
           },
           "include_deleted": {
@@ -13178,6 +13330,9 @@
           },
           "next_cursor": {
             "type": "string"
+          },
+          "ranking": {
+            "$ref": "#/components/schemas/RankingInfo"
           }
         },
         "required": [
@@ -13216,6 +13371,25 @@
             "type": "integer"
           }
         }
+      },
+      "ContentRanking": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "number"
+          },
+          "participation": {
+            "type": "number"
+          },
+          "adjusted_participation": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "participation",
+          "adjusted_participation"
+        ]
       },
       "ContentRecord": {
         "type": "object",
@@ -14176,7 +14350,7 @@
       "FilterSetting": {
         "type": "object",
         "properties": {
-          "group_id": {
+          "entity_id": {
             "type": "string"
           },
           "visible": {
@@ -14854,6 +15028,20 @@
         "required": [
           "language"
         ]
+      },
+      "GuestFilterSetting": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "default": {
+            "type": "boolean"
+          }
+        }
       },
       "HeldItem": {
         "type": "object",
@@ -16031,6 +16219,12 @@
           },
           "position": {
             "type": "integer"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "activity_token": {
+            "type": "string"
           }
         }
       },
@@ -16754,6 +16948,33 @@
           "value"
         ]
       },
+      "RankingInfo": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "requested_from": {
+            "type": "string"
+          },
+          "requested_until": {
+            "type": "string"
+          },
+          "covered_from": {
+            "type": "string"
+          },
+          "covered_until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "mode"
+        ]
+      },
       "ReactionCounts": {
         "type": "object",
         "properties": {
@@ -17430,6 +17651,9 @@
           },
           "position": {
             "type": "integer"
+          },
+          "activity_token": {
+            "type": "string"
           }
         }
       },

@@ -353,9 +353,11 @@ For a custom layout, `useDailyReleases(query)` exposes the same shared read and
 ranking window. For example, `{ sort: "popular:7d", published_within: "7d" }`
 ranks only content published during the past seven days.
 
-`<PopularContentGrid query={{ kind: "gallery" }} />` supplies the 7-day,
-90-day, 365-day and all-time selector, keeps score and age windows matched,
-and loads further pages as the reader scrolls. `period` and `onPeriodChange`
+`<PopularContentGrid query={{ kind: "gallery" }} />` supplies four visible tabs
+for 7-day, 90-day, 365-day and all-time activity and loads further pages as the
+reader scrolls. Publication age is unrestricted, so older content can trend
+again. Supply `query.published_within` only when a release-age cutoff is wanted.
+`period` and `onPeriodChange`
 optionally keep its state in the host's URL. For a homepage preview, pass
 `popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
 
@@ -816,6 +818,7 @@ the host owns search-page navigation.
 ```tsx
 <SearchBox presentation="header" onSearch={(query) => navigate(`/search?q=${encodeURIComponent(query)}`)} />
 <ReaderSettings
+  kinds={["gallery"]}
   languages={[{ value: "en", label: "English" }, { value: "es", label: "Español" }]}
   language={language}
   onLanguageChange={changeLanguage}
@@ -829,7 +832,24 @@ account languages use the provider's `languagePreference` adapter. Each domain
 only offers its configured, user-toggleable entities; internal classifications
 and required or locked rules never appear in reader settings. Labels use the
 entities' localized names. Saving this domain's settings preserves choices for
-entities offered by other domains.
+entities offered by other domains and other content kinds. `kinds` limits the
+controls shown by either `ReaderSettings` or `ContentFilterSettings`; omit it to
+show all configured kinds. Multiple kinds get separate headings; `labels` can
+supply their display names. The same entity can have independent gallery and
+blog preferences. Resets follow the current domain default, including after it
+changes. Old unscoped browser choices remain a fallback until replaced
+by a choice for that content kind.
+
+The HTTP shape groups preferences by kind:
+
+```json
+{"kinds":{"gallery":[{"entity_id":"tag-id","visible":false}]},"include_deleted":false}
+```
+
+`PUT /me/content-filters` replaces only the submitted kinds. An empty gallery
+list resets that kind to its domain defaults without changing blog preferences.
+The registration initializer also accepts `legacy_filters` so old browser
+choices can be transferred without dropping preferences for another domain.
 
 ```tsx
 <ContentKitProvider
@@ -860,3 +880,36 @@ language choice. Ordinary sign-ins never import guest preferences.
 `useReaderPreferences()` exposes the preferred language, pending/error state and
 a retry action. ReaderSettings shows an incomplete transfer and lets the reader
 retry it. Guest preferences are retained separately after registration and logout.
+
+### Activity tracking
+
+`useViewSignal(contentId, versionId)` starts an observation when its returned
+callback first reports progress. The shared `Beacons` client immediately requests
+an activity context from ContentKit, then includes that signed receipt in each
+revision. Its server timestamp stays fixed for the entire view. Pass a version
+when one is displayed; receipt requests use the provider's current language, or
+the client's configured request language outside React.
+
+`useExposure(items, options)` records cumulative rendered and visible placements.
+It splits long lists into stable segments of at most 32 placements, increments
+each segment's stage revision, and attributes clicks to the matching segment.
+Each newly observed placement receives its own server context. The client does
+not supply premium status or eligibility claims. Receipt requests are batched in
+groups of at most 100 targets.
+
+For a custom integration, `client.discovery.activityContexts(targets, session,
+language)` exposes `POST /activity-contexts`. Request its contexts when the
+observation starts, not when a delayed event batch is flushed. An explicit
+`enabled: false` response permits legacy tracking for an embedding without a
+signer; a failed or invalid receipt never silently becomes an untrusted event.
+
+The provider's identity changes invalidate buffered observations and active
+view sessions. Events collected for one account or guest are never reassigned
+to the next account. Custom callers using `Beacons.exposure` should call
+`endExposure(renderId)` after the list leaves the page to release receipt state;
+`useExposure` does this automatically.
+
+Tracking flushes pack complete events into byte-bounded requests and serialize
+keepalive sends across clients. Large queues flush while the page is active.
+A single cumulative event that exceeds the keepalive budget uses normal fetch;
+its delivery during page exit remains best effort.

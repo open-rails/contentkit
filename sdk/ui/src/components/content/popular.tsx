@@ -16,7 +16,7 @@ export interface PopularContentGridProps extends Omit<CardListProps, "infinite">
 
 const PERIODS: readonly PopularPeriod[] = ["7d", "90d", "365d", "all"];
 
-/** A popularity listing with matched score/age windows and infinite paging. */
+/** Rank activity in the selected window, across publication ages, with infinite paging. */
 export function PopularContentGrid({ query, period, onPeriodChange, locked, ...p }: PopularContentGridProps) {
   const m = useMessages();
   const [ownPeriod, setOwnPeriod] = useState<PopularPeriod>("7d");

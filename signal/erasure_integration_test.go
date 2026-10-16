@@ -202,15 +202,19 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	next := Subject{AnonKey: "anon_v1_hashed"}
 	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	c1, c2, c3 := cid(1), cid(2), cid(3)
+	access := &AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true, PolicyRevision: "at-read"}
 	view := func(subject Subject, id string) Signal {
 		return Signal{ContentRef: gallery(tenant, id), Subject: subject, Type: TypeView,
-			EventID: "view-" + id, OccurredAt: at, Progress: 1, ProgressMax: 2}
+			EventID: "view-" + id, OccurredAt: at, Progress: 1, ProgressMax: 2, Access: access}
 	}
 	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c1), view(next, c2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RecordExposures(ctx, tenant, []Exposure{{RenderID: "old-render", Stage: StageRendered,
-		Subject: old, Surface: SurfaceSearch, Shown: []Placement{{ContentRef: gallery(tenant, c1), Position: 1}}, OccurredAt: at}}); err != nil {
+		Subject: old, Surface: SurfaceSearch, Shown: []Placement{{ContentRef: gallery(tenant, c1), Position: 1, Access: access}}, OccurredAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordPopulation(ctx, tenant, []PopulationObservation{{ID: "old-active", ContentKind: "gallery", Subject: old, ObservedAt: at, EligibilityKnown: true}}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -229,6 +233,15 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	}
 	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
 		t.Fatalf("rekeyed exposures: %d", n)
+	}
+	if n := countWhere(t, conn, "population_observations", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
+		t.Fatalf("rekeyed population observations: %d", n)
+	}
+	if n := countWhere(t, conn, "signals", "tenant = ? AND subject = ? AND JSONExtractString(payload,'contentkit_access','policy_revision')='at-read'", tenant, next.Key()); n != 2 {
+		t.Fatalf("rekey changed event-time access: %d", n)
+	}
+	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject = ? AND JSONExtractString(access_contexts[1],'policy_revision')='at-read'", tenant, next.Key()); n != 1 {
+		t.Fatalf("rekey changed exposure access: %d", n)
 	}
 	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c3)}); err != nil {
 		t.Fatal(err)
