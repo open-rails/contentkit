@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 )
 
 // obj is a JSON object whose keys keep their insertion order, so the
@@ -190,6 +191,11 @@ func (m *model) operation(r httpapi.Spec) *obj {
 			param.set("schema", paramSchemas[q.Kind])
 		}
 		params = append(params, param)
+	}
+	if r.Auth == httpapi.Public && r.Method == http.MethodGet {
+		params = append(params, newObj("name", readerprefs.Header, "in", "header", "required", false,
+			"description", "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+			"schema", newObj("type", "string", "maxLength", 8192)))
 	}
 	if len(params) > 0 {
 		op.set("parameters", params)

@@ -7,10 +7,12 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -35,6 +37,14 @@ type ContentFilters struct {
 
 // ContentFiltersUpdate replaces the reader's settings.
 type ContentFiltersUpdate struct {
+	Filters        []FilterSetting `json:"filters"`
+	IncludeDeleted bool            `json:"include_deleted"`
+}
+
+// ContentFiltersInitialization binds guest preference adoption to the account
+// just registered, even if the client signs into another account before retry.
+type ContentFiltersInitialization struct {
+	AccountID      string          `json:"account_id"`
 	Filters        []FilterSetting `json:"filters"`
 	IncludeDeleted bool            `json:"include_deleted"`
 }
@@ -100,14 +110,11 @@ func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, 
 	return overrides, includeDeleted, nil
 }
 
-// ContentFilters is the signed-in reader's content filters: every
+// ContentFilters is the current reader's content filters: every
 // configured filter whose group exists, labeled in language. Defaults come
 // from the request's site; outside a request the first site's defaults apply.
 func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, language string) (ContentFilters, error) {
 	out := ContentFilters{Filters: []ContentFilterState{}}
-	if !actor.Member() {
-		return out, fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
-	}
 	if language != "" {
 		if err := s.checkLanguage(language); err != nil {
 			return out, err
@@ -117,11 +124,28 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 	if err != nil {
 		return out, err
 	}
-	overrides, includeDeleted, err := s.prefs(ctx, actor.AccountID())
-	if err != nil {
-		return out, err
+	overrides := map[string]string{}
+	if actor.Member() {
+		overrides, out.IncludeDeleted, err = s.prefs(ctx, actor.AccountID())
+		if err != nil {
+			return out, err
+		}
+	} else if actor.Anonymous {
+		allowed := make(map[string]bool, len(fgs))
+		for _, id := range fgs {
+			allowed[id] = true
+		}
+		choices, err := readerprefs.Overrides(ctx, allowed)
+		if err != nil {
+			return out, fmt.Errorf("%w: %s", ErrInvalid, err)
+		}
+		for id, visible := range choices {
+			overrides[id] = hide
+			if visible {
+				overrides[id] = show
+			}
+		}
 	}
-	out.IncludeDeleted = includeDeleted
 	ids := make([]groups.GroupID, 0, len(fgs))
 	for _, id := range fgs {
 		ids = append(ids, groups.GroupID(id))
@@ -160,6 +184,23 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 // SetContentFilters replaces the signed-in reader's settings; each names a
 // configured filter's group.
 func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersUpdate) error {
+	return s.setContentFilters(ctx, actor, u, false)
+}
+
+// InitializeContentFilters adopts a new account's guest choices only when no
+// account settings exist. Retries and delayed registration callbacks cannot
+// overwrite settings the account has already saved.
+func (s *Service) InitializeContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersInitialization) error {
+	if u.AccountID == "" {
+		return fmt.Errorf("%w: account_id is required", ErrInvalid)
+	}
+	if !actor.Member() || actor.AccountID() != u.AccountID {
+		return auth.ErrForbidden
+	}
+	return s.setContentFilters(ctx, actor, ContentFiltersUpdate{Filters: u.Filters, IncludeDeleted: u.IncludeDeleted}, true)
+}
+
+func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, u ContentFiltersUpdate, initialize bool) error {
 	if !actor.Member() {
 		return fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
@@ -188,8 +229,12 @@ func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u C
 	if err != nil {
 		return err
 	}
+	conflict := `DO UPDATE SET overrides = EXCLUDED.overrides, include_deleted = EXCLUDED.include_deleted, updated_at = now()`
+	if initialize {
+		conflict = `DO NOTHING`
+	}
 	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` (tenant_id, user_id, overrides, include_deleted, updated_at) VALUES ($1, $2, $3, $4, now())
- ON CONFLICT (tenant_id, user_id) DO UPDATE SET overrides = EXCLUDED.overrides, include_deleted = EXCLUDED.include_deleted, updated_at = now()`,
+ ON CONFLICT (tenant_id, user_id) `+conflict,
 		s.o.Tenant, actor.AccountID(), raw, u.IncludeDeleted)
 	return err
 }

@@ -316,7 +316,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/offer", nil, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga, nil, nil)
 
-	discoveryScenario(t, f, g1, user, anon)
+	discoveryScenario(t, f, g1, u.ID, user, anon)
 	mediaScenario(t, f, album, albumV, user, anon)
 	versionsScenario(t, w, f, staff, o.ID, owner, user, anon)
 
@@ -454,7 +454,7 @@ func TestRuntimeModeratesCatalogIntegration(t *testing.T) {
 
 // discoveryScenario reaches discovery's routes over the catalog's content;
 // without a signal plane its signal-backed routes answer not_configured.
-func discoveryScenario(t *testing.T, f *server, gallery, user, anon string) {
+func discoveryScenario(t *testing.T, f *server, gallery, accountID, user, anon string) {
 	var page discovery.ContentPage
 	f.want(http.StatusOK, anon, "GET", "/contents?kind=gallery", nil, &page)
 	if !slices.ContainsFunc(page.Contents, func(c discovery.Card) bool { return c.ID == gallery }) {
@@ -463,7 +463,8 @@ func discoveryScenario(t *testing.T, f *server, gallery, user, anon string) {
 	f.want(http.StatusOK, anon, "GET", "/search?q=gallery", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/typeahead?q=gal", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/release-dates?kind=gallery", nil, nil)
-	f.want(http.StatusOK, user, "GET", "/me/content-filters", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/content-filters", nil, nil)
+	f.want(http.StatusOK, user, "POST", "/me/content-filters/initialize", discovery.ContentFiltersInitialization{AccountID: accountID}, nil)
 	f.want(http.StatusOK, user, "PUT", "/me/content-filters", discovery.ContentFiltersUpdate{Filters: []discovery.FilterSetting{}}, nil)
 	unconfigured := http.StatusNotImplemented
 	f.want(unconfigured, anon, "GET", "/contents/"+gallery+"/similar", nil, nil)

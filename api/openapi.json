@@ -124,6 +124,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -291,6 +301,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -433,6 +453,16 @@
             "description": "items to skip",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -622,6 +652,16 @@
             "description": "items to skip",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -1228,6 +1268,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -1434,6 +1484,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -1604,6 +1664,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -1751,6 +1821,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -1832,6 +1912,16 @@
             "description": "items to skip",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -2027,6 +2117,16 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -3215,6 +3315,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -3263,6 +3373,16 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -3777,6 +3897,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -3942,6 +4072,16 @@
             "description": "the language to show text in; the site's first language, then any, when it has none",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -4148,6 +4288,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -4245,6 +4395,16 @@
             "description": "items to skip",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -4533,6 +4693,16 @@
             "description": "page size: 24 by default, at most 100",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -5740,6 +5910,16 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -5830,6 +6010,16 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -5941,6 +6131,16 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -6039,6 +6239,16 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -6279,6 +6489,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -6388,6 +6608,16 @@
             "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -7682,6 +7912,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -7867,6 +8107,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -7968,6 +8218,16 @@
             "description": "the download's ticket",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -8798,6 +9058,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -8899,6 +9169,16 @@
             "description": "per section: 8 by default, at most 20",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -9127,6 +9407,16 @@
             "description": "12 by default, at most 50",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -9575,6 +9865,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -9610,12 +9910,12 @@
         ]
       }
     },
-    "/v1/me/content-filters": {
+    "/v1/content-filters": {
       "get": {
         "tags": [
           "discovery"
         ],
-        "summary": "The reader's content filters: each configured filter's group, default and setting; every read applies them.",
+        "summary": "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.",
         "parameters": [
           {
             "name": "language",
@@ -9623,6 +9923,16 @@
             "description": "the language of labels and group names",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -9642,19 +9952,22 @@
           }
         },
         "security": [
+          {},
           {
             "host": []
           }
         ],
         "x-contentkit-module": "discovery",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth",
           "request"
         ]
-      },
+      }
+    },
+    "/v1/me/content-filters": {
       "put": {
         "tags": [
           "discovery"
@@ -9703,6 +10016,64 @@
         "x-contentkit-module": "discovery",
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/content-filters/initialize": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of labels and group names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentFiltersInitialization"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentFilters"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden"
+        ],
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth",
@@ -10196,6 +10567,16 @@
             "description": "10 by default, at most 100",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -10763,6 +11144,16 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
             }
           }
         ],
@@ -12183,6 +12574,23 @@
           "filters",
           "include_deleted"
         ]
+      },
+      "ContentFiltersInitialization": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilterSetting"
+            }
+          },
+          "include_deleted": {
+            "type": "boolean"
+          }
+        }
       },
       "ContentFiltersUpdate": {
         "type": "object",

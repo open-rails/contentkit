@@ -181,14 +181,14 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	f := seeded(t)
 	const host = "main.test"
 	var filters ContentFilters
-	if status, _ := f.call(http.MethodGet, host, "plain", "/me/content-filters", nil, &filters); status != http.StatusOK {
+	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
 	if len(filters.Filters) != 2 || filters.Filters[0].Label != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
 		filters.Filters[1].Label != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
-	if status, _ := f.call(http.MethodGet, host, "", "/me/content-filters", nil, nil); status != http.StatusUnauthorized {
+	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {
 		t.Fatalf("anonymous content filters: %d", status)
 	}
 	// A hidden group's content stays out of other lists, but its own page

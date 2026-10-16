@@ -51,7 +51,7 @@ func TestContentFilterEntrypointDefaults(t *testing.T) {
 	settings := func(host string, defaultBig, defaultYaoi, visibleBig, visibleYaoi, overridden bool) {
 		t.Helper()
 		var got ContentFilters
-		if status, _ := f.call(http.MethodGet, host, "reader", "/me/content-filters", nil, &got); status != http.StatusOK {
+		if status, _ := f.call(http.MethodGet, host, "reader", "/content-filters", nil, &got); status != http.StatusOK {
 			t.Fatalf("settings %s: %d", host, status)
 		}
 		if len(got.Filters) != 2 {

@@ -11,7 +11,7 @@ import type {
   Typeahead,
 } from "./generated/wire.js";
 import type { Http } from "./http.js";
-import { call } from "./route.js";
+import { call, routeURL } from "./route.js";
 import { browserSearchHistory, type BrowserSearchHistory } from "./browser-search-history.js";
 
 /** A popularity period. */
@@ -156,8 +156,10 @@ export class DiscoveryClient {
   releaseDates(q: ReleaseDatesQuery = {}, signal?: AbortSignal): Promise<ReleaseDates> {
     return call(this.http, "GET", "/release-dates", { query: query(q) as never, signal });
   }
-  contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
-    return call(this.http, "GET", "/me/content-filters", { query: { language }, signal });
+  async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
+    const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
+    this.http.acceptGuestFilters(result.filters);
+    return result;
   }
   /** Replaces the reader's filter settings; every read applies them. */
   async setContentFilters(update: ContentFiltersUpdate, language?: string): Promise<ContentFilters> {

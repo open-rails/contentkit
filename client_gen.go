@@ -2560,13 +2560,13 @@ func (c *Client) GetReleaseDates(ctx context.Context, q GetReleaseDatesQuery) (d
 	return out, err
 }
 
-// GetMeContentFiltersQuery is the query of GetMeContentFilters.
-type GetMeContentFiltersQuery struct {
+// GetContentFiltersQuery is the query of GetContentFilters.
+type GetContentFiltersQuery struct {
 	// the language of labels and group names
 	Language string
 }
 
-func (q GetMeContentFiltersQuery) values() url.Values {
+func (q GetContentFiltersQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -2574,10 +2574,10 @@ func (q GetMeContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// GetMeContentFilters is GET /v1/me/content-filters (user). The reader's content filters: each configured filter's group, default and setting; every read applies them.
-func (c *Client) GetMeContentFilters(ctx context.Context, q GetMeContentFiltersQuery) (discovery.ContentFilters, error) {
+// GetContentFilters is GET /v1/content-filters (public). The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.
+func (c *Client) GetContentFilters(ctx context.Context, q GetContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
-	err := c.call(ctx, http.MethodGet, "/v1/me/content-filters", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/content-filters", q.values(), nil, &out)
 	return out, err
 }
 
@@ -2599,6 +2599,27 @@ func (q PutMeContentFiltersQuery) values() url.Values {
 func (c *Client) PutMeContentFilters(ctx context.Context, body discovery.ContentFiltersUpdate, q PutMeContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
 	err := c.call(ctx, http.MethodPut, "/v1/me/content-filters", q.values(), body, &out)
+	return out, err
+}
+
+// PostMeContentFiltersInitializeQuery is the query of PostMeContentFiltersInitialize.
+type PostMeContentFiltersInitializeQuery struct {
+	// the language of labels and group names
+	Language string
+}
+
+func (q PostMeContentFiltersInitializeQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PostMeContentFiltersInitialize is POST /v1/me/content-filters/initialize (user). Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.
+func (c *Client) PostMeContentFiltersInitialize(ctx context.Context, body discovery.ContentFiltersInitialization, q PostMeContentFiltersInitializeQuery) (discovery.ContentFilters, error) {
+	var out discovery.ContentFilters
+	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/initialize", q.values(), body, &out)
 	return out, err
 }
 

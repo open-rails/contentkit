@@ -6,8 +6,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { ContentFilterSettings } from "./filters.js";
+import { useContents } from "../../react/discovery.js";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); localStorage.clear(); });
 
 it("renders nothing after loading when the site has no configurable filters", async () => {
   const fetcher = vi.fn(async () => Response.json({ filters: [], include_deleted: false }));
@@ -41,4 +42,32 @@ it("keeps configured filters visible and saves reader changes", async () => {
   expect(screen.queryByRole("button", { name: "Use the default" })).toBeNull();
   const update = fetcher.mock.calls.find(([, init]) => init?.method === "PUT");
   expect(JSON.parse(String(update?.[1]?.body))).toEqual({ filters: [{ group_id: "filter-group", visible: true }], include_deleted: false });
+});
+
+it("lets guests save filters locally and responds to another tab without authenticated writes", async () => {
+  const filter = { entity: { id: "guest-filter", slug: "explicit", name: "Explicit content" }, label: "Explicit content", default_visible: false, visible: false, overridden: false };
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("content-filters")) return Response.json({ filters: [filter], include_deleted: false });
+    const visible = new Headers(init?.headers).get("ContentKit-Reader-Preferences")?.includes('"visible":true');
+    return Response.json({ contents: visible ? [{ id: "visible", title: "Visible item" }] : [] });
+  });
+  const client = createContentKitClient({ baseUrl: "https://content.test/guest-filters", fetch: fetcher });
+  function Feed() {
+    const list = useContents({ kind: "gallery" });
+    return <div>{list.items.map((item) => <span key={item.id}>{item.title}</span>)}</div>;
+  }
+  render(<ContentKitProvider client={client} viewer={null}><ContentFilterSettings /><Feed /></ContentKitProvider>);
+  const toggle = await screen.findByRole("switch", { name: "Explicit content" });
+  expect(screen.queryByText("Include deleted content I own")).toBeNull();
+  await userEvent.setup().click(toggle);
+  await waitFor(() => expect(toggle).toBeChecked());
+  expect(await screen.findByText("Visible item")).toBeVisible();
+  expect(client.preferences.browser.snapshot().filters).toEqual([{ group_id: "guest-filter", visible: true }]);
+  expect(fetcher.mock.calls.every((args) => (args[1] as RequestInit | undefined)?.method === "GET")).toBe(true);
+  const key = Object.keys(localStorage).find((name) => name.includes("guest-filters"))!;
+  const next = JSON.stringify({ filters: [{ group_id: "guest-filter", visible: false }] });
+  localStorage.setItem(key, next);
+  window.dispatchEvent(new StorageEvent("storage", { key, newValue: next }));
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  await waitFor(() => expect(screen.queryByText("Visible item")).toBeNull());
 });

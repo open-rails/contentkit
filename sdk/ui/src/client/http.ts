@@ -1,7 +1,8 @@
-import { readContentKitError, requestFailure } from "./errors.js";
+import { ContentKitError, readContentKitError, requestFailure } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
 import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
+import { browserReaderPreferences, type BrowserReaderPreferences } from "./browser-reader-preferences.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
 export type Mount = string | ((ref: RefBody) => string);
@@ -77,6 +78,10 @@ export interface RequestOptions {
   /** Read the body as a Blob instead of JSON. */
   blob?: boolean;
   keepalive?: boolean;
+  /** Internal preference inventory reads never send unvalidated overrides. */
+  guestPreferences?: boolean;
+  /** Internal: avoid repeating recovery if a refreshed override is rejected. */
+  retryGuestPreferences?: boolean;
 }
 
 const trim = (u: string) => u.replace(/\/+$/, "");
@@ -94,10 +99,36 @@ export class Http {
   private readonly listeners = new Set<(change: ContentKitChange, scope: string | null) => void>();
   private readScope = { key: "{}" };
   private readonly base: string;
+  readonly browserPreferences: BrowserReaderPreferences;
+  private viewer?: string | null;
+  private viewerRevision = 0;
+  private filterIDs?: Set<string>;
+  private filterInventory?: Promise<void>;
 
   constructor(private readonly o: HttpOptions) {
     if (typeof o.baseUrl !== "string") throw new Error("contentkit: createContentKitClient needs baseUrl");
     this.base = trim(o.baseUrl);
+    this.browserPreferences = browserReaderPreferences(this.mount("discovery"));
+  }
+
+  setViewer(viewer: string | null | undefined): void {
+    if (viewer !== this.viewer) this.viewerRevision++;
+    this.viewer = viewer;
+  }
+
+  acceptGuestFilters(filters: readonly { entity: { id: string } }[]): void {
+    this.filterIDs = new Set(filters.map((f) => f.entity.id));
+    const saved = this.browserPreferences.snapshot().filters;
+    const valid = saved.filter((f) => this.filterIDs!.has(f.group_id));
+    if (valid.length !== saved.length) this.browserPreferences.setFilters(valid);
+  }
+
+  private async validateGuestFilters(): Promise<void> {
+    if (this.filterIDs || !this.browserPreferences.snapshot().filters.length) return;
+    this.filterInventory ??= this.request<{ filters: { entity: { id: string } }[] }>(`${this.mount("discovery")}/content-filters`, { guestPreferences: false })
+      .then((result) => this.acceptGuestFilters(result.filters))
+      .finally(() => { this.filterInventory = undefined; });
+    await this.filterInventory;
   }
 
   /** The module's base URL, without a trailing slash. */
@@ -111,14 +142,23 @@ export class Http {
     return this.base + CONTENTKIT_MODULES[module];
   }
 
-  async request<T>(url: string, { method, body, signal, blob, keepalive }: RequestOptions = {}): Promise<T> {
+  async request<T>(url: string, { method, body, signal, blob, keepalive, guestPreferences = true, retryGuestPreferences = true }: RequestOptions = {}): Promise<T> {
+    const viewerRevision = this.viewerRevision;
+    if (this.viewer === null && guestPreferences) await this.validateGuestFilters();
+    if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
+    headers.delete("ContentKit-Reader-Preferences");
     if (body !== undefined) headers.set("Content-Type", "application/json");
     const token = await this.o.token?.();
     if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
     const lang = this.o.language?.();
     if (lang) headers.set("Accept-Language", lang);
+    if (this.viewer === null && guestPreferences) {
+      const filters = this.browserPreferences.snapshot().filters;
+      if (filters.length) headers.set("ContentKit-Reader-Preferences", JSON.stringify({ filters }));
+    }
+    if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
     let res: Response;
     try {
       res = await f(url, {
@@ -132,7 +172,19 @@ export class Http {
     } catch (err) {
       throw requestFailure(err, signal, `ContentKit API ${new URL(url, "http://x").pathname}`);
     }
-    if (!res.ok) throw await readContentKitError(res);
+    if (!res.ok) {
+      const error = await readContentKitError(res);
+      const old = headers.get("ContentKit-Reader-Preferences");
+      if ((method ?? (body === undefined ? "GET" : "POST")) === "GET" && error.code === "invalid_request" && old && this.viewer === null && retryGuestPreferences) {
+        this.filterIDs = undefined;
+        await this.validateGuestFilters();
+        if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
+        const filters = this.browserPreferences.snapshot().filters;
+        const current = filters.length ? JSON.stringify({ filters }) : null;
+        if (current !== old) return this.request(url, { method, body, signal, blob, keepalive, guestPreferences, retryGuestPreferences: false });
+      }
+      throw error;
+    }
     if (blob) return (await res.blob()) as T;
     return (res.status === 204 ? undefined : await res.json()) as T;
   }

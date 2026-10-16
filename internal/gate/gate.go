@@ -21,6 +21,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 )
 
 // Gate guards one module's routes.
@@ -254,6 +255,12 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 			}
 		}
 		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), siteKey{}, r.Host)
+		if a.Anonymous {
+			ctx = readerprefs.WithHeader(ctx, r.Header.Values(readerprefs.Header))
+		}
+		if s.Auth == httpapi.Public && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			w.Header().Add("Vary", readerprefs.Header)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

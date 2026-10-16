@@ -49,14 +49,26 @@ For an ordinary reader, visibility is resolved in this order:
 
 1. The app's default.
 2. The matched site's override, if any.
-3. The reader's explicit saved override, if any.
+3. The reader's explicit override, saved to their account or supplied by an anonymous browser.
 
 Saved overrides belong to the account within this app, so an explicit choice
 continues to win when that person visits another entrypoint of the same app.
 It does not become a preference in another app sharing the tenant account.
-Anonymous readers have only the resolved site defaults.
+Anonymous readers can keep choices in local storage and send them with each
+request in the `ContentKit-Reader-Preferences` header:
 
-`GET /v1/me/content-filters` returns the current site's `default_visible`, the
+```json
+{"filters": [{"group_id": "configured-entity-id", "visible": false}]}
+```
+
+The header changes only soft content filters. It grants no access, does not
+change the entrypoint's restrictions, and never writes an anonymous account
+row. It is limited to 8 KiB and 128 filters; malformed values, duplicate IDs
+and IDs that are not configured filters return `400 invalid_request`.
+Authenticated readers always use their account settings, even when a request
+carries the header. Hosts must allow this header in their CORS policy.
+
+`GET /v1/content-filters` is public and returns the current site's `default_visible`, the
 effective `visible` value and whether it was `overridden`. Saving uses
 `PUT /v1/me/content-filters`; its `filters` list replaces the saved overrides.
 Omit a filter from that list to reset it to the current site's default. For
@@ -66,6 +78,21 @@ include-deleted preference:
 ```json
 {"filters": [], "include_deleted": false}
 ```
+
+After a new account registers, `POST /v1/me/content-filters/initialize` can
+adopt its guest choices. Its body includes `account_id`, `filters` and
+`include_deleted`. The account ID must match the authenticated account;
+mismatches return `403 forbidden`. Initialization inserts only if no saved
+settings exist, so retries and delayed callbacks cannot replace account
+choices, including an explicit reset to defaults. Ordinary sign-in must load
+account preferences instead of initializing them from the browser.
+
+Before attaching persisted guest choices, fetch `GET /v1/content-filters`
+without the header and discard choices whose IDs are no longer configured.
+This keeps old browser storage from making catalog requests invalid after a
+filter is removed. Language remains a separate account profile preference;
+hosts can persist guest language in the same browser store and adopt it on
+registration through their account profile adapter.
 
 Lists, searches and recommendations share the catalog's resolved preferences.
 Public catalog totals use site defaults, independent of any reader's saved

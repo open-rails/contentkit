@@ -1,6 +1,7 @@
 // Headless React layer: ContentKitProvider and every hook. No styling or strings.
 // Hooks read the client from the provider; a `client` option overrides it.
 export { ContentKitProvider, type ContentKitProviderProps } from "./provider.js";
+export { useReaderPreferences } from "./reader-preferences.js";
 export {
   useContentKit,
   useContentKitClient,

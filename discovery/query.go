@@ -148,6 +148,9 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
 		Requested: required})
 	if err != nil {
+		if errors.Is(err, catalog.ErrInvalid) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalid, err)
+		}
 		return nil, err
 	}
 	q.viewer = v

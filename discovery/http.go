@@ -114,14 +114,18 @@ var routes = []httpapi.Route[handler]{
 		Query: params([]httpapi.Param{httpapi.Text("by", "month (the default) or day")}, filterParams, readerParams,
 			[]httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "60 by default, at most 1000")}),
 		Responses: []httpapi.Reply{httpapi.OK(ReleaseDates{})}, Errors: signals}, Serve: httpapi.H(handler.releaseDates)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/content-filters", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "The reader's content filters: each configured filter's group, default and setting; every read applies them.",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/content-filters", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}},
 		Serve: httpapi.H(handler.contentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/me/content-filters", Resource: "discovery", Auth: httpapi.User,
 		Doc:   "Replaces the reader's content filter settings and whether lists include deleted content they hold.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: ContentFiltersUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}}, Serve: httpapi.H(handler.setContentFilters)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/initialize", Resource: "discovery", Auth: httpapi.User,
+		Doc:   "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
+		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: ContentFiltersInitialization{},
+		Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.initializeContentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
 		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"),
@@ -270,6 +274,19 @@ func (h handler) setContentFilters(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := gate.Actor(r.Context())
 	if err := h.s.SetContentFilters(r.Context(), actor, u); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.contentFilters(w, r)
+}
+
+func (h handler) initializeContentFilters(w http.ResponseWriter, r *http.Request) {
+	var u ContentFiltersInitialization
+	if err := decode(r, &u); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err := h.s.InitializeContentFilters(r.Context(), gate.Actor(r.Context()), u); err != nil {
 		h.fail(w, r, err)
 		return
 	}

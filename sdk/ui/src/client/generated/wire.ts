@@ -401,6 +401,12 @@ export interface ContentFilters {
   include_deleted: boolean;
 }
 
+export interface ContentFiltersInitialization {
+  account_id: string;
+  filters: FilterSetting[];
+  include_deleted: boolean;
+}
+
 export interface ContentFiltersUpdate {
   filters: FilterSetting[];
   include_deleted: boolean;

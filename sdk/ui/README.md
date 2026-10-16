@@ -761,7 +761,37 @@ the host owns search-page navigation.
 />
 ```
 
-Render these under `ContentKitProvider`. Keep its `viewer` current: guests can
-change language, while signed-in readers also see the site's configured content
-filters. Filter toggles save through ContentKit immediately. The language callback
-belongs to the host so it can update its route and stored preference together.
+Render these under `ContentKitProvider` with `viewer={null}` for guests. Guest
+language choices and filter overrides are stored per app in localStorage and
+shared across tabs. Account filter choices come from ContentKit's database;
+account languages use the provider's `languagePreference` adapter:
+
+```tsx
+<ContentKitProvider
+  client={contentkit}
+  viewer={user?.id ?? null}
+  language={routeLanguage}
+  languagePreference={{
+    load: (accountId) => loadAccountLanguage(accountId),
+    save: (language, accountId) => saveAccountLanguage(accountId, language),
+  }}
+>
+  {children}
+</ContentKitProvider>
+```
+
+The adapter must check the expected account before reading or writing. Return
+null from `load` when no language is saved. A localized URL does not change a
+stored preference: only an explicit language selection does. The language
+callback still belongs to the host's router.
+
+On a confirmed **new registration**, call
+`contentkit.preferences.inheritAfterRegistration(userId)`. Never call it for an
+ordinary sign-in. The captured guest choices are retried once that account's
+authenticated transport is ready; failed transfers remain pending in localStorage.
+Existing account filter records are preserved. A confirmed new registration
+inherits the guest language over its initial default; retries preserve a later
+language choice. Ordinary sign-ins never import guest preferences.
+`useReaderPreferences()` exposes the preferred language, pending/error state and
+a retry action. ReaderSettings shows an incomplete transfer and lets the reader
+retry it. Guest preferences are retained separately after registration and logout.

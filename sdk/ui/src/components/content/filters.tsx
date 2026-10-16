@@ -24,7 +24,7 @@ export interface ContentFilterSettingsProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** The signed-in reader's content filters: show or hide each configured group. */
+/** Show or hide configured content for this browser or signed-in account. */
 export function ContentFilterSettings(p: ContentFilterSettingsProps) {
   const m = useMessages();
   const { t } = m;
@@ -37,7 +37,6 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
       {children}
     </ContentKitUiRoot>
   );
-  if (ctx?.viewer === null) return root(<p className="text-muted-foreground">{t("contents.filtersSignedOut")}</p>);
   if (!f.filters) {
     if (f.error) return root(<ErrorLine>{contentError(m, f.error)}</ErrorLine>);
     return root(<Skeleton className="h-24 w-full" />);
@@ -58,7 +57,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
           ))}
         </ul>
       ) : null}
-      {p.includeDeleted !== false && (
+      {p.includeDeleted !== false && ctx?.viewer !== null && (
         <div className="flex items-center gap-3">
           <Switch id={`${id}-deleted`} checked={filters.include_deleted} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setIncludeDeleted(v))} />
           <Label htmlFor={`${id}-deleted`}>{t("contents.includeDeleted")}</Label>

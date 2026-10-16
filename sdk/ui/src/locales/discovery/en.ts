@@ -1,6 +1,8 @@
 // Discovery: cards, grids, rails, search, content filters, history, release dates.
 export const discovery = {
   readerSettings: {
+    savingPreferences: "Saving your preferences…",
+    preferencesNotSaved: "Your preferences haven't been saved yet.",
     title: "Reader settings",
     description: "Choose your language and the content you see.",
     filters: "Show Content:",

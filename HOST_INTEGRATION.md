@@ -700,8 +700,20 @@ that fits the reader (`display_language` first, then position).
   then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
-- `GET|PUT /me/content-filters`: the configured `content_filters`, each the
-  reader may show or hide, and `include_deleted`.
+- `GET /content-filters` (public): the configured `content_filters`, their
+  entrypoint defaults and the current reader's effective settings.
+  `PUT /me/content-filters` saves account settings and `include_deleted`.
+  `POST /me/content-filters/initialize` adopts a new account's guest choices
+  only when no saved settings exist; its `account_id` must match the signed-in
+  account. Trigger initialization on registration, never ordinary sign-in.
+  Guest browsers persist choices locally and send
+  `ContentKit-Reader-Preferences: {"filters":[{"group_id":"configured-entity-id","visible":false}]}`.
+  The header is ignored for authenticated accounts, grants no access, and
+  accepts at most 8 KiB and 128 configured filters. Unknown or duplicate IDs
+  and malformed values return `400 invalid_request`. Allow the header in the
+  host's CORS policy, and prune stale browser choices against a public
+  `GET /content-filters` without the header before attaching them to reads.
+  Account language remains the host's existing profile preference.
 - `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or

@@ -15,6 +15,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -128,6 +129,20 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		}
 		for id, o := range overrides {
 			hidden[id] = o == "hide"
+		}
+	} else if o.Actor.Anonymous {
+		allowed := make(map[string]bool, len(s.cfg.ContentFilters))
+		for _, f := range s.cfg.ContentFilters {
+			if id, ok := ids[f.Group]; ok {
+				allowed[id] = true
+			}
+		}
+		overrides, err := readerprefs.Overrides(ctx, allowed)
+		if err != nil {
+			return nil, invalid("%s", err)
+		}
+		for id, visible := range overrides {
+			hidden[id] = !visible
 		}
 	}
 	for _, id := range o.Requested {

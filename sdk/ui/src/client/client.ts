@@ -17,6 +17,7 @@ import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } 
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
 import { NotificationsClient } from "./notifications.js";
+import { ReaderPreferencesClient } from "./reader-preferences.js";
 
 export interface ContentKitClientOptions extends HttpOptions {
   /** Upload tuning (transport, part concurrency, retries). */
@@ -62,6 +63,8 @@ export interface ContentKitClient {
   readonly stats: StatsClient;
   /** The signed-in person's native and imported notifications. */
   readonly notifications: NotificationsClient;
+  /** Browser guest preferences and explicit registration inheritance. */
+  readonly preferences: ReaderPreferencesClient;
 
   /** What the content module allows: which interactions signed-out visitors may make. */
   config(signal?: AbortSignal): Promise<Config>;
@@ -98,6 +101,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     codes: new CodesClient(h),
     stats: new StatsClient(h),
     notifications: new NotificationsClient(h),
+    preferences: new ReaderPreferencesClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) => call(h, "GET", "/kinds", { signal }),
     import: (batch) => call(h, "POST", "/import", { body: batch }),

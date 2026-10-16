@@ -3,7 +3,7 @@ import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSessio
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
-import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import { ContentKitError, toContentKitError } from "../client/errors.js";
 import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -201,7 +201,7 @@ export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {
 }
 
 export interface UseContentFilters {
-  /** null until read (and signed out). */
+  /** null until the configured filters have loaded. */
   filters: ContentFilters | null;
   loading: boolean;
   error?: ContentKitError;
@@ -213,28 +213,53 @@ export interface UseContentFilters {
   setIncludeDeleted: (include: boolean) => Promise<ContentFilters>;
 }
 
-/** The signed-in reader's content filters: each configured group, its default and their setting. */
+/** Configured filters: browser choices for guests, server choices for accounts. */
 export function useContentFilters(o: { language?: string; client?: ContentKitClient } = {}): UseContentFilters {
   const { client, store, scope, viewer, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
-  const key = viewer === null ? null : keyOf("content-filters", scope, language);
-  const r = useResource<ContentFilters>(store, key, { type: "content-filters" }, (s) => client.discovery.contentFilters(language, s));
+  const guest = viewer === null;
+  const browser = client.preferences.browser;
+  const local = useSyncExternalStore(browser.subscribe, browser.snapshot, browser.snapshot);
+  const key = keyOf("content-filters", scope, language);
+  const previous = useRef<{ client: ContentKitClient; language?: string; guest: boolean; data?: ContentFilters } | null>(null);
+  const initial = guest && previous.current?.guest && previous.current.client === client && previous.current.language === language ? previous.current.data : undefined;
+  const r = useResource<ContentFilters>(store, key, { type: "content-filters" }, (s) => client.discovery.contentFilters(language, s), { initial });
+  previous.current = { client, language, guest, data: r.data };
+  const applyGuest = useCallback((source: ContentFilters, settings = local.filters): ContentFilters => {
+    const values = new Map(settings.map((f) => [f.group_id, f.visible]));
+    return { include_deleted: false, filters: source.filters.map((f) => ({ ...f, visible: values.get(f.entity.id) ?? f.default_visible, overridden: values.has(f.entity.id) })) };
+  }, [local.filters]);
+  const displayed = useMemo(() => r.data && guest ? applyGuest(r.data) : r.data, [r.data, guest, applyGuest]);
   const guarded = useGuarded();
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
   const [inflight, setInflight] = useState(0);
-  const current = useRef(r.data);
-  current.current = r.data;
+  const current = useRef(displayed);
+  current.current = displayed;
+  useEffect(() => { setInflight(0); }, [client, scope]);
   const save = useCallback(
     async (update: ContentFiltersUpdate) => {
+      if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
+      if (guest) {
+        const source = current.current;
+        if (!source) throw new ContentKitError("invalid_request", "Content filters have not loaded.");
+        const allowed = new Set(source.filters.map((f) => f.entity.id));
+        if (update.filters.some((f) => !allowed.has(f.group_id))) throw new ContentKitError("invalid_request", "This content filter is not configured.");
+        browser.setFilters(update.filters);
+        return applyGuest(source, update.filters);
+      }
       setInflight((n) => n + 1);
       try {
-        const out = await guarded(() => client.discovery.setContentFilters(update, language));
-        if (key) store.set(key, out);
+        const out = await guarded(() => {
+          if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
+          return client.discovery.setContentFilters(update, language);
+        });
+        if (isCurrent()) store.set(key, out);
         return out;
       } finally {
-        setInflight((n) => n - 1);
+        setInflight((n) => Math.max(0, n - 1));
       }
     },
-    [client, guarded, language, key, store],
+    [client, guarded, language, key, store, isCurrent, guest, browser, applyGuest],
   );
   const settings = (f: ContentFilters) => f.filters.filter((x) => x.overridden).map((x) => ({ group_id: x.entity.id, visible: x.visible }));
   const setVisible = useCallback(
@@ -253,7 +278,7 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
     },
     [save],
   );
-  return { filters: r.data ?? null, loading: !!key && (r.loading || !r.loaded), error: r.error, saving: inflight > 0, save, setVisible, setIncludeDeleted };
+  return { filters: displayed ?? null, loading: r.loading || !r.loaded, error: r.error, saving: inflight > 0, save, setVisible, setIncludeDeleted };
 }
 
 export interface UseTypeahead {

@@ -2,6 +2,8 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    savingPreferences: "正在保存偏好设置…",
+    preferencesNotSaved: "偏好设置尚未保存。",
     title: "阅读设置",
     description: "选择语言和要显示的内容。",
     filters: "显示内容：",

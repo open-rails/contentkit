@@ -1,0 +1,202 @@
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
+import { createContentKitClient } from "./client.js";
+
+const inventory = { filters: [{ entity: { id: "filter", name: "Filtered", slug: "filtered" }, default_visible: false, visible: false, overridden: false }], include_deleted: false };
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+it("persists guest language and filters across clients and browser storage events", () => {
+  const one = createContentKitClient({ baseUrl: "https://content.test/prefs-one" }).preferences;
+  const two = createContentKitClient({ baseUrl: "https://content.test/prefs-one/" }).preferences;
+  const other = createContentKitClient({ baseUrl: "https://content.test/prefs-other" }).preferences;
+  const changed = vi.fn();
+  const off = two.browser.subscribe(changed);
+  one.browser.setLanguage("ja");
+  one.browser.setFilters([{ group_id: "filter", visible: true }]);
+  expect(two.browser.snapshot()).toEqual({ language: "ja", filters: [{ group_id: "filter", visible: true }] });
+  expect(other.browser.snapshot().filters).toEqual([]);
+  const key = Object.keys(localStorage).find((key) => key.includes("prefs-one"))!;
+  const data = JSON.stringify({ language: "es", filters: [{ group_id: "filter", visible: false }] });
+  localStorage.setItem(key, data);
+  window.dispatchEvent(new StorageEvent("storage", { key, newValue: data }));
+  expect(two.browser.snapshot().language).toBe("es");
+  expect(changed).toHaveBeenCalledTimes(3);
+  off();
+});
+
+it("validates stale stored filters before sending anonymous requests and never sends them for accounts", async () => {
+  const calls: { path: string; preferences: string | null }[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/bootstrap", fetch: (async (input: string, init: RequestInit) => {
+    calls.push({ path: new URL(input).pathname, preferences: new Headers(init.headers).get("ContentKit-Reader-Preferences") });
+    return Response.json(input.includes("content-filters") ? inventory : { contents: [] });
+  }) as typeof fetch });
+  client.preferences.browser.setFilters([{ group_id: "obsolete", visible: true }, { group_id: "filter", visible: true }]);
+  client.preferences.configure(null);
+  await client.discovery.list();
+  expect(calls).toEqual([
+    { path: "/bootstrap/v1/content-filters", preferences: null },
+    { path: "/bootstrap/v1/contents", preferences: JSON.stringify({ filters: [{ group_id: "filter", visible: true }] }) },
+  ]);
+  client.preferences.configure("existing");
+  await client.discovery.list();
+  expect(calls.at(-1)?.preferences).toBeNull();
+  expect(client.preferences.browser.snapshot().filters).toEqual([{ group_id: "filter", visible: true }]);
+});
+
+it("refreshes configured IDs when a database reset invalidates a previously accepted guest filter", async () => {
+  let reset = false;
+  const headers: (string | null)[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/reset", fetch: (async (input: string, init: RequestInit) => {
+    const value = new Headers(init.headers).get("ContentKit-Reader-Preferences");
+    if (input.includes("content-filters")) return Response.json(reset ? { filters: [], include_deleted: false } : inventory);
+    headers.push(value);
+    if (reset && value) return Response.json({ code: "invalid_request", error: "unknown filter" }, { status: 400 });
+    return Response.json({ contents: [] });
+  }) as typeof fetch });
+  client.preferences.browser.setFilters([{ group_id: "filter", visible: true }]);
+  client.preferences.configure(null);
+  await client.discovery.list();
+  reset = true;
+  await expect(client.discovery.list()).resolves.toEqual({ contents: [] });
+  expect(headers).toHaveLength(3);
+  expect(headers[2]).toBeNull();
+  expect(client.preferences.browser.snapshot().filters).toEqual([]);
+});
+
+it("inherits only an explicit new registration and keeps guest data separate from existing accounts", async () => {
+  let language: string | null = "en";
+  const initialized: unknown[] = [];
+  const save = vi.fn(async (value: string, account: string) => { expect(account).toBe("new"); language = value; });
+  const client = createContentKitClient({ baseUrl: "https://content.test/register", fetch: (async (input: string, init: RequestInit) => {
+    if (input.endsWith("/initialize")) initialized.push(JSON.parse(String(init.body)));
+    return Response.json(inventory);
+  }) as typeof fetch });
+  client.preferences.browser.setLanguage("es");
+  client.preferences.browser.setFilters([{ group_id: "filter", visible: true }]);
+  await client.preferences.inheritAfterRegistration("new");
+  client.preferences.configure("new", { load: async () => language, save });
+  await vi.waitFor(() => expect(client.preferences.snapshot().pending).toBe(false));
+  expect(save).toHaveBeenCalledExactlyOnceWith("es", "new");
+  expect(initialized).toEqual([{ account_id: "new", filters: [{ group_id: "filter", visible: true }], include_deleted: false }]);
+  expect(client.preferences.browser.snapshot().language).toBe("es");
+  client.preferences.configure("existing", { load: async () => "ja", save });
+  await vi.waitFor(() => expect(client.preferences.snapshot().language).toBe("ja"));
+  expect(initialized).toHaveLength(1);
+  expect(save).toHaveBeenCalledTimes(1);
+  client.preferences.configure(null);
+  expect(client.preferences.snapshot().language).toBe("es");
+});
+
+it("keeps failed registration inheritance durable and retries without overwriting a saved language", async () => {
+  let fail = true;
+  let language = "en";
+  const save = vi.fn(async (value: string) => { language = value; });
+  const fetcher = (async (input: string) => {
+    if (input.endsWith("/initialize") && fail) return Response.json({ error: "unavailable", code: "unavailable" }, { status: 503 });
+    return Response.json(inventory);
+  }) as typeof fetch;
+  const first = createContentKitClient({ baseUrl: "https://content.test/retry", fetch: fetcher }).preferences;
+  first.browser.setLanguage("es");
+  first.browser.setFilters([{ group_id: "filter", visible: true }]);
+  await first.inheritAfterRegistration("new");
+  first.configure("new", { load: async () => language, save });
+  await vi.waitFor(() => expect(first.snapshot().error?.code).toBe("unavailable"));
+  expect(first.snapshot().pending).toBe(true);
+  expect(save).toHaveBeenCalledOnce();
+  expect(first.browser.pending("new")?.languageDone).toBe(true);
+  language = "ja";
+  fail = false;
+  const reloaded = createContentKitClient({ baseUrl: "https://content.test/retry", fetch: fetcher }).preferences;
+  reloaded.configure("other", { load: async () => "en", save });
+  await vi.waitFor(() => expect(reloaded.snapshot().loading).toBe(false));
+  expect(reloaded.browser.pending("new")).toBeDefined();
+  reloaded.configure("new", { load: async () => "ja", save });
+  await vi.waitFor(() => expect(reloaded.snapshot().pending).toBe(false));
+  expect(save).toHaveBeenCalledOnce();
+  expect(reloaded.browser.snapshot().language).toBe("es");
+});
+
+it("does not overwrite a later account language when retrying a failed initial write", async () => {
+  let language = "en";
+  let fail = true;
+  const save = vi.fn(async (value: string) => { if (fail) throw new Error("offline"); language = value; });
+  const preferences = createContentKitClient({ baseUrl: "https://content.test/later-language" }).preferences;
+  preferences.browser.setLanguage("es");
+  await preferences.inheritAfterRegistration("new");
+  preferences.configure("new", { load: async () => language, save });
+  await vi.waitFor(() => expect(preferences.snapshot().error).toBeDefined());
+  expect(preferences.browser.pending("new")).toMatchObject({ languageObserved: true, initialLanguage: "en" });
+  language = "ja";
+  fail = false;
+  await preferences.retry();
+  expect(language).toBe("ja");
+  expect(save).toHaveBeenCalledOnce();
+  expect(preferences.snapshot().pending).toBe(false);
+});
+
+it("treats an explicit account language choice as completing pending inheritance", async () => {
+  let language = "en", fail = true;
+  const save = vi.fn(async (value: string) => { if (fail) throw new Error("offline"); language = value; });
+  const preferences = createContentKitClient({ baseUrl: "https://content.test/explicit-language" }).preferences;
+  preferences.browser.setLanguage("es");
+  await preferences.inheritAfterRegistration("new");
+  preferences.configure("new", { load: async () => language, save });
+  await vi.waitFor(() => expect(preferences.snapshot().error).toBeDefined());
+  fail = false;
+  await preferences.setLanguage("ja");
+  await preferences.retry();
+  expect(preferences.snapshot().pending).toBe(false);
+  expect(language).toBe("ja");
+  expect(save.mock.calls.map(([value]) => value)).toEqual(["es", "ja"]);
+});
+
+it("does not apply a late language read from the previous account", async () => {
+  let resolve!: (language: string | null) => void;
+  const preferences = createContentKitClient({ baseUrl: "https://content.test/switch" }).preferences;
+  preferences.browser.setLanguage("es");
+  await preferences.inheritAfterRegistration("first");
+  const save = vi.fn(async () => {});
+  preferences.configure("first", { load: () => new Promise((done) => { resolve = done; }), save });
+  await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
+  preferences.configure("second", { load: async () => "ja", save });
+  resolve(null);
+  await vi.waitFor(() => expect(preferences.snapshot().language).toBe("ja"));
+  expect(save).not.toHaveBeenCalled();
+  expect(preferences.browser.pending("first")).toBeDefined();
+});
+
+it.each(["headers", "token"] as const)("does not send the previous account's filter changes after awaiting %s", async (pause) => {
+  let resume!: () => void;
+  let token = "account-a-token";
+  const fetcher = vi.fn(async () => Response.json(inventory));
+  const client = createContentKitClient({
+    baseUrl: `https://content.test/account-switch-${pause}`,
+    fetch: fetcher,
+    headers: pause === "headers" ? () => new Promise<HeadersInit>((resolve) => { resume = () => resolve({}); }) : undefined,
+    token: pause === "token" ? () => new Promise<string>((resolve) => { resume = () => resolve(token); }) : () => token,
+  });
+  client.preferences.configure("account-a");
+  const result = expect(client.discovery.setContentFilters({ filters: [{ group_id: "filter", visible: true }], include_deleted: false }))
+    .rejects.toMatchObject({ code: "aborted" });
+  await vi.waitFor(() => expect(resume).toBeTypeOf("function"));
+  token = "account-b-token";
+  client.preferences.configure("account-b");
+  resume();
+  await result;
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("keeps working in memory when browser storage is unavailable", () => {
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+  const preferences = createContentKitClient({ baseUrl: "https://content.test/blocked-storage" }).preferences;
+  expect(() => preferences.browser.setLanguage("es")).not.toThrow();
+  expect(preferences.browser.snapshot().language).toBe("es");
+});
+
+it("does not share anonymous preferences between server-rendered requests", () => {
+  vi.stubGlobal("window", undefined);
+  const one = createContentKitClient({ baseUrl: "/server-render" }).preferences;
+  const two = createContentKitClient({ baseUrl: "/server-render" }).preferences;
+  one.browser.setLanguage("es");
+  expect(two.browser.snapshot().language).toBeUndefined();
+});

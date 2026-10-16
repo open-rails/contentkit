@@ -2,6 +2,8 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    savingPreferences: "Deine Einstellungen werden gespeichert…",
+    preferencesNotSaved: "Deine Einstellungen wurden noch nicht gespeichert.",
     title: "Leseeinstellungen",
     description: "Wähle deine Sprache und die angezeigten Inhalte.",
     filters: "Inhalte anzeigen:",

@@ -54,6 +54,7 @@ export type SocialOperation =
   | "membership.save"
   | "history.forget"
   | "filters.save"
+  | "preferences.save"
   | "offer.save"
   | "membership.join";
 

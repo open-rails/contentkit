@@ -250,7 +250,7 @@ func TestEngineIntegration(t *testing.T) {
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents?kind=gallery", nil, &listed)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/search?q=moonlit", nil, nil)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/typeahead?q=moon", nil, nil)
-	s.call(http.StatusOK, user, "GET", "/api/ck/v1/me/content-filters", nil, nil)
+	s.call(http.StatusOK, user, "GET", "/api/ck/v1/content-filters", nil, nil)
 	s.call(http.StatusNotImplemented, user, "GET", "/api/ck/v1/me/history", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "GET", "/api/ck/v1/recommendations", nil, nil)
 

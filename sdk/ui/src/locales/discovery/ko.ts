@@ -2,6 +2,8 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    savingPreferences: "환경설정을 저장하는 중…",
+    preferencesNotSaved: "환경설정이 아직 저장되지 않았습니다.",
     title: "열람 설정",
     description: "언어와 표시할 콘텐츠를 선택하세요.",
     filters: "표시할 콘텐츠:",
