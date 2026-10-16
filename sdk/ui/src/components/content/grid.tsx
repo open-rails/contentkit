@@ -301,7 +301,7 @@ export function ContentRail({ title, similar, recommendations, history, group, l
         <h2 className="text-base font-semibold">{title}</h2>
         {more}
       </div>
-      <ol className={layout?.className ?? "flex snap-x gap-4 overflow-x-auto pb-2"} style={layout?.style}>
+      <ol className={layout?.className ?? "relative flex snap-x gap-4 overflow-x-auto pb-2"} style={layout?.style}>
         {(rail.loading && !rail.items.length ? Array.from({ length: 6 }, () => null) : rail.items).map((card, i) => (
           <li key={card?.id ?? i} className={layout ? undefined : "w-36 shrink-0 snap-start sm:w-44"} ref={card ? exposure.track(card.id, i + 1) : undefined}>
             {!card ? (
