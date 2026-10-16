@@ -230,6 +230,8 @@ type siteOptions struct {
 	gallery func(*kinds.Kind)
 	// mediaGallery adjusts a gallery's media rules before the registry is built.
 	mediaGallery func(*media.Kind)
+	// reader adjusts delivery and URL-window limits before workers start.
+	reader func(*media.ReaderOptions)
 }
 
 func newSite(t *testing.T, o siteOptions) *site {
@@ -302,8 +304,12 @@ func newSite(t *testing.T, o siteOptions) *site {
 	if s.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: s.ms, ProcessOnUpload: true}); err != nil {
 		t.Fatal(err)
 	}
-	if s.reader, err = media.NewReader(media.ReaderOptions{Manifests: s.ms, Queue: queue,
-		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signer}}); err != nil {
+	readerOptions := media.ReaderOptions{Manifests: s.ms, Queue: queue,
+		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signer}}
+	if o.reader != nil {
+		o.reader(&readerOptions)
+	}
+	if s.reader, err = media.NewReader(readerOptions); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.svc.Bind(versions.Media{Manifests: s.ms, Uploads: s.uploads, Jobs: s.jobs, Reader: s.reader}); err != nil {

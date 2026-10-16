@@ -372,17 +372,22 @@ func (s *Service) PageReview(ctx context.Context, actor access.Actor, t Target) 
 			}
 			for _, f := range read.Files {
 				if i, ok := byPath[f.Path]; ok {
-					out.Pages[i].SourceURL = f.URL
-					out.Pages[i].PreviewURL = f.EditorURL
+					if f.URL != "" {
+						out.Pages[i].SourceURL = f.URL
+					}
+					if f.EditorURL != "" {
+						out.Pages[i].PreviewURL = f.EditorURL
+					}
 				}
 				if i, ok := byPath[f.From]; ok && strings.HasPrefix(f.Type, "image/") && out.Pages[i].PreviewURL == "" {
 					out.Pages[i].PreviewURL = f.URL
 				}
 			}
-			offset += len(read.Files)
-			if offset >= read.Total || len(read.Files) == 0 {
+			// Read includes all metadata; only its effective Limit gets URLs.
+			if read.Limit <= 0 || read.Limit >= read.Total-offset || len(read.Files) == 0 {
 				break
 			}
+			offset += read.Limit
 		}
 	}
 	return out, nil
