@@ -686,7 +686,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Files) != 2 || out.Files[0].Path != "originals/0001.png" {
+	if len(out.Files) != 2 || out.Files[0].Path != "originals/001.png" || out.Files[1].Path != "originals/002.png" {
 		t.Fatalf("committed %+v", out.Files)
 	}
 	// Sending them again finds the folder's bytes and keeps two pages.
@@ -705,7 +705,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	t.Cleanup(func() { _ = env.Store.Delete(context.Background(), src) })
 	copied, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
 		[]contentkit.MediaFile{{Path: "originals/0003.png", Type: "image/png", From: src, Size: int64(len(body))}})
-	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/0003.png" {
+	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/003.png" {
 		t.Fatalf("copied %+v %v", copied.Files, err)
 	}
 	if _, err := env.Store.Head(t.Context(), src); err != nil {
@@ -722,13 +722,13 @@ func TestImportThenIngestMedia(t *testing.T) {
 		[]contentkit.MediaFile{{Path: "audio/0001.mp3", Type: "audio/mpeg", Body: bytes.NewReader([]byte("ID3 page one"))}}); err != nil {
 		t.Fatal(err)
 	}
-	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("0001")}}}
+	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("001")}}}
 	for range 2 {
 		if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); err != nil {
 			t.Fatalf("set reader metadata: %v", err)
 		}
 	}
-	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("0002")})
+	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("002")})
 	var ce *contentkit.Error
 	if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); !errors.As(err, &ce) || ce.Status != http.StatusBadRequest {
 		t.Fatalf("a cue on missing audio: %v", err)
