@@ -79,16 +79,23 @@ describe("content hooks against the real ContentKit", () => {
     await waitFor(() => expect(result.current.replies.loading).toBe(false), wait);
     expect(result.current.b.items).toBe(result.current.a.items);
     expect(requests.filter((r) => r.endsWith("/comments"))).toHaveLength(1);
-    await waitFor(() => expect(result.current.standing.standing).toMatchObject({ can_comment: true, user_id: acc.id("alice") }), wait);
+    await waitFor(() => expect(result.current.standing.standing).toMatchObject({ can_comment: true, user_id: acc.id("alice"), count: 1 }), wait);
 
     requests.length = 0;
     let mine!: Awaited<ReturnType<typeof result.current.a.post>>;
     await act(async () => void (mine = await result.current.a.post("hello")));
     expect(result.current.a.items.map((x) => x.id)).toEqual([mine.id, first.id]);
     expect(result.current.a.items[0]!.author?.username).toBe(acc.username("alice"));
+    await waitFor(() => expect(result.current.standing.standing?.count).toBe(2), wait);
+    // A root changes the authoritative total, while the shared list stays in place.
+    expect(requests.filter((r) => r.startsWith("GET"))).toEqual([`GET /contents/${ref.id}/can-comment`]);
+
+    requests.length = 0;
     await act(async () => void (await result.current.a.post("a reply", { replyTo: first.id })));
     expect(result.current.replies.items.map((x) => x.body)).toEqual(["a reply"]);
     expect(result.current.a.items.find((x) => x.id === first.id)!.reply_count).toBe(1);
+    expect(result.current.standing.standing?.count).toBe(2);
+    // Replies do not change the top-level total or require another read.
     expect(requests.filter((r) => r.startsWith("GET"))).toEqual([]);
 
     const target = result.current.a.items.find((x) => x.id === first.id)!;
