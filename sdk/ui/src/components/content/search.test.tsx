@@ -218,7 +218,7 @@ it("keeps the default inline panel and content thumbnails", async () => {
   expect(document.querySelector('[data-ckui="search-backdrop"]')).toBeNull();
 });
 
-it("shows recent dates and keeps portaled history controls working without navigating", async () => {
+it("omits recent dates and keeps portaled history controls working without navigating", async () => {
   let searches = [
     { query: "older", results: 1, searched_at: "2026-04-15T12:00:00Z" },
     { query: "newer", results: 2, searched_at: "2026-04-16T12:00:00Z" },
@@ -240,7 +240,7 @@ it("shows recent dates and keeps portaled history controls working without navig
   vi.spyOn(input, "getBoundingClientRect").mockImplementation(() => ({ bottom: 48, left: 20, width } as DOMRect));
   await user.click(input);
   await screen.findByRole("option", { name: /older/ });
-  expect(document.querySelector('time[datetime="2026-04-15T12:00:00Z"]')).toHaveTextContent(new Intl.DateTimeFormat(undefined, { dateStyle: "short" }).format(new Date("2026-04-15T12:00:00Z")));
+  expect(document.querySelector("time")).toBeNull();
   width = 240;
   fireEvent.resize(window);
   expect(document.querySelector("time")).toBeNull();
