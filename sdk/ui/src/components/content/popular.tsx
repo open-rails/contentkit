@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { popularQuery, type PopularPeriod, type PopularQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitUiRoot } from "../../scope.js";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { ContentGrid, type CardListProps, type LockedCards } from "./grid.js";
 
 export interface PopularContentGridProps extends Omit<CardListProps, "infinite"> {
@@ -25,16 +25,23 @@ export function PopularContentGrid({ query, period, onPeriodChange, locked, ...p
   const label = (value: PopularPeriod) => value === "all" ? m.t("listing.period_all") : m.plural("listing.pastDays", Number(value.slice(0, -1)));
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="popular-grid">
-      <Select value={current} onValueChange={(value) => {
+      <Tabs value={current} onValueChange={(value) => {
         if (!value || !PERIODS.includes(value as PopularPeriod)) return;
         const next = value as PopularPeriod;
         if (period === undefined) setOwnPeriod(next);
         onPeriodChange?.(next);
-      }}>
-        <SelectTrigger className="w-fit min-w-40" aria-label={m.t("listing.popularPeriod")}><SelectValue>{label(current)}</SelectValue></SelectTrigger>
-        <SelectContent>{PERIODS.map((value) => <SelectItem key={value} value={value}>{label(value)}</SelectItem>)}</SelectContent>
-      </Select>
-      <ContentGrid {...p} surface={p.surface ?? "popular"} query={list} locked={locked} infinite />
+      }} className="gap-4">
+        <TabsList aria-label={m.t("listing.popularPeriod")} className="grid w-full grid-cols-4 group-data-horizontal/tabs:h-auto sm:w-fit">
+          {PERIODS.map((value) => (
+            <TabsTrigger key={value} value={value} className="min-h-10 whitespace-normal px-3 py-2 text-center">
+              {label(value)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={current}>
+          <ContentGrid {...p} surface={p.surface ?? "popular"} query={list} locked={locked} infinite />
+        </TabsContent>
+      </Tabs>
     </ContentKitUiRoot>
   );
 }

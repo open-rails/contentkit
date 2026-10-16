@@ -23,11 +23,14 @@ it("pairs every selected popularity period with its publication-age filter", asy
   } });
   render(<ContentKitProvider client={client} viewer={null}><PopularContentGrid query={{ kind: "gallery" }} onPeriodChange={changed} /></ContentKitProvider>);
   await screen.findByText("Gallery 7d");
+  expect(screen.getByRole("tablist", { name: "Popularity period" })).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(4);
+  expect(screen.getByRole("tab", { name: "Past 7 days" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("combobox", { name: "Popularity period" })).toBeNull();
   const user = userEvent.setup();
   for (const [period, label] of [["90d", "Past 90 days"], ["365d", "Past 365 days"], ["all", "all time"]]) {
-    await user.click(screen.getByRole("combobox", { name: "Popularity period" }));
-    expect(await screen.findAllByRole("option")).toHaveLength(4);
-    await user.click(screen.getByRole("option", { name: label }));
+    await user.click(screen.getByRole("tab", { name: label }));
+    expect(screen.getByRole("tab", { name: label })).toHaveAttribute("aria-selected", "true");
     await screen.findByText(`Gallery ${period}`);
     const request = requests.filter((url) => url.pathname.endsWith("/contents")).at(-1)!;
     expect(request.searchParams.get("sort")).toBe(`popular:${period}`);
