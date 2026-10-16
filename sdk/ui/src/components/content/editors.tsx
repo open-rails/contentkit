@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
 import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
@@ -8,6 +8,7 @@ import { useContentKitClient, type ContentKitErrorHandler } from "../../react/co
 import { useKinds } from "../../react/groups.js";
 import { useMediaRead } from "../../react/read.js";
 import { usePresets } from "../../react/public.js";
+import { useContentScope } from "../../react/use-resource.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
@@ -63,20 +64,93 @@ function useKind(kind: string, client?: ContentKitClient): { model: ContentModel
   return { model: kinds, spec: kinds?.kinds[kind] };
 }
 
+// A fresh record rebases clean fields; only an explicit save/discard settles edits.
+// Per-field counters also protect edits made while that operation is pending.
+function useDraft<T extends object>(seed: T) {
+  const [value, setValue] = useState(seed);
+  const draft = useRef({ value: seed, dirty: new Set<keyof T>(), edits: new Map<keyof T, number>() });
+  useEffect(() => {
+    const next = { ...seed };
+    for (const key of draft.current.dirty) next[key] = draft.current.value[key];
+    draft.current.value = next;
+    setValue(next);
+  }, [seed]);
+  const edit = (update: SetStateAction<T>) => {
+    const d = draft.current;
+    const next = typeof update === "function" ? (update as (value: T) => T)(d.value) : update;
+    for (const key of new Set([...Object.keys(d.value), ...Object.keys(next)] as (keyof T)[])) {
+      if (!Object.is(d.value[key], next[key])) {
+        d.dirty.add(key);
+        d.edits.set(key, (d.edits.get(key) ?? 0) + 1);
+      }
+    }
+    d.value = next;
+    setValue(next);
+  };
+  const checkpoint = () => {
+    const edits = new Map(draft.current.edits);
+    return (canonical: T) => {
+      const d = draft.current;
+      const next = { ...canonical };
+      for (const key of new Set([...Object.keys(d.value), ...Object.keys(canonical)] as (keyof T)[])) {
+        if (d.edits.get(key) !== edits.get(key)) next[key] = d.value[key];
+        else d.dirty.delete(key);
+      }
+      d.value = next;
+      setValue(next);
+      return d.dirty.size === 0;
+    };
+  };
+  return { value, edit, checkpoint };
+}
+
+function useEditorKey(id: string, client: ContentKitClient, scope: string) {
+  const [identity, setIdentity] = useState({ id, client, scope, key: 0 });
+  if (identity.id !== id || identity.client !== client || identity.scope !== scope) {
+    const next = { id, client, scope, key: identity.key + 1 };
+    setIdentity(next);
+    return next.key;
+  }
+  return identity.key;
+}
+
+function useEditorReload(content: Content, own?: ContentKitClient) {
+  const { client, store, scope, language } = useContentScope(own);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  return async () => {
+    const fresh = await client.contents.get(content.id, language ?? content.language);
+    let latest = fresh;
+    if (mounted.current) store.patch<Content | null>(
+      (tag) => tag.type === "content" && tag.id === content.id && (tag.readScope ?? "{}") === scope,
+      (current) => {
+        if (current && current.revision > latest.revision) latest = current;
+        return latest;
+      },
+    );
+    return latest;
+  };
+}
+
 /** Listing and the kind's declared attributes. */
-export function ContentDetailsEditor({ content, ...p }: Common & { content: Content }) {
+export function ContentDetailsEditor(p: Common & { content: Content }) {
+  const { client, scope } = useContentScope(p.client);
+  const key = useEditorKey(p.content.id, client, scope);
+  return <ContentDetailsForm key={key} {...p} client={client} />;
+}
+
+function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const { spec } = useKind(content.kind, p.client);
   const declared = useMemo(() => spec?.attributes ?? {}, [spec]);
-  const [listing, setListing] = useState<Listing>(content.listing);
-  const [comments, setComments] = useState(content.comments);
-  const [attrs, setAttrs] = useState<Record<string, string | boolean>>({});
-  useEffect(() => {
-    setListing(content.listing);
-    setComments(content.comments);
-    setAttrs(formOf(declared, content.attributes));
-  }, [content.revision, content.listing, content.comments, content.attributes, declared]);
+  const fields = useDraft(useMemo(() => ({ listing: content.listing, comments: content.comments }), [content.listing, content.comments]));
+  const attrs = useDraft(useMemo(() => formOf(declared, content.attributes), [declared, content.attributes]));
+  const { listing, comments } = fields.value;
+  const reload = useEditorReload(content, p.client);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -90,16 +164,22 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
           setSaved(false);
           let attributes: Record<string, unknown>;
           try {
-            attributes = parseAttributes(declared, attrs);
+            attributes = parseAttributes(declared, attrs.value);
           } catch (err) {
             return setInvalid((err as Error).message);
           }
-          void save.run(() => client.contents.update(content.id, { listing, comments, attributes, revision: content.revision })).then((d) => d && setSaved(true));
+          const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
+          void save.run(() => client.contents.update(content.id, { listing, comments, attributes, revision: content.revision })).then((d) => {
+            if (!d) return;
+            const cleanFields = settleFields({ listing: d.listing, comments: d.comments });
+            const cleanAttrs = settleAttrs(formOf(declared, d.attributes));
+            setSaved(cleanFields && cleanAttrs);
+          });
         }}
       >
         <div className="grid gap-1.5 sm:max-w-xs">
           <Label>{t("contentEditor.listing")}</Label>
-          <Select value={listing} onValueChange={(v) => setListing(v as Listing)}>
+          <Select value={listing} onValueChange={(v) => { fields.edit((f) => ({ ...f, listing: v as Listing })); setSaved(false); }}>
             <SelectTrigger size="sm" aria-label={t("contentEditor.listing")}>
               <SelectValue>{(v: string) => t(`contentEditor.listing_${v as Listing}`)}</SelectValue>
             </SelectTrigger>
@@ -114,7 +194,7 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
         </div>
         <div className="grid gap-1.5 sm:max-w-xs">
           <Label>{t("contentEditor.comments")}</Label>
-          <Select value={comments} onValueChange={(v) => setComments(v as Comments)}>
+          <Select value={comments} onValueChange={(v) => { fields.edit((f) => ({ ...f, comments: v as Comments })); setSaved(false); }}>
             <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
               <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
             </SelectTrigger>
@@ -127,13 +207,23 @@ export function ContentDetailsEditor({ content, ...p }: Common & { content: Cont
             </SelectContent>
           </Select>
         </div>
-        <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={p.labels} />
+        <AttributeFields declared={declared} form={attrs.value} onChange={(n, v) => { attrs.edit((a) => ({ ...a, [n]: v })); setSaved(false); }} labels={p.labels} />
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
         <div className="flex items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending}>
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={save.pending} onClick={() => {
+            const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
+            void save.run(reload).then((d) => {
+              if (!d) return;
+              settleFields({ listing: d.listing, comments: d.comments });
+              settleAttrs(formOf(declared, d.attributes));
+              setInvalid(null);
+              setSaved(false);
+            });
+          }}>{t("common.cancel")}</Button>
           <Saved show={saved} />
         </div>
       </form>
@@ -274,12 +364,18 @@ function cleanRule(r: Rule): Rule {
 }
 
 /** Who may open the content and what it sells for. */
-export function AccessEditor({ content, ...p }: Common & { content: Content }) {
+export function AccessEditor(p: Common & { content: Content }) {
+  const { client, scope } = useContentScope(p.client);
+  const key = useEditorKey(p.content.id, client, scope);
+  return <AccessForm key={key} {...p} client={client} />;
+}
+
+function AccessForm({ content, ...p }: Common & { content: Content }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const { model } = useKind(content.kind, p.client);
-  const [rule, setRule] = useState<Rule>(content.access);
-  useEffect(() => setRule(content.access), [content.revision, content.access]);
+  const rule = useDraft(content.access);
+  const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
@@ -290,15 +386,24 @@ export function AccessEditor({ content, ...p }: Common & { content: Content }) {
         onSubmit={(e) => {
           e.preventDefault();
           setSaved(false);
-          void save.run(() => client.contents.update(content.id, { access: cleanRule(rule), revision: content.revision })).then((d) => d && setSaved(true));
+          const settle = rule.checkpoint();
+          void save.run(() => client.contents.update(content.id, { access: cleanRule(rule.value), revision: content.revision })).then((d) => d && setSaved(settle(d.access)));
         }}
       >
-        <RuleFields value={rule} onChange={setRule} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
+        <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
         <ErrorLine error={save.error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending || !complete(rule)}>
+          <Button type="submit" size="sm" disabled={save.pending || !complete(rule.value)}>
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={save.pending} onClick={() => {
+            const settle = rule.checkpoint();
+            void save.run(reload).then((d) => {
+              if (!d) return;
+              settle(d.access);
+              setSaved(false);
+            });
+          }}>{t("common.cancel")}</Button>
           <Saved show={saved} />
         </div>
       </form>
