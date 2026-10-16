@@ -150,7 +150,11 @@ Repeating completion is safe. A status response resembles:
   "content_id": "...",
   "version_id": "...",
   "progress": {"stage": "complete", "completed": 20, "total": 20},
-  "result": {"path": "/en/g/EXAMPLE/example-gallery", "pages": 20},
+  "result": {
+    "path": "/en/g/EXAMPLE/example-gallery",
+    "pages": 20,
+    "page_review": {"sources": 23, "selected": 20, "excluded": 3, "flagged": 4}
+  },
   "created_at": "2026-10-15T12:00:00Z",
   "updated_at": "2026-10-15T12:00:05Z"
 }
@@ -184,6 +188,65 @@ covers one archive-backed reader version. Its worker checks the imported
 archive checksum, exact ordered pages, required renditions, cover, original
 metadata revisions and authority before automatic publication. Editing the
 pending draft prevents it from silently publishing different content.
+
+## Page normalization and review
+
+Ingestion retains the uploaded ZIP and each original page. Generated reader
+images, thumbnails and download ZIPs are separate renditions. Excluding a page
+from the reading order does not delete its original. This policy applies to new
+ingestion; it cannot recover source archives removed by an older import.
+
+New numeric filenames are normalized once: `1.png`, `2.png`, `10.png` become
+`001.png`, `002.png`, `010.png` in natural numeric order. Numeric gaps are kept,
+and larger numbers are not truncated. A joined spread such as `002-003.png`
+remains one reader image; by default it replaces separate pages 2 and 3 in the
+reading order. The original names remain in the review record. Existing reader
+keys and manually reordered pages are not renamed during reprocessing.
+
+Exact duplicates and confidently empty pages are automatically excluded.
+Uncertain blank pages, unusual numbering and conflicting ranges stay available
+with review flags. Native analysis examines the original pixels before cropping
+or resizing, and a failure to classify a valid image does not block publication.
+If automatic cleanup would leave no pages, one source remains included with an
+explicit empty-selection review flag. An editor cannot exclude every page.
+The normal three-request upload flow needs no additional QA-start or approval
+request. `result.page_review` summarizes the selected and flagged sources.
+
+An editor can inspect every retained page through:
+
+```http
+GET /v1/contents/{content-id}/versions/{version-id}/pages
+```
+
+The response includes a `revision`, ordered `pages`, original names, canonical
+IDs, automatic decisions, confidence, flags and signed editor preview/source
+URLs. The standard ContentKit version editor exposes these same controls.
+The Go client exposes `GetContentVersionPages` and `PatchContentVersionPages`;
+the browser client uses `versions.pages` and `versions.updatePages`.
+
+To restore a source, use its canonical ID and the revision just read:
+
+```http
+PATCH /v1/contents/{content-id}/versions/{version-id}/pages
+Content-Type: application/json
+
+{"revision":"<current revision>","pages":[{"id":"002","mode":"include"}]}
+```
+
+The modes are `include`, `exclude` and `auto`. Explicit choices survive later
+analysis and rendition regeneration. An optional `order` array must contain
+every retained page ID exactly once, including excluded sources; moving pages
+changes their order, not their stable IDs. A stale revision returns HTTP 409:
+reload the report before editing again. Review changes and automatic decisions
+are recorded for audit. These editor-only operations are optional corrections,
+not extra steps in ordinary publishing.
+
+Versions with explicit chapter/segment ranges preserve their existing selection
+and source order. They carry `segmented_selection_preserved` review flags, and
+the review UI is read-only for inclusion and ordering. This avoids moving a
+page across an existing release or access boundary; it does not pause ordinary
+publishing. Segment-aware remapping must be handled explicitly before those
+versions can use automatic exclusion or structural page review.
 
 For browsing existing items, `GET /v1/manage/gallery?q=...` selects a configured
 kind directly in the path. `/v1/manage` lists across kinds. Both apply the same authorization.

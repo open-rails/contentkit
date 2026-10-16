@@ -496,7 +496,7 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File, error) {
 	var out []media.File
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) {
+		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) || !media.PageIncluded(f) {
 			continue
 		}
 		if f.Fail() != nil || f.Blob == "" {

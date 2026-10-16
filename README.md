@@ -127,6 +127,8 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 For machine publishing, [the archive publishing guide](docs/api/publishing.md)
 covers `Client.PublishArchive`, app-bound API keys and the resumable HTTP
 operation that submits a gallery with its artist, series and tags.
+The same guide covers retained source ZIPs, automatic page normalization and
+the shared editor's reversible [page review](docs/api/publishing.md#page-normalization-and-review).
 
 ## HTTP API
 

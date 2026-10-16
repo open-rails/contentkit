@@ -9,9 +9,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"slices"
 	"strings"
@@ -116,7 +118,7 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 			zips = nil
 			todo = slices.DeleteFunc(todo, func(w work) bool { return len(w.public) == 0 })
 			for i := range todo {
-				todo[i].private, todo[i].measure = nil, false
+				todo[i].private, todo[i].measure, todo[i].analyze = nil, false, false
 			}
 		}
 		if len(todo) == 0 && len(zips) == 0 {
@@ -158,6 +160,7 @@ type work struct {
 	private []*media.Private
 	public  []*media.Public
 	measure bool // record its size (W×H) only
+	analyze bool // record original-page evidence, independently of renditions
 }
 
 // done is a rendered upload.
@@ -167,12 +170,14 @@ type done struct {
 	publications []media.Publication
 	written      []string // public keys written
 	dims         media.Dims
+	analysis     *media.PageAnalysis
 	err          error // permanent
 }
 
 // todo lists the uploads with stale, pending or forced image outputs.
 func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest, job media.ProcessJob) ([]work, error) {
 	k := item.Kind()
+	analysisCapacity := k.PageAnalysisCapacity(m)
 	var out []work
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Blob == "" || f.Gone || f.Fail() != nil {
@@ -207,7 +212,12 @@ func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest
 			}
 		}
 		w.measure = strings.HasPrefix(f.Type, "image/") && f.W == 0
-		if len(w.private) > 0 || len(w.public) > 0 || w.measure {
+		w.analyze = analysisCapacity > 0 && k.IsPageUpload(f) && strings.HasPrefix(f.Type, "image/") &&
+			!f.HasPageAnalysis(media.PageAnalysisRecipe) && media.PageAnalysisFits(f.Meta)
+		if w.analyze {
+			analysisCapacity--
+		}
+		if len(w.private) > 0 || len(w.public) > 0 || w.measure || w.analyze {
 			out = append(out, w)
 		}
 	}
@@ -325,6 +335,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			return err == nil, nil
 		}
 		var gone []string // outputs of uploads removed or replaced meanwhile, and of zips that bundled them
+		analysisCapacity := k.PageAnalysisCapacity(cur)
 		if hidden = cur.Hidden; hidden {
 			if err := p.drop(ctx, written); err != nil {
 				return err
@@ -342,6 +353,17 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 					}
 				}
 				continue
+			}
+			if d.analysis != nil && analysisCapacity > 0 {
+				meta, err := media.WithPageAnalysis(cur.Files[i].Meta, *d.analysis)
+				if err == nil {
+					cur.Files[i].Meta = meta
+					analysisCapacity--
+				} else {
+					// A concurrent metadata edit may have used the reserved space.
+					// Never discard an administrator's choices to fit evidence.
+					slog.WarnContext(ctx, "page analysis metadata unavailable", "ref", item.Ref(), "path", d.src.Path, "error", err)
+				}
 			}
 			if d.err != nil && cur.Full {
 				// A failure record does not fit a Full manifest: drop the
@@ -497,10 +519,22 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 	src, err := p.read(ctx, key, w.src, item.Kind())
 	if err != nil {
 		if isPermanent(err) {
+			if w.analyze {
+				digest, _ := layout.BlobDigest(w.src.Blob)
+				d.analysis = &media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: hex.EncodeToString(digest),
+					Status: "failed", Blank: "unknown", Confidence: "unknown", Flags: []string{"source_unavailable"}}
+			}
 			d.err = err
 			return d, nil
 		}
 		return d, err
+	}
+	if w.analyze {
+		a, err := p.AnalyzePage(ctx, src, w.src.Type)
+		if err != nil {
+			return d, err
+		}
+		d.analysis = &a
 	}
 	k := item.Kind()
 	for _, pu := range w.public {

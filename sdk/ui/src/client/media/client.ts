@@ -48,6 +48,8 @@ export interface UploadOptions {
 export interface UploadedFile {
   /** The path to commit: cleaned, with an extension, named by the server for a Named upload. */
   path: string;
+  /** Original file name (the requested name for an unnamed Blob), before canonicalization. */
+  sourceName?: string;
   /**
    * The name to commit: the folder's identical blob ("sha256-{hex}-{uuid}") when
    * exists, else the staged upload ("u-{uuid}") the worker hashes and places
@@ -96,6 +98,8 @@ export interface PlannedPart {
 export interface UploadState {
   ticket: string;
   path: string;
+  /** Retained across multipart pauses and resumes for the eventual put. */
+  sourceName?: string;
   /** The staged upload ("u-{uuid}") the parts write. */
   blob: string;
   type: string;
@@ -205,13 +209,14 @@ export class MediaClient {
     const sha256 = await sha256Hex(file, { signal: o.signal, onProgress: (loaded) => o.onProgress?.({ phase: "hashing", loaded, total }) });
     const presign = () => this.api.presign({ ref: o.ref, path: o.path, type, size: total, sha256 }, o.signal);
     let p = await presign();
-    const out = (p: PresignReply): UploadedFile => ({ path: p.path, blob: p.blob, type, size: total, exists: !!p.exists, processOnUpload: !!p.process_on_upload });
+    const out = (p: PresignReply): UploadedFile => ({ path: p.path, sourceName: file.name || p.source_name, blob: p.blob, type, size: total, exists: !!p.exists, processOnUpload: !!p.process_on_upload });
     if (p.exists) return out(p);
     if (p.multipart) {
       const m = p.multipart;
       const state: UploadState = {
         ticket: m.ticket,
         path: p.path,
+        sourceName: file.name || p.source_name,
         blob: p.blob,
         type,
         size: total,
@@ -245,15 +250,17 @@ export class MediaClient {
   async put(file: Uploadable, o: UploadOptions & PutOptions): Promise<FileInfo> {
     const up = await this.upload(file, o);
     o.onUploaded?.(up);
-    const op: Op = { op: "put", path: up.path, blob: up.blob };
+    const op: Op = { op: "put", path: up.path, source_name: up.sourceName, blob: up.blob };
     if (o.createOnly) op.create_id = crypto.randomUUID();
+    else op.replace = true;
     if (o.edit) op.edit = o.edit;
     if (o.meta) op.meta = o.meta;
     if (o.index !== undefined) op.index = o.index;
     const files = await this.commit(o.ref, [op], { signal: o.signal, sources: { [up.blob]: { file, type: up.type } } });
-    if (o.wait === false) return files.find((f) => f.path === up.path) ?? { path: up.path, type: up.type };
+    const stored = (op.create_id ? files.find((f) => f.create_id === op.create_id) : undefined) ?? files.find((f) => f.path === up.path);
+    if (o.wait === false) return stored ?? { path: up.path, type: up.type };
     o.onProgress?.({ phase: "processing", loaded: up.size, total: up.size });
-    return this.waitFor(o.ref, up.path, { signal: o.signal, timeout: o.timeout });
+    return this.waitFor(o.ref, stored?.path ?? up.path, { signal: o.signal, timeout: o.timeout });
   }
 
   /**
@@ -580,7 +587,7 @@ export class MediaClient {
     o.onProgress?.({ phase: "completing", loaded: state.size, total: state.size });
     const c = await this.retry(() => this.api.complete(state.ref, { ticket: state.ticket }, o.signal), o.signal);
     o.onState?.(null);
-    return { path: state.path, blob: c.blob, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
+    return { path: state.path, sourceName: state.sourceName || state.file.name, blob: c.blob, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
   }
 
   private async retry<T>(fn: () => Promise<T>, signal?: AbortSignal, before?: (err: ContentKitError) => Promise<void>): Promise<T> {

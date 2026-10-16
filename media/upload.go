@@ -115,6 +115,7 @@ type PresignRequest struct {
 // PUT or the parts write.
 type Presigned struct {
 	Path            string
+	SourceName      string
 	Blob            string
 	Exists          bool
 	Put             *PresignedRequest
@@ -169,13 +170,19 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
 		return Presigned{}, err
 	}
-	out := Presigned{Path: path, ProcessOnUpload: u.o.ProcessOnUpload}
+	out := Presigned{Path: path, SourceName: r.Path, ProcessOnUpload: u.o.ProcessOnUpload}
 	// An identical current allocation needs no upload. Unreferenced objects
 	// are never reused. Anything else is staged: nothing a client sends is
 	// ever written under a private blob name.
 	current, err := u.current(ctx, item)
 	if err != nil {
 		return Presigned{}, err
+	}
+	if item.Kind().IsPageUpload(File{Path: path}) {
+		_, _, _, numeric := CanonicalPageName(path)
+		if !numeric {
+			out.Path = nextPagePath(item.Kind(), current, path)
+		}
 	}
 	views, area := u.reg.editorViews(current), item.Kind().Area(path, "")
 	for _, blob := range current.Blobs() {
@@ -245,6 +252,11 @@ func (u *Uploads) uploadPath(k *Kind, path, contentType string) (string, int, er
 	}
 	if k.Uploads[g].Named {
 		stem = dir + NewName()
+	}
+	if k.IsPageUpload(File{Path: stem}) {
+		if canonical, _, _, ok := CanonicalPageName(stem); ok {
+			stem = dir + canonical
+		}
 	}
 	if ext == "" {
 		ext = typeExt(contentType)
@@ -414,6 +426,15 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // unreferenced private blobs go when a grace period old, or at once for a
 // takedown (Op.Takedown).
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op) (*Manifest, error) {
+	return u.CommitChecked(ctx, actor, ref, operationID, ops, nil)
+}
+
+// CommitChecked is Commit with an optional precondition evaluated under the
+// manifest lock before any operation is applied. A successful commit records
+// processing and notification effects durably with the manifest mutation.
+// Replays of the same operation ID return its receipt without rechecking an
+// obsolete precondition. The callback must not mutate the manifest.
+func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op, check func(*Manifest) error) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
 		return nil, err
@@ -422,8 +443,18 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil || id == uuid.Nil || id.String() != operationID {
 		return nil, uploadErr(CodeInvalid, "operation_id must be a canonical nonzero UUID")
 	}
-	if len(ops) == 0 || len(ops) > 1000 {
-		return nil, uploadErr(CodeInvalid, "commit 1 to 1000 operations")
+	trusted := actor.Kind == "contentkit:system" && actor.ID == "contentkit" && !actor.Anonymous
+	limit := 1000
+	if trusted {
+		limit = 2*MaxUploads + 1 // one metadata put and move per source, plus regeneration
+	}
+	if len(ops) == 0 || len(ops) > limit {
+		return nil, uploadErr(CodeInvalid, "commit 1 to %d operations", limit)
+	}
+	// Page provenance, analysis and selection are server-owned. External
+	// upload metadata cannot impersonate an analyzer or an audited override.
+	if !trusted {
+		ops = clientUploadOps(ops)
 	}
 	for _, op := range ops {
 		if err := op.validate(); err != nil {
@@ -478,8 +509,24 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	defer cancel()
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
+		if check != nil {
+			if err := check(m); err != nil {
+				return err
+			}
+		}
 		prior = m.Clone()
-		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt}
+		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		o.authorizePath = func(path string) error {
+			stem, _ := splitExt(path)
+			allocated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
+			if err != nil {
+				return err
+			}
+			if allocated.Owner != grant.Owner || allocated.Exempt != grant.Exempt {
+				return uploadErr(CodeForbidden, "allocated page has a different upload owner")
+			}
+			return nil
+		}
 		keys = keys[:0]
 		var names []string
 		for _, op := range ops {

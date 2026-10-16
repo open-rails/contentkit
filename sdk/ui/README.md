@@ -669,6 +669,13 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
 
+- **`PageReview`**: retained page sources, original filenames, automatic cleanup
+  reasons, previews, inclusion overrides and ordering. `ContentManager` includes
+  it for reader versions; use `content` and `version` to embed it separately.
+  `usePageReview()` exposes the same revision-checked API. Explicitly segmented
+  versions keep their selection/order and show read-only review controls so
+  cleanup cannot move pages across release/access boundaries.
+
 - **`ReaderManifestEditor`**: a reader version's manifest over its published
   pages and audio: scroll anchors, audio cues (matched to pages or anchors by
   file name in one step), background tracks and auto-advance. Page order is

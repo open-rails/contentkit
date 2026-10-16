@@ -5,7 +5,7 @@ import { ContentKitError, failureError, toContentKitError } from "../client/erro
 import type { Edit, FileInfo, Op, ReadResult, RefBody, UploadRule } from "../client/generated/wire.js";
 import { stem } from "../client/media/client.js";
 import type { QueueItem } from "../client/media/queue.js";
-import { filesFor, isPattern, ruleDir, ruleFor, screenFiles, uniqueName, uploadRules, type Screened } from "../client/media/rules.js";
+import { filesFor, isPattern, ruleDir, ruleFor, screenFiles, sortPageFiles, uniqueName, uniquePageName, uploadRules, type Screened } from "../client/media/rules.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "./context.js";
 import { useMediaRead, type UseMediaRead } from "./read.js";
 import { useUploadQueue, type UseUploadQueue } from "./upload.js";
@@ -213,9 +213,10 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
         return t;
       };
       const paths = new Map<File, string>();
-      for (const { file, rule } of s.accepted) {
+      for (const { file, rule } of sortPageFiles(s.accepted)) {
         const t = takenIn(rule);
-        const name = opts.current.name?.(file) ?? uniqueName(file.name, t);
+        const requested = opts.current.name?.(file);
+        const name = rule.page ? uniquePageName(requested ?? file.name, t) : requested ?? uniqueName(file.name, t);
         t.push(name);
         paths.set(file, ruleDir(rule.path) + name);
       }

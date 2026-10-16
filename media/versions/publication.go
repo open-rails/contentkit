@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -37,6 +38,8 @@ type pagesSnapshot struct {
 }
 
 type page struct {
+	Name   string      `json:"name,omitempty"`
+	Span   *PageSpan   `json:"span,omitempty"`
 	Path   string      `json:"path"`   // the page upload
 	Source string      `json:"source"` // its blob and edit (File.Key)
 	Files  []rendition `json:"files"`  // Publish.Renditions, in order
@@ -98,7 +101,7 @@ func previewDir(k *media.Kind) string {
 func imports(k *media.Kind, m *media.Manifest) []media.File {
 	var out []media.File
 	for _, f := range m.Files {
-		if k.Publish.Import != "" && f.IsUpload() && !f.Unattached && f.Fail() == nil && inPattern(k.Publish.Import, f.Path) {
+		if k.Publish.Import != "" && f.IsUpload() && !f.Unattached && f.Fail() == nil && (f.Meta["archive_completed_sha256"] == nil || f.Meta["archive_completed_sha256"] != pageDigest(f)) && inPattern(k.Publish.Import, f.Path) {
 			out = append(out, f)
 		}
 	}
@@ -115,13 +118,19 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) {
 			continue
 		}
+		if !media.PageIncluded(f) {
+			continue
+		}
 		if f.Fail() != nil {
 			return nil, fmt.Errorf("%w: %s", errFailed, f.Path)
 		}
 		if f.Blob == "" {
 			return nil, ErrNotReady
 		}
-		p := page{Path: f.Path, Source: f.Key()}
+		if pageMeta(f).SchemaVersion > 0 && strings.HasPrefix(f.Type, "image/") && !f.Gone && f.Fail() == nil && media.PageAnalysisFits(f.Meta) && k.PageAnalysisCapacity(m) > 0 && !f.HasPageAnalysis(media.PageAnalysisRecipe) {
+			return nil, ErrNotReady
+		}
+		p := page{Path: f.Path, Source: f.Key(), Name: pageID(k, f), Span: pageMeta(f).Span}
 		for _, name := range k.Publish.Renditions {
 			pre := private(k, name)
 			outs := m.Outputs(f.Path, name)
@@ -174,7 +183,16 @@ func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
 
 // lockSource serializes a version's publication with its forks and imports.
 func (s *Service) lockSource(ctx context.Context, v Target) (func(), error) {
-	return media.PGLocker(s.o.Pool).Lock(ctx, "contentkit:versions:"+s.o.Tenant+":"+v.Version)
+	return LockSource(ctx, s.o.Pool, s.o.Tenant, v.Version)
+}
+
+// LockSource serializes source selection with catalog segment writes. Acquire
+// it before a SQL transaction/row lock; manifest commits may notify the catalog.
+func LockSource(ctx context.Context, pool *pgxpool.Pool, tenant, version string) (func(), error) {
+	if tenant == "" || version == "" {
+		return nil, ErrInvalid
+	}
+	return LockSources(ctx, pool, tenant, []string{version})
 }
 
 // lockVersion locks v's row in tx; ErrNotFound when it is gone.

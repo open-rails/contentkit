@@ -35,6 +35,7 @@ type PresignBody struct {
 // upload (u-{uuid}) the PUT or parts write, which the worker places.
 type PresignReply struct {
 	Path            string          `json:"path"`
+	SourceName      string          `json:"source_name,omitempty"`
 	Blob            string          `json:"blob"`
 	Exists          bool            `json:"exists,omitempty"`
 	Put             *RequestReply   `json:"put,omitempty"`
@@ -197,6 +198,7 @@ type FileInfo struct {
 	URL      string  `json:"url,omitempty"`
 
 	// Editors (editor reads and commit replies):
+	CreateID   string          `json:"create_id,omitempty"`
 	Upload     bool            `json:"upload,omitempty"`
 	Staged     bool            `json:"staged,omitempty"` // uploaded, not yet placed by the worker: no blob, views or frames yet
 	From       string          `json:"from,omitempty"`
@@ -220,6 +222,7 @@ type UploadRule struct {
 	// Max caps the files at Path; 0 is unlimited.
 	Max   int  `json:"max,omitempty"`
 	Named bool `json:"named,omitempty"`
+	Page  bool `json:"page,omitempty"` // original pages of a versioned reader
 	// Body: the upload holds the body's images (Upload.Body).
 	Body   bool   `json:"body,omitempty"`
 	Frames string `json:"frames,omitempty"`

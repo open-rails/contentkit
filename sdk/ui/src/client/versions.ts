@@ -1,14 +1,26 @@
-import type { FileDownload, ForkBody, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
+import type { FileDownload, ForkBody, PageReview, PageReviewPatch, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call, routeURL } from "./route.js";
 
 /** A version's answer while it is prepared (202). */
 export const isPending = (x: unknown): x is Pending => !!x && typeof x === "object" && "status" in x && !("pages" in x) && !("url" in x);
 
-/** Content versions: reader plans, reader metadata, forks and downloads. */
+/** Content versions: page review, reader plans, reader metadata, forks and downloads. */
 export class VersionsClient {
   constructor(private readonly http: Http) {}
 
+  /** Editors: retained page sources, automatic decisions and manual overrides. */
+  pages(content: string, version: string, signal?: AbortSignal): Promise<PageReview> {
+    return call(this.http, "GET", "/contents/{id}/versions/{version}/pages", { params: { id: content, version }, signal });
+  }
+  /** Editors: changes choices or order against the review's current revision. */
+  async updatePages(content: string, version: string, patch: PageReviewPatch): Promise<PageReview> {
+    const emit = this.http.captureChanges();
+    const next: PageReview = await call(this.http, "PATCH", "/contents/{id}/versions/{version}/pages", { params: { id: content, version }, body: patch });
+    emit({ type: "content.changed", id: content });
+    emit({ type: "reader.changed", content, version });
+    return next;
+  }
   /** The version's reader plan for this viewer; Pending while it has no current publication. */
   reader(content: string, version: string, signal?: AbortSignal): Promise<ReaderPlan | Pending> {
     return call(this.http, "GET", "/contents/{id}/versions/{version}/reader", { params: { id: content, version }, signal });

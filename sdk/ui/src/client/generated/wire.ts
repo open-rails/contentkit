@@ -783,6 +783,7 @@ export interface FileInfo {
   dur?: number;
   download?: string;
   url?: string;
+  create_id?: string;
   upload?: boolean;
   staged?: boolean;
   from?: string;
@@ -1263,9 +1264,11 @@ export interface OfferRecord {
 
 export interface Op {
   op: OpName;
+  source_name?: string;
   path?: string;
   blob?: string;
   create_id?: string;
+  replace?: boolean;
   index?: number;
   meta?: Record<string, unknown>;
   edit?: Edit;
@@ -1304,6 +1307,7 @@ export interface OperationError {
 export interface OperationResult {
   path: string;
   pages: number;
+  page_review?: PageReviewSummary;
 }
 
 export interface Order {
@@ -1324,6 +1328,85 @@ export interface Origin {
 export interface Page {
   items: Item[];
   next_cursor?: string;
+}
+
+export interface PageAnalysis {
+  recipe: string;
+  source_sha256: string;
+  status: string;
+  width?: number;
+  height?: number;
+  frames?: number;
+  pixel_sha256?: string;
+  pixel_format?: string;
+  profile_sha256?: string;
+  blank: string;
+  blank_reason?: string;
+  confidence: string;
+  metrics?: PageAnalysisMetrics;
+  flags?: string[];
+}
+
+export interface PageAnalysisMetrics {
+  pixels: number;
+  visible_pixels: number;
+  opaque_pixels: number;
+  foreground_pixels: number;
+  min_rgb: string;
+  max_rgb: string;
+}
+
+export interface PageDecision {
+  reason: string;
+  confidence: string;
+  related?: string[];
+}
+
+export interface PageReview {
+  revision: string;
+  pages: PageReviewEntry[];
+  selected: number;
+  flagged: number;
+}
+
+export interface PageReviewChange {
+  id: string;
+  mode: string;
+}
+
+export interface PageReviewEntry {
+  id: string;
+  path: string;
+  source_name: string;
+  source_entry?: string;
+  archive_sha256?: string;
+  source_sha256: string;
+  span?: PageSpan;
+  included: boolean;
+  mode: string;
+  decision: PageDecision;
+  flags: string[];
+  analysis?: PageAnalysis;
+  preview_url?: string;
+  source_url?: string;
+}
+
+export interface PageReviewPatch {
+  revision: string;
+  pages?: PageReviewChange[];
+  order?: string[];
+}
+
+export interface PageReviewSummary {
+  sources: number;
+  selected: number;
+  excluded: number;
+  flagged: number;
+}
+
+export interface PageSpan {
+  from: number;
+  to: number;
 }
 
 export interface PartBody {
@@ -1361,6 +1444,7 @@ export interface Placement {
 
 export interface PlanPage {
   name: string;
+  span?: PageSpan;
   w: number;
   h: number;
   files: Record<string, string>;
@@ -1517,6 +1601,7 @@ export interface PresignBody {
 
 export interface PresignReply {
   path: string;
+  source_name?: string;
   blob: string;
   exists?: boolean;
   put?: RequestReply;
@@ -1886,6 +1971,7 @@ export interface UploadRule {
   max_bytes: number;
   max?: number;
   named?: boolean;
+  page?: boolean;
   body?: boolean;
   frames?: string;
   aspect?: string;

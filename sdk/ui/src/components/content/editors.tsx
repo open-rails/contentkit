@@ -15,6 +15,7 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
+import { PageReview } from "../admin/page-review.js";
 import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
@@ -606,7 +607,10 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
   const languages = useMemo(() => (model?.languages ?? []).map((l) => ({ value: l, label: languageName(l) })), [model, languageName]);
   if (!r.read && r.loading) return <Skeleton className="h-24 w-full" />;
   if (r.read?.uploads && videoPaths(r.read.uploads).source) return <VideoMediaEditor item={item} languages={languages} client={p.client} onError={p.onError} />;
-  return <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />;
+  return <>
+    <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />
+    {model?.kinds[content.kind]?.presentation === "reader" && <PageReview content={content.id} version={version.id} client={p.client} onError={p.onError} />}
+  </>;
 }
 
 type Row = { title: string; start: string; end: string; release: string };

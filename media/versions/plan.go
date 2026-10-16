@@ -51,6 +51,7 @@ type PlanSegment struct {
 // path of each rendition in the segment's item.
 type PlanPage struct {
 	Name  string            `json:"name"`
+	Span  *PageSpan         `json:"span,omitempty"`
 	W     int               `json:"w"`
 	H     int               `json:"h"`
 	Files map[string]string `json:"files"`
@@ -185,7 +186,11 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 			ref := s.publishedRef(k, it.ID)
 			seg.Item = &media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID}
 			for _, pg := range snap.Pages[it.Start:it.End] {
-				pp := PlanPage{Name: k.NameOf(pg.Path), W: pg.Files[0].W, H: pg.Files[0].H, Files: map[string]string{}}
+				name := pg.Name
+				if name == "" {
+					name = k.NameOf(pg.Path)
+				}
+				pp := PlanPage{Name: name, Span: pg.Span, W: pg.Files[0].W, H: pg.Files[0].H, Files: map[string]string{}}
 				for _, r := range pg.Files {
 					pp.Files[r.Preset] = r.Path
 				}
@@ -212,8 +217,12 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 			}
 			pg := snap.Pages[n-1]
 			r := im.Renditions[len(im.Renditions)-1]
-			plan.Previews = append(plan.Previews, PlanPreview{Index: n - 1, Name: k.NameOf(pg.Path), URL: r.URL, W: r.W, H: r.H})
-			readable[k.NameOf(pg.Path)] = true
+			name := pg.Name
+			if name == "" {
+				name = k.NameOf(pg.Path)
+			}
+			plan.Previews = append(plan.Previews, PlanPreview{Index: n - 1, Name: name, URL: r.URL, W: r.W, H: r.H})
+			readable[name] = true
 		}
 	}
 	files := map[string]bool{}

@@ -19,6 +19,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/publishing"
 )
 
@@ -112,7 +113,10 @@ func TestPublishArchiveRecoversLostResponsesWithoutLeakingKey(t *testing.T) {
 				publishingJSON(t, w, publishing.Operation{ID: id, ContentID: "content", VersionID: "version", State: publishing.Publishing})
 				return
 			}
-			publishingJSON(t, w, publishing.Operation{ID: id, ContentID: "content", VersionID: "version", State: "published", Result: &publishing.OperationResult{Path: "/en/g/example", Pages: 20}})
+			publishingJSON(t, w, publishing.Operation{ID: id, ContentID: "content", VersionID: "version", State: "published", Result: &publishing.OperationResult{
+				Path: "/en/g/example", Pages: 20,
+				PageReview: &versions.PageReviewSummary{Sources: 23, Selected: 20, Excluded: 3, Flagged: 4},
+			}})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -126,6 +130,9 @@ func TestPublishArchiveRecoversLostResponsesWithoutLeakingKey(t *testing.T) {
 	op, err := publishingClient(server).PublishArchive(context.Background(), input)
 	if err != nil || op.State != "published" || op.Result == nil || op.Result.Pages != 20 {
 		t.Fatalf("publication = %+v, %v", op, err)
+	}
+	if review := op.Result.PageReview; review == nil || review.Sources != 23 || review.Selected != 20 || review.Excluded != 3 || review.Flagged != 4 {
+		t.Fatalf("missing automatic page review receipt: %+v", review)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -401,5 +408,47 @@ func TestPublishArchiveReturnsScheduledReleaseWithoutWaitingForDate(t *testing.T
 	defer mu.Unlock()
 	if err != nil || op.State != publishing.Scheduled || op.PublishAt == nil || !op.PublishAt.Equal(at) || requests != 1 {
 		t.Fatalf("scheduled publication = %+v, %v, requests=%d", op, err, requests)
+	}
+}
+
+func TestPublishArchivePageReviewKeepsThreeWriteFlow(t *testing.T) {
+	const id = "550e8400-e29b-41d4-a716-446655440010"
+	data := []byte("archive bytes")
+	var mu sync.Mutex
+	var requests []string
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch requests[len(requests)-1] {
+		case "PUT /v1/publishing-operations/" + id:
+			publishingJSON(t, w, publishing.Operation{ID: id, State: publishing.AwaitingUpload,
+				Upload: &media.PresignReply{Put: &media.RequestReply{Method: http.MethodPut, URL: server.URL + "/archive"}}})
+		case "PUT /archive":
+			body, _ := io.ReadAll(r.Body)
+			if !bytes.Equal(body, data) || r.Header.Get("Authorization") != "" {
+				t.Error("storage received altered bytes or an API credential")
+			}
+			w.WriteHeader(http.StatusOK)
+		case "POST /v1/publishing-operations/" + id + "/complete":
+			publishingJSON(t, w, publishing.Operation{ID: id, State: publishing.Processing})
+		case "GET /v1/publishing-operations/" + id:
+			publishingJSON(t, w, publishing.Operation{ID: id, State: publishing.Published,
+				Result: &publishing.OperationResult{Pages: 2, PageReview: &versions.PageReviewSummary{Sources: 4, Selected: 2, Excluded: 2, Flagged: 2}}})
+		default:
+			t.Errorf("unexpected extra orchestration call: %s", requests[len(requests)-1])
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	out, err := publishingClient(server).PublishArchive(t.Context(), publishingInput(id, data))
+	if err != nil || out.Result == nil || out.Result.PageReview == nil || out.Result.PageReview.Excluded != 2 {
+		t.Fatalf("page review receipt: %+v, %v", out, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 4 {
+		t.Fatalf("expected two API writes, one storage PUT and one status read: %v", requests)
 	}
 }

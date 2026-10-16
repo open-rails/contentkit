@@ -64,11 +64,11 @@ func TestImport(t *testing.T) {
 	for _, pg := range p.Segments[0].Pages {
 		names = append(names, pg.Name)
 	}
-	if strings.Join(names, ",") != "p1,p2,p10" || p.Segments[0].Locked {
+	if strings.Join(names, ",") != "001,002,003" || p.Segments[0].Locked {
 		t.Fatalf("imported plan %+v", p)
 	}
-	if left := files(s.manifest(ref), "import/"); len(left) != 0 {
-		t.Fatalf("archive kept: %v", left)
+	if archive, ok := s.manifest(ref).Get("import/book.zip"); !ok || archive.Meta["archive_completed_sha256"] == nil {
+		t.Fatal("completed source archive was not retained")
 	}
 	// An archive of no images fails and stays, publishing nothing new.
 	s.mustUpload(s.creator, ref, "import/empty", "application/zip", zipOf(t, map[string][]byte{"a.txt": []byte("a")}))

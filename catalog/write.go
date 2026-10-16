@@ -959,6 +959,17 @@ func (s *Store) followOwned(ctx context.Context, query string, groups []string, 
 // PutVersions creates (VersionID "") or edits versions and returns their ids
 // in order.
 func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []VersionPut) ([]string, error) {
+	var segmentVersions []string
+	for _, p := range in {
+		if p.VersionID != "" && p.Segments != nil {
+			segmentVersions = append(segmentVersions, p.VersionID)
+		}
+	}
+	unlock, err := versions.LockSources(ctx, s.pool, s.tenant, segmentVersions)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	var ids []string
 	for _, p := range in {
 		if !slices.Contains(ids, p.ContentID) {
@@ -966,7 +977,7 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 		}
 	}
 	out := make([]string, len(in))
-	err := s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+	err = s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{expose: true}
 		for i, p := range in {
 			o := got[p.ContentID]

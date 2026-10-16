@@ -38,9 +38,10 @@ type archiveReceipt struct {
 // ArchiveReadiness is the progress of the exact imported archive, not merely
 // any media that happens to occupy its version.
 type ArchiveReadiness struct {
-	Pages     int
-	Completed int
-	Ready     bool
+	Pages      int
+	Completed  int
+	Ready      bool
+	PageReview *PageReviewSummary
 	// PublicReady additionally waits for exposure and public cover renditions.
 	// A hidden draft prepares the source cover but has no public renditions yet.
 	PublicReady bool
@@ -126,7 +127,7 @@ func (s *Service) ArchiveStatus(ctx context.Context, t Target, operation, digest
 		return out, ErrNotFound
 	}
 	for _, f := range m.Files {
-		if f.IsUpload() && f.Fail() != nil {
+		if f.IsUpload() && f.Fail() != nil && (!k.IsPageUpload(f) || media.PageIncluded(f)) {
 			return out, ErrArchiveFailed
 		}
 	}
@@ -143,17 +144,23 @@ func (s *Service) ArchiveStatus(ctx context.Context, t Target, operation, digest
 		return out, ErrArchiveChanged
 	}
 	current := archivePages(k, m)
-	out.Pages = len(receipt.Pages)
+	review := reviewOf(k, m)
+	out.PageReview = review.Summary()
+	out.Pages = review.Selected
 	if len(current) != len(receipt.Pages) || len(current) == 0 {
 		return out, ErrArchiveChanged
 	}
-	for i, p := range current {
-		if p != receipt.Pages[i] || p.SHA256 == "" {
+	expectedSources := map[string]string{}
+	for _, p := range receipt.Pages {
+		expectedSources[p.Path] = p.SHA256
+	}
+	for _, p := range current {
+		if p.SHA256 == "" || expectedSources[p.Path] != p.SHA256 {
 			return out, ErrArchiveChanged
 		}
 	}
 	for _, f := range m.Files {
-		if f.IsUpload() && !f.Unattached && inPattern(k.Publish.Pages, f.Path) && f.Blob != "" && len(f.Pending) == 0 {
+		if f.IsUpload() && !f.Unattached && inPattern(k.Publish.Pages, f.Path) && media.PageIncluded(f) && f.Blob != "" && len(f.Pending) == 0 {
 			out.Completed++
 		}
 	}

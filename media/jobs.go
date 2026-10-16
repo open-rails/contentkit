@@ -119,6 +119,15 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 // Manifests is the jobs' manifest store; hosts may share it.
 func (j *Jobs) Manifests() *Manifests { return j.manifests }
 
+// EnqueueProcessing brings an existing item's derived files up to date after
+// a version-level selection or ordering edit.
+func (j *Jobs) EnqueueProcessing(ctx context.Context, job ProcessJob) error {
+	if j.cfg.Processes == nil {
+		return errors.New("media: processing queue is not configured")
+	}
+	return j.cfg.Processes.Enqueue(ctx, job)
+}
+
 // RiverJobs contributes media's workers, queue and periodic sweep pass to
 // the host's helpers/river composition. It composes once.
 func (j *Jobs) RiverJobs() riverhelpers.Contribution {

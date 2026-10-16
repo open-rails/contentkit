@@ -1877,6 +1877,20 @@ func (c *Client) PostNotificationsPublish(ctx context.Context, body notification
 	return out, err
 }
 
+// GetContentVersionPages is GET /v1/contents/{id}/versions/{version}/pages (editor). All retained page sources and their automatic or manual reader selection. Flags never block publication.
+func (c *Client) GetContentVersionPages(ctx context.Context, id string, version string) (versions.PageReview, error) {
+	var out versions.PageReview
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil, &out)
+	return out, err
+}
+
+// PatchContentVersionPages is PATCH /v1/contents/{id}/versions/{version}/pages (editor). Overrides page inclusion or reorders sources without renaming them. The current revision is required.
+func (c *Client) PatchContentVersionPages(ctx context.Context, id string, version string, body versions.PageReviewPatch) (versions.PageReview, error) {
+	var out versions.PageReview
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, &out)
+	return out, err
+}
+
 // GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.
 func (c *Client) GetContentVersionReader(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
