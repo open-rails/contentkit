@@ -2,9 +2,9 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
-import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
+import type { AccessMode, ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
-import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
+import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 import { recentSearchLimit } from "../client/browser-search-history.js";
@@ -113,6 +113,21 @@ export function useReleaseDates(q: ReleaseDatesQuery = {}, o: { client?: Content
     const r = await client.discovery.releaseDates({ ...query, cursor: cursor as string | undefined }, signal);
     return { items: r.dates.map((d) => ({ ...d, id: d.date })), next: r.next_cursor ?? null };
   });
+}
+
+export interface UseDailyReleases {
+  data?: DailyReleases;
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+}
+
+/** One complete calendar window, shared by all readers of the same query. */
+export function useDailyReleases(q: DailyReleasesQuery | null = {}, o: { client?: ContentKitClient } = {}): UseDailyReleases {
+  const { client, store, scope } = useContentScope(o.client);
+  const query = useDisplay(q);
+  const r = useResource<DailyReleases>(store, query ? keyOf("daily-releases", scope, query) : null, { type: "daily-releases" }, (signal) => client.discovery.releases(query!, signal));
+  return { data: r.data, loading: !!query && (r.loading || !r.loaded), error: r.error, reload: r.reload };
 }
 
 export interface UseHistory extends UseList<Card> {

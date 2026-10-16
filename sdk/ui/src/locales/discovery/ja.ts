@@ -9,6 +9,7 @@ export const discovery: typeof en = {
     filters: "表示するコンテンツ：",
   },
   contents: {
+    showMore: "もっと表示",
     unknownAccess: "現在利用できません",
     members: "メンバー限定",
     joinFree: "無料で参加",
@@ -56,6 +57,9 @@ export const discovery: typeof en = {
     removeRecent: "「{q}」を削除",
   },
   listing: {
+    popularPeriod: "人気の集計期間",
+    pastDays_one: "過去{count}日間",
+    pastDays_other: "過去{count}日間",
     sort: "並べ替え",
     sort_newest: "新着",
     sort_oldest: "古い順",

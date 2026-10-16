@@ -34,6 +34,11 @@ func pageLimit(n, def int) int {
 // List pages cards: one per content item the reader's listing shows that
 // matches the filter, in the sort's order.
 func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) {
+	var err error
+	o.Filter, err = publicationCursor(o.Filter, o.Cursor, s.sortName(o.Sort, o.Kind))
+	if err != nil {
+		return ContentPage{Contents: []Card{}}, err
+	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err

@@ -290,17 +290,59 @@ cover at 3:1.
 
 ### Card lists: decorations and locked cards
 
-Every card list (`ContentGrid`, `ContentListing`, `ContentRail`,
+Every card list (`ContentGrid`, `ContentListing`, `ContentRail`, `DailyReleases`,
 `SearchResults`, `ContentHistory`) and `ContentCard` take `decorate(card)`:
 the host's badges, drawn over the cover (place them yourself; clicks reach
 the card, and click signals stay intact). Cards carry what badges need:
 `access.level` and `access.tiers` (the effective rule, the same for every
 reader), `version.has_audio`, `viewer.favorited` and `entities`.
 
+Hosts can tailor the details without replacing the card. For example,
+`metadata={{ languages: false, traits: ["colored"], duration: false }}` keeps
+the page count and the Colored trait, and `showCounts={false}` hides reaction
+totals. `groupKinds={["series"]}` selects series chips;
+`filterEntity={(entity, kind) => ...}` filters them before the chip limit.
+Defaults continue to show all normal metadata, entity chips and totals.
+
+Set `grid={{ minCardWidth: 320, mobileColumns: 2 }}` for large covers in a fluid
+grid: two columns on small screens, then as many columns as the available
+width supports. This is supported by card grids, daily releases, Popular and
+`ContentRail` previews; an unconfigured rail remains horizontal. There is no
+desktop column ceiling, and other apps keep their existing layout by default.
+
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
 the open ones and puts the rest behind a counted toggle that loads them on
 opening (`useLockedCount` counts them).
+
+### Daily releases
+
+```tsx
+<DailyReleases query={{ kind: "gallery", days: 10 }} initialVisible={30} />
+```
+
+`DailyReleases` fetches all card metadata for the calendar window in one
+`GET /releases` request. It uses the browser's IANA time zone unless
+`query.time_zone` is supplied. Days appear newest first as keyboard-accessible
+disclosures, with reduced-motion support. The initial card budget is shared
+across days, newest first. Opening older days or choosing **Show more** reveals
+already-fetched cards; it does not make another listing request.
+
+Only revealed cards occupy the grid, and images/previews mount when those cards
+enter the viewport. Collapsing a day removes its media. The standard card
+properties (`href`, `decorate`, `groupKinds`, `tiers`, and so on) remain available.
+For a custom layout, `useDailyReleases(query)` exposes the same shared read and
+`client.discovery.releases(query)` exposes the typed request directly.
+
+`published_within` filters a listing by publication age independently of its
+ranking window. For example, `{ sort: "popular:7d", published_within: "7d" }`
+ranks only content published during the past seven days.
+
+`<PopularContentGrid query={{ kind: "gallery" }} />` supplies the 7-day,
+90-day, 365-day and all-time selector, keeps score and age windows matched,
+and loads further pages as the reader scrolls. `period` and `onPeriodChange`
+optionally keep its state in the host's URL. For a homepage preview, pass
+`popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
 
 ### MediaFolderEditor
 

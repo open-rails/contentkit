@@ -8,6 +8,7 @@ export const discovery = {
     filters: "Show Content:",
   },
   contents: {
+    showMore: "Show more",
     unknownAccess: "Unavailable right now",
     members: "Members",
     joinFree: "Free to join",
@@ -55,6 +56,9 @@ export const discovery = {
     removeRecent: "Remove “{q}”",
   },
   listing: {
+    popularPeriod: "Popularity period",
+    pastDays_one: "Past {count} day",
+    pastDays_other: "Past {count} days",
     sort: "Sort",
     sort_newest: "Newest",
     sort_oldest: "Oldest",

@@ -2,7 +2,7 @@ import { FavouriteIcon, LockIcon, ThumbsUpIcon } from "@hugeicons/core-free-icon
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useCallback, useContext, useState, type MouseEvent, type ReactNode } from "react";
-import type { Card, CardAccess } from "../../client/generated/wire.js";
+import type { Card, CardAccess, Chip as EntityChip } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
@@ -21,10 +21,18 @@ export interface ContentCardProps {
   onOpen?: (card: Card) => void;
   /** Cover shape: "portrait" (3:4, readers) or "landscape" (16:9, players). Default portrait. */
   shape?: "portrait" | "landscape";
+  /** Mount images and previews. False keeps the card's text and reserved cover space. */
+  loadMedia?: boolean;
   /** The group kinds whose chips show, in order; default every kind the card names. */
   groupKinds?: readonly string[];
   /** Chips per group kind. Default 3. */
   chips?: number;
+  /** Select which entity chips appear, before the per-kind chip limit. */
+  filterEntity?: (entity: EntityChip, kind: string) => boolean;
+  /** Metadata fields to show; omitted fields keep their defaults. */
+  metadata?: CardMetadata;
+  /** Show like and favorite totals. Default true. */
+  showCounts?: boolean;
   /** Tiers the site sells, so a lock names them; others show as "for sale". */
   tiers?: readonly string[];
   /** Display names of kinds, traits and tiers by identifier. */
@@ -38,6 +46,14 @@ export interface ContentCardProps {
   /** Below the meta line: the host's own. */
   children?: ReactNode;
   className?: string;
+}
+
+export interface CardMetadata {
+  languages?: boolean;
+  /** True shows all traits; an array selects specific trait identifiers. */
+  traits?: boolean | readonly string[];
+  pages?: boolean;
+  duration?: boolean;
 }
 
 /** The host's badges over a cover. */
@@ -81,7 +97,7 @@ function useLink(url: string | undefined, before?: () => void) {
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds, chips = 3, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
+export function ContentCard({ card, href, onOpen, shape = "portrait", loadMedia = true, groupKinds, chips = 3, filterEntity, metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
@@ -92,12 +108,15 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
   const v = card.version;
   const progress = card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
   const kinds = groupKinds ?? Object.keys(card.entities);
+  const entities = kinds.flatMap((kind) => (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).slice(0, chips).map((entity) => ({ kind, entity })));
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
+  const selectedTraits = metadata?.traits;
+  const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
   const meta = [
-    ...v.languages.map(languageName),
-    ...v.traits.map((x) => labelOf(labels, x)),
-    v.pages ? m.plural("contents.pages", v.pages) : null,
-    minutes ? m.plural("contents.minutes", minutes) : null,
+    ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
+    ...traits.map((x) => labelOf(labels, x)),
+    metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
+    metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
   ].filter(Boolean);
   const title = card.title || card.code;
   const [article, setArticle] = useState<HTMLElement | null>(null);
@@ -106,16 +125,17 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
       <div className="relative overflow-hidden rounded-lg">
         <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div className={shape === "landscape" ? "aspect-video" : "aspect-[3/4]"}>
-            <RenditionImg
+            {loadMedia ? <RenditionImg
               outputs={card.cover}
               alt=""
               fit="cover"
               skeleton
+              loading="lazy"
               className="size-full transition-transform group-hover/card:scale-[1.02]"
               fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
-            />
+            /> : <span className="block size-full bg-muted" aria-hidden />}
           </div>
-          {v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
+          {loadMedia && v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
           {lock && (
             <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
               <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
@@ -128,14 +148,14 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
             </span>
           )}
         </a>
-        <Decorations card={card} decorate={decorate} />
+        {loadMedia && <Decorations card={card} decorate={decorate} />}
       </div>
       <div className="grid gap-1">
         <a href={url} onClick={onClick} className="line-clamp-2 font-medium break-words hover:underline" data-ckui="card-title">
           {title}
           {lock && <span className="sr-only"> ({lock})</span>}
         </a>
-        {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} />}
+        {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} />}
         {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
         {card.viewer?.completed && (
           <Badge variant="secondary" className="justify-self-start">
@@ -143,18 +163,12 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
           </Badge>
         )}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
-        {kinds.some((k) => card.entities[k]?.length) && (
+        {entities.length > 0 && (
           <ul className="flex flex-wrap gap-1" data-ckui="card-groups">
-            {kinds.flatMap((k) =>
-              (card.entities[k] ?? []).slice(0, chips).map((g) => (
-                <li key={`${k}:${g.id}`} data-kind={k}>
-                  <Chip url={g.path} name={g.name || g.slug} />
-                </li>
-              )),
-            )}
+            {entities.map(({ kind, entity }) => <li key={`${kind}:${entity.id}`} data-kind={kind}><Chip url={entity.path} name={entity.name || entity.slug} /></li>)}
           </ul>
         )}
-        {(card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
+        {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
           <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
             {card.counts.favorites !== undefined && (
               <span className="inline-flex items-center gap-1" title={t("contents.favorites")}>
@@ -179,11 +193,11 @@ export function ContentCard({ card, href, onOpen, shape = "portrait", groupKinds
 }
 
 /** The group that owns a content (a channel): its avatar and name, linking to its page. */
-export function OwnerChip({ group, href, className }: { group: GroupLike; href?: (g: GroupLike) => string | undefined; className?: string }) {
+export function OwnerChip({ group, href, className, loadMedia = true }: { group: GroupLike; href?: (g: GroupLike) => string | undefined; className?: string; loadMedia?: boolean }) {
   return (
     <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={group.id}>
       <GroupLink group={group} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
-        <GroupAvatar group={group} className="size-5 shrink-0 text-[0.625rem]" />
+        {loadMedia ? <GroupAvatar group={group} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
         <span className="truncate">{group.name || group.slug}</span>
       </GroupLink>
     </span>
@@ -202,13 +216,13 @@ function Chip({ url, name }: { url?: string; name: string }) {
   );
 }
 
-export interface PostCardProps extends Omit<ContentCardProps, "shape" | "chips" | "groupKinds"> {
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "chips" | "groupKinds" | "filterEntity" | "metadata"> {
   /** Above the title: the post's channel or author; default its owner group's chip. */
   byline?: ReactNode;
 }
 
 /** A post in a feed: a wide cover, its title, when it was published and what unlocking it costs. */
-export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, decorate, children, className }: PostCardProps) {
+export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, loadMedia = true, showCounts = true, decorate, children, className }: PostCardProps) {
   const m = useMessages();
   const url = href ? href(card) : card.path;
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
@@ -217,15 +231,15 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   const title = card.title || card.code;
   return (
     <article className={cn("grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} className="text-sm" />)}
+      {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
       <a href={url} onClick={onClick} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}
         </span>
         {card.cover.length > 0 && (
           <span className="relative block aspect-video overflow-hidden rounded-md bg-muted">
-            <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton className={cn("size-full", lock && "blur-md")} />
-            <Decorations card={card} decorate={decorate} />
+            {loadMedia && <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", lock && "blur-md")} />}
+            {loadMedia && <Decorations card={card} decorate={decorate} />}
             {lock && (
               <span className="absolute inset-0 grid place-items-center">
                 <span className="inline-flex items-center gap-1 rounded-md bg-background/85 px-2 py-1 text-xs font-medium shadow-sm" data-ckui="card-lock">
@@ -240,7 +254,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
       <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {card.published_at && <RelativeTime at={card.published_at} />}
         {!card.cover.length && lock && <span data-ckui="card-lock">{lock}</span>}
-        {card.counts.favorites !== undefined && (
+        {showCounts && card.counts.favorites !== undefined && (
           <span className="inline-flex items-center gap-1 tabular-nums" data-ckui="card-counts">
             <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
             <span className="sr-only">{m.t("contents.favorites")}</span>

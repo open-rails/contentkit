@@ -463,6 +463,7 @@ func discoveryScenario(t *testing.T, f *server, gallery, accountID, user, anon s
 	f.want(http.StatusOK, anon, "GET", "/search?q=gallery", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/typeahead?q=gal", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/release-dates?kind=gallery", nil, nil)
+	f.want(http.StatusOK, anon, "GET", "/releases?kind=gallery&days=10&time_zone=UTC", nil, nil)
 	f.want(http.StatusOK, user, "GET", "/content-filters", nil, nil)
 	f.want(http.StatusOK, user, "POST", "/me/content-filters/initialize", discovery.ContentFiltersInitialization{AccountID: accountID}, nil)
 	f.want(http.StatusOK, user, "PUT", "/me/content-filters", discovery.ContentFiltersUpdate{Filters: []discovery.FilterSetting{}}, nil)

@@ -1,0 +1,123 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// DailyReleasesOptions selects a complete calendar-day window of releases.
+type DailyReleasesOptions struct {
+	Reader
+	Filter
+	// Days includes today; 10 by default, from 1 through 31.
+	Days int
+	// TimeZone is an IANA zone, UTC by default.
+	TimeZone   string
+	CardGroups []string
+}
+
+type ReleaseDay struct {
+	Date     string `json:"date"`
+	Contents []Card `json:"contents"`
+}
+
+// DailyReleases contains every visible card in the requested window, without
+// a per-day or whole-response item limit. Empty days preserve its extent.
+type DailyReleases struct {
+	TimeZone    string       `json:"time_zone"`
+	FromDate    string       `json:"from_date"`
+	ThroughDate string       `json:"through_date"`
+	Days        []ReleaseDay `json:"days"`
+}
+
+func releaseWindow(now time.Time, days int, zone string) (time.Time, time.Time, *time.Location, error) {
+	if days == 0 {
+		days = 10
+	}
+	if days < 1 || days > 31 {
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: days must be from 1 through 31", ErrInvalid)
+	}
+	if zone == "" {
+		zone = "UTC"
+	}
+	if zone == "Local" {
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: time_zone must name an IANA time zone", ErrInvalid)
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: invalid time_zone %q", ErrInvalid, zone)
+	}
+	local := now.In(loc)
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	return today.AddDate(0, 0, 1-days), today, loc, nil
+}
+
+// Releases reads one complete window so clients can reveal more cards without
+// additional API calls. It shares listing visibility, preferences and access.
+func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyReleases, error) {
+	out := DailyReleases{Days: []ReleaseDay{}}
+	now := s.now()
+	from, today, loc, err := releaseWindow(now, o.Days, o.TimeZone)
+	if err != nil {
+		return out, err
+	}
+	out.TimeZone, out.FromDate, out.ThroughDate = loc.String(), from.Format(time.DateOnly), today.Format(time.DateOnly)
+	for day := today; !day.Before(from); day = day.AddDate(0, 0, -1) {
+		out.Days = append(out.Days, ReleaseDay{Date: day.Format(time.DateOnly), Contents: []Card{}})
+	}
+	filter := o.Filter
+	filter.ReleasedOn = ""
+	filter.TimeZone = loc.String()
+	q, err := s.compile(ctx, o.Reader, filter)
+	if err != nil {
+		return out, err
+	}
+	q.and("f.published_at >= @r_from AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted'", pgx.NamedArgs{"r_from": from, "r_now": now})
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT p.content_id, p.version_id, p.published_at FROM (
+ SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, f.published_at
+ FROM %s f WHERE %s ORDER BY f.content_id, %s) p
+ ORDER BY p.published_at DESC, p.content_id DESC`, s.t.facets, q.predicate(), preference), q.args)
+	if err != nil {
+		return out, err
+	}
+	type release struct {
+		pick
+		at time.Time
+	}
+	got, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (release, error) {
+		var r release
+		return r, row.Scan(&r.content, &r.version, &r.at)
+	})
+	if err != nil {
+		return out, err
+	}
+	indices := make(map[string]int, len(out.Days))
+	for i, day := range out.Days {
+		indices[day.Date] = i
+	}
+	// Bound each hydration query, never the result. Every selected item is
+	// returned, while a busy window does not become one oversized SQL array.
+	const batchSize = 256
+	for offset := 0; offset < len(got); offset += batchSize {
+		batch := got[offset:min(offset+batchSize, len(got))]
+		picks := make([]pick, len(batch))
+		dates := make(map[string]string, len(batch))
+		for i, r := range batch {
+			picks[i] = r.pick
+			dates[r.content] = r.at.In(loc).Format(time.DateOnly)
+		}
+		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+		if err != nil {
+			return out, err
+		}
+		for _, card := range cards {
+			if i, ok := indices[dates[card.ID]]; ok {
+				out.Days[i].Contents = append(out.Days[i].Contents, card)
+			}
+		}
+	}
+	return out, nil
+}

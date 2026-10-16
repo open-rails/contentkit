@@ -67,6 +67,7 @@ var (
 		httpapi.List("traits", "version traits every listed version has"),
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
+		httpapi.Text("published_within", "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window"),
 		httpapi.Text("tz", "the IANA time zone of released_on and release dates; UTC by default"),
 		httpapi.Text("view_status", "the signed-in reader's unseen, in_progress or completed contents"),
 	}
@@ -84,7 +85,21 @@ func params(groups ...[]httpapi.Param) []httpapi.Param {
 	return out
 }
 
+func dailyFilterParams() []httpapi.Param {
+	out := make([]httpapi.Param, 0, len(filterParams))
+	for _, p := range filterParams {
+		if p.Name != "released_on" && p.Name != "tz" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/releases", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardGroups, httpapi.Int("days", "calendar days including today: 10 by default, from 1 through 31"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
+		Responses: []httpapi.Reply{httpapi.OK(DailyReleases{})}}, Serve: httpapi.H(handler.releases)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents", Resource: "discovery", Auth: httpapi.Public,
 		Doc:   "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
 		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups}, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
@@ -173,8 +188,19 @@ func readerOf(r *http.Request) Reader {
 func filterOf(r *http.Request) Filter {
 	q := r.URL.Query()
 	return Filter{Kind: q.Get("kind"), Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
-		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
+		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
 		OwnerGroups: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
+}
+
+func (h handler) releases(w http.ResponseWriter, r *http.Request) {
+	days, err := intParam(r, "days")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	out, err := h.s.Releases(r.Context(), DailyReleasesOptions{Reader: readerOf(r), Filter: filterOf(r), Days: days, TimeZone: q.Get("time_zone"), CardGroups: list(q.Get("card_entities"))})
+	h.reply(w, r, out, err)
 }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {

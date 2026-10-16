@@ -9,6 +9,7 @@ export const discovery: typeof en = {
     filters: "표시할 콘텐츠:",
   },
   contents: {
+    showMore: "더 보기",
     unknownAccess: "지금은 이용할 수 없음",
     members: "멤버 전용",
     joinFree: "무료 가입",
@@ -56,6 +57,9 @@ export const discovery: typeof en = {
     removeRecent: "“{q}” 삭제",
   },
   listing: {
+    popularPeriod: "인기 집계 기간",
+    pastDays_one: "최근 {count}일",
+    pastDays_other: "최근 {count}일",
     sort: "정렬",
     sort_newest: "최신순",
     sort_oldest: "오래된순",

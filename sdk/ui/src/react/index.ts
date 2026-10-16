@@ -93,6 +93,8 @@ export {
   useRecentSearches,
   useRecommendations,
   useReleaseDates,
+  useDailyReleases,
+  type UseDailyReleases,
   useSearch,
   useSimilar,
   useTypeahead,

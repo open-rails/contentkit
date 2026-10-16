@@ -71,6 +71,15 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	if text == "" {
 		return empty, fmt.Errorf("%w: q is required", ErrInvalid)
 	}
+	var err error
+	order := o.Sort
+	if order == "" {
+		order = SortRelevance
+	}
+	o.Filter, err = publicationCursor(o.Filter, o.Cursor, order)
+	if err != nil {
+		return empty, err
+	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return empty, err
@@ -130,7 +139,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
 	out := ContentPage{Contents: cards}
 	if res.HasMore && len(res.Hits) > 0 {
-		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1]}.encode()
+		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1], AsOf: q.asOf}.encode()
 	}
 	return out, err
 }

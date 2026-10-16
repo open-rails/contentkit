@@ -2,6 +2,7 @@ import type {
   ContentFilters,
   ContentFiltersUpdate,
   ContentPage,
+  DailyReleases,
   ExposureInput,
   Exposures,
   RecentSearches,
@@ -42,6 +43,8 @@ export interface ContentFilterQuery {
   attribute?: readonly string[];
   /** Published on this day (YYYY-MM-DD) or month (YYYY-MM). */
   released_on?: string;
+  /** Only contents published within this age window; independent of the popularity score window. */
+  published_within?: Period;
   /** IANA time zone of released_on and release dates; UTC by default. */
   tz?: string;
   /** The signed-in reader's unseen, in-progress or completed contents. */
@@ -68,6 +71,14 @@ export interface PageQuery {
 }
 
 export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & { sort?: ListSort };
+export type PopularPeriod = "7d" | "90d" | "365d" | "all";
+export type PopularQuery = Omit<ContentQuery, "sort" | "published_within">;
+
+/** Match the popularity score window and publication age window. */
+export function popularQuery(period: PopularPeriod = "7d", filters: PopularQuery = {}): ContentQuery {
+  return { ...filters, sort: `popular:${period}`, published_within: period };
+}
+
 export type SearchQuery = ContentFilterQuery &
   ReaderQuery &
   CardQuery &
@@ -86,6 +97,8 @@ export interface RecentSearchesQuery {
 }
 export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
+/** Complete daily metadata for one calendar window, without pagination. */
+export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & { days?: number; time_zone?: string };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
@@ -155,6 +168,10 @@ export class DiscoveryClient {
   /** Per month or day, newest first: how many contents the reader's listing shows released then, and how many are free. */
   releaseDates(q: ReleaseDatesQuery = {}, signal?: AbortSignal): Promise<ReleaseDates> {
     return call(this.http, "GET", "/release-dates", { query: query(q) as never, signal });
+  }
+  /** Every visible card in each day; opening or expanding a day needs no further request. */
+  releases(q: DailyReleasesQuery = {}, signal?: AbortSignal): Promise<DailyReleases> {
+    return call(this.http, "GET", "/releases", { query: query(q) as never, signal });
   }
   async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
     const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });

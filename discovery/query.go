@@ -56,6 +56,10 @@ type Filter struct {
 	// ReleasedOn is a day (YYYY-MM-DD) or month (YYYY-MM) of publication in
 	// TimeZone.
 	ReleasedOn string
+	// PublishedWithin keeps currently live publications in this popularity
+	// period (7d, 30d, 90d, 365d or all). It does not change the ranking window.
+	PublishedWithin string
+	publishedAsOf   time.Time
 	// TimeZone is an IANA zone; UTC by default.
 	TimeZone string
 	// ViewStatus is unseen, in_progress or completed: the signed-in
@@ -93,6 +97,7 @@ type sel struct {
 	viewer  *catalog.Viewer
 	display string // the language of cards' text and paths
 	loc     *time.Location
+	asOf    *time.Time // publication-age window pinned by a paginated query
 }
 
 func (q *sel) and(pred string, args pgx.NamedArgs) {
@@ -208,6 +213,24 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 			return nil, err
 		}
 		q.and("f.published_at >= @d_from AND f.published_at < @d_to", pgx.NamedArgs{"d_from": from, "d_to": to})
+	}
+	if f.PublishedWithin != "" {
+		now := s.now()
+		if !f.publishedAsOf.IsZero() {
+			if f.publishedAsOf.After(now) {
+				return nil, fmt.Errorf("%w: cursor publication time is in the future", ErrInvalid)
+			}
+			now = f.publishedAsOf
+		}
+		q.asOf = &now
+		window, err := popularity.WindowForPeriod(f.PublishedWithin, now)
+		if err != nil {
+			return nil, fmt.Errorf("%w: published_within %q is one of %v", ErrInvalid, f.PublishedWithin, popularity.Periods)
+		}
+		q.and("f.published_at IS NOT NULL AND f.published_at <= @d_published_now AND f.live_from <= @d_published_now AND NOT f.deleted AND f.listing <> 'unlisted'", pgx.NamedArgs{"d_published_now": now})
+		if !window.From.IsZero() {
+			q.and("f.published_at >= @d_published_from", pgx.NamedArgs{"d_published_from": window.From})
+		}
 	}
 	if f.ViewStatus != "" {
 		if err := s.viewStatus(ctx, q, r.Actor, f.Kind, f.ViewStatus); err != nil {
@@ -395,12 +418,7 @@ const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key, ''), x.titl
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1), '')`
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
-	if raw == "" {
-		raw = s.o.Kinds.Kinds[f.Kind].Sort
-	}
-	if raw == "" {
-		raw = SortNewest
-	}
+	raw = s.sortName(raw, f.Kind)
 	name, period, hasPeriod := strings.Cut(raw, ":")
 	o := order{raw: raw, desc: true, cast: "float8", args: pgx.NamedArgs{}}
 	if hasPeriod && name != SortPopular && name != SortTopRated {
@@ -451,12 +469,38 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	return o, nil
 }
 
+func (s *Service) sortName(raw, kind string) string {
+	if raw == "" {
+		raw = s.o.Kinds.Kinds[kind].Sort
+	}
+	if raw == "" {
+		raw = SortNewest
+	}
+	return raw
+}
+
+func publicationCursor(f Filter, raw, sort string) (Filter, error) {
+	if f.PublishedWithin == "" || raw == "" {
+		return f, nil
+	}
+	cur, err := decodeCursor(raw, sort)
+	if err != nil {
+		return f, err
+	}
+	if cur.AsOf == nil || cur.AsOf.IsZero() {
+		return f, fmt.Errorf("%w: cursor publication time is required", ErrInvalid)
+	}
+	f.publishedAsOf = *cur.AsOf
+	return f, nil
+}
+
 // cursor continues a sorted list after the item it names.
 type cursor struct {
-	Sort  string `json:"s"`
-	Value string `json:"v"`
-	ID    string `json:"id"`
-	Seed  string `json:"r,omitempty"`
+	Sort  string     `json:"s"`
+	Value string     `json:"v"`
+	ID    string     `json:"id"`
+	Seed  string     `json:"r,omitempty"`
+	AsOf  *time.Time `json:"at,omitempty"`
 }
 
 func (c cursor) encode() string {
@@ -543,7 +587,7 @@ WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit`, o.expr, s.t.facets, 
 	for i, x := range got {
 		if i == limit {
 			last := got[limit-1]
-			next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed}.encode()
+			next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed, AsOf: q.asOf}.encode()
 			break
 		}
 		out = append(out, x.pick)

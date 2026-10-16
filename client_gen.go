@@ -1964,6 +1964,107 @@ func (c *Client) GetOffers(ctx context.Context, q GetOffersQuery) (offers.OfferP
 	return out, err
 }
 
+// GetReleasesQuery is the query of GetReleases.
+type GetReleasesQuery struct {
+	// only this content kind
+	Kind string
+	// group ids every listed version is in; a position sort orders by the first
+	Groups []string
+	// group ids no listed version is in
+	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
+	// version traits every listed version has
+	Traits []string
+	// name:value of one of the kind's filterable attributes; repeat for more
+	Attribute []string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
+	// the signed-in reader's unseen, in_progress or completed contents
+	ViewStatus string
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+	// the group kinds cards name; every kind with a page by default
+	CardEntities []string
+	// calendar days including today: 10 by default, from 1 through 31
+	Days int
+	// IANA zone for calendar-day boundaries; UTC by default
+	TimeZone string
+}
+
+func (q GetReleasesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.Groups) > 0 {
+		v.Set("groups", strings.Join(q.Groups, ","))
+	}
+	if len(q.ExcludeGroups) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
+	}
+	if len(q.Traits) > 0 {
+		v.Set("traits", strings.Join(q.Traits, ","))
+	}
+	for _, s := range q.Attribute {
+		v.Add("attribute", s)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
+	if q.ViewStatus != "" {
+		v.Set("view_status", q.ViewStatus)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.Days != 0 {
+		v.Set("days", fmt.Sprint(q.Days))
+	}
+	if q.TimeZone != "" {
+		v.Set("time_zone", q.TimeZone)
+	}
+	return v
+}
+
+// GetReleases is GET /v1/releases (public). Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. No item limit or pagination; future, unlisted and deleted releases stay excluded.
+func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery.DailyReleases, error) {
+	var out discovery.DailyReleases
+	err := c.call(ctx, http.MethodGet, "/v1/releases", q.values(), nil, &out)
+	return out, err
+}
+
 // GetContentsQuery is the query of GetContents.
 type GetContentsQuery struct {
 	// only this content kind
@@ -1986,6 +2087,8 @@ type GetContentsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2037,6 +2140,9 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2099,6 +2205,8 @@ type GetSearchQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2157,6 +2265,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2274,6 +2385,8 @@ type GetContentSimilarQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2321,6 +2434,9 @@ func (q GetContentSimilarQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2375,6 +2491,8 @@ type GetRecommendationsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2422,6 +2540,9 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2478,6 +2599,8 @@ type GetReleaseDatesQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2528,6 +2651,9 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)

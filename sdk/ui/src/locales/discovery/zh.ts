@@ -9,6 +9,7 @@ export const discovery: typeof en = {
     filters: "显示内容：",
   },
   contents: {
+    showMore: "显示更多",
     unknownAccess: "暂时无法访问",
     members: "会员专享",
     joinFree: "免费加入",
@@ -56,6 +57,9 @@ export const discovery: typeof en = {
     removeRecent: "移除“{q}”",
   },
   listing: {
+    popularPeriod: "热门时间范围",
+    pastDays_one: "过去{count}天",
+    pastDays_other: "过去{count}天",
     sort: "排序",
     sort_newest: "最新",
     sort_oldest: "最早",

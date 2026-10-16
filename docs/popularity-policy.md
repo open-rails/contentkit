@@ -33,6 +33,15 @@ An imported legacy view count (`view_baseline`, [import](import.md)) is no
 input: it has no time, viewer or engagement. It only adds to displayed views
 and the all-time `most_viewed` sort.
 
+Publication age is a separate filter from the score window. Discovery accepts
+`published_within=7d|30d|90d|365d|all`: only currently live, listed, undeleted
+publications qualify, based on the same publication timestamp used by newest
+ordering and the release feed. A bounded period uses the matching whole-UTC-day
+window; `all` has no age cutoff. Pair `sort=popular:7d&published_within=7d` for
+this week's popular releases. Cursors retain the first page's cutoff so a
+midnight boundary cannot move older or newly published works into that scroll.
+This pins publication eligibility, not a snapshot of scores or later edits.
+
 **Feedback** is each subject's current preference: one replaceable event per
 subject × work × axis (`EventID` fixed, `Revision` = mutation time), counted on
 the UTC day it last changed. An unvote drops out, like→dislike counts once as

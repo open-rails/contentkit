@@ -543,6 +543,13 @@ export interface Crop {
   h: number;
 }
 
+export interface DailyReleases {
+  time_zone: string;
+  from_date: string;
+  through_date: string;
+  days: ReleaseDay[];
+}
+
 export interface DateCount {
   date: string;
   count: number;
@@ -1625,6 +1632,11 @@ export interface RefBody {
 export interface ReleaseDates {
   dates: DateCount[];
   next_cursor?: string;
+}
+
+export interface ReleaseDay {
+  date: string;
+  contents: Card[];
 }
 
 export interface Rendition {

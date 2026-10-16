@@ -4619,6 +4619,14 @@
             }
           },
           {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tz",
             "in": "query",
             "description": "the IANA time zone of released_on and release dates; UTC by default",
@@ -8831,6 +8839,236 @@
         ]
       }
     },
+    "/v1/releases": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "owner group ids (channels): only content one of them owns",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "creators",
+            "in": "query",
+            "description": "user ids: only content one of them is credited on",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tiers",
+            "in": "query",
+            "description": "configured tiers: only content locked behind one of them",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_entities",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "description": "calendar days including today: 10 by default, from 1 through 31",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "description": "IANA zone for calendar-day boundaries; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReleases"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/search": {
       "get": {
         "tags": [
@@ -8962,6 +9200,14 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -9349,6 +9595,14 @@
             }
           },
           {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tz",
             "in": "query",
             "description": "the IANA time zone of released_on and release dates; UTC by default",
@@ -9582,6 +9836,14 @@
             }
           },
           {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "tz",
             "in": "query",
             "description": "the IANA time zone of released_on and release dates; UTC by default",
@@ -9806,6 +10068,14 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "published_within",
+            "in": "query",
+            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -13045,6 +13315,32 @@
           "y",
           "w",
           "h"
+        ]
+      },
+      "DailyReleases": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string"
+          },
+          "from_date": {
+            "type": "string"
+          },
+          "through_date": {
+            "type": "string"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseDay"
+            }
+          }
+        },
+        "required": [
+          "time_zone",
+          "from_date",
+          "through_date",
+          "days"
         ]
       },
       "DateCount": {
@@ -16610,6 +16906,24 @@
         },
         "required": [
           "dates"
+        ]
+      },
+      "ReleaseDay": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "contents"
         ]
       },
       "Rendition": {

@@ -241,26 +241,31 @@ export class ResourceStore {
         break;
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameTarget(t.target, c.target), () => c.counts);
-        if (c.target.type === "contents") cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+        if (c.target.type === "contents") {
+          cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+          this.invalidate((t) => t.type === "daily-releases");
+        }
         this.invalidate((t) => t.type === "reactions");
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameTarget(t.target, c.target), () => ({ favorited: c.favorited, count: c.count }));
-        if (c.target.type === "contents")
+        if (c.target.type === "contents") {
           cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
+          this.invalidate((t) => t.type === "daily-releases");
+        }
         this.invalidate((t) => t.type === "favorites");
         break;
       case "content.saved":
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
-        this.invalidate((t) => t.type === "contents" || t.type === "cards" || (t.type === "content-detail" && t.id === c.content.id));
+        this.invalidate((t) => t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || (t.type === "content-detail" && t.id === c.content.id));
         break;
       case "content.changed":
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases");
         break;
       case "content.deleted":
         items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted") || t.type === "daily-releases");
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -282,16 +287,16 @@ export class ResourceStore {
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
       case "entities.changed":
-        this.invalidate((t) => t.type.startsWith("group"));
+        this.invalidate((t) => t.type.startsWith("group") || t.type === "daily-releases");
         break;
       case "contentFilters.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group"));
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases");
         break;
       case "history.changed":
-        this.invalidate((t) => t.type === "history" || t.type === "cards");
+        this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases");
         break;
       case "searches.changed":
         this.invalidate((t) => t.type === "searches");

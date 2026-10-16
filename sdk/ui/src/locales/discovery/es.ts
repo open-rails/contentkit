@@ -9,6 +9,7 @@ export const discovery: typeof en = {
     filters: "Mostrar contenido:",
   },
   contents: {
+    showMore: "Mostrar más",
     unknownAccess: "No disponible ahora",
     members: "Miembros",
     joinFree: "Unirse gratis",
@@ -56,6 +57,9 @@ export const discovery: typeof en = {
     removeRecent: "Quitar «{q}»",
   },
   listing: {
+    popularPeriod: "Período de popularidad",
+    pastDays_one: "Último {count} día",
+    pastDays_other: "Últimos {count} días",
     sort: "Ordenar",
     sort_newest: "Más recientes",
     sort_oldest: "Más antiguos",

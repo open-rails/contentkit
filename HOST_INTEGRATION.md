@@ -700,6 +700,18 @@ that fits the reader (`display_language` first, then position).
   then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
+- `GET /releases` (`days=10`, `time_zone=America/Denver`, the reader/content
+  filters and `card_entities`): a complete calendar-day window of card
+  metadata, newest first. `DailyReleases` reports `from_date`, `through_date`,
+  `time_zone` and every `ReleaseDay`, including empty days. It accepts 1–31
+  days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
+  cards from that response in the browser; mount thumbnails only as needed.
+  Future, unlisted and deleted publications are excluded.
+- Lists/search accept `published_within=7d|30d|90d|365d|all` independently of
+  the sort's score period. To rank this week's releases, pair
+  `sort=popular:7d` with `published_within=7d`; old releases with recent views
+  then stay out. The cursor pins the publication cutoff while paging. Popular
+  ordering uses the shared ContentKit quality score, not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PUT /me/content-filters` saves account settings and `include_deleted`.

@@ -83,7 +83,7 @@ func (m Module) Prefix() string {
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
 	return []string{"media", "codes", "entities", "contents", "kinds", "offers", "me", "catalog", "notifications",
-		"search", "typeahead", "recommendations", "release-dates", "signals", "exposures", "import", "sitemap", "stats", "publishing-operations", "content-filters"}
+		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "publishing-operations", "content-filters"}
 }
 
 // Tier is what a route requires of its caller before its handler acts. The

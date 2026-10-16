@@ -26,6 +26,7 @@ export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decis
 export { EntitiesClient, type EntityImageSlot, type EntityQuery, type MemberQuery, type MyEntityQuery } from "./entities.js";
 export {
   DiscoveryClient,
+  popularQuery,
   type AccessMode,
   type CardQuery,
   type ContentFilterQuery,
@@ -33,10 +34,13 @@ export {
   type HistoryQuery,
   type ListSort,
   type Period,
+  type PopularPeriod,
+  type PopularQuery,
   type RailQuery,
   type ReaderQuery,
   type RecentSearchesQuery,
   type ReleaseDatesQuery,
+  type DailyReleasesQuery,
   type SearchQuery,
   type TypeaheadQuery,
 } from "./discovery.js";
