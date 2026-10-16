@@ -13,6 +13,7 @@ import (
 
 const m = "github.com/open-rails/contentkit"
 const authkit = "github.com/open-rails/authkit"
+const yaml = "github.com/goccy/go-yaml/..."
 
 type pkg struct {
 	ImportPath string
@@ -36,7 +37,10 @@ var rules = []rule{
 	// Tokens and the gateway share layout's canonical scoped-path parser. Both
 	// stay dependency-free beyond this stdlib-only primitive.
 	{pkgs: []string{m + "/media/token"}, only: []string{m + "/media/layout"}},
-	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref", m + "/kinds", "github.com/open-rails/authkit/auth"}},
+	// The config model strictly decodes YAML, including when embedded by a
+	// permissive host. Access inherits that pure parser, never a DB or worker.
+	{pkgs: []string{m + "/kinds"}, only: []string{yaml}},
+	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref", m + "/kinds", authkit + "/auth", yaml}},
 	// The media gateway: stdlib, token, layout and the SigV4 signer. No DB, River, S3
 	// client, CGO, media runtime or content/search/signal.
 	{pkgs: []string{m + "/cmd/media-gateway", m + "/media/gateway"}, only: []string{
@@ -68,6 +72,7 @@ var rules = []rule{
 var importers = map[string][]string{
 	"github.com/aws/aws-sdk-go-v2/service/s3/...": {m + "/media/s3", m + "/media/internal/..."},
 	"github.com/davidbyttow/govips/...":           {m + "/media/image"},
+	yaml:                                          {m + "/kinds"},
 }
 
 func match(path, pattern string) bool {
