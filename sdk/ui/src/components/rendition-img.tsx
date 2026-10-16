@@ -25,38 +25,47 @@ export function useRendition<T extends Rendition, E extends HTMLElement = HTMLIm
   const [width, setWidth] = useState(-1);
   useIsoLayoutEffect(() => {
     if (!el) return;
-    const measure = () => setWidth((w) => Math.max(w, el.getBoundingClientRect().width));
+    let live = true;
+    const measure = () => { if (live) setWidth((w) => Math.max(w, el.getBoundingClientRect().width)); };
     measure();
-    if (typeof ResizeObserver !== "function") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    ro?.observe(el);
+    return () => { live = false; ro?.disconnect(); };
   }, [el]);
   const sorted = useMemo(() => sortRenditions(outputs), [outputs]);
   const want = width >= 0 ? pickRendition(sorted, width, densityFor(range)) : undefined;
-  const [shown, setShown] = useState<T | undefined>(undefined);
-  const loaded = useRef(false);
-  const current = shown && sorted.some((r) => r.url === shown.url) ? shown : undefined;
+  const [shownURL, setShownURL] = useState<string | undefined>(undefined);
+  const loaded = useRef<string | undefined>(undefined);
+  const failedUpgrade = useRef<string | null>(null);
+  const current = sorted.find((r) => r.url === shownURL);
+  const wantURL = want?.url;
+  const wantWidth = want?.w ?? 0;
+  const currentURL = current?.url;
+  const currentWidth = current?.w ?? 0;
   useEffect(() => {
-    if (!want || want.url === current?.url) return;
+    if (!wantURL || wantURL === currentURL) return;
     // First pick, a new set, or before anything loaded: show it now.
-    if (!current || !loaded.current) {
-      loaded.current = false;
-      setShown(want);
+    if (!currentURL || loaded.current !== currentURL) {
+      setShownURL(wantURL);
       return;
     }
-    if (want.w <= current.w) return;
+    if (wantWidth <= currentWidth || failedUpgrade.current === wantURL) return;
     let live = true;
     const img = new Image();
-    img.onload = () => live && setShown(want);
-    img.src = want.url;
+    const show = () => { if (live) setShownURL(wantURL); };
+    img.onload = show;
+    img.onerror = () => { if (live) failedUpgrade.current = wantURL; };
+    img.src = wantURL;
+    if (img.complete && img.naturalWidth > 0) show();
     return () => {
       live = false;
+      img.onload = null;
+      img.onerror = null;
     };
-  }, [want, current]);
+  }, [wantURL, wantWidth, currentURL, currentWidth]);
   const onLoad = useCallback(() => {
-    loaded.current = true;
-  }, []);
+    loaded.current = currentURL ?? wantURL;
+  }, [currentURL, wantURL]);
   return { ref, rendition: current ?? want, onLoad };
 }
 
@@ -81,29 +90,41 @@ const PULSE = "ckui-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite";
  */
 export function RenditionImg({ outputs, density, onLoad, onError, alt = "", fallback, skeleton, fit, style, ...img }: RenditionImgProps) {
   const { ref, rendition, onLoad: loaded } = useRendition(outputs, { density });
-  const first = sortRenditions(outputs)[0];
-  const r = rendition ?? first;
+  const sorted = useMemo(() => sortRenditions(outputs), [outputs]);
+  const first = sorted[0];
+  const selected = rendition ?? first;
   const reduced = useReducedMotion();
-  const [failed, setFailed] = useState<string | null>(null);
+  const [failed, setFailed] = useState<readonly string[]>([]);
+  // One smaller fallback only: do not walk every variant or retry a broken
+  // source on resize/rerender. A new output URL or deliberate remount retries.
+  const r = selected && failed.includes(selected.url)
+    ? first && first.w < selected.w && !failed.includes(first.url) ? first : undefined
+    : selected;
   const [done, setDone] = useState<string | null>(null);
   const [el, setEl] = useState<HTMLImageElement | null>(null);
+  const activeImage = useRef<HTMLImageElement | null>(null);
   const src = rendition ? r?.url : undefined;
   // A cached image is complete before its load event; settle it before paint.
   useIsoLayoutEffect(() => {
-    if (el && src && el.complete && el.naturalWidth > 0) setDone(src);
-  }, [el, src]);
+    if (el && src && el.getAttribute("src") === src && el.complete && el.naturalWidth > 0) {
+      loaded();
+      setDone(src);
+    }
+  }, [el, src, loaded]);
   const attach = useCallback(
     (node: HTMLImageElement | null) => {
+      activeImage.current = node;
       ref(node);
       setEl(node);
     },
     [ref],
   );
-  if (!r || (first && failed === first.url)) return <>{fallback ?? null}</>;
+  if (!r) return <>{fallback ?? null}</>;
   const loading = skeleton && done !== src;
   return (
     <img
       {...img}
+      key={src}
       ref={attach}
       alt={alt}
       src={src}
@@ -114,12 +135,14 @@ export function RenditionImg({ outputs, density, onLoad, onError, alt = "", fall
       data-loading={loading ? "" : undefined}
       style={{ ...(fit ? { objectFit: fit } : {}), ...(loading ? { ...SKELETON, animation: reduced ? undefined : PULSE } : {}), ...style }}
       onLoad={(e) => {
+        if (activeImage.current !== e.currentTarget) return;
         loaded();
         if (src) setDone(src);
         onLoad?.(e);
       }}
       onError={(e) => {
-        if (first) setFailed(first.url);
+        if (activeImage.current !== e.currentTarget) return;
+        if (src) setFailed((previous) => [...previous.filter((url) => sorted.some((r) => r.url === url)), src]);
         onError?.(e);
       }}
     />
