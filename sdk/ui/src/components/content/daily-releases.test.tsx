@@ -52,11 +52,13 @@ it("fetches all day metadata once, reveals 30 newest cards, and expands cached d
     return Response.json(data());
   } });
   const user = userEvent.setup();
-  const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery", time_zone: "America/Denver" }} grid={{ minCardWidth: 320, mobileColumns: 2 }} /></ContentKitProvider>);
+  const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery", time_zone: "America/Denver" }} grid={{ minCardWidth: 320, mobileColumns: 2 }} aspectRatio="182 / 260" titlePosition="cover" entityStyle="text" /></ContentKitProvider>);
   await screen.findByText("Gallery today-1");
   expect(view.container.querySelectorAll('[data-ckui="content-card"]')).toHaveLength(30);
   expect(view.container.querySelector("ol")?.style.getPropertyValue("--ckui-card-min-width")).toBe("320px");
   expect(view.container.querySelector("ol")?.style.getPropertyValue("--ckui-card-mobile-columns")).toBe("2");
+  expect(view.container.querySelector<HTMLElement>('[data-ckui="card-cover-frame"]')?.style.aspectRatio).toBe("182 / 260");
+  expect(screen.getByRole("link", { name: "Gallery today-1" }).closest('[data-ckui="card-cover"]')).not.toBeNull();
   expect(screen.queryByText("Gallery yesterday-11")).toBeNull();
   expect(screen.queryByText("Gallery older-1")).toBeNull();
   expect(view.container.querySelectorAll('[data-ckui="release-day"]')).toHaveLength(3);

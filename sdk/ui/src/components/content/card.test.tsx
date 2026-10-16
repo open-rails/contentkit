@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
 import type { Card } from "../../client/generated/wire.js";
 import { ContentCard } from "./card.js";
 
@@ -20,6 +20,7 @@ it("keeps the default card metadata and counts unless the host chooses otherwise
   expect(screen.getByText(/English.*Colored.*Uncensored.*24 pages.*2 min/)).toBeVisible();
   expect(screen.getByText("A tag")).toBeVisible();
   expect(view.container.querySelector('[data-ckui="card-counts"]')).not.toBeNull();
+  expect(view.container.querySelector('[data-ckui="card-cover"]')?.contains(screen.getByRole("link", { name: "A gallery" }))).toBe(false);
 });
 
 it("lets a host show only page count, selected traits and filtered series without losing specific names", () => {
@@ -37,4 +38,25 @@ it("holds back cover and decoration images while media loading is disabled", () 
   const view = render(<ContentCard card={{ ...card, cover: [{ url: "https://media.test/cover.webp", w: 200, h: 300 }] }} loadMedia={false} decorate={() => <img src="https://media.test/badge.svg" alt="badge" />} />);
   expect(screen.getByText("A gallery")).toBeVisible();
   expect(view.container.querySelector("img[src]")).toBeNull();
+});
+
+it("supports a tall cover with one accessible overlay title and plain linked entities", () => {
+  const opened = vi.fn();
+  const view = render(<ContentCard
+    card={{ ...card, entities: { series: [{ id: "series", slug: "series", name: "A specific series", path: "/series" }] } }}
+    aspectRatio="182 / 260" titlePosition="cover" entityStyle="text" onOpen={opened} loadMedia={false}
+    metadata={{ languages: false, traits: ["colored"], duration: false }} labels={{ colored: "Colored" }}
+  />);
+  const title = screen.getByRole("link", { name: "A gallery" });
+  expect(screen.getAllByRole("link", { name: "A gallery" })).toHaveLength(1);
+  expect(view.container.querySelector('[data-ckui="card-cover"]')?.contains(title)).toBe(true);
+  expect(view.container.querySelector<HTMLElement>('[data-ckui="card-cover-frame"]')?.style.aspectRatio).toBe("182 / 260");
+  const entity = screen.getByRole("link", { name: "A specific series" });
+  expect(entity).toHaveAttribute("href", "/series");
+  expect(entity).not.toHaveClass("border");
+  expect(entity.compareDocumentPosition(screen.getByText("Colored · 24 pages")) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(view.container.querySelector("img[src]")).toBeNull();
+  title.addEventListener("click", (event) => event.preventDefault());
+  fireEvent.click(title);
+  expect(opened).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "gallery" }));
 });

@@ -304,6 +304,21 @@ totals. `groupKinds={["series"]}` selects series chips;
 `filterEntity={(entity, kind) => ...}` filters them before the chip limit.
 Defaults continue to show all normal metadata, entity chips and totals.
 
+For a poster-style card, set `aspectRatio="182 / 260"`,
+`titlePosition="cover"` and `entityStyle="text"`. The title is a single
+accessible link over the cover's bottom gradient; entities remain clickable
+without chip borders. The ratio overrides `shape` and also applies to loading
+placeholders. These options work through every card grid, rail and daily feed;
+omitting them retains the default ratio, title below the image and chips.
+Plain-text entities sit directly below the cover, followed by other metadata.
+
+```tsx
+<ContentGrid query={{ kind: "gallery" }}
+  aspectRatio="182 / 260" titlePosition="cover" entityStyle="text"
+  groupKinds={["series"]} showCounts={false}
+  metadata={{ languages: false, traits: ["colored"], duration: false }} />
+```
+
 Set `grid={{ minCardWidth: 320, mobileColumns: 2 }}` for large covers in a fluid
 grid: two columns on small screens, then as many columns as the available
 width supports. This is supported by card grids, daily releases, Popular and

@@ -40,7 +40,7 @@ export function DailyReleases({ query, initialVisible = 30, revealStep = 30, ...
   let remaining = count(initialVisible, 30);
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-6 text-sm", p.className)} data-ckui="daily-releases" aria-busy={releases.loading}>
-      {releases.loading && !releases.data ? <div className={layout.className} style={layout.style}>{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="aspect-[3/4]" />)}</div> : releases.error && !releases.data ? (
+      {releases.loading && !releases.data ? <div className={layout.className} style={layout.style}>{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video" : "aspect-[3/4]" : undefined} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />)}</div> : releases.error && !releases.data ? (
         <div role="alert" className="grid justify-items-start gap-2">
           <p className="text-destructive">{contentError(m, releases.error)}</p>
           <Button size="sm" variant="outline" onClick={releases.reload}>{m.t("common.retry")}</Button>
@@ -95,6 +95,6 @@ function ReleaseCard({ card, open, position, exposure, cardProps: p }: { card: C
   const tracked = useMemo(() => exposure.track(card.id, position), [exposure, card.id, position]);
   const ref = useCallback((element: HTMLLIElement | null) => { viewport(element); tracked(element); }, [viewport, tracked]);
   return <li ref={ref}>
-    <ContentCard card={card} href={p.href} shape={p.shape} loadMedia={open && visible} groupKinds={p.groupKinds} chips={p.chips} filterEntity={p.filterEntity} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} owner={p.owner} ownerHref={p.ownerHref} decorate={p.decorate} onOpen={() => exposure.click(card.id, position)} />
+    <ContentCard card={card} href={p.href} shape={p.shape} aspectRatio={p.aspectRatio} titlePosition={p.titlePosition} loadMedia={open && visible} groupKinds={p.groupKinds} chips={p.chips} filterEntity={p.filterEntity} entityStyle={p.entityStyle} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} owner={p.owner} ownerHref={p.ownerHref} decorate={p.decorate} onOpen={() => exposure.click(card.id, position)} />
   </li>;
 }

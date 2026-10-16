@@ -71,7 +71,7 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
       {list.loading && !list.items.length ? (
         <div className={layout.className} style={layout.style}>
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className={p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full"} />
+            <Skeleton key={i} className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
           ))}
         </div>
       ) : list.error && !list.items.length ? (
@@ -96,10 +96,13 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
                   card={card}
                   href={p.href}
                   shape={p.shape}
+                  aspectRatio={p.aspectRatio}
+                  titlePosition={p.titlePosition}
                   loadMedia={p.loadMedia}
                   groupKinds={p.groupKinds}
                   chips={p.chips}
                   filterEntity={p.filterEntity}
+                  entityStyle={p.entityStyle}
                   metadata={p.metadata}
                   showCounts={p.showCounts}
                   tiers={tiers}
@@ -208,10 +211,13 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               card={card}
               href={p.href}
               shape={p.shape}
+              aspectRatio={p.aspectRatio}
+              titlePosition={p.titlePosition}
               loadMedia={p.loadMedia}
               groupKinds={p.groupKinds}
               chips={p.chips}
               filterEntity={p.filterEntity}
+              entityStyle={p.entityStyle}
               metadata={p.metadata}
               showCounts={p.showCounts}
               tiers={p.tiers}
@@ -290,7 +296,7 @@ export function ContentRail({ title, similar, recommendations, history, group, l
         {(rail.loading && !rail.items.length ? Array.from({ length: 6 }, () => null) : rail.items).map((card, i) => (
           <li key={card?.id ?? i} className={layout ? undefined : "w-36 shrink-0 snap-start sm:w-44"} ref={card ? exposure.track(card.id, i + 1) : undefined}>
             {!card ? (
-              <Skeleton className={p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full"} />
+              <Skeleton className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
             ) : p.renderCard ? (
               p.renderCard(card, i + 1)
             ) : (
@@ -298,10 +304,13 @@ export function ContentRail({ title, similar, recommendations, history, group, l
                 card={card}
                 href={p.href}
                 shape={p.shape}
+                aspectRatio={p.aspectRatio}
+                titlePosition={p.titlePosition}
                 loadMedia={p.loadMedia}
                 groupKinds={p.groupKinds}
                 chips={p.chips}
                 filterEntity={p.filterEntity}
+                entityStyle={p.entityStyle}
                 metadata={p.metadata}
                 showCounts={p.showCounts}
                 tiers={p.tiers ?? kinds?.tiers}
