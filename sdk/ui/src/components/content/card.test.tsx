@@ -199,22 +199,41 @@ it("moves the chips up beside the views when the card names none of the meta gro
   expect(screen.getByText("A tag")).toBeVisible();
 });
 
-it("fits whole chips on one line and counts the rest", () => {
-  const widths = { offsetWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!, clientWidth: Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")! };
-  // Each chip is as wide as its text in 10px letters; the list is 200px.
+// Each chip is as wide as its text in 10px letters; the list is `width` px.
+function withWidths(width: number, run: () => void) {
+  const saved = { offsetWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!, clientWidth: Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")! };
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get(this: HTMLElement) { return (this.querySelector("a, span:not(.sr-only)")?.textContent ?? "").length * 10; } });
-  Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get() { return 200; } });
-  try {
-    const tags = ["bakunyu", "big ass", "double penetration", "tentacles"].map((name) => ({ id: name, slug: name, name }));
-    const view = render(<ContentCard card={{ ...card, entities: { tag: tags } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
-    const list = view.container.querySelector('[data-ckui="card-groups"]')!;
-    expect(list).toHaveAttribute("data-fit");
-    const seen = [...list.children].filter((li) => !li.classList.contains("invisible")).map((li) => li.querySelector("a, span")?.textContent);
-    expect(seen).toEqual(["bakunyu", "big ass", "+2"]);
-    expect(list.querySelector('[data-ckui="card-chip-more"]')?.textContent).toBe("+22 more");
-    expect(within(list as HTMLElement).getByText("tentacles").closest("li")).toHaveAttribute("aria-hidden", "true");
-  } finally {
-    Object.defineProperty(HTMLElement.prototype, "offsetWidth", widths.offsetWidth);
-    Object.defineProperty(Element.prototype, "clientWidth", widths.clientWidth);
+  Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get() { return width; } });
+  try { run(); } finally {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", saved.offsetWidth);
+    Object.defineProperty(Element.prototype, "clientWidth", saved.clientWidth);
   }
-});
+}
+const named = (...names: string[]) => names.map((name) => ({ id: name, slug: name, name }));
+const seen = (list: Element) => [...list.children].filter((li) => !li.classList.contains("invisible") && getComputedStyle(li).display !== "none").map((li) => li.querySelector("a, span")?.textContent);
+
+it("fits whole chips on one line and counts the rest", () => withWidths(200, () => {
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("bakunyu", "big ass", "double penetration", "tentacles") } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
+  const list = view.container.querySelector('[data-ckui="card-groups"]')!;
+  expect(list).toHaveAttribute("data-fit");
+  expect(seen(list)).toEqual(["bakunyu", "big ass", "+2"]);
+  expect(list.querySelector('[data-ckui="card-chip-more"]')?.textContent).toBe("+22 more");
+  expect(within(list as HTMLElement).getByText("tentacles").closest("li")).toHaveAttribute("aria-hidden", "true");
+}));
+
+it("keeps room for the +N even when no kind is over its limit", () => withWidths(190, () => {
+  // Without the reserve, three 60px chips (180px) would fill the line and push +N out.
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("aaaaaa", "bbbbbb", "cccccc", "dddddd") } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
+  expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["aaaaaa", "bbbbbb", "+2"]);
+}));
+
+it("skips chips hidden at this width when fitting", () => withWidths(500, () => {
+  const style = document.head.appendChild(document.createElement("style"));
+  style.textContent = ".hidden { display: none; }";
+  try {
+    const view = render(<ContentCard card={{ ...card, entities: { tag: named("a", "b"), artist: named("x") } }} groupKinds={["tag", "artist"]} chips={{ base: 1, lg: 2 }} chipOverflow chipFit />);
+    expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["a", "x", "+1"]);
+  } finally {
+    style.remove();
+  }
+}));

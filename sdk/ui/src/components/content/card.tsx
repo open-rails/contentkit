@@ -119,34 +119,39 @@ function useLink(url: string | undefined, before?: () => void) {
   );
 }
 
-/** How many of a one-line chip list's showing chips fit whole, leaving room for its "+N"; null until measured. */
+/** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show; null until measured. */
 function useChipFit(list: HTMLUListElement | null, total: number) {
-  const [shown, setShown] = useState<number | null>(null);
+  const [fit, setFit] = useState<{ through: number; fitted: number } | null>(null);
   useLayoutEffect(() => {
     if (!list) return;
     const view = list.ownerDocument.defaultView;
-    const showing = (li: HTMLElement) => view?.getComputedStyle(li).display !== "none";
     const measure = () => {
       const gap = Number.parseFloat(view?.getComputedStyle(list).columnGap ?? "") || 0;
       const items = [...list.children] as HTMLElement[];
-      const chips = items.filter((li) => li.dataset.ckui !== "card-chip-more" && showing(li));
-      const more = items.find((li) => li.dataset.ckui === "card-chip-more" && showing(li))?.offsetWidth ?? 0;
+      const more = items.find((li) => li.dataset.ckui === "card-chip-more")?.offsetWidth ?? 0;
       let used = 0;
-      let fit = 0;
-      for (const chip of chips) {
-        const next = used + (fit > 0 ? gap : 0) + chip.offsetWidth;
-        if (next + (total > fit + 1 && more > 0 ? gap + more : 0) > list.clientWidth) break;
+      let through = 0;
+      let fitted = 0;
+      let first = -1;
+      const chips = items.filter((li) => li.dataset.ckui !== "card-chip-more");
+      for (const [i, chip] of chips.entries()) {
+        if (view?.getComputedStyle(chip).display === "none") continue;
+        if (first < 0) first = i;
+        const next = used + (fitted > 0 ? gap : 0) + chip.offsetWidth;
+        if (next + (total > fitted + 1 && more > 0 ? gap + more : 0) > list.clientWidth) break;
         used = next;
-        fit += 1;
+        through = i + 1;
+        fitted += 1;
       }
-      setShown(Math.max(Math.min(1, chips.length), fit));
+      if (fitted === 0 && first >= 0) [through, fitted] = [first + 1, 1];
+      setFit((f) => f?.through === through && f.fitted === fitted ? f : { through, fitted });
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
     observer?.observe(list);
     return () => observer?.disconnect();
   }, [list, total]);
-  return shown;
+  return fit;
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
@@ -172,7 +177,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
   const views = metadata?.views ? card.counts.views ?? 0 : 0;
-  const metaGroup = metadata?.groups?.map((kind) => card.entities[kind]?.[0]).find(Boolean);
+  const metaGroup = metadata?.groups?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
   const meta: ReactNode[] = [
     views > 0 ? <span key="views" className="tabular-nums" data-ckui="card-views">
       <span aria-hidden><HugeiconsIcon icon={PlayIcon} strokeWidth={2} className="mr-1 inline size-3 align-[-2px]" />{compact(views, m.language)}</span>
@@ -192,7 +197,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     const base = total - Math.min(total, limit.base);
     const lg = total - Math.min(total, limit.lg);
     const more = (n: number, className?: string) => <li key={`${kind}:more:${className ?? ""}`} data-kind={kind} data-ckui="card-chip-more" className={className}>
-      <Chip name={`+${n}`} variant={entityStyle} />
+      <span aria-hidden><Chip name={`+${n}`} variant={entityStyle} /></span>
       <span className="sr-only">{m.plural("contents.moreChips", n)}</span>
     </li>;
     if (base === lg) return base > 0 ? [more(base)] : [];
@@ -205,19 +210,21 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const [chipList, setChipList] = useState<HTMLUListElement | null>(null);
   const fitting = chipFit && entityLayout === "inline";
   const chipTotal = entityGroups.reduce((n, g) => n + g.total, 0);
-  const shown = useChipFit(fitting ? chipList : null, chipTotal);
+  const fit = useChipFit(fitting ? chipList : null, chipTotal);
   const fittedItems = () => {
     let index = 0;
     const items = entityGroups.flatMap(({ kind, entities }) => entities.map((entity, i) => {
-      const out = shown !== null && index++ >= shown;
+      const out = fit !== null && index++ >= fit.through;
       return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn("shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>;
     }));
-    if (shown === null) return [...items, ...entityGroups.flatMap(({ kind, total }) => overflowItems(kind, total))];
-    const more = chipTotal - shown;
-    return chipOverflow && more > 0 ? [...items, <li key="more" data-ckui="card-chip-more" className="shrink-0">
-      <Chip name={`+${more}`} variant={entityStyle} />
+    if (!chipOverflow) return items;
+    // Always present, so its width is kept free; shown once measured with chips left out.
+    const more = fit === null ? chipTotal : chipTotal - fit.fitted;
+    const hidden = fit === null || more <= 0;
+    return [...items, <li key="more" data-ckui="card-chip-more" className={cn("shrink-0", hidden && "pointer-events-none invisible absolute")} aria-hidden={hidden || undefined}>
+      <span aria-hidden><Chip name={`+${more}`} variant={entityStyle} /></span>
       <span className="sr-only">{m.plural("contents.moreChips", more)}</span>
-    </li>] : items;
+    </li>];
   };
   const entityList = entityGroups.length > 0 ? entityLayout === "rows" ? (
     <div className="grid gap-1" data-ckui="card-groups" data-layout="rows">
@@ -279,7 +286,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
         {chipsInMeta ? <div className="flex min-w-0 items-center gap-2" data-ckui="card-meta-row">
-          {metaLine("shrink-0")}
+          {metaLine("max-w-1/2 shrink-0 truncate")}
           <div className="min-w-0 flex-1">{entityList}</div>
         </div> : metaLine("line-clamp-2")}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
