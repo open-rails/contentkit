@@ -180,7 +180,9 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerInstance, err := worker.New(ctx, worker.Config{Pool: pool, Schema: schema + "_media_worker", ContentSchema: schema, Store: env.Store, Kinds: registry, HostSchema: schema + "_river", TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1})
+	// This gallery fixture only processes images. Limit the unused video
+	// encoder to CPU H.264, supported by the host ffmpeg used in Go CI.
+	workerInstance, err := worker.New(ctx, worker.Config{Pool: pool, Schema: schema + "_media_worker", ContentSchema: schema, Store: env.Store, Kinds: registry, HostSchema: schema + "_river", TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1, VideoEncoder: "cpu", VideoCodecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
 	}
