@@ -36,6 +36,7 @@ export {
   type ListSort,
   type Period,
   type PopularPeriod,
+  type PopularDateRange,
   type PopularQuery,
   type RailQuery,
   type ReaderQuery,

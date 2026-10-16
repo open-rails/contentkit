@@ -68,6 +68,7 @@ export const discovery: typeof en = {
     removeRecent: "„{q}“ entfernen",
   },
   listing: {
+    activityRange: "Aktivität von {from} bis vor {until} (UTC)",
     popularPeriod: "Beliebtheitszeitraum",
     pastDays_one: "Letzter {count} Tag",
     pastDays_other: "Letzte {count} Tage",

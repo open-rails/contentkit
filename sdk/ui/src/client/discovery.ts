@@ -81,16 +81,23 @@ export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQu
   activity_until?: string;
 };
 export type PopularPeriod = "7d" | "90d" | "365d" | "all";
+/** Whole UTC dates: from inclusive, until exclusive. */
+export interface PopularDateRange {
+  from: string;
+  until: string;
+}
 export type PopularQuery = Omit<ContentQuery, "sort" | "activity_from" | "activity_until">;
 
 /** Rank activity in the selected window; publication age is an optional separate filter. */
-export function popularQuery(period: PopularPeriod = "7d", filters: PopularQuery = {}): ContentQuery {
-  return { ...filters, sort: `popular:${period}` };
+export function popularQuery(period: PopularPeriod | PopularDateRange = "7d", filters: PopularQuery = {}): ContentQuery {
+  return typeof period === "string"
+    ? { ...filters, sort: `popular:${period}` }
+    : { ...filters, sort: "popular", activity_from: period.from, activity_until: period.until };
 }
 
 /** Rank activity between two UTC dates: from inclusive, until exclusive. */
 export function popularBetween(from: string, until: string, filters: PopularQuery & { kind: string }): ContentQuery {
-  return { ...filters, sort: "popular", activity_from: from, activity_until: until };
+  return popularQuery({ from, until }, filters);
 }
 
 export type SearchQuery = ContentFilterQuery &

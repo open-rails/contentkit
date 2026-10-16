@@ -68,6 +68,7 @@ export const discovery: typeof en = {
     removeRecent: "移除“{q}”",
   },
   listing: {
+    activityRange: "UTC 时间 {from} 起至 {until} 前的活动",
     popularPeriod: "热门时间范围",
     pastDays_one: "过去{count}天",
     pastDays_other: "过去{count}天",

@@ -68,6 +68,7 @@ export const discovery = {
   },
   listing: {
     popularPeriod: "Popularity period",
+    activityRange: "Activity from {from} to before {until} (UTC)",
     pastDays_one: "Past {count} day",
     pastDays_other: "Past {count} days",
     sort: "Sort",

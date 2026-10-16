@@ -2,7 +2,7 @@ import { expect, expectTypeOf, it, vi } from "vitest";
 import { createContentKitClient } from "./client.js";
 import type { MineQuery } from "./content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, RecentSearchesQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "./discovery.js";
-import { popularBetween } from "./discovery.js";
+import { popularBetween, popularQuery } from "./discovery.js";
 import type { Method, RouteQuery } from "./route.js";
 
 // Parameters the route takes that the type lacks, and the reverse; both never.
@@ -19,6 +19,12 @@ it("queries historical activity with exclusive end date and no publication-age f
     sort: "popular", activity_from: "2026-04-01", activity_until: "2026-05-01", kind: "gallery", language: "en",
   });
   expect(requests[0]!.searchParams.has("published_within")).toBe(false);
+});
+
+it("accepts the same explicit activity window in the popularity selector query", () => {
+  expect(popularQuery({ from: "2026-04-01", until: "2026-05-01" }, { kind: "gallery" })).toEqual(
+    popularBetween("2026-04-01", "2026-05-01", { kind: "gallery" }),
+  );
 });
 
 it("does not invent anonymous server history sessions, but retains explicit sessions", async () => {

@@ -82,3 +82,48 @@ it("allows an explicit publication-age filter independently of the activity wind
   expect(request.searchParams.get("sort")).toBe("popular:7d");
   expect(request.searchParams.get("published_within")).toBe("90d");
 });
+
+it("ranks and pages a custom UTC activity range, then switches back to a rolling preset", async () => {
+  const observers: { callback: IntersectionObserverCallback; margin?: string }[] = [];
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) { observers.push({ callback, margin: options?.rootMargin }); }
+    observe() {}
+    disconnect() {}
+  });
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/historical", fetch: async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/kinds")) return Response.json(model);
+    if (url.pathname.endsWith("/media/presets")) return Response.json([]);
+    requests.push(url);
+    return Response.json(url.searchParams.has("cursor") ? { contents: [card("second")] } : { contents: [card("first")], next_cursor: "next-page" });
+  } });
+  const changed = vi.fn();
+  const grid = (period: "90d" | { from: string; until: string }) => (
+    <ContentKitProvider client={client} viewer={null}>
+      <PopularContentGrid period={period} query={{ kind: "gallery" }} onPeriodChange={changed} />
+    </ContentKitProvider>
+  );
+  const view = render(grid({ from: "2026-04-01", until: "2026-05-01" }));
+  await screen.findByText("Gallery first");
+  expect(screen.getByText("Activity from 2026-04-01 to before 2026-05-01 (UTC)")).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(4);
+  expect(screen.getAllByRole("tab").every((tab) => tab.getAttribute("aria-selected") === "false")).toBe(true);
+  const user = userEvent.setup();
+  await waitFor(() => expect(observers.some((observer) => observer.margin === "600px 0px")).toBe(true));
+  act(() => observers.filter((observer) => observer.margin === "600px 0px").forEach((observer) => observer.callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)));
+  await screen.findByText("Gallery second");
+  for (const request of requests) {
+    expect(Object.fromEntries(request.searchParams)).toMatchObject({ sort: "popular", activity_from: "2026-04-01", activity_until: "2026-05-01", kind: "gallery" });
+    expect(request.searchParams.has("published_within")).toBe(false);
+  }
+  expect(requests.some((request) => request.searchParams.get("cursor") === "next-page")).toBe(true);
+  await user.click(screen.getByRole("tab", { name: "Past 90 days" }));
+  expect(changed).toHaveBeenLastCalledWith("90d");
+  view.rerender(grid("90d"));
+  await waitFor(() => expect(requests.at(-1)!.searchParams.get("sort")).toBe("popular:90d"));
+  expect(requests.at(-1)!.searchParams.has("activity_from")).toBe(false);
+  expect(requests.at(-1)!.searchParams.has("activity_until")).toBe(false);
+  expect(screen.getByRole("tab", { name: "Past 90 days" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByText(/Activity from/)).toBeNull();
+});

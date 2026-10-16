@@ -399,6 +399,13 @@ again. Supply `query.published_within` only when a release-age cutoff is wanted.
 optionally keep its state in the host's URL. For a homepage preview, pass
 `popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
 
+For a historical activity window, pass `period={{ from: "2026-04-01", until:
+"2026-05-01" }}` and `query={{ kind: "gallery" }}`. Dates are UTC, with an
+inclusive start and exclusive end. No preset tab is selected for a custom
+range; selecting a tab calls `onPeriodChange` so the host can replace the range
+in its URL with that rolling preset. `popularQuery` accepts the same range
+object and sends `sort=popular&activity_from=...&activity_until=...`.
+
 ### MediaFolderEditor
 
 ```tsx
