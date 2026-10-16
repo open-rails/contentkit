@@ -119,6 +119,12 @@ func (q *sel) with(pred string, args pgx.NamedArgs) *sel {
 
 // compile resolves the reader once and renders the filter over f.
 func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error) {
+	return s.compileWithViewer(ctx, r, f, nil)
+}
+
+// compileWithViewer reuses a resolved request viewer for a private selection
+// under the same domain, entitlements and captured clock. Nil resolves normally.
+func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *catalog.Viewer) (*sel, error) {
 	if r.Mode == "" {
 		r.Mode = access.Lock
 	}
@@ -164,13 +170,15 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 		}
 	}
 	// A channel's feed shows its editors the channel's drafts too.
-	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
-		Requested: required})
-	if err != nil {
-		if errors.Is(err, catalog.ErrInvalid) {
-			return nil, fmt.Errorf("%w: %s", ErrInvalid, err)
+	if v == nil {
+		v, err = s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
+			Requested: required})
+		if err != nil {
+			if errors.Is(err, catalog.ErrInvalid) {
+				return nil, fmt.Errorf("%w: %s", ErrInvalid, err)
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 	q.viewer = v
 	listed, args := v.Listed("f")

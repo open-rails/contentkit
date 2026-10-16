@@ -103,6 +103,10 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 }
 
 func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Config) *fixture {
+	return newFixtureBilling(t, ch, chDB, cfg, nil)
+}
+
+func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Config, billing access.Billing) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
@@ -116,7 +120,7 @@ func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Confi
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg})
+	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg, Billing: billing})
 	if err != nil {
 		t.Fatal(err)
 	}

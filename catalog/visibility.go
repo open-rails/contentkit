@@ -199,6 +199,29 @@ func (v *Viewer) Domain() kinds.Domain { return v.domain }
 // Actor is the viewer's actor.
 func (v *Viewer) Actor() access.Actor { return v.actor }
 
+// HiddenContentFilters copies the optional, public entity filters currently
+// hidden by this viewer, by content kind. Required, fixed and internal rules
+// are domain policy, never optional filters.
+func (v *Viewer) HiddenContentFilters() map[string][]string {
+	out := make(map[string][]string, len(v.hidden))
+	for kind, ids := range v.hidden {
+		out[kind] = slices.Clone(ids)
+		slices.Sort(out[kind])
+	}
+	return out
+}
+
+// WithoutContentFilters returns a request-local viewer with only optional
+// entity preferences relaxed. The domain, entitlements, language, access mode
+// and captured clock remain the original request's. It never relaxes required,
+// fixed or internal domain policy.
+func (v *Viewer) WithoutContentFilters() *Viewer {
+	out := *v
+	out.hidden = nil
+	out.asked = maps.Clone(v.asked)
+	return &out
+}
+
 // Listed is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions the viewer's listing shows. A list shows one card per
 // content item among its rows. In Hide mode, and for members-listed rows,

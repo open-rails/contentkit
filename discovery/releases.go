@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/groups"
 )
 
 // DailyReleasesOptions selects a complete calendar-day window of releases.
@@ -22,6 +25,18 @@ type DailyReleasesOptions struct {
 type ReleaseDay struct {
 	Date     string `json:"date"`
 	Contents []Card `json:"contents"`
+	// FilteredCount is the unique contents omitted only by optional entity
+	// preferences, not by access or hard domain policy.
+	FilteredCount int `json:"filtered_count"`
+	// Counts overlap, so their sum is not FilteredCount. Hidden public filters
+	// with no matches have count zero. Locked entity redaction still applies.
+	FilteredEntities []ReleaseFilteredEntity `json:"filtered_entities"`
+}
+
+type ReleaseFilteredEntity struct {
+	ContentKind string           `json:"content_kind"`
+	Entity      groups.GroupCard `json:"entity"`
+	Count       int              `json:"count"`
 }
 
 // DailyReleases contains every visible card in the requested window, without
@@ -58,6 +73,7 @@ func releaseWindow(now time.Time, days int, zone string) (time.Time, time.Time, 
 // Releases reads one complete window so clients can reveal more cards without
 // additional API calls. It shares listing visibility, preferences and access.
 func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyReleases, error) {
+	ctx = access.WithMemo(ctx)
 	out := DailyReleases{Days: []ReleaseDay{}}
 	now := s.now()
 	from, today, loc, err := releaseWindow(now, o.Days, o.TimeZone)
@@ -66,31 +82,19 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 	}
 	out.TimeZone, out.FromDate, out.ThroughDate = loc.String(), from.Format(time.DateOnly), today.Format(time.DateOnly)
 	for day := today; !day.Before(from); day = day.AddDate(0, 0, -1) {
-		out.Days = append(out.Days, ReleaseDay{Date: day.Format(time.DateOnly), Contents: []Card{}})
+		out.Days = append(out.Days, ReleaseDay{Date: day.Format(time.DateOnly), Contents: []Card{}, FilteredEntities: []ReleaseFilteredEntity{}})
 	}
 	filter := o.Filter
 	filter.ReleasedOn = ""
 	filter.TimeZone = loc.String()
+	if filter.PublishedWithin != "" {
+		filter.publishedAsOf = now
+	}
 	q, err := s.compile(ctx, o.Reader, filter)
 	if err != nil {
 		return out, err
 	}
-	q.and("f.published_at >= @r_from AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted'", pgx.NamedArgs{"r_from": from, "r_now": now})
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT p.content_id, p.version_id, p.published_at FROM (
- SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, f.published_at
- FROM %s f WHERE %s ORDER BY f.content_id, %s) p
- ORDER BY p.published_at DESC, p.content_id DESC`, s.t.facets, q.predicate(), preference), q.args)
-	if err != nil {
-		return out, err
-	}
-	type release struct {
-		pick
-		at time.Time
-	}
-	got, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (release, error) {
-		var r release
-		return r, row.Scan(&r.content, &r.version, &r.at)
-	})
+	got, err := s.releasePicks(ctx, q, from, now)
 	if err != nil {
 		return out, err
 	}
@@ -101,6 +105,7 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 	// Bound each hydration query, never the result. Every selected item is
 	// returned, while a busy window does not become one oversized SQL array.
 	const batchSize = 256
+	visible := make([]string, 0, len(got))
 	for offset := 0; offset < len(got); offset += batchSize {
 		batch := got[offset:min(offset+batchSize, len(got))]
 		picks := make([]pick, len(batch))
@@ -114,10 +119,37 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 			return out, err
 		}
 		for _, card := range cards {
+			visible = append(visible, card.ID)
 			if i, ok := indices[dates[card.ID]]; ok {
 				out.Days[i].Contents = append(out.Days[i].Contents, card)
 			}
 		}
 	}
+	if err := s.filteredReleases(ctx, &out, filter, q, visible, from, now); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+type releasePick struct {
+	pick
+	at time.Time
+}
+
+// releasePicks applies feed-only publication and language constraints even to
+// privileged viewers, then selects the same preferred edition as card lists.
+func (s *Service) releasePicks(ctx context.Context, q *sel, from, now time.Time) ([]releasePick, error) {
+	q = q.with("f.published_at >= @r_from AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted' AND (@r_language = '' OR @r_language = ANY(f.languages))",
+		pgx.NamedArgs{"r_from": from, "r_now": now, "r_language": q.reader.Language})
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT p.content_id, p.version_id, p.published_at FROM (
+ SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, f.published_at
+ FROM %s f WHERE %s ORDER BY f.content_id, %s) p
+ ORDER BY p.published_at DESC, p.content_id DESC`, s.t.facets, q.predicate(), preference), q.args)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (releasePick, error) {
+		var r releasePick
+		return r, row.Scan(&r.content, &r.version, &r.at)
+	})
 }

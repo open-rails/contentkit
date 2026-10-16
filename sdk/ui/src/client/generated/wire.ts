@@ -1765,6 +1765,14 @@ export interface ReleaseDates {
 export interface ReleaseDay {
   date: string;
   contents: Card[];
+  filtered_count: number;
+  filtered_entities: ReleaseFilteredEntity[];
+}
+
+export interface ReleaseFilteredEntity {
+  content_kind: string;
+  entity: GroupCard;
+  count: number;
 }
 
 export interface Rendition {

@@ -2171,7 +2171,7 @@ func (q GetReleasesQuery) values() url.Values {
 	return v
 }
 
-// GetReleases is GET /v1/releases (public). Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. No item limit or pagination; future, unlisted and deleted releases stay excluded.
+// GetReleases is GET /v1/releases (public). Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.
 func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery.DailyReleases, error) {
 	var out discovery.DailyReleases
 	err := c.call(ctx, http.MethodGet, "/v1/releases", q.values(), nil, &out)

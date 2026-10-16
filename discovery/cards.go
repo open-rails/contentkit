@@ -148,6 +148,7 @@ type cardRow struct {
 	groupIDs    []string
 	owner       string
 	creator     bool
+	listing     string
 	slug        string
 	counts      struct {
 		likes, dislikes, favorites int
@@ -188,10 +189,11 @@ func (s *Service) lock(rows []cardRow) {
 	}
 }
 
-// cards hydrates picks in order. In hide mode a card the reader does not
-// open is dropped.
-func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions) ([]Card, error) {
-	out := []Card{}
+// cardRows hydrates and settles picks in order, applying locked-property
+// redaction before a caller can use entity memberships. In hide mode a card
+// the reader does not open is dropped. It does not fetch covers or names.
+func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow, error) {
+	out := []cardRow{}
 	if len(picks) == 0 {
 		return out, nil
 	}
@@ -207,7 +209,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		args[k] = v
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
+ f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio, f.listing,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
@@ -233,7 +235,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var isDefault bool
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator, &isDefault)
+			&c.Version.HasAudio, &c.listing, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator, &isDefault)
 		if err != nil {
 			return c, err
 		}
@@ -263,10 +265,21 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	if err := s.decide(ctx, q, got); err != nil {
 		return nil, err
 	}
-	if q.reader.Mode == access.Hide {
-		got = slices.DeleteFunc(got, func(c cardRow) bool { return !c.Access.Allowed })
-	}
+	// Members-only listings, like hide mode, need the exact verdict after an
+	// incomplete entitlement keyspace admitted them as SQL candidates.
+	got = slices.DeleteFunc(got, func(c cardRow) bool {
+		return !c.Access.Allowed && (q.reader.Mode == access.Hide || c.listing == "members")
+	})
 	s.lock(got)
+	return got, nil
+}
+
+// cards fills the settled rows' public media, names and viewer state.
+func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions) ([]Card, error) {
+	got, err := s.cardRows(ctx, q, picks)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.cardMedia(ctx, got); err != nil {
 		return nil, err
 	}
@@ -281,6 +294,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 			return nil, err
 		}
 	}
+	out := make([]Card, 0, len(got))
 	for _, c := range got {
 		out = append(out, c.Card)
 	}

@@ -9219,7 +9219,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+        "summary": "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
         "parameters": [
           {
             "name": "kind",
@@ -17716,11 +17716,41 @@
             "items": {
               "$ref": "#/components/schemas/Card"
             }
+          },
+          "filtered_count": {
+            "type": "integer"
+          },
+          "filtered_entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFilteredEntity"
+            }
           }
         },
         "required": [
           "date",
-          "contents"
+          "contents",
+          "filtered_count",
+          "filtered_entities"
+        ]
+      },
+      "ReleaseFilteredEntity": {
+        "type": "object",
+        "properties": {
+          "content_kind": {
+            "type": "string"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_kind",
+          "entity",
+          "count"
         ]
       },
       "Rendition": {
