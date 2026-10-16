@@ -16,7 +16,7 @@ const none = () => () => {};
 
 /** A shared read: fetched once per key while shown; initial is shown (and seeds the store) until it loads. */
 export function useResource<T>(
-  store: ResourceStore,
+  store: ResourceStore | null,
   key: string | null,
   tag: Tag,
   fetcher: Fetcher<T>,
@@ -35,21 +35,21 @@ export function useResource<T>(
     source.initial = o.initial;
   });
   const subscribe = useCallback(
-    (l: () => void) => (key ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
+    (l: () => void) => (key && store ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
     // The tag is part of the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [store, key, scope],
   );
-  const snapshot = useCallback(() => (key ? store.snapshot<T>(key) : IDLE), [store, key]);
+  const snapshot = useCallback(() => (key && store ? store.snapshot<T>(key) : IDLE), [store, key]);
   const entry = useSyncExternalStore(subscribe, snapshot, snapshot);
   useEffect(() => {
-    if (!key) return;
+    if (!key || !store) return;
     const unbind = store.bind(key, (s) => source.fetcher(s), source.more && ((c, s) => source.more!(c, s)));
     if (source.initial !== undefined && !store.snapshot(key).loaded && !store.snapshot(key).loading) store.set(key, source.initial);
     else store.load(key);
     return unbind;
   }, [store, key, source]);
-  const reload = useCallback(() => key && store.load(key, true), [store, key]);
+  const reload = useCallback(() => key && store?.load(key, true), [store, key]);
   if (!entry.loaded && o.initial !== undefined) return { ...entry, data: o.initial, reload };
   return { ...entry, reload };
 }

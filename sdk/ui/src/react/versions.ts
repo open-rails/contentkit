@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import { throwIfAborted, toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { FileDownload, Pending, PlanSegment, ReaderPlan } from "../client/generated/wire.js";
 import { isPending } from "../client/versions.js";
+import { sleep } from "../client/media/client.js";
 import { useMessages } from "../i18n/context.js";
 import type { Translator } from "../i18n/messages.js";
 import { useMediaRead, type ReadWindow } from "./read.js";
@@ -141,33 +142,38 @@ export function useVersionDownload(
   version: string,
   o: { poll?: number; client?: ContentKitClient; start?: (d: FileDownload) => void } = {},
 ): UseVersionDownload {
-  const { client } = useContentScope(o.client);
+  const { client, scope } = useContentScope(o.client);
   const m = useMessages();
-  const [preparing, setPreparing] = useState(false);
-  const [error, setError] = useState<ContentKitError>();
-  const [retryAt, setRetryAt] = useState<number>();
+  const owner = useMemo(() => ({ client, scope, content, version, active: undefined as AbortController | undefined }), [client, scope, content, version]);
+  const [state, setState] = useState<{ owner: typeof owner; preparing: boolean; error?: ContentKitError; retryAt?: number }>();
+  useEffect(() => () => owner.active?.abort(), [owner]);
+  const current = state?.owner === owner ? state : undefined;
   const start = o.start ?? startDownload;
   const download = useCallback(async () => {
-    setError(undefined);
-    setRetryAt(undefined);
-    setPreparing(true);
+    owner.active?.abort();
+    const controller = owner.active = new AbortController();
+    const { signal } = controller;
+    setState({ owner, preparing: true });
     try {
       for (;;) {
-        const out = await client.versions.download(content, version);
+        const out = await client.versions.download(content, version, signal);
+        // Also reject a late result from a transport that ignored cancellation.
+        throwIfAborted(signal);
         if (!isPending(out)) {
           start(out);
           return out;
         }
-        await new Promise((r) => setTimeout(r, o.poll ?? 3000));
+        await sleep(o.poll ?? 3000, signal);
       }
     } catch (e) {
-      const err = toContentKitError(e);
-      setError(err);
-      if (err.code === "rate_limited") setRetryAt(Date.now() + (err.retryAfter ?? 60) * 1000);
-      throw err;
+      const error = toContentKitError(e);
+      if (!signal.aborted && owner.active === controller) {
+        setState({ owner, preparing: false, error, retryAt: error.code === "rate_limited" ? Date.now() + (error.retryAfter ?? 60) * 1000 : undefined });
+      }
+      throw error;
     } finally {
-      setPreparing(false);
+      if (!signal.aborted && owner.active === controller) setState((state) => state?.owner === owner ? { ...state, preparing: false } : state);
     }
-  }, [client, content, version, o.poll, start]);
-  return { download, preparing, error, retryAt, message: downloadMessage(m, error) };
+  }, [client, content, version, o.poll, start, owner]);
+  return { download, preparing: current?.preparing ?? false, error: current?.error, retryAt: current?.retryAt, message: downloadMessage(m, current?.error) };
 }
