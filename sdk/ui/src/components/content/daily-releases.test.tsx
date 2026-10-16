@@ -294,3 +294,40 @@ it("does not carry an open day dialog or prior cards across an account change", 
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByText("Gallery alice-private-standing")).toBeNull();
 });
+
+const summaryAspect = (element: HTMLElement): number => {
+  const [width, height = "1"] = element.style.aspectRatio.split("/");
+  return Number(width) / Number(height);
+};
+
+it("matches the requested kind's cover aspect for a filtered-only day", async () => {
+  observeMedia();
+  const requests: string[] = [];
+  const response = windowWith([], 2, [{ content_kind: "gallery", entity: entity("futanari", "Futa"), count: 2 }]);
+  const client = createContentKitClient({ baseUrl: "https://content.test/filtered-cover-aspect", fetch: async (input) => {
+    const path = new URL(String(input)).pathname;
+    requests.push(path);
+    return Response.json(path.endsWith("/presets") ? [{ kind: "gallery", name: "cover", aspect: "7071:10000" }] : response);
+  } });
+  render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery" }} /></ContentKitProvider>);
+  const tile = await screen.findByRole("button", { name: "2 items filtered out" });
+  await waitFor(() => expect(summaryAspect(tile)).toBeCloseTo(0.7071, 5));
+  expect(requests.filter((path) => path.endsWith("/presets"))).toHaveLength(1);
+  expect(requests.filter((path) => path.endsWith("/releases"))).toHaveLength(1);
+});
+
+it.each([
+  { name: "inferred filtered kind", contents: [], filterKind: "gallery", queryKind: undefined, explicit: undefined, expected: 0.7071 },
+  { name: "inferred visible kind", contents: [card("visible")], filterKind: undefined, queryKind: undefined, explicit: undefined, expected: 0.7071 },
+  { name: "explicit requested kind", contents: [], filterKind: "blog", queryKind: "gallery", explicit: undefined, expected: 0.7071 },
+  { name: "mixed content kinds", contents: [card("visible")], filterKind: "blog", queryKind: undefined, explicit: undefined, expected: 0.75 },
+  { name: "absent kind metadata", contents: [], filterKind: undefined, queryKind: undefined, explicit: undefined, expected: 0.75 },
+  { name: "explicit card aspect", contents: [], filterKind: "gallery", queryKind: "gallery", explicit: "1 / 1", expected: 1 },
+])("uses safe summary aspect selection for $name", async ({ name, contents, filterKind, queryKind, explicit, expected }) => {
+  observeMedia();
+  const response = windowWith(contents, 2, filterKind ? [{ content_kind: filterKind, entity: entity("filter"), count: 2 }] : []);
+  const client = createContentKitClient({ baseUrl: `https://content.test/summary-aspect-${name.replaceAll(" ", "-")}`, fetch: async (input) => Response.json(String(input).endsWith("/presets") ? [{ kind: "gallery", name: "cover", aspect: "7071:10000" }, { kind: "blog", name: "cover", aspect: "16:9" }] : response) });
+  render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: queryKind }} aspectRatio={explicit} /></ContentKitProvider>);
+  const tile = await screen.findByRole("button", { name: "2 items filtered out" });
+  await waitFor(() => expect(summaryAspect(tile)).toBeCloseTo(expected, 5));
+});

@@ -76,6 +76,10 @@ export function DailyReleases({ query, initialVisible = 30, revealStep = 30, col
 
 type ReleaseCardProps = Omit<DailyReleasesProps, "query" | "initialVisible" | "revealStep" | "collapsePremium" | "summaryLabels">;
 const lockedPremium = (card: Card) => !card.access.allowed && card.access.level === "tier";
+const singleReleaseKind = (day: ReleaseDay): string | undefined => {
+  const kinds = new Set([...day.contents.map((card) => card.kind), ...(day.filtered_entities ?? []).map((entry) => entry.content_kind)]);
+  return kinds.size === 1 ? kinds.values().next().value : undefined;
+};
 
 function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapsePremium, summaryLabels, language, kinds }: {
   day: ReleaseDay; initial: number; step: number; pending: boolean; cardProps: ReleaseCardProps;
@@ -91,6 +95,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   const dayHeading = useRef<HTMLButtonElement>(null);
   const cards = useMemo(() => day.contents.slice(0, visible), [day.contents, visible]);
   const premiumCount = useMemo(() => day.contents.filter(lockedPremium).length, [day.contents]);
+  const summaryContentKind = kinds?.[0] ?? singleReleaseKind(day);
   const entries = useMemo(() => {
     let inserted = false;
     return cards.flatMap((card, i): { key: string; card: Card; summary: boolean; position: number }[] => {
@@ -126,9 +131,9 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
         <div className="min-h-0 overflow-hidden">
           <ol ref={reveal.grid} className={cn(layout.className, "pt-2")} style={layout.style}>
             {entries.map((entry) => entry.summary ?
-              <ReleaseSummaryTile key={entry.key} tileKey={entry.key} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
+              <ReleaseSummaryTile key={entry.key} tileKey={entry.key} contentKind={kinds?.[0] ?? entry.card.kind} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
               <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} position={entry.position} exposure={exposure} cardProps={p} />)}
-            {day.filtered_count > 0 && <ReleaseSummaryTile tileKey="filtered-summary" open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
+            {day.filtered_count > 0 && <ReleaseSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
           </ol>
           {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="outline" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
         </div>
@@ -138,13 +143,13 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   );
 }
 
-function ReleaseSummaryTile({ tileKey, kind, preview, open, label, onClick, cardProps: p }: {
-  tileKey: string; kind: "premium" | "filtered"; preview?: Card; open: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void; cardProps: ReleaseCardProps;
+function ReleaseSummaryTile({ tileKey, kind, contentKind, preview, open, label, onClick, cardProps: p }: {
+  tileKey: string; kind: "premium" | "filtered"; contentKind?: string; preview?: Card; open: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void; cardProps: ReleaseCardProps;
 }) {
   const { t } = useMessages();
   const [ref, near] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });
   const { presets } = usePresets({ client: p.client });
-  const aspect: CSSProperties["aspectRatio"] = p.aspectRatio ?? ratio(presets.find((preset) => preset.kind === preview?.kind && preset.name === "cover")?.aspect) ?? (p.shape === "landscape" ? "16 / 9" : "3 / 4");
+  const aspect: CSSProperties["aspectRatio"] = p.aspectRatio ?? ratio(presets.find((preset) => preset.kind === contentKind && preset.name === "cover")?.aspect) ?? (p.shape === "landscape" ? "16 / 9" : "3 / 4");
   return <li ref={ref} data-release-key={tileKey}>
     <Button type="button" variant="outline" data-ckui={`${kind}-release-tile`} aria-label={label} aria-expanded={kind === "premium" ? false : undefined} aria-haspopup={kind === "filtered" ? "dialog" : undefined} className="relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal" style={{ aspectRatio: aspect }} onClick={onClick}>
       {preview && open && near && <RenditionImg outputs={preview.cover} alt="" fit="cover" loading="lazy" className="absolute inset-0 size-full opacity-20" />}
