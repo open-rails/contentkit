@@ -421,6 +421,7 @@ func (k *Kind) UploadRules() []UploadRule {
 	out := make([]UploadRule, 0, len(k.Uploads))
 	for _, u := range k.Uploads {
 		r := UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Body: u.Body, Frames: u.Frames}
+		r.Page = k.Publish != nil && u.Path == k.Publish.Pages
 		if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.From == u.Path }); i >= 0 {
 			r.Aspect, r.MinWidth = k.Public[i].Image.Aspect, k.Public[i].Image.MinWidth
 		}

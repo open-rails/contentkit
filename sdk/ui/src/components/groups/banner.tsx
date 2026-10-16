@@ -3,7 +3,7 @@ import { useContext, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Edit, GroupAccess, GroupDetail, Sale } from "../../client/generated/wire.js";
-import type { GroupImageSlot } from "../../client/groups.js";
+import type { EntityImageSlot } from "../../client/entities.js";
 import { decodeImage, type CropSource } from "../../client/image.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
@@ -118,8 +118,10 @@ export function GroupBanner(p: GroupBannerProps) {
 
 export interface GroupImageEditorProps {
   group: GroupLike;
+  /** Read the entity through the staff management API, including internal entities. */
+  management?: boolean;
   /** The cover, or a user-owned kind's avatar. */
-  slot: GroupImageSlot;
+  slot: EntityImageSlot;
   /** Crop before uploading. Default true. */
   crop?: boolean;
   client?: ContentKitClient;
@@ -128,9 +130,9 @@ export interface GroupImageEditorProps {
 }
 
 /** A group's cover or avatar for its editors: pick (and crop) an image, upload it and select it; or go back to none (a cover: automatic). */
-export function GroupImageEditor({ group, slot, crop = true, client, onError, className }: GroupImageEditorProps) {
+export function GroupImageEditor({ group, slot, crop = true, client, onError, className, management }: GroupImageEditorProps) {
   const { t } = useMessages();
-  const g = useGroup(group.id, { client });
+  const g = useGroup(group.id, { client, management });
   const input = useRef<HTMLInputElement>(null);
   const save = useAction("group.save", onError);
   const [source, setSource] = useState<CropSource | null>(null);

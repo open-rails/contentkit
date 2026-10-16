@@ -59,7 +59,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 	f := serve(t, e)
 
 	var tags []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "vanilla",
+	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "vanilla",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Vanilla"}}}}, &tags)
 	premiumRule := access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	cover := "i-" + uuid.NewString()
@@ -73,7 +73,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 		f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: kind, Access: &premiumRule, Attributes: map[string]any{"format": "manga"},
 			Text: map[string]catalog.Text{"en": {Title: kind + " title", Description: kind + " teaser", Body: "the paid part"}}, Versions: []catalog.VersionInput{v}}, &c)
 		f.want(http.StatusOK, staff, "PATCH", "/contents/"+c.ID+"/versions/"+c.Versions[0].ID, catalog.VersionInput{Cover: &cover}, nil)
-		f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tags[0].ID}}}, nil)
+		f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tags[0].ID}}}, nil)
 		f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
 		f.want(http.StatusOK, premiumToken, "POST", "/contents/"+c.ID+"/like", nil, nil)
 		f.want(http.StatusOK, premiumToken, "POST", "/contents/"+c.ID+"/favorite", nil, nil)

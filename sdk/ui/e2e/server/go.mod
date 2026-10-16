@@ -3,19 +3,19 @@ module github.com/open-rails/contentkit/sdk/ui/e2e/server
 go 1.26.9
 
 require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-rails/authkit v1.30.0
-	github.com/open-rails/contentkit v0.92.0
+	github.com/open-rails/contentkit v0.92.1
 	github.com/open-rails/helpers v1.13.0
 	github.com/riverqueue/river v0.49.0
 )
 
 require (
 	github.com/ClickHouse/ch-go v0.71.0 // indirect
-	github.com/ClickHouse/clickhouse-go/v2 v2.40.3 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.42.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
@@ -39,6 +39,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/webauthn v0.18.2 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
+	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
@@ -51,7 +52,7 @@ require (
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
-	github.com/open-rails/migratekit v1.11.0 // indirect
+	github.com/open-rails/migratekit v1.11.2 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect

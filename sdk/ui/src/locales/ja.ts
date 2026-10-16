@@ -234,6 +234,13 @@ export const ja: ContentKitUiMessageBundle = {
     failed: "ダウンロードを開始できませんでした。もう一度お試しください。",
   },
   errors: {
+    ambiguous_entity: "この名前に一致する項目が複数あります。目的の項目を選択してください。",
+    unknown_entity: "この項目が見つかりません。既存の項目を選択するか、新規作成を許可してください。",
+    operation_conflict: "この送信には別のコンテンツが含まれています。新しく送信してください。",
+    operation_busy: "この送信を更新中です。しばらくしてから再試行してください。",
+    source_conflict: "このソースはすでに送信されています。",
+    content_changed: "送信後にコンテンツが変更されました。公開する前に確認してください。",
+    invalid_archive: "このZIPを処理できませんでした。対応するファイルが含まれているか確認してください。",
     download_unavailable: "現在はダウンロードできません。",
     no_download: "まだダウンロードできるものがありません。",
     generic: "サーバー側で問題が発生しました。もう一度お試しください。",

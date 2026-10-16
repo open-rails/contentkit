@@ -2,9 +2,9 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
-import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
-import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
+import type { AccessMode, ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
+import { ContentKitError, toContentKitError } from "../client/errors.js";
+import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 import { recentSearchLimit } from "../client/browser-search-history.js";
@@ -47,7 +47,7 @@ export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitC
   const { client, store, scope } = useContentScope(o.client);
   const filter = useMemo(() => {
     if (!q) return null;
-    const { sort: _s, cursor: _c, limit: _l, card_groups: _g, mode: _m, ...f } = q;
+    const { sort: _s, cursor: _c, limit: _l, card_entities: _g, mode: _m, ...f } = q;
     return f;
   }, [q]);
   const query = useDisplay(filter);
@@ -115,6 +115,21 @@ export function useReleaseDates(q: ReleaseDatesQuery = {}, o: { client?: Content
   });
 }
 
+export interface UseDailyReleases {
+  data?: DailyReleases;
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+}
+
+/** One complete calendar window, shared by all readers of the same query. */
+export function useDailyReleases(q: DailyReleasesQuery | null = {}, o: { client?: ContentKitClient } = {}): UseDailyReleases {
+  const { client, store, scope } = useContentScope(o.client);
+  const query = useDisplay(q);
+  const r = useResource<DailyReleases>(store, query ? keyOf("daily-releases", scope, query) : null, { type: "daily-releases" }, (signal) => client.discovery.releases(query!, signal));
+  return { data: r.data, loading: !!query && (r.loading || !r.loaded), error: r.error, reload: r.reload };
+}
+
 export interface UseHistory extends UseList<Card> {
   /** Erases the reader's history: of one content item, one kind, or (no argument) everything. */
   forget: (o?: { kind?: string; content_id?: string }) => Promise<void>;
@@ -180,7 +195,7 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
 /** A favorite or reaction with its content's or group's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.group?.id ?? "" })), next: p.next_cursor ?? null });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? "" })), next: p.next_cursor ?? null });
 
 /** The signed-in reader's favorites, most recent first: content cards or groups. */
 export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
@@ -201,95 +216,152 @@ export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {
 }
 
 export interface UseContentFilters {
-  /** null until read (and signed out). */
+  /** null until the configured filters have loaded. */
   filters: ContentFilters | null;
   loading: boolean;
   error?: ContentKitError;
   saving: boolean;
-  /** Replaces every setting; the lists showing re-read. */
+  /** Replaces offered settings for the supplied kinds; other kinds remain unchanged. */
   save: (update: ContentFiltersUpdate) => Promise<ContentFilters>;
   /** Shows or hides one filter's group, keeping the other settings. */
-  setVisible: (groupId: string, visible: boolean) => Promise<ContentFilters>;
+  setVisible: (kind: string, entityId: string, visible: boolean) => Promise<ContentFilters>;
   setIncludeDeleted: (include: boolean) => Promise<ContentFilters>;
 }
 
-/** The signed-in reader's content filters: each configured group, its default and their setting. */
+/** Current-domain toggles: browser choices for guests, server choices for accounts. */
 export function useContentFilters(o: { language?: string; client?: ContentKitClient } = {}): UseContentFilters {
   const { client, store, scope, viewer, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
-  const key = viewer === null ? null : keyOf("content-filters", scope, language);
-  const r = useResource<ContentFilters>(store, key, { type: "content-filters" }, (s) => client.discovery.contentFilters(language, s));
+  const guest = viewer === null;
+  const browser = client.preferences.browser;
+  const local = useSyncExternalStore(browser.subscribe, browser.snapshot, browser.snapshot);
+  const key = keyOf("content-filters", scope, language);
+  const previous = useRef<{ client: ContentKitClient; language?: string; guest: boolean; data?: ContentFilters } | null>(null);
+  const initial = guest && previous.current?.guest && previous.current.client === client && previous.current.language === language ? previous.current.data : undefined;
+  const r = useResource<ContentFilters>(store, key, { type: "content-filters" }, (s) => client.discovery.contentFilters(language, s), { initial });
+  previous.current = { client, language, guest, data: r.data };
+  const applyGuest = useCallback((source: ContentFilters, choices = local): ContentFilters => {
+    const legacy = new Map(choices.legacy_filters.map((f) => [f.entity_id, f.visible]));
+    return { include_deleted: false, kinds: Object.fromEntries(Object.entries(source.kinds).map(([kind, rows]) => {
+      const values = new Map<string, boolean | undefined>(legacy);
+      for (const f of choices.kinds[kind] ?? []) values.set(f.entity_id, f.default ? undefined : f.visible);
+      return [kind, rows.map((f) => ({ ...f, visible: values.get(f.entity.id) ?? f.default_visible, overridden: values.get(f.entity.id) !== undefined }))];
+    })) };
+  }, [local]);
+  const displayed = useMemo(() => r.data && guest ? applyGuest(r.data) : r.data, [r.data, guest, applyGuest]);
   const guarded = useGuarded();
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
   const [inflight, setInflight] = useState(0);
-  const current = useRef(r.data);
-  current.current = r.data;
+  const current = useRef(displayed);
+  current.current = displayed;
+  useEffect(() => { setInflight(0); }, [client, scope]);
   const save = useCallback(
     async (update: ContentFiltersUpdate) => {
+      if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
+      if (guest) {
+        const source = current.current;
+        if (!source) throw new ContentKitError("invalid_request", "Content filters have not loaded.");
+        const snapshot = browser.snapshot();
+        const merged = { ...snapshot.kinds };
+        const legacy = new Set(snapshot.legacy_filters.map((row) => row.entity_id));
+        for (const [kind, updates] of Object.entries(update.kinds)) {
+          const offered = source.kinds[kind];
+          if (!offered) throw new ContentKitError("invalid_request", "This content kind has no configurable filters.");
+          const allowed = new Set(offered.map((f) => f.entity.id));
+          if (updates.some((f) => !allowed.has(f.entity_id))) throw new ContentKitError("invalid_request", "This content filter is not configured.");
+          const explicit = new Set(updates.map((f) => f.entity_id));
+          // Resets follow whichever domain default is current, while suppressing
+          // an old unscoped preference for only this kind/entity pair.
+          const defaults = offered.filter((f) => legacy.has(f.entity.id) && !explicit.has(f.entity.id))
+            .map((f) => ({ entity_id: f.entity.id, default: true as const }));
+          merged[kind] = [...(snapshot.kinds[kind] ?? []).filter((f) => !allowed.has(f.entity_id)), ...updates, ...defaults];
+        }
+        client.preferences.setGuestFilters(merged);
+        return applyGuest(source, { ...snapshot, kinds: merged });
+      }
       setInflight((n) => n + 1);
       try {
-        const out = await guarded(() => client.discovery.setContentFilters(update, language));
-        if (key) store.set(key, out);
+        const out = await guarded(() => {
+          if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
+          return client.discovery.setContentFilters(update, language);
+        });
+        if (isCurrent()) store.set(key, out);
         return out;
       } finally {
-        setInflight((n) => n - 1);
+        setInflight((n) => Math.max(0, n - 1));
       }
     },
-    [client, guarded, language, key, store],
+    [client, guarded, language, key, store, isCurrent, guest, browser, applyGuest],
   );
-  const settings = (f: ContentFilters) => f.filters.filter((x) => x.overridden).map((x) => ({ group_id: x.group.id, visible: x.visible }));
+  const settings = (f: ContentFilters) => Object.fromEntries(Object.entries(f.kinds).map(([kind, rows]) =>
+    [kind, rows.filter((x) => x.overridden).map((x) => ({ entity_id: x.entity.id, visible: x.visible }))]));
   const setVisible = useCallback(
-    (groupId: string, visible: boolean) => {
+    async (kind: string, entityId: string, visible: boolean) => {
       const f = current.current;
       if (!f) return Promise.reject(new Error("contentkit-ui: the content filters have not loaded"));
-      return save({ filters: [...settings(f).filter((x) => x.group_id !== groupId), { group_id: groupId, visible }], include_deleted: f.include_deleted });
+      if (guest) {
+        if (!isCurrent()) return Promise.reject(new ContentKitError("aborted", "The account changed."));
+        if (!f.kinds[kind]?.some((row) => row.entity.id === entityId)) return Promise.reject(new ContentKitError("invalid_request", "This content filter is not configured."));
+        const snapshot = browser.snapshot();
+        const kinds = { ...snapshot.kinds, [kind]: [...(snapshot.kinds[kind] ?? []).filter((row) => row.entity_id !== entityId), { entity_id: entityId, visible }] };
+        client.preferences.setGuestFilters(kinds);
+        return Promise.resolve(applyGuest(f, { ...snapshot, kinds }));
+      }
+      const rows = settings(f)[kind] ?? [];
+      return save({ kinds: { [kind]: [...rows.filter((x) => x.entity_id !== entityId), { entity_id: entityId, visible }] }, include_deleted: f.include_deleted });
     },
-    [save],
+    [save, guest, isCurrent, browser, applyGuest, client],
   );
   const setIncludeDeleted = useCallback(
     (include: boolean) => {
       const f = current.current;
       if (!f) return Promise.reject(new Error("contentkit-ui: the content filters have not loaded"));
-      return save({ filters: settings(f), include_deleted: include });
+      return save({ kinds: {}, include_deleted: include });
     },
     [save],
   );
-  return { filters: r.data ?? null, loading: !!key && (r.loading || !r.loaded), error: r.error, saving: inflight > 0, save, setVisible, setIncludeDeleted };
+  return { filters: displayed ?? null, loading: r.loading || !r.loaded, error: r.error, saving: inflight > 0, save, setVisible, setIncludeDeleted };
 }
 
 export interface UseTypeahead {
   contents: Card[];
-  groups: GroupCard[];
+  entities: GroupCard[];
   /** The query the suggestions answer (trimmed). */
   query: string;
   loading: boolean;
   error?: ContentKitError;
 }
 
-const NONE: Pick<UseTypeahead, "contents" | "groups"> = { contents: [], groups: [] };
+const NONE: Pick<UseTypeahead, "contents" | "entities"> = { contents: [], entities: [] };
 
 /** Suggestions while the reader types: debounced, the stale ones abandoned. */
 export function useTypeahead(
   text: string,
-  o: Omit<TypeaheadQuery, "q"> & { debounce?: number; minLength?: number; client?: ContentKitClient } = {},
+  o: Omit<TypeaheadQuery, "q"> & { debounce?: number; minLength?: number; client?: ContentKitClient; management?: boolean } = {},
 ): UseTypeahead {
-  const { client, language } = useContentScope(o.client);
-  const { debounce = 150, minLength = 1, client: _own, ...rest } = o;
+  const { client, language, scope: viewerScope } = useContentScope(o.client);
+  const { debounce = 150, minLength = 1, client: _own, management = false, ...rest } = o;
+  const scope = JSON.stringify([viewerScope, management]);
   const q = text.trim();
   const query = useMemo(() => ({ display_language: language, ...rest, q }), [language, q, JSON.stringify(rest)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [state, setState] = useState<UseTypeahead>({ ...NONE, query: "", loading: false });
+  const [state, setState] = useState<UseTypeahead & { scope: string }>({ ...NONE, query: "", loading: false, scope });
   useEffect(() => {
     if (q.length < minLength) {
-      setState({ ...NONE, query: "", loading: false });
+      setState({ ...NONE, query: "", loading: false, scope });
       return;
     }
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => ({ ...(s.scope === scope ? s : { ...NONE, query: "" }), loading: true, scope }));
     const ctl = new AbortController();
     const timer = setTimeout(() => {
-      client.discovery.typeahead(query, ctl.signal).then(
-        (r) => setState({ contents: r.contents, groups: r.groups, query: q, loading: false }),
+      const request = management
+        ? client.entities.manage({ q, kind: query.entity_kinds?.[0], language: query.display_language, limit: query.limit ?? 10 }, ctl.signal)
+          .then((page) => ({ contents: [], entities: page.entities }))
+        : client.discovery.typeahead(query, ctl.signal);
+      request.then(
+        (r) => { if (!ctl.signal.aborted) setState({ contents: r.contents, entities: r.entities, query: q, loading: false, scope }); },
         (e) => {
           const error = toContentKitError(e);
-          if (error.code !== "aborted") setState({ ...NONE, query: q, loading: false, error });
+          if (!ctl.signal.aborted && error.code !== "aborted") setState({ ...NONE, query: q, loading: false, error, scope });
         },
       );
     }, debounce);
@@ -297,8 +369,8 @@ export function useTypeahead(
       clearTimeout(timer);
       ctl.abort();
     };
-  }, [client, query, q, debounce, minLength]);
-  return state;
+  }, [client, query, q, debounce, minLength, management, scope]);
+  return state.scope === scope ? state : { ...NONE, query: "", loading: q.length >= minLength };
 }
 
 const beacons = new WeakMap<ContentKitClient, Beacons>();
@@ -317,10 +389,18 @@ export function useBeacons(o: { client?: ContentKitClient } = {}): Beacons {
 
 /** A view of a content (or one version) while it is shown: report its progress as it changes. */
 export function useViewSignal(content: string | null | undefined, version?: string, o: Attribution & { client?: ContentKitClient } = {}): ViewSession["update"] {
-  const b = useBeacons(o);
-  const { client: _c, ...attribution } = o;
-  const session = useMemo(() => (content ? b.view(content, version, attribution) : null), [b, content, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  return useCallback((u) => session?.update(u), [session]);
+  const { client, scope, viewer, language } = useContentScope(o.client);
+  const b = beaconsFor(client);
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  // Retire the mutable session whenever its owner or read scope changes.
+  const holder = useMemo(() => ({ session: undefined as ViewSession | undefined }), [b, content, version, scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useCallback((u) => {
+    if (!content || !isCurrent() || (viewer !== undefined && client.preferences.identity() !== viewer)) return;
+    // Create after the committed provider has configured authentication, not
+    // during render while the transport can still belong to the old account.
+    holder.session ??= b.view(content, version, { render_id: o.render_id, surface: o.surface, position: o.position, language: o.language ?? language });
+    holder.session.update(u);
+  }, [b, client, content, version, viewer, language, o.language, o.render_id, o.surface, o.position, holder, isCurrent]);
 }
 
 export interface ExposureOptions {
@@ -335,6 +415,7 @@ export interface ExposureOptions {
 }
 
 export interface UseExposure {
+  /** The first bounded segment; click() selects the matching segment for later positions. */
   render_id: string;
   /** A card's ref: reports it shown once at least half of it is in view. */
   track: (content: string, position: number) => (el: Element | null) => void;
@@ -343,54 +424,91 @@ export interface UseExposure {
 }
 
 /** A rendered result list: each page rendered, each card shown, clicks attributed to the render. */
-export function useExposure(items: readonly { id: string }[], o: ExposureOptions): UseExposure {
-  const b = useBeacons(o);
-  const renderId = useMemo(() => eventId(), [o.render]); // eslint-disable-line react-hooks/exhaustive-deps
-  const base = useMemo(() => ({ render_id: renderId, surface: o.surface, ranker: o.ranker, query_id: o.query_id, language: o.language }), [renderId, o.surface, o.ranker, o.query_id, o.language]);
-  const rendered = useRef(new Set<string>());
-  const visible = useRef(new Set<string>());
+export function useExposure(items: readonly { id: string; version_id?: string; version?: { id: string } | null }[], o: ExposureOptions): UseExposure {
+  const { client, scope, language } = useContentScope(o.client);
+  const b = beaconsFor(client);
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  const renderId = useMemo(() => eventId(), [o.render, scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  const base = useMemo(() => ({ surface: o.surface, ranker: o.ranker, query_id: o.query_id, language: o.language ?? language }), [o.surface, o.ranker, o.query_id, o.language, language]);
+  const state = useMemo(() => ({ segments: new Map<number, ExposureSegment>(), pending: new Set<number>(), timer: undefined as ReturnType<typeof setTimeout> | undefined }), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const segmentID = useCallback((index: number) => index === 0 ? renderId : `${renderId}-${index}`, [renderId]);
+  const segmentFor = useCallback((index: number) => {
+    let segment = state.segments.get(index);
+    if (!segment) {
+      segment = { rendered: new Map(), visible: new Map(), renderedRevision: 0, visibleRevision: 0 };
+      state.segments.set(index, segment);
+    }
+    return segment;
+  }, [state]);
   useEffect(() => {
-    rendered.current = new Set();
-    visible.current = new Set();
-  }, [renderId]);
-  useEffect(() => {
-    const shown = items.flatMap((it, i) => (rendered.current.has(it.id) ? [] : [{ content_id: it.id, position: i + 1 }]));
-    for (const s of shown) rendered.current.add(s.content_id);
-    if (shown.length) b.exposure({ ...base, stage: "rendered", occurred_at: new Date().toISOString(), shown });
-  }, [b, base, items]);
-  const pending = useRef<{ content_id: string; position: number }[]>([]);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    if (!isCurrent()) return;
+    const changed = new Set<number>();
+    for (const [i, item] of items.entries()) {
+      const index = Math.floor(i / EXPOSURE_SEGMENT_SIZE), segment = segmentFor(index);
+      if (segment.rendered.has(item.id)) continue;
+      segment.rendered.set(item.id, { content_id: item.id, version_id: item.version_id ?? item.version?.id, position: i + 1 });
+      changed.add(index);
+    }
+    for (const index of changed) {
+      const segment = segmentFor(index);
+      b.exposure({ ...base, render_id: segmentID(index), stage: "rendered", revision: ++segment.renderedRevision,
+        occurred_at: segment.renderedAt ??= new Date().toISOString(), shown: [...segment.rendered.values()] });
+    }
+  }, [b, base, items, state, segmentFor, segmentID, isCurrent]);
   const observer = useMemo(() => {
     if (typeof IntersectionObserver !== "function") return null;
-    return new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (!e.isIntersecting) continue;
-          const el = e.target as HTMLElement;
-          const content = el.dataset.exposureContent!;
-          if (visible.current.has(content)) continue;
-          visible.current.add(content);
-          pending.current.push({ content_id: content, position: Number(el.dataset.exposurePosition) });
+    return new IntersectionObserver((entries) => {
+      if (!isCurrent()) return;
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const el = e.target as HTMLElement, content = el.dataset.exposureContent!;
+        const position = Number(el.dataset.exposurePosition), index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
+        const segment = segmentFor(index);
+        if (segment.visible.has(content)) continue;
+        segment.visible.set(content, segment.rendered.get(content) ?? { content_id: content, position });
+        state.pending.add(index);
+      }
+      if (!state.pending.size) return;
+      state.timer ??= setTimeout(() => {
+        state.timer = undefined;
+        if (!isCurrent()) return;
+        for (const index of state.pending) {
+          const segment = segmentFor(index);
+          b.exposure({ ...base, render_id: segmentID(index), stage: "visible", revision: ++segment.visibleRevision,
+            occurred_at: segment.visibleAt ??= new Date().toISOString(), shown: [...segment.visible.values()] });
         }
-        timer.current ??= setTimeout(() => {
-          timer.current = undefined;
-          const shown = pending.current.splice(0);
-          if (shown.length) b.exposure({ ...base, stage: "visible", occurred_at: new Date().toISOString(), shown });
-        }, 300);
-      },
-      { threshold: 0.5 },
-    );
-  }, [b, base]);
-  useEffect(() => () => observer?.disconnect(), [observer]);
-  const track = useCallback(
-    (content: string, position: number) => (el: Element | null) => {
-      if (!el || !observer) return;
-      (el as HTMLElement).dataset.exposureContent = content;
-      (el as HTMLElement).dataset.exposurePosition = String(position);
-      observer.observe(el);
-    },
-    [observer],
-  );
-  const click = useCallback((content: string, position: number) => b.click(content, { render_id: renderId, surface: o.surface, position }), [b, renderId, o.surface]);
+        state.pending.clear();
+      }, 300);
+    }, { threshold: 0.5 });
+  }, [b, base, state, segmentFor, segmentID, isCurrent]);
+  useEffect(() => () => { observer?.disconnect(); clearTimeout(state.timer); }, [observer, state]);
+  useEffect(() => {
+    for (const index of state.segments.keys()) b.beginExposure(segmentID(index));
+    return () => { for (const index of state.segments.keys()) b.endExposure(segmentID(index)); };
+  }, [b, state, segmentID]);
+  const track = useCallback((content: string, position: number) => (el: Element | null) => {
+    if (!el || !observer) return;
+    (el as HTMLElement).dataset.exposureContent = content;
+    (el as HTMLElement).dataset.exposurePosition = String(position);
+    observer.observe(el);
+  }, [observer]);
+  const click = useCallback((content: string, position: number) => {
+    if (!isCurrent()) return;
+    const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
+    const item = items.find((item) => item.id === content);
+    const version = item?.version_id ?? item?.version?.id;
+    b.click(content, { render_id: segmentID(index), surface: o.surface, position, version_id: version, language: base.language });
+  }, [b, items, segmentID, o.surface, base.language, isCurrent]);
   return { render_id: renderId, track, click };
 }
+
+type ObservedPlacement = { content_id: string; version_id?: string; position: number };
+type ExposureSegment = {
+  rendered: Map<string, ObservedPlacement>;
+  visible: Map<string, ObservedPlacement>;
+  renderedRevision: number;
+  visibleRevision: number;
+  renderedAt?: string;
+  visibleAt?: string;
+};
+const EXPOSURE_SEGMENT_SIZE = 32;

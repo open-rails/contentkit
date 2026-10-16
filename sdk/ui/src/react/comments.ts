@@ -72,7 +72,7 @@ export function useComments(target: Target, o: UseCommentsOptions = {}): UseComm
   const list = useList(
     store,
     key,
-    { type: "comments", target: { type, id, version } },
+    { type: "comments", target: { type, id, version }, language },
     offsetPages(size, (q, signal) => client.comments.list({ type, id, version }, { ...q, sort, language }, signal)),
   );
   const post = useCallback<UseComments["post"]>(
@@ -94,12 +94,13 @@ export function useCommentReplies(id: string, o: { pageSize?: number; enabled?: 
   return useList(store, key, { type: "replies", id }, offsetPages(size, (q, signal) => client.comments.replies(id, q, signal)));
 }
 
-/** Whether the caller may comment on the target, the ban that stops it, and what it may do to others' comments. */
-export function useCanComment(target: Target, o: { client?: ContentKitClient } = {}) {
+/** Commenting permissions and the entire visible thread's count in language, independent of loaded pages. Hidden/locked threads withhold the count. */
+export function useCanComment(target: Target, o: { language?: string; client?: ContentKitClient } = {}) {
   const { client, store, scope } = useContentScope(o.client);
   const { type, id, version } = target;
-  const r = useResource<CommentStanding>(store, keyOf("standing", scope, type, id, version), { type: "standing", target: { type, id, version } }, (s) =>
-    client.comments.standing({ type, id, version }, s),
+  const language = o.language || undefined;
+  const r = useResource<CommentStanding>(store, keyOf("standing", scope, type, id, version, language), { type: "standing", target: { type, id, version }, language }, (s) =>
+    client.comments.standing({ type, id, version }, s, { language }),
   );
   return { standing: r.data ?? null, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
 }

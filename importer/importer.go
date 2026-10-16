@@ -38,7 +38,7 @@ type Batch struct {
 	// imported group of an auth_scope kind that names none; without it such
 	// a group fails.
 	ProvisionScopes bool             `json:"provision_scopes,omitempty"`
-	Groups          []GroupRecord    `json:"groups,omitempty"`
+	Groups          []GroupRecord    `json:"entities,omitempty"`
 	Contents        []ContentRecord  `json:"contents,omitempty"`
 	Memberships     []MembershipSet  `json:"memberships,omitempty"`
 	Offers          []OfferRecord    `json:"offers,omitempty"`
@@ -81,6 +81,9 @@ type GroupRecord struct {
 	ID   string `json:"id,omitempty"`
 	Kind string `json:"kind"`
 	Slug string `json:"slug"`
+	// Internal classifications can drive domain policy but never public metadata.
+	// Omission preserves an existing entity's classification; new entities are public.
+	Internal *bool `json:"internal,omitempty"`
 	// Scope is the group a scoped kind's slug is unique within.
 	Scope  *Ref `json:"scope,omitempty"`
 	Parent *Ref `json:"parent,omitempty"`
@@ -334,7 +337,7 @@ type DeleteRecord struct {
 
 // Sections, in the order a batch writes them.
 const (
-	SectionGroups      = "groups"
+	SectionGroups      = "entities"
 	SectionContents    = "contents"
 	SectionMemberships = "memberships"
 	SectionOffers      = "offers"

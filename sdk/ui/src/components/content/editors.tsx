@@ -15,6 +15,7 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
+import { PageReview } from "../admin/page-review.js";
 import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
@@ -146,7 +147,7 @@ function RuleFields({ value, onChange, model, kind, owner, labels, client }: { v
   const id = useId();
   const tiers = model?.tiers ?? [];
   const spec = model?.kinds[kind];
-  const groupKinds = Object.entries(model?.group_kinds ?? {})
+  const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
   // Picked once the model has loaded: its first group kind until one is chosen.
@@ -606,7 +607,10 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
   const languages = useMemo(() => (model?.languages ?? []).map((l) => ({ value: l, label: languageName(l) })), [model, languageName]);
   if (!r.read && r.loading) return <Skeleton className="h-24 w-full" />;
   if (r.read?.uploads && videoPaths(r.read.uploads).source) return <VideoMediaEditor item={item} languages={languages} client={p.client} onError={p.onError} />;
-  return <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />;
+  return <>
+    <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />
+    {model?.kinds[content.kind]?.presentation === "reader" && <PageReview content={content.id} version={version.id} client={p.client} onError={p.onError} />}
+  </>;
 }
 
 type Row = { title: string; start: string; end: string; release: string };
@@ -677,7 +681,7 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
 }
 
 /** Every editor section of an existing content: details, access and price, versions, groups. */
-export function ContentSections({ content, ...p }: Common & { content: Content; media?: boolean; className?: string }) {
+export function ContentSections({ content, ...p }: Common & { content: Content; media?: boolean; className?: string; management?: boolean }) {
   const languageName = useLanguageName();
   const versions = useMemo(() => content.versions.map((v) => ({ id: v.id, label: versionLabel(v, languageName, p.labels) })), [content.versions, languageName, p.labels]);
   const { spec } = useKind(content.kind, p.client);
@@ -686,9 +690,9 @@ export function ContentSections({ content, ...p }: Common & { content: Content; 
       <ContentDetailsEditor content={content} {...p} />
       <AccessEditor content={content} {...p} />
       <VersionsEditor content={content} {...p} />
-      {!!spec?.groups?.length && (
+      {!!spec?.entities?.length && (
         <section className="grid gap-3 border-t border-border pt-4" data-ckui="content-groups">
-          <MembershipEditor content={content.id} contentKind={content.kind} versions={spec.versions.hidden ? undefined : versions} labels={p.labels} client={p.client} onError={p.onError} />
+          <MembershipEditor management={p.management} content={content.id} contentKind={content.kind} versions={spec.versions.hidden ? undefined : versions} labels={p.labels} client={p.client} onError={p.onError} />
         </section>
       )}
     </div>

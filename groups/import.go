@@ -17,9 +17,11 @@ import (
 // ImportGroup is a group as the bulk import writes it: its id kept. Nil
 // Names, Text and Edges keep what is stored; given ones replace it.
 type ImportGroup struct {
-	ID          GroupID
-	Kind        string
-	Slug        string
+	ID   GroupID
+	Kind string
+	Slug string
+	// Internal preserves the stored classification when omitted.
+	Internal    *bool
 	ScopeID     GroupID
 	ParentID    GroupID
 	State       State
@@ -142,6 +144,12 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		if !ok {
 			continue
 		}
+		if in[i].Internal == nil {
+			r.Internal = g.Internal
+		}
+		if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: r.Kind, Slug: r.Slug, ScopeID: GroupID(r.ScopeID), State: State(r.State), Internal: r.Internal}); err != nil {
+			return err
+		}
 		switch {
 		case g.Kind != r.Kind:
 			return fmt.Errorf("%w: group %s is a %s, not a %s", ErrInvalid, r.ID, g.Kind, r.Kind)
@@ -151,7 +159,7 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		if in[i].CreatedAt == nil {
 			r.CreatedAt = g.CreatedAt
 		}
-		if string(g.State) != r.State || string(g.ParentID) != *orEmpty(r.ParentID) {
+		if string(g.State) != r.State || string(g.ParentID) != *orEmpty(r.ParentID) || g.Internal != r.Internal {
 			moved = append(moved, r.ID)
 		}
 	}
@@ -160,19 +168,19 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		return err
 	}
 	// An automatic cover stays while the import selects none.
-	got, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s AS g (tenant_id, id, kind, slug, scope_id, parent_id, state, attributes, cover, avatar,
+	got, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s AS g (tenant_id, id, kind, slug, internal, scope_id, parent_id, state, attributes, cover, avatar,
  owner_user_id, auth_scope, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope,
+ SELECT $1, r.id, r.kind, r.slug, r.internal, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope,
   r.created_at, r.updated_at
- FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb,
+ FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, internal boolean, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb,
   avatar text, owner_user_id text, auth_scope text, created_at timestamptz, updated_at timestamptz)
  ORDER BY r.ordinal
- ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
+ ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, internal = EXCLUDED.internal, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
   attributes = EXCLUDED.attributes, cover = CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END,
   avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = coalesce(EXCLUDED.auth_scope, g.auth_scope),
   created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, revision = g.revision + 1
- WHERE (g.slug, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
-  IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
+ WHERE (g.slug, g.internal, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
+  IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.internal, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
   coalesce(EXCLUDED.auth_scope, g.auth_scope), EXCLUDED.created_at, CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END)
  RETURNING g.id`, s.table("content_groups")), s.tenant, string(data))
 	if err != nil {
@@ -228,8 +236,17 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		return err
 	}
 	marks := make([]Group, 0, len(written))
+	var exposed []Ref
 	for _, g := range written {
 		marks = append(marks, g)
+		if previous, exists := stored[string(g.ID)]; exists && previous.Internal != g.Internal {
+			exposed = append(exposed, Ref{Kind: g.Kind, ID: g.ID})
+		}
+	}
+	if s.folders != nil && len(exposed) > 0 {
+		if err := s.folders.ExposeTx(ctx, q, exposed); err != nil {
+			return err
+		}
 	}
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
@@ -267,6 +284,9 @@ func (s *Store) checkImport(g *ImportGroup) (importRow, error) {
 	}
 	row := importRow{groupRow: groupRow{ID: string(g.ID), Kind: kind, Slug: slug, Attributes: g.Attributes,
 		OwnerUserID: optional(g.OwnerUserID), AuthScope: optional(g.AuthScope)}, State: string(g.State)}
+	if g.Internal != nil {
+		row.Internal = *g.Internal
+	}
 	if g.ScopeID != "" {
 		if err := validateID(g.ScopeID); err != nil {
 			return row, err

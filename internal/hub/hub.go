@@ -403,6 +403,16 @@ func (h *Hub) RecordSignals(ctx context.Context, signals []signal.Signal) error 
 	return store.RecordSignals(ctx, h.tenant, signals)
 }
 
+// PopulationCoverage is the earliest trusted eligible-audience observation in
+// this app/kind/domain/language and requested activity window.
+func (h *Hub) PopulationCoverage(ctx context.Context, kind string, scope signal.ActivityScope, window signal.Window) (time.Time, bool, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return store.PopulationCoverage(ctx, h.tenant, kind, scope, window)
+}
+
 // --- Discovery plane ---
 
 func (h *Hub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {

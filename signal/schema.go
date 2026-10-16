@@ -51,6 +51,17 @@ var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"
 // expectedSchema is the schema this library version reads and writes. It must
 // match the applied lineage in migrations/clickhouse.
 var expectedSchema = map[string]tableSpec{
+	"population_coverage": {
+		engine: "AggregatingMergeTree", sortingKey: "tenant, content_kind, domain, language",
+		columns: []columnSpec{{"tenant", "LowCardinality(String)"}, {"content_kind", "LowCardinality(String)"}, {"domain", "LowCardinality(String)"}, {"language", "LowCardinality(String)"}, {"started_at", "SimpleAggregateFunction(min, DateTime64(6, 'UTC'))"}},
+	},
+	"population_observations": {
+		engine: "ReplacingMergeTree", version: "version",
+		sortingKey: "tenant, content_kind, subject_kind, subject, observation_id", partitionKey: "toYYYYMM(observed_at)",
+		columns: []columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"content_kind", "LowCardinality(String)"},
+			{"observation_id", "String"}, {"observed_at", "DateTime64(6, 'UTC')"}, {"domain", "LowCardinality(String)"},
+			{"language", "LowCardinality(String)"}, {"eligible_tiers", "Array(String)"}, {"eligibility_known", "Bool"}, {"version", "UInt64"}},
+	},
 	"signals": {
 		engine: "ReplacingMergeTree", version: "version",
 		sortingKey:   "tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id",
@@ -113,6 +124,7 @@ var expectedSchema = map[string]tableSpec{
 			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
 			{"content_kinds", "Array(LowCardinality(String))"}, {"content_ids", "Array(String)"}, {"content_version_ids", "Array(String)"},
 			{"positions", "Array(UInt32)"}, {"occurred_at", "DateTime('UTC')"}, {"version", "UInt128"},
+			{"access_contexts", "Array(String)"},
 			{"ingested_at", "DateTime64(6, 'UTC')"},
 		},
 	},

@@ -33,7 +33,7 @@ func TestOwnerChip(t *testing.T) {
 		d.Scopes = ckauthkit.Scopes(w.ak)
 	}))
 	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio",
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := made[0]
 	ref := media.RefBody{Kind: "channel", ID: string(ch.ID)}
@@ -49,7 +49,7 @@ func TestOwnerChip(t *testing.T) {
 	}
 	avatar, avatarImage := picture("avatar/me.png", "avatar", 32)
 	cover, coverImage := picture("cover/wide.png", "cover", 48)
-	f.want(http.StatusOK, creatorToken, "PATCH", "/groups/"+string(ch.ID), groups.GroupUpdate{Avatar: &groups.Avatar{Image: avatar},
+	f.want(http.StatusOK, creatorToken, "PATCH", "/entities/"+string(ch.ID), groups.GroupUpdate{Avatar: &groups.Avatar{Image: avatar},
 		Cover: &groups.Cover{Image: cover}}, nil)
 
 	var owned catalog.Content
@@ -104,7 +104,7 @@ func TestOwnerGroupEditors(t *testing.T) {
 	})
 	f := serve(t, e)
 	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio",
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := string(made[0].ID)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
@@ -114,7 +114,7 @@ func TestOwnerGroupEditors(t *testing.T) {
 	var members, draft, gallery catalog.Content
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", membersOnly, &members)
 	monthly := 720
-	f.want(http.StatusOK, creatorToken, "PUT", "/groups/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
+	f.want(http.StatusOK, creatorToken, "PUT", "/entities/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
 		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
@@ -184,13 +184,13 @@ func TestOwnerGroupEditors(t *testing.T) {
 
 	for token, editor := range map[string]bool{creatorToken: true, writerToken: true, strangerToken: false} {
 		var page groups.GroupDetail
-		f.want(http.StatusOK, token, "GET", "/groups/"+ch, nil, &page)
+		f.want(http.StatusOK, token, "GET", "/entities/"+ch, nil, &page)
 		if a := page.Access; a == nil || a.Editor != editor || (a.Offer == nil) != editor {
 			t.Fatalf("the channel's page as an editor (%v): access %+v", editor, a)
 		}
 	}
 	var mine groups.MyGroupPage
-	f.want(http.StatusOK, writerToken, "GET", "/me/groups", nil, &mine)
+	f.want(http.StatusOK, writerToken, "GET", "/me/entities", nil, &mine)
 	if len(mine.Groups) != 1 || string(mine.Groups[0].ID) != ch || !mine.Groups[0].Writer || mine.Groups[0].Editor || mine.Groups[0].Owner {
 		t.Fatalf("the writer's groups %+v", mine)
 	}

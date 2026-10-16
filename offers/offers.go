@@ -115,7 +115,7 @@ type Service struct {
 }
 
 type tables struct {
-	offers, items, versions, text, creators, groups, groupNames string
+	offers, items, versions, text, creators, groups, groupNames, facets string
 }
 
 // New validates o.
@@ -142,7 +142,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{pool: o.Pool, tenant: o.Tenant, kinds: o.Kinds, cfg: o.Config, billing: o.Billing, gate: o.Gate,
 		queue: o.Queue, log: o.Logger,
 		t: tables{offers: q("content_offers"), items: q("content_items"), versions: q("content_versions"), text: q("content_text"),
-			creators: q("content_creators"), groups: q("content_groups"), groupNames: q("content_group_names")}}
+			creators: q("content_creators"), groups: q("content_groups"), groupNames: q("content_group_names"), facets: q("content_facets")}}
 	if s.queue == "" {
 		s.queue = "contentkit_offers"
 	}
@@ -203,9 +203,19 @@ type GroupAccess struct {
 }
 
 // GroupAccess answers, per group in order, its key, active offer and the
-// viewer's standing: one offers read and at most one billing read
+// viewer's standing. Internal or inactive entities return ErrNotFound.
+// There is one offers read and at most one billing read
 // (access.Gate.Holds). A failed billing read answers Unknown, not an error.
 func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups []string) ([]GroupAccess, error) {
+	visible, err := s.publicGroups(ctx, groups)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range groups {
+		if !visible[id] {
+			return nil, ErrNotFound
+		}
+	}
 	out := make([]GroupAccess, len(groups))
 	keys := make([]access.Key, len(groups))
 	for i, id := range groups {
@@ -233,7 +243,7 @@ func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups [
 	return out, nil
 }
 
-// Joined is the groups whose key viewer holds, bought, subscribed or joined
+// Joined is the public groups whose key viewer holds, bought, subscribed or joined
 // free: the request's one entitlements read (access.Gate.Filter), at most
 // access.HeldLimit of them. A failed read answers none.
 func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, error) {
@@ -241,5 +251,16 @@ func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, er
 	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
 	}
-	return f.Groups(), nil
+	ids := f.Groups()
+	visible, err := s.publicGroups(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, id := range ids {
+		if visible[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }

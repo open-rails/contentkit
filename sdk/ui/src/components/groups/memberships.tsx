@@ -31,6 +31,8 @@ export interface MembershipEditorProps {
   content: string;
   /** Its kind: the group kinds it joins. */
   contentKind: string;
+  /** Staff lookup, including internal classifications. */
+  management?: boolean;
   /** Its versions, for version-level memberships (voice actors, version-only tags). */
   versions?: readonly VersionChoice[];
   /** Only these group kinds; default every kind its kind joins. */
@@ -61,13 +63,13 @@ export function MembershipEditor(p: MembershipEditorProps) {
   const { t } = m;
   const { kinds, loading: kindsLoading } = useKinds({ client: p.client });
   const cg = useContentGroups(p.content, { language: p.language, client: p.client });
-  const groupKinds = useMemo(() => p.groupKinds ?? kinds?.kinds[p.contentKind]?.groups ?? [], [p.groupKinds, kinds, p.contentKind]);
+  const groupKinds = useMemo(() => p.groupKinds ?? kinds?.kinds[p.contentKind]?.entities ?? [], [p.groupKinds, kinds, p.contentKind]);
   const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
-  const cards = useMemo(() => new Map([...cg.groups, ...picked]), [cg.groups, picked]);
+  const cards = useMemo(() => new Map([...cg.entities, ...picked]), [cg.entities, picked]);
   const seq = useRef(0);
   const initial = useMemo(
-    () => cg.memberships.filter((x) => groupKinds.includes(cg.groups.get(x.group_id ?? "")?.kind ?? "")).map((x) => ({ ...x, content_id: undefined })),
-    [cg.memberships, cg.groups, groupKinds],
+    () => cg.memberships.filter((x) => groupKinds.includes(cg.entities.get(x.group_id ?? "")?.kind ?? "")).map((x) => ({ ...x, content_id: undefined })),
+    [cg.memberships, cg.entities, groupKinds],
   );
   const [draft, setDraft] = useState<Draft[]>([]);
   const dirty = !same(draft.map(strip), initial);
@@ -109,13 +111,13 @@ export function MembershipEditor(p: MembershipEditorProps) {
         void save.run(() => cg.set(draft.map(strip), [...groupKinds])).then((out) => {
           if (!out) return;
           setSaved(true);
-          setDraft(out.memberships.filter((x) => groupKinds.includes(out.groups.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
+          setDraft(out.memberships.filter((x) => groupKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
           p.onSaved?.(out);
         });
       }}
     >
       {groupKinds.map((kind) => {
-        const spec: GroupKind = kinds?.group_kinds?.[kind] ?? {};
+        const spec: GroupKind = kinds?.entity_kinds?.[kind] ?? {};
         const rows = draft.filter((x) => cards.get(x.group_id ?? "")?.kind === kind);
         const label = labelOf(p.labels, kind);
         return (
@@ -142,6 +144,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
               </ul>
             )}
             <GroupPicker
+              management={p.management}
               kind={kind}
               language={p.language}
               label={t("memberships.add", { kind: label })}
@@ -322,7 +325,7 @@ export function GroupMembers(p: GroupMembersProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
-  const spec: GroupKind = kinds?.group_kinds?.[p.group.kind] ?? {};
+  const spec: GroupKind = kinds?.entity_kinds?.[p.group.kind] ?? {};
   const members = useGroupMembers(p.group.id, { pageSize: p.pageSize, client: p.client });
   const save = useAction("membership.save", p.onError);
   const [editing, setEditing] = useState<string | null>(null);

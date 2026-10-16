@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
@@ -9,9 +9,9 @@ import type { ContentModel, GroupAccess, GroupDetail, Offer } from "../../client
 import { ContentKitProvider } from "../../react/index.js";
 import { MembershipBox } from "./banner.js";
 import { GroupEditor } from "./editor.js";
-import { GroupAvatar, GroupCover } from "./parts.js";
+import { GroupAvatar, GroupCover, GroupPicker } from "./parts.js";
 
-type Handler = (req: { url: URL }) => unknown;
+type Handler = (req: { url: URL; init?: RequestInit }) => unknown;
 
 function server(routes: Record<string, Handler>) {
   const calls: string[] = [];
@@ -21,7 +21,7 @@ function server(routes: Record<string, Handler>) {
     calls.push(key);
     const h = routes[key];
     if (!h) return Response.json({ error: "not found", code: "not_found" }, { status: 404 });
-    const out = await h({ url });
+    const out = await h({ url, init });
     return out instanceof Response ? out : Response.json(out);
   });
   return { calls, client: createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch }) };
@@ -51,7 +51,7 @@ it("MembershipBox: no Join where the group sells no membership; members stay mem
 });
 
 it("MembershipBox: a free group's Join refused as not joinable says so, not that something changed elsewhere", async () => {
-  const s = server({ "POST /groups/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
+  const s = server({ "POST /entities/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
   const user = userEvent.setup();
   render(<MembershipBox group={group({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
   await user.click(screen.getByRole("button", { name: "Join" }));
@@ -59,11 +59,12 @@ it("MembershipBox: a free group's Join refused as not joinable says so, not that
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
 });
 
-const model: ContentModel = { languages: ["en"], tiers: [], content_filters: [], signals: false, kinds: {}, group_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
+const model: ContentModel = { languages: ["en"], tiers: [], signals: false, kinds: {}, entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
 const at = "2026-10-13T00:00:00Z";
 const offer: Offer = { id: "o1", target: { kind: "group", id: "g1" }, key, terms: { amount: "4.99", currency: "USD", renew_hours: 720 }, state: "active", synced: true, revision: 2, updated_at: at };
 const detail: GroupDetail = {
   id: "g1",
+  internal: false,
   kind: "channel",
   slug: "studio",
   state: "active",
@@ -83,7 +84,7 @@ const detail: GroupDetail = {
 };
 
 it("GroupEditor: its editor sees the membership it sells, though no paywall offers it to them", async () => {
-  const s = server({ "GET /kinds": () => model, "GET /groups/g1": () => detail });
+  const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
   const { container } = render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
   await waitFor(() => expect(container.querySelector('[data-ckui="group-offer"] [data-ckui="current-offer"]')).not.toBeNull());
   const section = container.querySelector<HTMLElement>('[data-ckui="group-offer"]')!;
@@ -106,4 +107,73 @@ it("GroupAvatar and GroupCover are styling roots of their own outside a ContentK
     expect(el).toHaveAttribute("data-ckui-theme");
   }
   expect(container.querySelector('[data-ckui="group-avatar"]')).toHaveClass("rounded-full", "size-10");
+});
+
+
+it("staff entity editors read and update internal metadata through the management surface", async () => {
+  let internal = true;
+  const updates: unknown[] = [];
+  const s = server({
+    "GET /kinds": () => model,
+    "GET /manage/entities/g1": () => ({ ...detail, internal }),
+    "PATCH /entities/g1": ({ init }) => {
+      const patch = JSON.parse(String(init?.body));
+      updates.push(patch);
+      internal = patch.internal;
+      return { ...detail, internal };
+    },
+  });
+  const user = userEvent.setup();
+  const { container } = render(<GroupEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  const toggle = await screen.findByRole("switch", { name: "Internal use only" });
+  expect(toggle).toBeChecked();
+  expect(s.calls).toContain("GET /manage/entities/g1");
+  expect(s.calls).not.toContain("GET /entities/g1");
+  await user.click(toggle);
+  const details = container.querySelector<HTMLElement>('[data-ckui="group-details"]')!;
+  await user.click(within(details).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(updates).toHaveLength(1));
+  expect(updates[0]).toMatchObject({ internal: false });
+});
+
+it("user-owned entity editors do not offer the staff-only internal setting", async () => {
+  const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
+  render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+  await screen.findByRole("heading", { name: "Studio" });
+  expect(screen.queryByRole("switch", { name: "Internal use only" })).toBeNull();
+  expect(s.calls).not.toContain("GET /manage/entities/g1");
+});
+
+it("staff pickers find internal entities without making them public search suggestions", async () => {
+  const queries: URL[] = [];
+  const internal = { id: "private", kind: "tag", slug: "restricted", name: "Restricted", internal: true, count: 1 };
+  const s = server({ "GET /manage/entities": ({ url }) => { queries.push(url); return { entities: [internal] }; } });
+  const picked = vi.fn();
+  const user = userEvent.setup();
+  render(<GroupPicker kind="tag" label="Add tag" management onPick={picked} />, { wrapper: wrap(s.client) });
+  await user.type(screen.getByRole("combobox", { name: "Add tag" }), "restr");
+  await user.click(await screen.findByRole("option", { name: /Restricted/ }));
+  expect(picked).toHaveBeenCalledWith(internal);
+  expect(queries[0]?.searchParams.get("q")).toBe("restr");
+  expect(queries[0]?.searchParams.get("kind")).toBe("tag");
+  expect(s.calls).not.toContain("GET /typeahead");
+});
+
+
+it("does not retain internal suggestions when the signed-in account changes", async () => {
+  let reply: ((value: unknown) => void) | undefined;
+  let requests = 0;
+  const s = server({ "GET /manage/entities": () => {
+    if (++requests > 1) return Response.json({ code: "forbidden", error: "Forbidden" }, { status: 403 });
+    return new Promise((resolve) => { reply = resolve; });
+  } });
+  const page = (viewer: string | null) => <ContentKitProvider client={s.client} viewer={viewer}><GroupPicker kind="tag" label="Private search" management onPick={vi.fn()} /></ContentKitProvider>;
+  const view = render(page("staff"));
+  await userEvent.setup().type(screen.getByRole("combobox", { name: "Private search" }), "restricted");
+  await waitFor(() => expect(reply).toBeDefined());
+  view.rerender(page(null));
+  await act(async () => { reply!({ entities: [{ id: "hidden", kind: "tag", slug: "restricted", name: "Internal secret", internal: true }] }); });
+  expect(screen.queryByRole("option", { name: /Internal secret/ })).toBeNull();
+  await waitFor(() => expect(requests).toBe(2));
+  expect(screen.queryByRole("option", { name: /Internal secret/ })).toBeNull();
 });

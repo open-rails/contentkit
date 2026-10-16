@@ -3,9 +3,11 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/popularity"
 )
 
 // ListOptions select one page of a list.
@@ -16,6 +18,11 @@ type ListOptions struct {
 	// most_favorited, most_viewed, position or random; the kind's configured
 	// sort, else newest, by default. Periods are popularity.Periods.
 	Sort string
+	// ActivityFrom and ActivityUntil choose a custom popularity window of whole
+	// UTC dates [from, until). Both require SortPopular and an explicit Kind.
+	// They select activity dates, independently of publication-date filters.
+	ActivityFrom  string
+	ActivityUntil string
 	// CardGroups are the group kinds cards name; every kind with a page by
 	// default.
 	CardGroups []string
@@ -34,11 +41,42 @@ func pageLimit(n, def int) int {
 // List pages cards: one per content item the reader's listing shows that
 // matches the filter, in the sort's order.
 func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) {
+	window, custom, err := activityWindow(o)
+	if err != nil {
+		return ContentPage{Contents: []Card{}}, err
+	}
+	sort := s.sortName(o.Sort, o.Kind)
+	if custom {
+		sort = historicalSort(o.Kind, window)
+		if _, err := decodeCursor(o.Cursor, sort); err != nil {
+			return ContentPage{Contents: []Card{}}, err
+		}
+	}
+	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sort)
+	if err != nil {
+		return ContentPage{Contents: []Card{}}, err
+	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}
-	srt, err := s.parseSort(ctx, o.Sort, o.Filter)
+	var srt order
+	if custom {
+		srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+	} else if name, period, _ := strings.Cut(sort, ":"); name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
+		if period == "" {
+			period = popularity.DefaultPeriod
+		}
+		window, err = popularity.WindowForPeriod(period, s.now())
+		if err != nil {
+			err = fmt.Errorf("%w: %w", ErrInvalid, err)
+		} else {
+			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+			srt.raw = sort
+		}
+	} else {
+		srt, err = s.parseSort(ctx, o.Sort, o.Filter)
+	}
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}
@@ -47,7 +85,12 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		return ContentPage{Contents: []Card{}}, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
-	return ContentPage{Contents: cards, NextCursor: next}, err
+	for i := range cards {
+		if ranking, ok := srt.rankings[cards[i].ID]; ok {
+			cards[i].Ranking = &ranking
+		}
+	}
+	return ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}, err
 }
 
 // ReleaseDatesOptions select the release date index.

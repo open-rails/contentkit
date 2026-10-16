@@ -121,7 +121,7 @@ func (s *Service) Live(ctx context.Context, keys []access.Key) (map[string]Offer
 	if len(ids) == 0 {
 		return out, nil
 	}
-	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`, kinds, ids)
+	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[])) AND (o.target_kind <> 'group' OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))`, kinds, ids)
 	for _, o := range list {
 		out[o.Key.String()] = o
 	}
@@ -164,7 +164,7 @@ func (s *Service) active(ctx context.Context, targets []Target) ([]Offer, error)
 	for i, t := range targets {
 		kinds[i], ids[i] = string(t.Kind), t.ID
 	}
-	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`, kinds, ids)
+	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[])) AND (o.target_kind <> 'group' OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))`, kinds, ids)
 	if err != nil {
 		return nil, err
 	}

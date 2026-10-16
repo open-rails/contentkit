@@ -67,10 +67,10 @@ func (k *Kind) ZipStale(m *Manifest, p *Private) bool {
 // a derived file of one.
 func (k *Kind) attached(m *Manifest, f File) bool {
 	if f.IsUpload() {
-		return !f.Unattached
+		return !f.Unattached && PageIncluded(f)
 	}
 	if src, ok := m.Get(f.From); ok && src.IsUpload() {
-		return !src.Unattached
+		return !src.Unattached && PageIncluded(src)
 	}
 	return true
 }
@@ -164,7 +164,7 @@ func (k *Kind) Normalize(m *Manifest) {
 // frame, it is no body image (new versions copy those, editors view them),
 // and nothing is pending or failed from it.
 func (k *Kind) droppable(m *Manifest, f File) bool {
-	if k.KeepOriginals || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
+	if k.KeepOriginals || k.IsPageUpload(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
 		return false
 	}
 	i, _, _, _, ok := k.upload(f.Path)

@@ -46,10 +46,10 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 	f := serve(t, e)
 
 	var made []groups.Group
-	f.want(http.StatusCreated, ownerToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "club",
+	f.want(http.StatusCreated, ownerToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "club",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Club"}}}}, &made)
 	ch := string(made[0].ID)
-	path := "/groups/" + ch
+	path := "/entities/" + ch
 
 	// Selling nothing: no offer for the owner, no join for anyone.
 	var d groups.GroupDetail

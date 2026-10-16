@@ -105,7 +105,7 @@ func newEngineWith(t *testing.T, mutate func(*contentkit.Config, *contentkit.Dep
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
-	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: contentkit.AllRoutes &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
+	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: e.RouteGroups() &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestImportConverges(t *testing.T) {
 	if len(res.Failed) > 0 {
 		t.Fatalf("failures: %+v", res.Failed)
 	}
-	want := map[string]int{"groups": 6, "contents": 4, "memberships": 5, "aliases": 2, "comments": 4, "reactions": 6, "favorites": 2, "polls": 2,
+	want := map[string]int{"entities": 6, "contents": 4, "memberships": 5, "aliases": 2, "comments": 4, "reactions": 6, "favorites": 2, "polls": 2,
 		"votes": 3, "answers": 1}
 	for s, n := range want {
 		if res.Written[s] != n {
@@ -309,13 +309,46 @@ func TestImportConverges(t *testing.T) {
 	edit := catalogBatch()
 	edit.Contents = edit.Contents[:1]
 	edit.Contents[0].Text["en"] = catalog.Text{Title: "First, revised"}
-	revisions := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
+	revisions := func() map[string]int64 {
+		t.Helper()
+		rows, err := f.pool.Query(t.Context(), `SELECT id, revision FROM `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var id string
+			var revision int64
+			if err := rows.Scan(&id, &revision); err != nil {
+				t.Fatal(err)
+			}
+			out[id] = revision
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	oldRevisions := revisions()
 	if res := f.importBatch(t, importer.Batch{Source: edit.Source, Contents: edit.Contents}); len(res.Failed) > 0 || res.Written["contents"] != 1 {
 		t.Fatalf("edit: %+v", res)
 	}
-	now := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
-	if strings.Count(now, ":2") != strings.Count(revisions, ":2")+1 || f.scalar(t, `SELECT title FROM $s.content_text WHERE content_id = $1 AND language = 'en'`, g1) != "First, revised" {
-		t.Errorf("revisions %s -> %s", revisions, now)
+	newRevisions := revisions()
+	if len(newRevisions) != len(oldRevisions) {
+		t.Errorf("content set changed: %v -> %v", oldRevisions, newRevisions)
+	}
+	for id, old := range oldRevisions {
+		want := old
+		if id == g1 {
+			want++
+		}
+		if got := newRevisions[id]; got != want {
+			t.Errorf("content %s revision = %d, want %d", id, got, want)
+		}
+	}
+	if f.scalar(t, `SELECT title FROM $s.content_text WHERE content_id = $1 AND language = 'en'`, g1) != "First, revised" {
+		t.Error("changed record title was not updated")
 	}
 	if f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x") != "22" {
 		t.Errorf("external ids duplicated: %s", f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x"))
@@ -523,7 +556,7 @@ func TestImportRoute(t *testing.T) {
 	}
 	rec := post("importer", b)
 	var res importer.Result
-	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["groups"] != 1 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["entities"] != 1 {
 		t.Fatalf("import: %d %s", rec.Code, rec.Body)
 	}
 	ids := func(actor string, q any) *httptest.ResponseRecorder {
@@ -598,7 +631,7 @@ func TestImportGroupScopes(t *testing.T) {
 			OwnerUserID: "u-1", Avatar: avatar, AuthScope: scope}
 	}
 	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{channel(1, "scope-1"), channel(2, "")}})
-	if res.Written["groups"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
+	if res.Written["entities"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
 		t.Fatalf("result %+v", res)
 	}
 	if got := f.scalar(t, `SELECT owner_user_id || ' ' || avatar || ' ' || auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "u-1 "+avatar+" scope-1" {
@@ -613,7 +646,7 @@ func TestImportGroupScopes(t *testing.T) {
 		t.Fatalf("scope after re-import: %q", got)
 	}
 	res = f.importBatch(t, importer.Batch{Source: "test-legacy", ProvisionScopes: true, Groups: []importer.GroupRecord{channel(2, "")}})
-	if len(res.Failed) > 0 || res.Written["groups"] != 1 {
+	if len(res.Failed) > 0 || res.Written["entities"] != 1 {
 		t.Fatalf("provisioned import %+v", res)
 	}
 }
@@ -653,7 +686,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Files) != 2 || out.Files[0].Path != "originals/0001.png" {
+	if len(out.Files) != 2 || out.Files[0].Path != "originals/001.png" || out.Files[1].Path != "originals/002.png" {
 		t.Fatalf("committed %+v", out.Files)
 	}
 	// Sending them again finds the folder's bytes and keeps two pages.
@@ -672,7 +705,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	t.Cleanup(func() { _ = env.Store.Delete(context.Background(), src) })
 	copied, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
 		[]contentkit.MediaFile{{Path: "originals/0003.png", Type: "image/png", From: src, Size: int64(len(body))}})
-	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/0003.png" {
+	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/003.png" {
 		t.Fatalf("copied %+v %v", copied.Files, err)
 	}
 	if _, err := env.Store.Head(t.Context(), src); err != nil {
@@ -689,13 +722,13 @@ func TestImportThenIngestMedia(t *testing.T) {
 		[]contentkit.MediaFile{{Path: "audio/0001.mp3", Type: "audio/mpeg", Body: bytes.NewReader([]byte("ID3 page one"))}}); err != nil {
 		t.Fatal(err)
 	}
-	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("0001")}}}
+	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("001")}}}
 	for range 2 {
 		if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); err != nil {
 			t.Fatalf("set reader metadata: %v", err)
 		}
 	}
-	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("0002")})
+	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("002")})
 	var ce *contentkit.Error
 	if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); !errors.As(err, &ce) || ce.Status != http.StatusBadRequest {
 		t.Fatalf("a cue on missing audio: %v", err)

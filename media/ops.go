@@ -32,9 +32,11 @@ const (
 // Op is one commit op.
 type Op struct {
 	Op         string         `json:"op"`
+	SourceName string         `json:"source_name,omitempty"`
 	Path       string         `json:"path,omitempty"`
 	Blob       string         `json:"blob,omitempty"`      // put: the staged upload (u-{uuid}) or a blob in the folder
 	CreateID   string         `json:"create_id,omitempty"` // put: create-only UUID; repeat the same ID to retry
+	Replace    bool           `json:"replace,omitempty"`   // put: explicitly replace the target, including another source alias
 	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload
 	Meta       map[string]any `json:"meta,omitempty"`      // put, copy: upload meta; attach: merged; meta: item meta; remove: auto_cover guards ownership
 	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
@@ -128,6 +130,9 @@ func (op Op) validate() error {
 			return bad("create_id requires a put and a canonical nonzero UUID")
 		}
 	}
+	if op.Replace && (op.Op != OpPut || op.CreateID != "") {
+		return bad("replace requires a put without create_id")
+	}
 	if limit := op.metaLimit(); metaBytes(op.Meta) > limit {
 		return uploadErr(CodeTooLarge, "%s %q: meta is at most %d bytes of JSON", op.Op, op.Path, limit)
 	}
@@ -157,14 +162,26 @@ type opRun struct {
 	copies map[int][]File
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
-	exempt bool
+	exempt  bool
+	trusted bool // in-process system commits may update reserved provenance
+	// authorizePath rechecks a collision allocation against host path policy.
+	authorizePath func(string) error
 }
 
 func (o *opRun) apply(n int, op Op) error {
 	k, m := o.k, o.m
 	switch op.Op {
 	case OpMeta:
-		m.Meta = maps.Clone(op.Meta)
+		next := maps.Clone(op.Meta)
+		for _, key := range []string{"publishing_archives", "publishing_cover_errors"} {
+			if value, ok := m.Meta[key]; ok {
+				if next == nil {
+					next = map[string]any{}
+				}
+				next[key] = value
+			}
+		}
+		m.Meta = next
 		return nil
 	case OpRegenerate:
 		if op.Preset != "" && k.private(op.Preset) == nil && k.public(op.Preset) == nil {
@@ -283,6 +300,48 @@ func (o *opRun) dropZips(path string) {
 // put adds or replaces an upload.
 func (o *opRun) put(op Op) error {
 	k, m := o.k, o.m
+	requested := op.Path
+	requestedStem, _ := splitExt(requested)
+	existing := o.stem(requestedStem)
+	if existing < 0 || op.CreateID != "" && op.CreateID != m.Files[existing].CreateID {
+		op.Path = normalizedPagePath(k, op.Path)
+	}
+	source := op.SourceName
+	if source == "" {
+		source = requested
+	}
+	collision := false
+	if k.IsPageUpload(File{Path: op.Path}) {
+		if op.CreateID != "" {
+			for _, f := range m.Files {
+				if k.IsPageUpload(f) && f.CreateID == op.CreateID {
+					op.Path = f.Path
+					break
+				}
+			}
+		}
+		stem, _ := splitExt(op.Path)
+		hasTarget := o.stem(stem) >= 0
+		if i := o.stem(stem); i >= 0 {
+			old := m.Files[i]
+			if op.SourceName == "" && (op.CreateID == "" || op.CreateID == old.CreateID) {
+				source = sourceName(old.Meta, old.Path)
+			}
+			collision = !op.Replace && (sourceName(old.Meta, old.Path) != sourceName(nil, source) ||
+				op.CreateID != "" && op.CreateID != old.CreateID)
+		} else {
+			collision = pageIdentityUsed(k, m, k.NameOf(op.Path))
+		}
+		_, _, _, numeric := CanonicalPageName(op.Path)
+		if collision || !numeric && !hasTarget {
+			op.Path = nextPagePath(k, m, op.Path)
+		}
+	}
+	if op.Path != requested && o.authorizePath != nil {
+		if err := o.authorizePath(op.Path); err != nil {
+			return err
+		}
+	}
 	g, stem, name, ext, ok := k.upload(op.Path)
 	if !ok {
 		return uploadErr(CodeNotFound, "kind %q has no upload path %q", k.Name, op.Path)
@@ -310,21 +369,42 @@ func (o *opRun) put(op Op) error {
 		f.Blob = op.Blob
 	}
 	i := o.stem(stem)
+	legacy := false
 	if i >= 0 {
 		old := m.Files[i]
+		page, _ := pageMetadata(old.Meta)
+		legacy = page["schema_version"] == nil && page["name"] == nil
 		if old.Source() == f.Source() {
 			f.W, f.H, f.Dur = old.W, old.H, old.Dur
 		}
 		if f.Meta == nil {
 			f.Meta = old.Meta
 		}
+		if k.IsPageUpload(f) && !o.trusted {
+			f.Meta = preservePageMeta(f.Meta, old.Meta)
+		}
+		if o.trusted && op.CreateID == "" && old.Source() == f.Source() {
+			f.CreateID = old.CreateID
+		}
+		if old.Source() != f.Source() {
+			f.Meta = clearArchiveState(f.Meta)
+		}
 		f.Unattached = old.Unattached && op.Unattached
 	} else if u.Max > 0 && o.count(g) >= u.Max {
 		return tooManyFiles(u.Max, "kind %q allows at most %d uploads at %s", k.Name, u.Max, u.Path)
 	}
+	if k.IsPageUpload(f) && !legacy {
+		f.Meta = withPageSource(f.Meta, k.NameOf(f.Path), source)
+		if collision {
+			f.Meta = pageCollisionMeta(f.Meta, k.NameOf(f.Path))
+		}
+	}
 	if f.Meta[MetaAutoCover] != nil {
 		f.Meta = maps.Clone(f.Meta)
 		delete(f.Meta, MetaAutoCover)
+	}
+	if metaBytes(f.Meta) > MaxMetaBytes {
+		return uploadErr(CodeTooLarge, "page source metadata exceeds %d bytes", MaxMetaBytes)
 	}
 	if op.Edit != nil {
 		if !isImageType(f.Type) {
@@ -506,6 +586,19 @@ func (o *opRun) copy(op Op, src []File) error {
 	if to == "" {
 		to = f.Path
 	}
+	to = normalizedPagePath(k, to)
+	if k.IsPageUpload(File{Path: to}) {
+		stem, _ := splitExt(to)
+		_, _, _, numeric := CanonicalPageName(to)
+		if o.stem(stem) >= 0 || pageIdentityUsed(k, m, k.NameOf(to)) || !numeric {
+			to = nextPagePath(k, m, to)
+		}
+	}
+	if to != cmpOr(op.To, src[0].Path) && o.authorizePath != nil {
+		if err := o.authorizePath(to); err != nil {
+			return err
+		}
+	}
 	g, stem, name, ext, ok := k.upload(to)
 	if !ok {
 		return uploadErr(CodeInvalid, "copy to %q: not an upload path", to)
@@ -521,6 +614,18 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	from := f.Path
 	f.Path, f.Unattached, f.CreateID = stem+"."+ext, false, ""
+	if k.IsPageUpload(f) {
+		// A copied page is a new source entry, not the old page's manual
+		// choice or logical identity. Its bytes remain traceable by digest.
+		f.Meta = maps.Clone(f.Meta)
+		original := sourceName(f.Meta, from)
+		delete(f.Meta, "page")
+		f.Meta = withPageSource(f.Meta, k.NameOf(f.Path), original)
+	}
+	f.Meta = clearArchiveState(f.Meta)
+	if metaBytes(f.Meta) > MaxMetaBytes {
+		return uploadErr(CodeTooLarge, "page source metadata exceeds %d bytes", MaxMetaBytes)
+	}
 	group, _, _, _, _ := k.upload(from)
 	if g != group || op.Edit != nil {
 		if f.Gone {
@@ -634,6 +739,14 @@ func rebase(p, old, new string) string {
 func (o *opRun) created(op Op) (bool, error) {
 	if op.CreateID == "" {
 		return false, nil
+	}
+	if o.k.IsPageUpload(File{Path: op.Path}) {
+		for _, f := range o.m.Files {
+			if o.k.IsPageUpload(f) && f.CreateID == op.CreateID {
+				return f.Fail() == nil || f.Source() == op.Blob, nil
+			}
+		}
+		return false, nil // a new create may receive a collision-safe path
 	}
 	stem, _ := splitExt(op.Path)
 	i := o.stem(stem)

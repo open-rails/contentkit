@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { useContext, useId } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
+import type { GroupCard } from "../../client/generated/wire.js";
 import type { ReleaseDatesQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
@@ -11,11 +12,26 @@ import { Button } from "#ckui/ui/button";
 import { Label } from "#ckui/ui/label";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { Switch } from "#ckui/ui/switch";
+import { labelOf, type Labels } from "../groups/parts.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 
+/** Counts for one concrete listing selection, keyed by content kind and entity.
+ * Only rows offered by the current domain's filter inventory are displayed. */
+export interface ContentFilterCount {
+  content_kind: string;
+  entity: Pick<GroupCard, "id">;
+  count: number;
+}
+
 export interface ContentFilterSettingsProps {
-  /** Labels and group names in this language; default the provider's. */
+  /** Content kinds to show. Omitted displays every configured kind. */
+  kinds?: readonly string[];
+  /** Display labels for content-kind sections, when more than one is shown. */
+  labels?: Labels;
+  /** Entity names in this language; default the provider's. */
   language?: string;
+  /** Currently excluded matches in this listing/day; omitted shows no counts. */
+  counts?: readonly ContentFilterCount[];
   /** Offer listing deleted content the reader holds. Default true. */
   includeDeleted?: boolean;
   client?: ContentKitClient;
@@ -24,7 +40,7 @@ export interface ContentFilterSettingsProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** The signed-in reader's content filters: show or hide each configured group. */
+/** Show or hide configured content for this browser or signed-in account. */
 export function ContentFilterSettings(p: ContentFilterSettingsProps) {
   const m = useMessages();
   const { t } = m;
@@ -37,28 +53,32 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
       {children}
     </ContentKitUiRoot>
   );
-  if (ctx?.viewer === null) return root(<p className="text-muted-foreground">{t("contents.filtersSignedOut")}</p>);
   if (!f.filters) {
     if (f.error) return root(<ErrorLine>{contentError(m, f.error)}</ErrorLine>);
     return root(<Skeleton className="h-24 w-full" />);
   }
   const filters = f.filters;
-  if (!filters.filters.length && p.includeDeleted === false) return null;
+  const groups = Object.entries(filters.kinds).filter(([kind, rows]) => rows.length && (!p.kinds || p.kinds.includes(kind)));
+  if (!groups.length && p.includeDeleted === false) return null;
   return root(
     <>
-      {filters.filters.length ? (
-        <ul className="grid divide-y divide-border rounded-lg border border-border">
-          {filters.filters.map((x) => (
-            <li key={x.group.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.group.slug} data-visible={x.visible}>
-              <Switch id={`${id}-${x.group.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.group.id, v))} />
-              <Label htmlFor={`${id}-${x.group.id}`} className="min-w-0 flex-1">
-                {x.label || x.group.name}
-              </Label>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {p.includeDeleted !== false && (
+      {groups.map(([kind, rows]) => (
+        <section key={kind} className="grid gap-2" data-content-kind={kind}>
+          {groups.length > 1 && <h4 className="font-medium">{labelOf(p.labels, kind)}</h4>}
+          <ul className="grid divide-y divide-border rounded-lg border border-border">
+            {rows.map((x) => (
+              <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-kind={kind} data-slug={x.entity.slug} data-visible={x.visible}>
+                <Switch id={`${id}-${kind}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(kind, x.entity.id, v))} />
+                <Label htmlFor={`${id}-${kind}-${x.entity.id}`} className="min-w-0 flex-1">
+                  {x.entity.name || x.entity.slug}
+                  {p.counts !== undefined && <span className="tabular-nums">: {new Intl.NumberFormat(m.language).format(p.counts.find((entry) => entry.content_kind === kind && entry.entity.id === x.entity.id)?.count ?? 0)}</span>}
+                </Label>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {p.includeDeleted !== false && ctx?.viewer !== null && (
         <div className="flex items-center gap-3">
           <Switch id={`${id}-deleted`} checked={filters.include_deleted} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setIncludeDeleted(v))} />
           <Label htmlFor={`${id}-deleted`}>{t("contents.includeDeleted")}</Label>

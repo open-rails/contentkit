@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path"
@@ -17,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -37,8 +38,8 @@ const digestMeta = "sha256"
 type permanent struct{ error }
 
 // expand ingests v's attached archives (Publish.Import), in manifest order,
-// as pages appended in the entries' natural order, then removes each. Pages
-// already there (a repeated run) are skipped; an archive that cannot be
+// as pages appended in the entries' natural order, retaining each source ZIP.
+// Pages already there (a repeated run) are skipped; an archive that cannot be
 // expanded is marked failed.
 func (s *Service) expand(ctx context.Context, t Target) error {
 	v, err := s.one(ctx, t)
@@ -84,7 +85,18 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 		} else if err != nil {
 			return err
 		}
-		if _, err := s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: f.Path}}); err != nil {
+		meta := maps.Clone(f.Meta)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["archive_completed_sha256"] = pageDigest(f)
+		if _, err := s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: f.Path, Blob: f.Blob, Edit: f.Edit, Meta: meta}}, func(m *media.Manifest) error {
+			i := m.Find(f.Path)
+			if i < 0 || m.Files[i].Key() != f.Key() {
+				return ErrArchiveChanged
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 	}
@@ -92,6 +104,14 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 }
 
 func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentref.ContentRef, f media.File) error {
+	operation, _ := f.Meta[ArchiveOperation].(string)
+	expected, _ := f.Meta[ArchiveSHA256].(string)
+	if operation != "" {
+		digest, ok := layout.BlobDigest(f.Blob)
+		if !ok || hex.EncodeToString(digest) != expected {
+			return permanent{errors.New("archive checksum does not match its publishing declaration")}
+		}
+	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
 		return err
@@ -130,26 +150,45 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 	case expanded > maxImportExpanded:
 		return permanent{fmt.Errorf("the archive expands to %d bytes; at most %d", expanded, maxImportExpanded)}
 	}
-	slices.SortFunc(entries, func(a, b *zip.File) int { return naturalCompare(a.Name, b.Name) })
+	slices.SortStableFunc(entries, func(a, b *zip.File) int {
+		if c := naturalCompare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
 		return err
 	}
 	dir := strings.TrimSuffix(k.Publish.Pages, "{name}")
-	have, names := map[string]bool{}, map[string]bool{}
+	names := map[string]bool{}
+	archiveHash := pageDigest(f)
+	if archiveHash == "" {
+		archiveHash = expected
+	}
+	existing := map[int]media.File{}
+	next := 0
 	for _, f := range m.Files {
 		if f.IsUpload() && inPattern(k.Publish.Pages, f.Path) {
-			if digest, ok := layout.BlobDigest(f.Blob); ok {
-				have[hex.EncodeToString(digest)] = true
+			name := pageID(k, f)
+			names[name] = true
+			if _, _, end, ok := media.CanonicalPageName(name); ok && end > next {
+				next = end
 			}
-			if sum, ok := f.Meta[digestMeta].(string); ok {
-				have[sum] = true
+			pm := pageMeta(f)
+			if pm.ArchiveSHA256 == archiveHash {
+				existing[pm.SourceIndex] = f
 			}
-			names[strings.TrimPrefix(f.Path, dir)] = true
+		}
+	}
+	for _, e := range entries {
+		if _, _, end, ok := media.CanonicalPageName(path.Base(e.Name)); ok && end > next {
+			next = end
 		}
 	}
 	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
-	for _, e := range entries {
+	expectedPages := map[string]string{}
+	for index, e := range entries {
 		body, err := readEntry(e, up.MaxBytes)
 		if err != nil {
 			return err
@@ -160,18 +199,60 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		}
 		raw := sha256.Sum256(body)
 		sum := hex.EncodeToString(raw[:])
-		if have[sum] {
+		if previous, ok := existing[index+1]; ok {
+			if pageDigest(previous) != sum || pageMeta(previous).SourceEntry != e.Name {
+				return permanent{ErrArchiveChanged}
+			}
+			expectedPages[previous.Path] = sum
 			continue
 		}
-		name := uniqueName(names, media.CleanName(path.Base(e.Name)))
-		if _, err := s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: ref, Path: dir + name, Type: typ,
-			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: map[string]any{digestMeta: sum}}); err != nil {
+		name, span, flags := plannedPageName(path.Base(e.Name), names, &next)
+		pm := pageMetadata{SchemaVersion: 1, Name: name, SourceName: path.Base(e.Name), SourceEntry: e.Name, ArchiveSHA256: archiveHash, SourceIndex: index + 1, SourceSHA256: sum, Span: span, Flags: flags}
+		metaFile := media.File{Meta: map[string]any{digestMeta: sum}}
+		writePageMeta(&metaFile, pm)
+		ext := strings.ToLower(path.Ext(e.Name))
+		target := dir + name + ext
+		expectedPages[target] = sum
+		if _, err := s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: ref, Path: target, Type: typ,
+			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: metaFile.Meta}); err != nil {
 			if _, refused := media.AsUploadError(err); refused {
 				return permanent{fmt.Errorf("%s: %w", e.Name, err)}
 			}
 			return err
 		}
-		have[sum], names[name] = true, true
+	}
+	if operation != "" {
+		_, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
+			pages := archivePages(k, m)
+			if len(pages) != len(expectedPages) {
+				return permanent{ErrArchiveChanged}
+			}
+			for _, page := range pages {
+				if expectedPages[page.Path] != page.SHA256 {
+					return permanent{ErrArchiveChanged}
+				}
+			}
+			var receipts map[string]archiveReceipt
+			if existing := m.Meta[archiveReceipts]; existing != nil {
+				b, err := json.Marshal(existing)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(b, &receipts); err != nil {
+					return err
+				}
+			}
+			if receipts == nil {
+				receipts = map[string]archiveReceipt{}
+			}
+			receipts[operation] = archiveReceipt{SHA256: expected, Pages: pages}
+			if m.Meta == nil {
+				m.Meta = map[string]any{}
+			}
+			m.Meta[archiveReceipts] = receipts
+			return nil
+		})
+		return err
 	}
 	return nil
 }

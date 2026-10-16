@@ -7,11 +7,11 @@ import type { Target } from "./types.js";
 /** A page of the caller's favorites or reactions. */
 export interface MineQuery {
   /** contents (the default) or groups. */
-  target?: "contents" | "groups";
+  target?: "contents" | "entities";
   /** One content kind or group kind. */
   kind?: string;
   /** The group kinds each card names; every kind with a page by default. */
-  card_groups?: readonly string[];
+  card_entities?: readonly string[];
   cursor?: string;
   limit?: number;
   language?: string;
@@ -26,7 +26,7 @@ export class FavoritesClient {
   /** The target's favorite count and whether the caller favorited it (never, signed out). */
   get(t: Target, signal?: AbortSignal): Promise<FavoriteState> {
     const o = { params: { id: t.id }, signal };
-    return t.type === "groups" ? call(this.http, "GET", "/groups/{id}/favorite", o) : call(this.http, "GET", "/contents/{id}/favorite", { ...o, query: { version: t.version } });
+    return t.type === "entities" ? call(this.http, "GET", "/entities/{id}/favorite", o) : call(this.http, "GET", "/contents/{id}/favorite", { ...o, query: { version: t.version } });
   }
   /** Favorites or unfavorites the target (signed in); repeating is a no-op. Resolves with the new state and count. */
   async set(t: Target, favorited: boolean): Promise<FavoriteState> {
@@ -34,7 +34,7 @@ export class FavoritesClient {
     const method = favorited ? "POST" : "DELETE";
     const o = { params: { id: t.id } };
     const state: FavoriteState =
-      t.type === "groups" ? await call(this.http, method, "/groups/{id}/favorite", o) : await call(this.http, method, "/contents/{id}/favorite", { ...o, query: { version: t.version } });
+      t.type === "entities" ? await call(this.http, method, "/entities/{id}/favorite", o) : await call(this.http, method, "/contents/{id}/favorite", { ...o, query: { version: t.version } });
     emit({ type: "favorite.changed", target: t, favorited: state.favorited, count: state.count });
     return state;
   }

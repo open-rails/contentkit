@@ -18,6 +18,8 @@ export const groups: typeof en = {
     noMatch: "没有匹配项。",
   },
   groupEditor: {
+    internal: "仅供内部使用",
+    internalHint: "不显示在公开页面、搜索和阅读设置中。工作人员可在域名规则中使用此实体。",
     uploadAvatar: "上传头像",
     removeAvatar: "移除头像",
     images: "图片",

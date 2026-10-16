@@ -36,7 +36,7 @@ func factsOf(k *media.Kind, m *media.Manifest) facts {
 			continue
 		}
 		switch {
-		case k.Publish != nil && inPattern(k.Publish.Pages, file.Path):
+		case k.Publish != nil && inPattern(k.Publish.Pages, file.Path) && media.PageIncluded(*file):
 			pages++
 			if first == nil {
 				first = file

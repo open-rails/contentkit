@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReadResult, UploadRule } from "../generated/wire.js";
-import { acceptOf, defaultImage, filesFor, ratioLabel, ruleFor, screenFiles, uniqueName, withMediaType } from "./rules.js";
+import { acceptOf, defaultImage, filesFor, naturalNameCompare, ratioLabel, ruleFor, screenFiles, sortPageFiles, uniqueName, uniquePageName, withMediaType } from "./rules.js";
 import { chunkOffsets, mergeReads, processing } from "./windows.js";
 
 const MiB = 1 << 20;
@@ -58,6 +58,33 @@ describe("upload rules", () => {
     expect(uniqueName("a.png", ["b.png"])).toBe("a.png");
     expect(uniqueName("a.png", ["a.jpg", "a-2.webp"])).toBe("a-3.png");
     expect(uniqueName("notes", ["notes"])).toBe("notes-2");
+  });
+
+  it("matches ZIP natural order before padding, retaining gaps, ranges and large numbers", () => {
+    expect(["1000.png", "10.png", "2.png", "03-04.png", "001.png", "1.png"].sort(naturalNameCompare)).toEqual([
+      "001.png", "1.png", "2.png", "03-04.png", "10.png", "1000.png",
+    ]);
+    expect(["p2.png", "P2.png", "p10.png"].sort(naturalNameCompare)).toEqual(["P2.png", "p2.png", "p10.png"]);
+  });
+
+  it("sorts only the new page batch, keeping non-page entries in their slots", () => {
+    const pages = { ...images, page: true };
+    const entries = [
+      { file: file("10.png", "image/png"), rule: pages },
+      { file: file("z.mp4", "video/mp4"), rule: videos },
+      { file: file("2.png", "image/png"), rule: pages },
+      { file: file("a.mp4", "video/mp4"), rule: videos },
+      { file: file("1.png", "image/png"), rule: pages },
+    ];
+    expect(sortPageFiles(entries).map((x) => x.file.name)).toEqual(["1.png", "z.mp4", "2.png", "a.mp4", "10.png"]);
+    expect(entries.map((x) => x.file.name)).toEqual(["10.png", "z.mp4", "2.png", "a.mp4", "1.png"]);
+  });
+
+  it("preserves distinct 1/001 sources without fabricating a joined-range collision name", () => {
+    expect(uniquePageName("001.png", ["1.jpg"])).toBe("001 (2).png");
+    expect(uniquePageName("1.png", ["001.png", "1 (2).webp"])).toBe("1 (3).png");
+    expect(uniquePageName("01-02.png", ["1-2.jpg"])).toBe("01-02 (2).png");
+    expect(uniquePageName("1000.png", ["999.png"])).toBe("1000.png");
   });
 
   it("labels ratios and lists a rule's uploads", () => {

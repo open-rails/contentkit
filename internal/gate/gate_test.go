@@ -12,7 +12,23 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 )
+
+func TestReaderPreferencesVary(t *testing.T) {
+	g := &Gate{Auth: provider{err: auth.ErrUnauthenticated}}
+	h := g.Guard(httpapi.Spec{Method: http.MethodGet, Path: "/contents", Auth: httpapi.Public}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		r := httptest.NewRequest(method, "/contents", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent || w.Header().Get("Vary") != readerprefs.Header {
+			t.Fatalf("%s: status=%d Vary=%q", method, w.Code, w.Header().Get("Vary"))
+		}
+	}
+}
 
 var scope = auth.Scope{Authority: "https://auth.test", ID: "root"}
 

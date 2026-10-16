@@ -41,7 +41,7 @@ it("shows loading and empty-result states while preserving keyboard submit and s
   await user.type(input, "cat");
   expect(screen.getByRole("status")).toHaveTextContent("Loading…");
   await waitFor(() => expect(complete).toBeTypeOf("function"));
-  complete!(Response.json({ contents: [], groups: [] }));
+  complete!(Response.json({ contents: [], entities: [] }));
   expect(await screen.findByText("Nothing matches “cat”.")).toBeVisible();
   await user.keyboard("{Enter}");
   expect(onSearch).toHaveBeenLastCalledWith("cat");
@@ -49,7 +49,7 @@ it("shows loading and empty-result states while preserving keyboard submit and s
   complete = undefined;
   await user.type(input, "s");
   await waitFor(() => expect(complete).toBeTypeOf("function"));
-  complete!(Response.json({ contents: [], groups: [{ id: "artist", kind: "artist", name: "Cats", slug: "cats", path: "/artists/cats" }] }));
+  complete!(Response.json({ contents: [], entities: [{ id: "artist", kind: "artist", name: "Cats", slug: "cats", path: "/artists/cats" }] }));
   const option = await screen.findByRole("option", { name: /Cats/ });
   await user.keyboard("{ArrowDown}");
   expect(option).toHaveAttribute("aria-selected", "true");
@@ -79,7 +79,7 @@ it("uses recent searches and permits clearing them without submitting a search",
 
 it("submits a recent query from the keyboard and keeps typed text when closing", async () => {
   const onSearch = vi.fn();
-  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (url) => String(url).includes("/typeahead") ? Response.json({ contents: [], groups: [] }) : Response.json({ searches: [{ query: "old query" }] }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (url) => String(url).includes("/typeahead") ? Response.json({ contents: [], entities: [] }) : Response.json({ searches: [{ query: "old query" }] }) });
   render(<ContentKitProvider client={client}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
   const user = userEvent.setup();
   const input = screen.getByRole("combobox", { name: "Search" });
@@ -96,7 +96,7 @@ it("submits a recent query from the keyboard and keeps typed text when closing",
 
 it("keeps public search usable with local guest recents and no account history request", async () => {
   const onSearch = vi.fn();
-  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).includes("/typeahead") ? Response.json({ contents: [], groups: [] }) : Response.json({ error: { code: "authentication_required", message: "Sign in" } }, { status: 401 }));
+  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).includes("/typeahead") ? Response.json({ contents: [], entities: [] }) : Response.json({ error: { code: "authentication_required", message: "Sign in" } }, { status: 401 }));
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: fetcher });
   render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
   const user = userEvent.setup();
@@ -165,7 +165,7 @@ it("anchors the header dropdown to the field width and follows resize and scroll
 
 it("uses the input as a header fallback and offers the archived clear/close control", async () => {
   const onSearch = vi.fn();
-  const client = createContentKitClient({ baseUrl: "https://content.test/header-input", fetch: async () => Response.json({ contents: [], groups: [] }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/header-input", fetch: async () => Response.json({ contents: [], entities: [] }) });
   render(<ContentKitProvider client={client} viewer={null}><SearchBox presentation="header" onSearch={onSearch} /></ContentKitProvider>);
   const input = screen.getByRole("combobox", { name: "Search" });
   vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ bottom: 48, left: 20, width: 320 } as DOMRect);
@@ -189,8 +189,8 @@ it("renders one flat header list with colored type icons, provider order, and cl
     { id: "g", kind: "gallery", title: "Gallery result", path: "/gallery" },
     { id: "p", kind: "post", title: "Post result", path: "/post" },
   ];
-  const groups = ["artist", "series", "tag", "character"].map((kind) => ({ id: kind, kind, name: `${kind} result`, path: `/${kind}` }));
-  const client = createContentKitClient({ baseUrl: "https://content.test/header-results", fetch: async () => Response.json({ contents, groups }) });
+  const entities = ["artist", "series", "tag", "character"].map((kind) => ({ id: kind, kind, name: `${kind} result`, path: `/${kind}` }));
+  const client = createContentKitClient({ baseUrl: "https://content.test/header-results", fetch: async () => Response.json({ contents, entities }) });
   render(<ContentKitProvider client={client} viewer={null} navigate={navigate}><SearchBox presentation="header" onSearch={() => {}} /></ContentKitProvider>);
   const user = userEvent.setup();
   await user.type(screen.getByRole("combobox", { name: "Search" }), "result");
@@ -208,7 +208,7 @@ it("renders one flat header list with colored type icons, provider order, and cl
 });
 
 it("keeps the default inline panel and content thumbnails", async () => {
-  const client = createContentKitClient({ baseUrl: "https://content.test/inline-cover", fetch: async () => Response.json({ contents: [{ id: "gallery", kind: "gallery", title: "Inline gallery", cover: [{ url: "https://media.test/cover.webp", w: 300, h: 400 }] }], groups: [] }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/inline-cover", fetch: async () => Response.json({ contents: [{ id: "gallery", kind: "gallery", title: "Inline gallery", cover: [{ url: "https://media.test/cover.webp", w: 300, h: 400 }] }], entities: [] }) });
   const { container } = render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={() => {}} /></ContentKitProvider>);
   await userEvent.setup().type(screen.getByRole("combobox", { name: "Search" }), "gallery");
   await screen.findByRole("option", { name: "Inline gallery" });
@@ -218,7 +218,7 @@ it("keeps the default inline panel and content thumbnails", async () => {
   expect(document.querySelector('[data-ckui="search-backdrop"]')).toBeNull();
 });
 
-it("shows recent dates and keeps portaled history controls working without navigating", async () => {
+it("omits recent dates and keeps portaled history controls working without navigating", async () => {
   let searches = [
     { query: "older", results: 1, searched_at: "2026-04-15T12:00:00Z" },
     { query: "newer", results: 2, searched_at: "2026-04-16T12:00:00Z" },
@@ -240,7 +240,7 @@ it("shows recent dates and keeps portaled history controls working without navig
   vi.spyOn(input, "getBoundingClientRect").mockImplementation(() => ({ bottom: 48, left: 20, width } as DOMRect));
   await user.click(input);
   await screen.findByRole("option", { name: /older/ });
-  expect(document.querySelector('time[datetime="2026-04-15T12:00:00Z"]')).toHaveTextContent(new Intl.DateTimeFormat(undefined, { dateStyle: "short" }).format(new Date("2026-04-15T12:00:00Z")));
+  expect(document.querySelector("time")).toBeNull();
   width = 240;
   fireEvent.resize(window);
   expect(document.querySelector("time")).toBeNull();

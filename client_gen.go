@@ -20,10 +20,11 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/offers"
+	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/helpers/notify"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, group kinds, content filters, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
 func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
 	var out kindsroute.ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
@@ -99,8 +100,8 @@ func (c *Client) PostContentComments(ctx context.Context, id string, body conten
 	return out, err
 }
 
-// GetGroupCommentsQuery is the query of GetGroupComments.
-type GetGroupCommentsQuery struct {
+// GetEntityCommentsQuery is the query of GetEntityComments.
+type GetEntityCommentsQuery struct {
 	// only this language's comments; every language by default
 	Language string
 	// likes (most liked), best (Wilson lower bound) or newest (the default)
@@ -111,7 +112,7 @@ type GetGroupCommentsQuery struct {
 	Offset int
 }
 
-func (q GetGroupCommentsQuery) values() url.Values {
+func (q GetEntityCommentsQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -128,17 +129,17 @@ func (q GetGroupCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetGroupComments is GET /v1/groups/{id}/comments (public). The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.
-func (c *Client) GetGroupComments(ctx context.Context, id string, q GetGroupCommentsQuery) ([]content.Comment, error) {
+// GetEntityComments is GET /v1/entities/{id}/comments (public). The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.
+func (c *Client) GetEntityComments(ctx context.Context, id string, q GetEntityCommentsQuery) ([]content.Comment, error) {
 	var out []content.Comment
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PostGroupComments is POST /v1/groups/{id}/comments (public). Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
-func (c *Client) PostGroupComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
+// PostEntityComments is POST /v1/entities/{id}/comments (public). Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
+func (c *Client) PostEntityComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
 	var out content.Comment
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
@@ -369,31 +370,31 @@ func (c *Client) GetContentReaction(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostGroupLike is POST /v1/groups/{id}/like (public). Likes a group.
-func (c *Client) PostGroupLike(ctx context.Context, id string) (content.ReactionCounts, error) {
+// PostEntityLike is POST /v1/entities/{id}/like (public). Likes a group.
+func (c *Client) PostEntityLike(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/like", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/like", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostGroupDislike is POST /v1/groups/{id}/dislike (public). Dislikes a group.
-func (c *Client) PostGroupDislike(ctx context.Context, id string) (content.ReactionCounts, error) {
+// PostEntityDislike is POST /v1/entities/{id}/dislike (public). Dislikes a group.
+func (c *Client) PostEntityDislike(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/dislike", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/dislike", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// DeleteGroupReaction is DELETE /v1/groups/{id}/reaction (public). Clears the caller's reaction to a group.
-func (c *Client) DeleteGroupReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+// DeleteEntityReaction is DELETE /v1/entities/{id}/reaction (public). Clears the caller's reaction to a group.
+func (c *Client) DeleteEntityReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// GetGroupReaction is GET /v1/groups/{id}/reaction (public). The like and dislike counts of a group and the caller's own reaction.
-func (c *Client) GetGroupReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+// GetEntityReaction is GET /v1/entities/{id}/reaction (public). The like and dislike counts of a group and the caller's own reaction.
+func (c *Client) GetEntityReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -460,24 +461,24 @@ func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostGroupFavorite is POST /v1/groups/{id}/favorite (user). Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
-func (c *Client) PostGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+// PostEntityFavorite is POST /v1/entities/{id}/favorite (user). Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
+func (c *Client) PostEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// DeleteGroupFavorite is DELETE /v1/groups/{id}/favorite (user). Unfavorites a group, also one no longer visible. Answers the state with its favorite count.
-func (c *Client) DeleteGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+// DeleteEntityFavorite is DELETE /v1/entities/{id}/favorite (user). Unfavorites a group, also one no longer visible. Answers the state with its favorite count.
+func (c *Client) DeleteEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// GetGroupFavorite is GET /v1/groups/{id}/favorite (public). The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).
-func (c *Client) GetGroupFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+// GetEntityFavorite is GET /v1/entities/{id}/favorite (public). The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).
+func (c *Client) GetEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -729,15 +730,15 @@ func (c *Client) DeleteGlobalCommentBan(ctx context.Context, user string) error 
 	return c.call(ctx, http.MethodDelete, expand("/v1/global-comment-bans/{user}", "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
-// GetGroupHeldCommentsQuery is the query of GetGroupHeldComments.
-type GetGroupHeldCommentsQuery struct {
+// GetEntityHeldCommentsQuery is the query of GetEntityHeldComments.
+type GetEntityHeldCommentsQuery struct {
 	// the previous page's next
 	Cursor string
 	// page size: 20 by default, at most 100
 	Limit int
 }
 
-func (q GetGroupHeldCommentsQuery) values() url.Values {
+func (q GetEntityHeldCommentsQuery) values() url.Values {
 	v := url.Values{}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -748,22 +749,22 @@ func (q GetGroupHeldCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetGroupHeldComments is GET /v1/groups/{id}/held-comments (person). Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.
-func (c *Client) GetGroupHeldComments(ctx context.Context, id string, q GetGroupHeldCommentsQuery) (content.HeldPage, error) {
+// GetEntityHeldComments is GET /v1/entities/{id}/held-comments (person). Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.
+func (c *Client) GetEntityHeldComments(ctx context.Context, id string, q GetEntityHeldCommentsQuery) (content.HeldPage, error) {
 	var out content.HeldPage
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/held-comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/held-comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetGroupCommentBansQuery is the query of GetGroupCommentBans.
-type GetGroupCommentBansQuery struct {
+// GetEntityCommentBansQuery is the query of GetEntityCommentBans.
+type GetEntityCommentBansQuery struct {
 	// page size: 20 by default, at most 100
 	Limit int
 	// items to skip
 	Offset int
 }
 
-func (q GetGroupCommentBansQuery) values() url.Values {
+func (q GetEntityCommentBansQuery) values() url.Values {
 	v := url.Values{}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
@@ -774,29 +775,31 @@ func (q GetGroupCommentBansQuery) values() url.Values {
 	return v
 }
 
-// GetGroupCommentBans is GET /v1/groups/{id}/comment-bans (person). The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.
-func (c *Client) GetGroupCommentBans(ctx context.Context, id string, q GetGroupCommentBansQuery) ([]content.CommentBan, error) {
+// GetEntityCommentBans is GET /v1/entities/{id}/comment-bans (person). The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) GetEntityCommentBans(ctx context.Context, id string, q GetEntityCommentBansQuery) ([]content.CommentBan, error) {
 	var out []content.CommentBan
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/comment-bans", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comment-bans", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PutGroupCommentBan is PUT /v1/groups/{id}/comment-bans/{user} (person). Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.
-func (c *Client) PutGroupCommentBan(ctx context.Context, id string, user string, body content.BanInput) (content.CommentBan, error) {
+// PutEntityCommentBan is PUT /v1/entities/{id}/comment-bans/{user} (person). Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) PutEntityCommentBan(ctx context.Context, id string, user string, body content.BanInput) (content.CommentBan, error) {
 	var out content.CommentBan
-	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupCommentBan is DELETE /v1/groups/{id}/comment-bans/{user} (person). Lifts a user's ban on a user-owned group and its content.
-func (c *Client) DeleteGroupCommentBan(ctx context.Context, id string, user string) error {
-	return c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, nil, nil)
+// DeleteEntityCommentBan is DELETE /v1/entities/{id}/comment-bans/{user} (person). Lifts a user's ban on a user-owned group and its content.
+func (c *Client) DeleteEntityCommentBan(ctx context.Context, id string, user string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
 // GetContentCanCommentQuery is the query of GetContentCanComment.
 type GetContentCanCommentQuery struct {
 	// one version of the content item; the item itself by default
 	Version string
+	// only this language's thread; all languages by default
+	Language string
 }
 
 func (q GetContentCanCommentQuery) values() url.Values {
@@ -804,20 +807,37 @@ func (q GetContentCanCommentQuery) values() url.Values {
 	if q.Version != "" {
 		v.Set("version", q.Version)
 	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
 	return v
 }
 
-// GetContentCanComment is GET /v1/contents/{id}/can-comment (public). Whether the caller may comment on a content item or one of its versions, and the ban that stops it.
+// GetContentCanComment is GET /v1/contents/{id}/can-comment (public). Whether the caller may comment on a content item or one of its versions, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
 func (c *Client) GetContentCanComment(ctx context.Context, id string, q GetContentCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetGroupCanComment is GET /v1/groups/{id}/can-comment (public). Whether the caller may comment on a group, and the ban that stops it.
-func (c *Client) GetGroupCanComment(ctx context.Context, id string) (content.CommentStanding, error) {
+// GetEntityCanCommentQuery is the query of GetEntityCanComment.
+type GetEntityCanCommentQuery struct {
+	// only this language's thread; all languages by default
+	Language string
+}
+
+func (q GetEntityCanCommentQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on a group, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
+func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntityCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/can-comment", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
@@ -965,10 +985,8 @@ func (c *Client) GetContentVersion(ctx context.Context, id string, vid string, q
 	return out, err
 }
 
-// GetManageContentsQuery is the query of GetManageContents.
-type GetManageContentsQuery struct {
-	// only this kind
-	Kind string
+// GetManageQuery is the query of GetManage.
+type GetManageQuery struct {
 	// draft, scheduled, published (live) or deleted; every state but deleted by default
 	State string
 	// only this owner group's, which the caller edits
@@ -983,11 +1001,8 @@ type GetManageContentsQuery struct {
 	Offset int
 }
 
-func (q GetManageContentsQuery) values() url.Values {
+func (q GetManageQuery) values() url.Values {
 	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
@@ -1009,10 +1024,56 @@ func (q GetManageContentsQuery) values() url.Values {
 	return v
 }
 
-// GetManageContents is GET /v1/manage/contents (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.
-func (c *Client) GetManageContents(ctx context.Context, q GetManageContentsQuery) ([]catalog.Content, error) {
+// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.
+func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Content, error) {
 	var out []catalog.Content
-	err := c.call(ctx, http.MethodGet, "/v1/manage/contents", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/manage", q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageKindQuery is the query of GetManageKind.
+type GetManageKindQuery struct {
+	// draft, scheduled, published or deleted
+	State string
+	// only this owner group's, which the caller edits
+	OwnerGroup string
+	// only items whose title, description or body contains this text, ignoring case
+	Q string
+	// the language to show text in; the site's first language, then any, when it has none
+	Language string
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetManageKindQuery) values() url.Values {
+	v := url.Values{}
+	if q.State != "" {
+		v.Set("state", q.State)
+	}
+	if q.OwnerGroup != "" {
+		v.Set("owner_group", q.OwnerGroup)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetManageKind is GET /v1/manage/{kind} (public). Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.
+func (c *Client) GetManageKind(ctx context.Context, kind string, q GetManageKindQuery) ([]catalog.Content, error) {
+	var out []catalog.Content
+	err := c.call(ctx, http.MethodGet, expand("/v1/manage/{kind}", "{kind}", url.PathEscape(kind)), q.values(), nil, &out)
 	return out, err
 }
 
@@ -1392,15 +1453,15 @@ func (c *Client) PostCodesAliases(ctx context.Context, body contenturl.AliasLook
 	return out, err
 }
 
-// GetGroupsQuery is the query of GetGroups.
-type GetGroupsQuery struct {
-	// only groups of this kind
+// GetEntitiesQuery is the query of GetEntities.
+type GetEntitiesQuery struct {
+	// only entities of this kind
 	Kind string
-	// only children of this group
+	// only children of this entity
 	Parent string
-	// only groups scoped by this group
+	// only entities scoped by this entity
 	Scope string
-	// only the group with this slug
+	// only the entity with this slug
 	Slug string
 	// only sort names starting with this letter (a-z), or with anything else (#)
 	Letter string
@@ -1416,7 +1477,7 @@ type GetGroupsQuery struct {
 	Limit int
 }
 
-func (q GetGroupsQuery) values() url.Values {
+func (q GetEntitiesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
@@ -1451,20 +1512,20 @@ func (q GetGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetGroups is GET /v1/groups (public). Lists active groups with name, code, path, cover, avatar, count and a sellable group's offer and the viewer's membership, filtered, ordered and cursor-paged.
-func (c *Client) GetGroups(ctx context.Context, q GetGroupsQuery) (groups.GroupPage, error) {
+// GetEntities is GET /v1/entities (public). Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.
+func (c *Client) GetEntities(ctx context.Context, q GetEntitiesQuery) (groups.GroupPage, error) {
 	var out groups.GroupPage
-	err := c.call(ctx, http.MethodGet, "/v1/groups", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/entities", q.values(), nil, &out)
 	return out, err
 }
 
-// GetGroupQuery is the query of GetGroup.
-type GetGroupQuery struct {
+// GetEntityQuery is the query of GetEntity.
+type GetEntityQuery struct {
 	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
 	Language string
 }
 
-func (q GetGroupQuery) values() url.Values {
+func (q GetEntityQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -1472,16 +1533,108 @@ func (q GetGroupQuery) values() url.Values {
 	return v
 }
 
-// GetGroup is GET /v1/groups/{id} (public). An active group with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged group answers with its survivor.
-func (c *Client) GetGroup(ctx context.Context, id string, q GetGroupQuery) (groups.GroupDetail, error) {
+// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.
+func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (groups.GroupDetail, error) {
 	var out groups.GroupDetail
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetMeGroupsQuery is the query of GetMeGroups.
-type GetMeGroupsQuery struct {
-	// only groups of this kind
+// GetManageEntitiesQuery is the query of GetManageEntities.
+type GetManageEntitiesQuery struct {
+	// only entities of this kind
+	Kind string
+	// only children of this entity
+	Parent string
+	// only entities scoped by this entity
+	Scope string
+	// only the entity with this slug
+	Slug string
+	// match a canonical name, alias or slug
+	Q string
+	// only sort names starting with this letter
+	Letter string
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+	// count contents of this kind
+	ContentKind string
+	// name, count or newest
+	Sort string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: at most 200
+	Limit int
+}
+
+func (q GetManageEntitiesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Parent != "" {
+		v.Set("parent", q.Parent)
+	}
+	if q.Scope != "" {
+		v.Set("scope", q.Scope)
+	}
+	if q.Slug != "" {
+		v.Set("slug", q.Slug)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Letter != "" {
+		v.Set("letter", q.Letter)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.ContentKind != "" {
+		v.Set("content_kind", q.ContentKind)
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetManageEntities is GET /v1/manage/entities (staff). Lists active entities for administration, including internal classifications that are never exposed by public reads.
+func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (groups.GroupPage, error) {
+	var out groups.GroupPage
+	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageEntityQuery is the query of GetManageEntity.
+type GetManageEntityQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q GetManageEntityQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetManageEntity is GET /v1/manage/entities/{id} (staff). An entity's administration view, including internal classifications and their relationships.
+func (c *Client) GetManageEntity(ctx context.Context, id string, q GetManageEntityQuery) (groups.GroupDetail, error) {
+	var out groups.GroupDetail
+	err := c.call(ctx, http.MethodGet, expand("/v1/manage/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetMeEntitiesQuery is the query of GetMeEntities.
+type GetMeEntitiesQuery struct {
+	// only entities of this kind
 	Kind string
 	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
 	Language string
@@ -1493,7 +1646,7 @@ type GetMeGroupsQuery struct {
 	Limit int
 }
 
-func (q GetMeGroupsQuery) values() url.Values {
+func (q GetMeEntitiesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
@@ -1513,85 +1666,85 @@ func (q GetMeGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetMeGroups is GET /v1/me/groups (user). The viewer's active groups: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the group's AuthKit scope, or hold the key of, each saying which, as GET /groups lists them.
-func (c *Client) GetMeGroups(ctx context.Context, q GetMeGroupsQuery) (groups.MyGroupPage, error) {
+// GetMeEntities is GET /v1/me/entities (user). The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.
+func (c *Client) GetMeEntities(ctx context.Context, q GetMeEntitiesQuery) (groups.MyGroupPage, error) {
 	var out groups.MyGroupPage
-	err := c.call(ctx, http.MethodGet, "/v1/me/groups", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/me/entities", q.values(), nil, &out)
 	return out, err
 }
 
-// PostGroups is POST /v1/groups (editor). Creates groups with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) PostGroups(ctx context.Context, body []groups.GroupInput) ([]groups.Group, error) {
+// PostEntities is POST /v1/entities (editor). Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+func (c *Client) PostEntities(ctx context.Context, body []groups.GroupInput) ([]groups.Group, error) {
 	var out []groups.Group
-	err := c.call(ctx, http.MethodPost, "/v1/groups", nil, body, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/entities", nil, body, &out)
 	return out, err
 }
 
-// PatchGroup is PATCH /v1/groups/{id} (editor). Updates a group's given fields; state restores or deletes it. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) PatchGroup(ctx context.Context, id string, body groups.GroupUpdate) (groups.Group, error) {
+// PatchEntity is PATCH /v1/entities/{id} (editor). Updates a entity's given fields; state restores or deletes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+func (c *Client) PatchEntity(ctx context.Context, id string, body groups.GroupUpdate) (groups.Group, error) {
 	var out groups.Group
-	err := c.call(ctx, http.MethodPatch, expand("/v1/groups/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPatch, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroup is DELETE /v1/groups/{id} (editor). Marks a group deleted, retires its AuthKit scope and hides its media; a user-owned group's content is deleted with it, and restoring the group (PATCH state active) brings that content back, and its media within the retention. Staff holding root:groups:write write any group; a signed-in person creates groups of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) DeleteGroup(ctx context.Context, id string) (groups.Group, error) {
+// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+func (c *Client) DeleteEntity(ctx context.Context, id string) (groups.Group, error) {
 	var out groups.Group
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PutGroupNames is PUT /v1/groups/{id}/names (staff). Replaces a group's names and aliases.
-func (c *Client) PutGroupNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
+// PutEntityNames is PUT /v1/entities/{id}/names (staff). Replaces a entity's names and aliases.
+func (c *Client) PutEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
 	var out []groups.Name
-	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostGroupNames is POST /v1/groups/{id}/names (staff). Adds names and aliases to a group; a new canonical name demotes the old one to an alias.
-func (c *Client) PostGroupNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
+// PostEntityNames is POST /v1/entities/{id}/names (staff). Adds names and aliases to a entity; a new canonical name demotes the old one to an alias.
+func (c *Client) PostEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
 	var out []groups.Name
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupNames is DELETE /v1/groups/{id}/names (staff). Removes names and aliases from a group.
-func (c *Client) DeleteGroupNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
+// DeleteEntityNames is DELETE /v1/entities/{id}/names (staff). Removes names and aliases from a entity.
+func (c *Client) DeleteEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
 	var out []groups.Name
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostGroupEdges is POST /v1/groups/{id}/edges (staff). Adds edges from a group.
-func (c *Client) PostGroupEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
+// PostEntityEdges is POST /v1/entities/{id}/edges (staff). Adds edges from a entity.
+func (c *Client) PostEntityEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
 	var out []groups.Edge
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupEdges is DELETE /v1/groups/{id}/edges (staff). Removes edges from a group.
-func (c *Client) DeleteGroupEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
+// DeleteEntityEdges is DELETE /v1/entities/{id}/edges (staff). Removes edges from a entity.
+func (c *Client) DeleteEntityEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
 	var out []groups.Edge
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostGroupMerge is POST /v1/groups/{id}/merge (staff). Merges a group into another of its kind: memberships, names, edges and children move, and its code redirects.
-func (c *Client) PostGroupMerge(ctx context.Context, id string, body groups.MergeInput) (groups.MergeReport, error) {
+// PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.
+func (c *Client) PostEntityMerge(ctx context.Context, id string, body groups.MergeInput) (groups.MergeReport, error) {
 	var out groups.MergeReport
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/merge", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/merge", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// GetGroupMembersQuery is the query of GetGroupMembers.
-type GetGroupMembersQuery struct {
+// GetEntityMembersQuery is the query of GetEntityMembers.
+type GetEntityMembersQuery struct {
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 50 by default, at most 500
 	Limit int
 }
 
-func (q GetGroupMembersQuery) values() url.Values {
+func (q GetEntityMembersQuery) values() url.Values {
 	v := url.Values{}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -1602,41 +1755,41 @@ func (q GetGroupMembersQuery) values() url.Values {
 	return v
 }
 
-// GetGroupMembers is GET /v1/groups/{id}/members (staff). A group's memberships in member order, paged.
-func (c *Client) GetGroupMembers(ctx context.Context, id string, q GetGroupMembersQuery) (groups.MemberPage, error) {
+// GetEntityMembers is GET /v1/entities/{id}/members (staff). A entity's memberships in member order, paged.
+func (c *Client) GetEntityMembers(ctx context.Context, id string, q GetEntityMembersQuery) (groups.MemberPage, error) {
 	var out groups.MemberPage
-	err := c.call(ctx, http.MethodGet, expand("/v1/groups/{id}/members", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PostGroupMembers is POST /v1/groups/{id}/members (staff). Adds contents or versions to a group, or updates their position, window and state.
-func (c *Client) PostGroupMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
+// PostEntityMembers is POST /v1/entities/{id}/members (staff). Adds contents or versions to a entity, or updates their position, window and state.
+func (c *Client) PostEntityMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
 	var out groups.Written
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupMembers is DELETE /v1/groups/{id}/members (staff). Removes contents or versions from a group.
-func (c *Client) DeleteGroupMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
+// DeleteEntityMembers is DELETE /v1/entities/{id}/members (staff). Removes contents or versions from a entity.
+func (c *Client) DeleteEntityMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
 	var out groups.Written
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PutGroupMembersOrder is PUT /v1/groups/{id}/members/order (staff). Orders an ordered group: the listed members first, in list order.
-func (c *Client) PutGroupMembersOrder(ctx context.Context, id string, body groups.Order) (groups.Written, error) {
+// PutEntityMembersOrder is PUT /v1/entities/{id}/members/order (staff). Orders an ordered entity: the listed members first, in list order.
+func (c *Client) PutEntityMembersOrder(ctx context.Context, id string, body groups.Order) (groups.Written, error) {
 	var out groups.Written
-	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/members/order", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/members/order", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// GetContentGroupsQuery is the query of GetContentGroups.
-type GetContentGroupsQuery struct {
+// GetContentEntitiesQuery is the query of GetContentEntities.
+type GetContentEntitiesQuery struct {
 	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
 	Language string
 }
 
-func (q GetContentGroupsQuery) values() url.Values {
+func (q GetContentEntitiesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -1644,20 +1797,20 @@ func (q GetContentGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetContentGroups is GET /v1/contents/{id}/groups (staff). A content's memberships, its versions' included, with the groups they name.
-func (c *Client) GetContentGroups(ctx context.Context, id string, q GetContentGroupsQuery) (groups.ContentMemberships, error) {
+// GetContentEntities is GET /v1/contents/{id}/entities (staff). A content's memberships, its versions' included, with the entities they name.
+func (c *Client) GetContentEntities(ctx context.Context, id string, q GetContentEntitiesQuery) (groups.ContentMemberships, error) {
 	var out groups.ContentMemberships
-	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/groups", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/entities", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PutContentGroupsQuery is the query of PutContentGroups.
-type PutContentGroupsQuery struct {
+// PutContentEntitiesQuery is the query of PutContentEntities.
+type PutContentEntitiesQuery struct {
 	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
 	Language string
 }
 
-func (q PutContentGroupsQuery) values() url.Values {
+func (q PutContentEntitiesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -1665,10 +1818,10 @@ func (q PutContentGroupsQuery) values() url.Values {
 	return v
 }
 
-// PutContentGroups is PUT /v1/contents/{id}/groups (staff). Replaces a content's memberships, its versions' included, in the group kinds named (every kind its kind joins by default).
-func (c *Client) PutContentGroups(ctx context.Context, id string, body groups.ContentGroups, q PutContentGroupsQuery) (groups.ContentMemberships, error) {
+// PutContentEntities is PUT /v1/contents/{id}/entities (staff). Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).
+func (c *Client) PutContentEntities(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesQuery) (groups.ContentMemberships, error) {
 	var out groups.ContentMemberships
-	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/groups", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities", "{id}", url.PathEscape(id)), q.values(), body, &out)
 	return out, err
 }
 
@@ -1740,6 +1893,20 @@ func (c *Client) DeleteNotificationDismiss(ctx context.Context, id string) (noti
 func (c *Client) PostNotificationsPublish(ctx context.Context, body notification.Publication) (notification.Published, error) {
 	var out notification.Published
 	err := c.call(ctx, http.MethodPost, "/v1/notifications/publish", nil, body, &out)
+	return out, err
+}
+
+// GetContentVersionPages is GET /v1/contents/{id}/versions/{version}/pages (editor). All retained page sources and their automatic or manual reader selection. Flags never block publication.
+func (c *Client) GetContentVersionPages(ctx context.Context, id string, version string) (versions.PageReview, error) {
+	var out versions.PageReview
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil, &out)
+	return out, err
+}
+
+// PatchContentVersionPages is PATCH /v1/contents/{id}/versions/{version}/pages (editor). Overrides page inclusion or reorders sources without renaming them. The current revision is required.
+func (c *Client) PatchContentVersionPages(ctx context.Context, id string, version string, body versions.PageReviewPatch) (versions.PageReview, error) {
+	var out versions.PageReview
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, &out)
 	return out, err
 }
 
@@ -1827,31 +1994,31 @@ func (c *Client) DeleteContentVersionOffer(ctx context.Context, id string, vid s
 	return out, err
 }
 
-// PutGroupOffer is PUT /v1/groups/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
-func (c *Client) PutGroupOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
+// PutEntityOffer is PUT /v1/entities/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+func (c *Client) PutEntityOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
 	var out offers.Offer
-	err := c.call(ctx, http.MethodPut, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteGroupOffer is DELETE /v1/groups/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
-func (c *Client) DeleteGroupOffer(ctx context.Context, id string) (offers.Offer, error) {
+// DeleteEntityOffer is DELETE /v1/entities/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
+func (c *Client) DeleteEntityOffer(ctx context.Context, id string) (offers.Offer, error) {
 	var out offers.Offer
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostGroupJoin is POST /v1/groups/{id}/join (user). Joins a group free to join: grants the viewer its key.
-func (c *Client) PostGroupJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
+// PostEntityJoin is POST /v1/entities/{id}/join (user). Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.
+func (c *Client) PostEntityJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
 	var out offers.GroupJoin
-	err := c.call(ctx, http.MethodPost, expand("/v1/groups/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// DeleteGroupJoin is DELETE /v1/groups/{id}/join (user). Leaves a group joined free; a bought membership stays.
-func (c *Client) DeleteGroupJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
+// DeleteEntityJoin is DELETE /v1/entities/{id}/join (user). Leaves a group joined free; a bought membership stays.
+func (c *Client) DeleteEntityJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
 	var out offers.GroupJoin
-	err := c.call(ctx, http.MethodDelete, expand("/v1/groups/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
+	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -1879,7 +2046,7 @@ func (q GetMeLibraryQuery) values() url.Values {
 	return v
 }
 
-// GetMeLibrary is GET /v1/me/library (user). The content the viewer bought, newest first, deleted content included.
+// GetMeLibrary is GET /v1/me/library (user). The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.
 func (c *Client) GetMeLibrary(ctx context.Context, q GetMeLibraryQuery) (offers.LibraryPage, error) {
 	var out offers.LibraryPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/library", q.values(), nil, &out)
@@ -1922,6 +2089,114 @@ func (c *Client) GetOffers(ctx context.Context, q GetOffersQuery) (offers.OfferP
 	return out, err
 }
 
+// PostActivityContexts is POST /v1/activity-contexts (public). Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.
+func (c *Client) PostActivityContexts(ctx context.Context, body discovery.ActivityContextsInput) (discovery.ActivityContexts, error) {
+	var out discovery.ActivityContexts
+	err := c.call(ctx, http.MethodPost, "/v1/activity-contexts", nil, body, &out)
+	return out, err
+}
+
+// GetReleasesQuery is the query of GetReleases.
+type GetReleasesQuery struct {
+	// only this content kind
+	Kind string
+	// group ids every listed version is in; a position sort orders by the first
+	Groups []string
+	// group ids no listed version is in
+	ExcludeGroups []string
+	// owner group ids (channels): only content one of them owns
+	OwnerGroup []string
+	// user ids: only content one of them is credited on
+	Creators []string
+	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
+	Access []string
+	// configured tiers: only content locked behind one of them
+	Tiers []string
+	// version traits every listed version has
+	Traits []string
+	// name:value of one of the kind's filterable attributes; repeat for more
+	Attribute []string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
+	// the signed-in reader's unseen, in_progress or completed contents
+	ViewStatus string
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+	// the group kinds cards name; every kind with a page by default
+	CardEntities []string
+	// calendar days including today: 10 by default, from 1 through 31
+	Days int
+	// IANA zone for calendar-day boundaries; UTC by default
+	TimeZone string
+}
+
+func (q GetReleasesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.Groups) > 0 {
+		v.Set("groups", strings.Join(q.Groups, ","))
+	}
+	if len(q.ExcludeGroups) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	}
+	if len(q.OwnerGroup) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	}
+	if len(q.Creators) > 0 {
+		v.Set("creators", strings.Join(q.Creators, ","))
+	}
+	if len(q.Access) > 0 {
+		v.Set("access", strings.Join(q.Access, ","))
+	}
+	if len(q.Tiers) > 0 {
+		v.Set("tiers", strings.Join(q.Tiers, ","))
+	}
+	if len(q.Traits) > 0 {
+		v.Set("traits", strings.Join(q.Traits, ","))
+	}
+	for _, s := range q.Attribute {
+		v.Add("attribute", s)
+	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
+	if q.ViewStatus != "" {
+		v.Set("view_status", q.ViewStatus)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.Days != 0 {
+		v.Set("days", fmt.Sprint(q.Days))
+	}
+	if q.TimeZone != "" {
+		v.Set("time_zone", q.TimeZone)
+	}
+	return v
+}
+
+// GetReleases is GET /v1/releases (public). Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.
+func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery.DailyReleases, error) {
+	var out discovery.DailyReleases
+	err := c.call(ctx, http.MethodGet, "/v1/releases", q.values(), nil, &out)
+	return out, err
+}
+
 // GetContentsQuery is the query of GetContents.
 type GetContentsQuery struct {
 	// only this content kind
@@ -1944,6 +2219,8 @@ type GetContentsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -1957,7 +2234,11 @@ type GetContentsQuery struct {
 	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
+	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
+	ActivityFrom string
+	// custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular
+	ActivityUntil string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -1996,6 +2277,9 @@ func (q GetContentsQuery) values() url.Values {
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
 	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
 	}
@@ -2014,8 +2298,14 @@ func (q GetContentsQuery) values() url.Values {
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.ActivityFrom != "" {
+		v.Set("activity_from", q.ActivityFrom)
+	}
+	if q.ActivityUntil != "" {
+		v.Set("activity_until", q.ActivityUntil)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2057,6 +2347,8 @@ type GetSearchQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2070,7 +2362,7 @@ type GetSearchQuery struct {
 	// relevance (the default) or a list sort of the best matches
 	Sort string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// false ranks a signed-in reader's results as anyone's
 	Personalize *bool
 	// a signed-out reader's session, which keeps its recent searches
@@ -2116,6 +2408,9 @@ func (q GetSearchQuery) values() url.Values {
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
 	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
 	}
@@ -2134,8 +2429,8 @@ func (q GetSearchQuery) values() url.Values {
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Personalize != nil {
 		v.Set("personalize", fmt.Sprint(*q.Personalize))
@@ -2166,7 +2461,7 @@ type GetTypeaheadQuery struct {
 	// only contents of this kind
 	Kind string
 	// the group kinds suggested; every kind with a page by default
-	GroupKinds []string
+	EntityKinds []string
 	// only content with a live version in this language
 	Language string
 	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
@@ -2185,8 +2480,8 @@ func (q GetTypeaheadQuery) values() url.Values {
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
 	}
-	if len(q.GroupKinds) > 0 {
-		v.Set("group_kinds", strings.Join(q.GroupKinds, ","))
+	if len(q.EntityKinds) > 0 {
+		v.Set("entity_kinds", strings.Join(q.EntityKinds, ","))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -2232,6 +2527,8 @@ type GetContentSimilarQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2243,7 +2540,7 @@ type GetContentSimilarQuery struct {
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// 12 by default, at most 50
 	Limit int
 }
@@ -2280,6 +2577,9 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
 	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
 	}
@@ -2295,8 +2595,8 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if q.Mode != "" {
 		v.Set("mode", q.Mode)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
@@ -2333,6 +2633,8 @@ type GetRecommendationsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2344,7 +2646,7 @@ type GetRecommendationsQuery struct {
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// 12 by default, at most 50
 	Limit int
 }
@@ -2381,6 +2683,9 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
 	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
 	}
@@ -2396,8 +2701,8 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if q.Mode != "" {
 		v.Set("mode", q.Mode)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
@@ -2436,6 +2741,8 @@ type GetReleaseDatesQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
+	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
+	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2487,6 +2794,9 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
 	}
+	if q.PublishedWithin != "" {
+		v.Set("published_within", q.PublishedWithin)
+	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
 	}
@@ -2518,13 +2828,13 @@ func (c *Client) GetReleaseDates(ctx context.Context, q GetReleaseDatesQuery) (d
 	return out, err
 }
 
-// GetMeContentFiltersQuery is the query of GetMeContentFilters.
-type GetMeContentFiltersQuery struct {
+// GetContentFiltersQuery is the query of GetContentFilters.
+type GetContentFiltersQuery struct {
 	// the language of labels and group names
 	Language string
 }
 
-func (q GetMeContentFiltersQuery) values() url.Values {
+func (q GetContentFiltersQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -2532,10 +2842,10 @@ func (q GetMeContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// GetMeContentFilters is GET /v1/me/content-filters (user). The reader's content filters: each configured filter's group, default and setting; every read applies them.
-func (c *Client) GetMeContentFilters(ctx context.Context, q GetMeContentFiltersQuery) (discovery.ContentFilters, error) {
+// GetContentFilters is GET /v1/content-filters (public). The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.
+func (c *Client) GetContentFilters(ctx context.Context, q GetContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
-	err := c.call(ctx, http.MethodGet, "/v1/me/content-filters", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/content-filters", q.values(), nil, &out)
 	return out, err
 }
 
@@ -2560,6 +2870,27 @@ func (c *Client) PutMeContentFilters(ctx context.Context, body discovery.Content
 	return out, err
 }
 
+// PostMeContentFiltersInitializeQuery is the query of PostMeContentFiltersInitialize.
+type PostMeContentFiltersInitializeQuery struct {
+	// the language of labels and group names
+	Language string
+}
+
+func (q PostMeContentFiltersInitializeQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PostMeContentFiltersInitialize is POST /v1/me/content-filters/initialize (user). Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.
+func (c *Client) PostMeContentFiltersInitialize(ctx context.Context, body discovery.ContentFiltersInitialization, q PostMeContentFiltersInitializeQuery) (discovery.ContentFilters, error) {
+	var out discovery.ContentFilters
+	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/initialize", q.values(), body, &out)
+	return out, err
+}
+
 // GetMeHistoryQuery is the query of GetMeHistory.
 type GetMeHistoryQuery struct {
 	// only this content kind
@@ -2567,7 +2898,7 @@ type GetMeHistoryQuery struct {
 	// seen, in_progress or completed; any by default
 	Status string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// only content with a live version in this language
 	Language string
 	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
@@ -2588,8 +2919,8 @@ func (q GetMeHistoryQuery) values() url.Values {
 	if q.Status != "" {
 		v.Set("status", q.Status)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -2652,12 +2983,12 @@ func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) er
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
 type GetMeFavoritesQuery struct {
-	// contents (the default) or groups
+	// contents (the default) or entities
 	Target string
 	// only this content kind or group kind
 	Kind string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2678,8 +3009,8 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2710,12 +3041,12 @@ func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (dis
 type GetMeReactionsQuery struct {
 	// like or dislike; both by default
 	Value string
-	// contents (the default) or groups
+	// contents (the default) or entities
 	Target string
 	// only this content kind or group kind
 	Kind string
 	// the group kinds cards name; every kind with a page by default
-	CardGroups []string
+	CardEntities []string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2739,8 +3070,8 @@ func (q GetMeReactionsQuery) values() url.Values {
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
 	}
-	if len(q.CardGroups) > 0 {
-		v.Set("card_groups", strings.Join(q.CardGroups, ","))
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2848,8 +3179,8 @@ func (c *Client) GetSitemapContents(ctx context.Context, q GetSitemapContentsQue
 	return out, err
 }
 
-// GetSitemapGroupsQuery is the query of GetSitemapGroups.
-type GetSitemapGroupsQuery struct {
+// GetSitemapEntitiesQuery is the query of GetSitemapEntities.
+type GetSitemapEntitiesQuery struct {
 	// the group kind; required
 	Kind string
 	// the previous page's next_cursor
@@ -2858,7 +3189,7 @@ type GetSitemapGroupsQuery struct {
 	Limit int
 }
 
-func (q GetSitemapGroupsQuery) values() url.Values {
+func (q GetSitemapEntitiesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
@@ -2872,10 +3203,10 @@ func (q GetSitemapGroupsQuery) values() url.Values {
 	return v
 }
 
-// GetSitemapGroups is GET /v1/sitemap/groups (open). Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.
-func (c *Client) GetSitemapGroups(ctx context.Context, q GetSitemapGroupsQuery) (discovery.SitemapPage, error) {
+// GetSitemapEntities is GET /v1/sitemap/entities (open). Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.
+func (c *Client) GetSitemapEntities(ctx context.Context, q GetSitemapEntitiesQuery) (discovery.SitemapPage, error) {
 	var out discovery.SitemapPage
-	err := c.call(ctx, http.MethodGet, "/v1/sitemap/groups", q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, "/v1/sitemap/entities", q.values(), nil, &out)
 	return out, err
 }
 
@@ -2974,5 +3305,26 @@ func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.
 func (c *Client) PostImportExternalIds(ctx context.Context, body importer.ExternalIDsQuery) (importer.ExternalIDs, error) {
 	var out importer.ExternalIDs
 	err := c.call(ctx, http.MethodPost, "/v1/import/external-ids", nil, body, &out)
+	return out, err
+}
+
+// PutPublishingOperation is PUT /v1/publishing-operations/{id} (public). Creates or resumes one immutable archive submission. id is a client-chosen UUID. Requires content write; creating missing taxonomy also requires group write. Tenant and app come from the verified request. Repeating identical input returns the same draft and renews expired upload instructions; changed input is a conflict. when_ready requires provider-supported durable authorization.
+func (c *Client) PutPublishingOperation(ctx context.Context, id string, body publishing.Request) (publishing.Operation, error) {
+	var out publishing.Operation
+	err := c.call(ctx, http.MethodPut, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// PostPublishingOperationComplete is POST /v1/publishing-operations/{id}/complete (public). Completes the submission's declared upload and durably begins processing. The server owns its exact media commit; no caller-supplied content IDs or blob references are accepted. Repeats do not create another import.
+func (c *Client) PostPublishingOperationComplete(ctx context.Context, id string, body publishing.CompleteRequest) (publishing.Operation, error) {
+	var out publishing.Operation
+	err := c.call(ctx, http.MethodPost, expand("/v1/publishing-operations/{id}/complete", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// GetPublishingOperation is GET /v1/publishing-operations/{id} (public). Reads an owned submission, its compact progress, asynchronous failure or final catalog path. This read never creates upload URLs or advances the operation. HTTP 200 does not imply successful publication.
+func (c *Client) GetPublishingOperation(ctx context.Context, id string) (publishing.Operation, error) {
+	var out publishing.Operation
+	err := c.call(ctx, http.MethodGet, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }

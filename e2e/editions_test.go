@@ -106,10 +106,10 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 
 	// A version-level tag on A alone: its list's card is A, linked with ?v=.
 	var tags []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "first-edition",
+	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "first-edition",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "First edition"}}}}, &tags)
 	tag := tags[0].ID
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tag, VersionID: a.ID}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tag, VersionID: a.ID}}}, nil)
 	if got := card("display_language=en&groups=" + string(tag)); got.Version.ID != a.ID || got.Cover[0].URL != cover[a.ID] ||
 		!strings.HasSuffix(got.Path, "?v="+a.Code) {
 		t.Fatalf("filtered card %+v", got)
@@ -125,7 +125,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	}
 	for language, v := range map[string]catalog.Version{"en": b, "zh": z} {
 		var g groups.GroupDetail
-		f.want(http.StatusOK, "", "GET", "/groups/"+string(tag)+"?language="+language, nil, &g)
+		f.want(http.StatusOK, "", "GET", "/entities/"+string(tag)+"?language="+language, nil, &g)
 		if g.Cover == nil || !g.Cover.Auto || g.Cover.ContentID != c.ID || len(g.Cover.Renditions) == 0 || g.Cover.Renditions[0].URL != cover[v.ID] {
 			t.Fatalf("%s group cover %+v, want %s's", language, g.Cover, v.ID)
 		}

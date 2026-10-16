@@ -183,7 +183,7 @@ export async function seedContents(staff: ContentKitClient, items: SeedContent[]
   for (const it of items) {
     const text = Object.fromEntries(Object.entries(it.titles).map(([l, title]) => [l, { title }]));
     let c = await staff.contents.create({ kind: it.kind, text, access: it.access, attributes: it.attributes, versions: it.versions, owner_group_id: it.owner });
-    if (it.groups?.length) await staff.groups.setOfContent(c.id, { memberships: it.groups.map((group_id) => ({ group_id })) });
+    if (it.groups?.length) await staff.entities.setOfContent(c.id, { memberships: it.groups.map((group_id) => ({ group_id })) });
     if (it.publish !== false) c = await staff.contents.publish(c.id);
     out.push(c);
   }

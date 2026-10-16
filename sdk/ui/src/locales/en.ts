@@ -233,6 +233,13 @@ export const en = {
     failed: "The download couldn't start. Please try again.",
   },
   errors: {
+    ambiguous_entity: "More than one entry matches this name. Choose the intended entry.",
+    unknown_entity: "This entry was not found. Select an existing entry or allow creation.",
+    operation_conflict: "This submission already contains different content. Start a new submission.",
+    operation_busy: "This submission is still being updated. Try again shortly.",
+    source_conflict: "This source has already been submitted.",
+    content_changed: "The content changed after submission. Review it before publishing.",
+    invalid_archive: "This ZIP could not be processed. Check that it contains supported files.",
     download_unavailable: "This isn't available to download right now.",
     no_download: "There is nothing to download yet.",
     generic: "Something went wrong on our end. Please try again.",

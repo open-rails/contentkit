@@ -2,12 +2,14 @@ package contentkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 )
@@ -57,6 +59,93 @@ func (e *Engine) validateGroupScopes(provider groups.Scopes) error {
 type Authorization interface {
 	ResolveActor(ctx context.Context, scope Scope, verified auth.Verified) (string, error)
 	Authorize(ctx context.Context, scope Scope, verified auth.Verified, target PermissionTarget) (bool, error)
+}
+
+// PublishingAuthorization is an optional app policy for a durable publishing
+// request. CapturePublishing accepts only the provider's verified credential
+// and returns nonsecret delegation data. ResumePublishing rechecks its live
+// authority; it never trusts an identity decoded from JSON or stores a bearer
+// token. Providers without this capability still support preparing drafts.
+type PublishingAuthorization interface {
+	CapturePublishing(context.Context, Scope, auth.Verified) (json.RawMessage, error)
+	ResumePublishing(context.Context, Scope, json.RawMessage) (auth.Verified, error)
+}
+
+type publishingAuthority struct{ e *Engine }
+
+type publishingDelegation struct {
+	App        string          `json:"app"`
+	Host       bool            `json:"host,omitempty"`
+	Credential json.RawMessage `json:"credential,omitempty"`
+}
+
+func (a publishingAuthority) Capture(ctx context.Context, actor access.Actor) (json.RawMessage, error) {
+	d := publishingDelegation{App: a.scopeKey()}
+	if gate.IsHost(actor) {
+		d.Host = true
+		return json.Marshal(d)
+	}
+	scoped, ok := a.e.auth.(scopeAuthenticator)
+	if !ok || actor.Verified == nil {
+		return nil, auth.ErrForbidden
+	}
+	p, ok := scoped.policy.(PublishingAuthorization)
+	if !ok {
+		return nil, auth.ErrForbidden
+	}
+	var err error
+	d.Credential, err = p.CapturePublishing(ctx, scoped.scope, actor.Verified)
+	if err != nil {
+		return nil, err
+	}
+	if len(d.Credential) == 0 {
+		return nil, auth.ErrForbidden
+	}
+	return json.Marshal(d)
+}
+
+func (a publishingAuthority) Resume(ctx context.Context, raw json.RawMessage) (access.Actor, error) {
+	var d publishingDelegation
+	if err := json.Unmarshal(raw, &d); err != nil || d.App != a.scopeKey() {
+		return access.Actor{}, auth.ErrForbidden
+	}
+	if d.Host {
+		if len(d.Credential) != 0 {
+			return access.Actor{}, auth.ErrForbidden
+		}
+		return gate.Host(), nil
+	}
+	scoped, ok := a.e.auth.(scopeAuthenticator)
+	if !ok || len(d.Credential) == 0 {
+		return access.Actor{}, auth.ErrForbidden
+	}
+	p, ok := scoped.policy.(PublishingAuthorization)
+	if !ok {
+		return access.Actor{}, auth.ErrForbidden
+	}
+	v, err := p.ResumePublishing(ctx, scoped.scope, d.Credential)
+	if err != nil {
+		return access.Actor{}, err
+	}
+	if v == nil {
+		return access.Actor{}, auth.ErrForbidden
+	}
+	id, err := scoped.ResolveActor(ctx, v)
+	if err != nil {
+		return access.Actor{}, err
+	}
+	identity := v.Identity()
+	if id == "" || identity.SubjectKind != auth.SubjectApplication {
+		return access.Actor{}, auth.ErrForbidden
+	}
+	return access.Actor{ID: id, Kind: identity.SubjectKind, Verified: v, Invoker: identity.Invoker}, nil
+}
+
+func (a publishingAuthority) scopeKey() string {
+	if a.e.scope != nil {
+		return a.e.scope.TenantID.String() + "/" + a.e.scope.AppID.String()
+	}
+	return "legacy:" + a.e.schema + "/" + a.e.cfg.Tenant
 }
 
 // TenantAccountAuthorization separates audience membership from administrative

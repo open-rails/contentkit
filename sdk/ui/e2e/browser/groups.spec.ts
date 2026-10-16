@@ -13,7 +13,7 @@ const name = (language: string, n: string, kind: "name" | "alias" = "name") => (
 
 /** Waits until the typeahead finds a group just made: search documents follow writes within a moment. */
 const searchable = (ck: ReturnType<typeof contentKit>, kind: string, text: string) =>
-  expect.poll(async () => (await ck.discovery.typeahead({ q: text, group_kinds: [kind] })).groups.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  expect.poll(async () => (await ck.discovery.typeahead({ q: text, entity_kinds: [kind] })).entities.length, { timeout: 30_000 }).toBeGreaterThan(0);
 
 async function staffClient() {
   const staff = await h.user({ role: "staff" });
@@ -24,16 +24,16 @@ for (const theme of ["light", "dark"] as const) {
   test(`group directory: letter buckets in the URL, counts, and a group's page (${theme})`, async ({ page }, info) => {
     const { ck } = await staffClient();
     const r = run();
-    const [parent] = await ck.groups.create([{ kind: "series", slug: `p-${r}`, names: [name("en", `Parent ${r}`)] }]);
-    const children = await ck.groups.create(
+    const [parent] = await ck.entities.create([{ kind: "series", slug: `p-${r}`, names: [name("en", `Parent ${r}`)] }]);
+    const children = await ck.entities.create(
       ["Alpha", "Beta", "3x3"].map((n) => ({ kind: "series", slug: `${n.toLowerCase()}-${r}`, parent_id: parent!.id, names: [name("en", `${n} ${r}`)] })),
     );
     const beta = children[1]!;
     for (let i = 0; i < 2; i++) {
       const c = await seedContent(ck, { kind: "comic", titles: { en: `Member ${r} ${i}` }, versions: [{ languages: ["en"] }] });
-      await ck.groups.addMembers(beta.id, [{ content_id: c.id }]);
+      await ck.entities.addMembers(beta.id, [{ content_id: c.id }]);
     }
-    await ck.groups.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
+    await ck.entities.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
     await h.recount();
 
     await page.goto(demo("groups.html", null, { kind: "series", parent: parent!.id, theme }));
@@ -64,7 +64,7 @@ for (const theme of ["light", "dark"] as const) {
 test("group header: names in other languages, aliases and typed attributes", async ({ page }) => {
   const { ck } = await staffClient();
   const r = run();
-  const [artist] = await ck.groups.create([
+  const [artist] = await ck.entities.create([
     {
       kind: "artist",
       slug: `circle-${r}`,
@@ -90,7 +90,7 @@ test("membership editor: a content's groups with roles, positions and versions",
   const r = run();
   const content = await seedContent(ck, { kind: "comic", titles: { en: `Content ${r}` }, versions: [{ languages: ["en"] }, { languages: ["ja"] }] });
   const ja = content.versions[1]!.id;
-  const [artist, series, voice] = (await ck.groups.create([
+  const [artist, series, voice] = (await ck.entities.create([
     { kind: "artist", slug: `pub-${r}`, names: [name("en", `Publisher ${r}`)] },
     { kind: "series", slug: `saga-${r}`, names: [name("en", `Saga ${r}`)] },
     { kind: "voice_actor", slug: `voice-${r}`, names: [name("en", `Voice ${r}`)] },
@@ -117,7 +117,7 @@ test("membership editor: a content's groups with roles, positions and versions",
 
   await editor.getByRole("button", { name: "Save" }).click();
   await expect(editor.getByText("Saved.")).toBeVisible();
-  const saved = (await ck.groups.ofContent(content.id)).memberships;
+  const saved = (await ck.entities.ofContent(content.id)).memberships;
   expect(saved).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ group_id: artist.id, role: "publisher" }),
@@ -130,7 +130,7 @@ test("membership editor: a content's groups with roles, positions and versions",
   await kind("series").getByRole("button", { name: `Remove Saga ${r}` }).click();
   await editor.getByRole("button", { name: "Save" }).click();
   await expect(editor.getByText("Saved.")).toBeVisible();
-  expect((await ck.groups.ofContent(content.id)).memberships.map((m) => m.group_id).sort()).toEqual([artist.id, voice.id].sort());
+  expect((await ck.entities.ofContent(content.id)).memberships.map((m) => m.group_id).sort()).toEqual([artist.id, voice.id].sort());
 });
 
 for (const [mode, theme] of [
@@ -156,12 +156,12 @@ for (const [mode, theme] of [
     const id = page.url().split("/").pop()!;
     if (mode === "router") await expect(page.locator("[data-demo=router-location]")).toHaveText(`/admin/groups/artist/${id}`);
     await expect(flow.locator("[data-ckui=group-head]").getByRole("heading", { name: `Studio ${r}` })).toBeVisible();
-    expect((await ck.groups.get(id)).attributes).toEqual({ artist_type: "company" });
+    expect((await ck.entities.get(id)).attributes).toEqual({ artist_type: "company" });
 
     await flow.getByLabel("Works").fill("12");
     await flow.locator("[data-ckui=group-details]").getByRole("button", { name: "Save" }).click();
     await expect(flow.locator("[data-ckui=group-details]").getByText("Saved.")).toBeVisible();
-    expect((await ck.groups.get(id)).attributes).toEqual({ artist_type: "company", works: 12 });
+    expect((await ck.entities.get(id)).attributes).toEqual({ artist_type: "company", works: 12 });
 
     const names = flow.locator("[data-ckui=group-names-editor]");
     await names.getByRole("textbox", { name: "A name or alias" }).fill(`S. ${r}`);
@@ -184,7 +184,7 @@ for (const [mode, theme] of [
     await page.screenshot({ path: `${dir}/group-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
 
     // Merge into another artist: the flow moves to the survivor.
-    const [target] = await ck.groups.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
+    const [target] = await ck.entities.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
     await searchable(ck, "artist", `Target ${r}`);
     await flow.getByRole("button", { name: "Merge" }).click();
     const dialog = page.locator("[data-ckui=group-merge-dialog]");

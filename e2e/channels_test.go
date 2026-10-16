@@ -87,15 +87,15 @@ func TestChannels(t *testing.T) {
 	f := serve(t, e)
 
 	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio",
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := made[0]
 	if ch.OwnerUserID != creator.ID || ch.AuthScope != string(ch.ID) {
 		t.Fatalf("channel %+v", ch)
 	}
-	f.want(http.StatusConflict, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "another"}}, nil)
+	f.want(http.StatusConflict, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "another"}}, nil)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(editor.ID), w.channelEditor)
-	path := "/groups/" + string(ch.ID)
+	path := "/entities/" + string(ch.ID)
 
 	// The editor uploads and selects the avatar; the stranger may not.
 	ref := media.RefBody{Kind: "channel", ID: string(ch.ID)}
@@ -126,7 +126,7 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusOK, editorToken, "PUT", path+"/offer", free, nil)
 
 	var page groups.GroupPage
-	f.want(http.StatusOK, viewerToken, "GET", "/groups?kind=channel&language=en", nil, &page)
+	f.want(http.StatusOK, viewerToken, "GET", "/entities?kind=channel&language=en", nil, &page)
 	card := page.Groups[0]
 	if len(page.Groups) != 1 || card.Avatar == nil || card.Avatar.Image != image || len(card.Avatar.Renditions) == 0 ||
 		card.Avatar.Renditions[0].URL != published.Renditions[0].URL {
@@ -142,11 +142,11 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("detail after joining: access %+v avatar %+v", d.Access, d.Avatar)
 	}
 	var mine groups.MyGroupPage
-	f.want(http.StatusOK, viewerToken, "GET", "/me/groups", nil, &mine)
+	f.want(http.StatusOK, viewerToken, "GET", "/me/entities", nil, &mine)
 	if len(mine.Groups) != 1 || !mine.Groups[0].Member || mine.Groups[0].Owner || mine.Groups[0].Editor {
 		t.Fatalf("the viewer's groups %+v", mine)
 	}
-	f.want(http.StatusOK, editorToken, "GET", "/me/groups?kind=channel", nil, &mine)
+	f.want(http.StatusOK, editorToken, "GET", "/me/entities?kind=channel", nil, &mine)
 	if len(mine.Groups) != 1 || !mine.Groups[0].Editor || mine.Groups[0].Owner {
 		t.Fatalf("the editor's groups %+v", mine)
 	}
@@ -170,15 +170,15 @@ func TestChannels(t *testing.T) {
 	}
 
 	// The host's in-process client: staff, without a credential.
-	if _, err := c.PatchGroup(ctx, string(ch.ID), groups.GroupUpdate{Text: []groups.Text{{Language: "en", Description: "Films"}}}); err != nil {
+	if _, err := c.PatchEntity(ctx, string(ch.ID), groups.GroupUpdate{Text: []groups.Text{{Language: "en", Description: "Films"}}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.GetGroup(ctx, string(ch.ID), contentkit.GetGroupQuery{Language: "en"})
+	got, err := c.GetEntity(ctx, string(ch.ID), contentkit.GetEntityQuery{Language: "en"})
 	if err != nil || len(got.Text) != 1 || got.Text[0].Description != "Films" || got.Name != "Studio" {
 		t.Fatalf("client detail %+v %v", got, err)
 	}
 	var ce *contentkit.Error
-	if _, err := c.GetGroup(ctx, contentref.NewID(), contentkit.GetGroupQuery{}); !errors.As(err, &ce) || ce.Code != "not_found" {
+	if _, err := c.GetEntity(ctx, contentref.NewID(), contentkit.GetEntityQuery{}); !errors.As(err, &ce) || ce.Code != "not_found" {
 		t.Fatalf("a missing group: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestChannelPostReads(t *testing.T) {
 		d.Auth, d.Scopes = counter, ckauthkit.Scopes(w.ak)
 	}))
 	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
 	ch := made[0]
 	if ch.OwnerUserID != creator.ID || ch.AuthScope == "" {
 		t.Fatalf("channel %+v", ch)
@@ -384,10 +384,10 @@ func TestChannelCommentModeration(t *testing.T) {
 		d.Scopes = ckauthkit.Scopes(w.ak)
 	}))
 	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
 	ch := made[0]
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(moderator.ID), w.channelModerator)
-	f.want(http.StatusCreated, otherToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "other"}}, nil)
+	f.want(http.StatusCreated, otherToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "other"}}, nil)
 	var post catalog.Content
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID),
 		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, &post)
@@ -426,8 +426,8 @@ func TestChannelCommentModeration(t *testing.T) {
 		t.Fatal("a held comment stays in its thread")
 	}
 	var held content.HeldPage
-	f.want(http.StatusForbidden, strangerToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, nil)
-	f.want(http.StatusOK, creatorToken, "GET", "/groups/"+string(ch.ID)+"/held-comments", nil, &held)
+	f.want(http.StatusForbidden, strangerToken, "GET", "/entities/"+string(ch.ID)+"/held-comments", nil, nil)
+	f.want(http.StatusOK, creatorToken, "GET", "/entities/"+string(ch.ID)+"/held-comments", nil, &held)
 	if len(held.Items) != 1 || held.Items[0].ID != doubtful.ID {
 		t.Fatalf("the channel's held comments %+v", held.Items)
 	}
@@ -436,7 +436,7 @@ func TestChannelCommentModeration(t *testing.T) {
 		t.Fatal("a released comment is not back in its thread")
 	}
 
-	bans := "/groups/" + string(ch.ID) + "/comment-bans"
+	bans := "/entities/" + string(ch.ID) + "/comment-bans"
 	f.want(http.StatusForbidden, strangerToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
 	f.want(http.StatusOK, moderatorToken, "PUT", bans+"/"+commenter.ID, content.BanInput{Reason: "spam"}, nil)
 	var refusal struct{ Code string }
@@ -454,7 +454,7 @@ func TestChannelCommentModeration(t *testing.T) {
 	comment(commenterToken, item, "again")
 
 	var mine groups.MyGroupPage
-	f.want(http.StatusOK, moderatorToken, "GET", "/me/groups", nil, &mine)
+	f.want(http.StatusOK, moderatorToken, "GET", "/me/entities", nil, &mine)
 	if g := mine.Groups; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
 		t.Fatalf("the moderator's groups %+v", mine)
 	}

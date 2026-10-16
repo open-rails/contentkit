@@ -57,46 +57,51 @@ func TestHandler(t *testing.T) {
 		}
 		return out
 	}
+	for _, retired := range []string{"/groups", "/me/groups", "/groups/retired", "/contents/retired/groups"} {
+		if code, _ := call("", "GET", retired, ""); code != http.StatusNotFound {
+			t.Fatalf("retired entity path %s still served: %d", retired, code)
+		}
+	}
 	const user = "user:u1"
-	out := expect(user, "POST", "/groups", `[{"kind":"tag","slug":"color","names":[{"language":"en","kind":"name","name":"Color"}]},{"kind":"series","slug":"saga"}]`, 201, `"slug":"color"`)
+	out := expect(user, "POST", "/entities", `[{"kind":"tag","slug":"color","names":[{"language":"en","kind":"name","name":"Color"}]},{"kind":"series","slug":"saga"}]`, 201, `"slug":"color"`)
 	var made []Group
 	if err := json.Unmarshal([]byte(out), &made); err != nil || len(made) != 2 {
 		t.Fatal(out, err)
 	}
 	color, saga := string(made[0].ID), string(made[1].ID)
-	expect("", "POST", "/groups", `[]`, 401, "")
-	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"color"}]`, 409, "")
-	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"x","nope":1}]`, 400, "unknown field")
-	expect(user, "POST", "/groups", `[{"kind":"tag","slug":"x"}] {}`, 400, "more than one JSON value")
-	expect("", "GET", "/groups?kind=tag&language=en", "", 200, `"name":"Color"`)
-	expect("", "GET", "/groups?sort=random", "", 400, "sort")
-	expect("", "GET", "/groups/"+color, "", 200, `"names":[{"language":"en","kind":"name","name":"Color"}]`)
-	expect("", "GET", "/groups/"+cid(99), "", 404, "")
-	expect("", "GET", "/groups/not-an-id", "", 400, "group id: ")
-	expect(user, "PATCH", "/groups/"+color, `{"slug":"colour","attributes":{"x":1}}`, 400, "not declared")
-	expect(user, "PATCH", "/groups/"+color, `{"slug":"colour","text":[{"language":"en","description":"Hues"}]}`, 200, `"slug":"colour"`)
-	expect(user, "POST", "/groups/"+color+"/names", `[{"language":"en","kind":"alias","name":"Hue"}]`, 200, `"name":"Hue"`)
-	expect(user, "POST", "/groups/"+cid(99)+"/names", `[{"language":"en","name":"x"}]`, 404, "")
-	expect(user, "POST", "/groups/"+color+"/edges", `[{"relation":"related","to":"`+saga+`"}]`, 200, `"relation":"related"`)
-	expect(user, "POST", "/groups/"+color+"/edges", `[{"relation":"Bad Rel","to":"`+saga+`"}]`, 400, "relation")
-	expect(user, "POST", "/groups/"+color+"/edges", `[{"relation":"related","to":"`+cid(99)+`"}]`, 404, "")
-	expect(user, "PUT", "/contents/"+cid(1)+"/groups", `{"memberships":[{"group_id":"`+color+`"},{"group_id":"`+saga+`","position":3}]}`, 200, `"position":3`)
-	expect(user, "PUT", "/contents/"+cid(1)+"/groups", `{"memberships":[{"group_id":"`+color+`","position":1}]}`, 400, "ordered")
-	expect(user, "PUT", "/contents/"+cid(9)+"/groups", `{"memberships":[]}`, 404, "")
-	expect(user, "GET", "/contents/"+cid(1)+"/groups", "", 200, `"groups":[`)
-	expect(user, "POST", "/groups/"+saga+"/members", `[{"group_id":"`+color+`","content_id":"`+cid(1)+`"}]`, 400, "names group")
-	expect(user, "PUT", "/groups/"+saga+"/members/order", `{"members":[{"content_id":"`+cid(1)+`"}]}`, 200, `"count":1`)
-	expect(user, "GET", "/groups/"+saga+"/members?cursor=%21", "", 400, "cursor")
-	expect(user, "POST", "/groups/"+color+"/merge", `{"into":"`+saga+`"}`, 409, "")
-	expect(user, "DELETE", "/groups/"+color, "", 200, `"state":"deleted"`)
-	expect("", "GET", "/groups/"+color, "", 404, "")
+	expect("", "POST", "/entities", `[]`, 401, "")
+	expect(user, "POST", "/entities", `[{"kind":"tag","slug":"color"}]`, 409, "")
+	expect(user, "POST", "/entities", `[{"kind":"tag","slug":"x","nope":1}]`, 400, "unknown field")
+	expect(user, "POST", "/entities", `[{"kind":"tag","slug":"x"}] {}`, 400, "more than one JSON value")
+	expect("", "GET", "/entities?kind=tag&language=en", "", 200, `"name":"Color"`)
+	expect("", "GET", "/entities?sort=random", "", 400, "sort")
+	expect("", "GET", "/entities/"+color, "", 200, `"names":[{"language":"en","kind":"name","name":"Color"}]`)
+	expect("", "GET", "/entities/"+cid(99), "", 404, "")
+	expect("", "GET", "/entities/not-an-id", "", 400, "group id: ")
+	expect(user, "PATCH", "/entities/"+color, `{"slug":"colour","attributes":{"x":1}}`, 400, "not declared")
+	expect(user, "PATCH", "/entities/"+color, `{"slug":"colour","text":[{"language":"en","description":"Hues"}]}`, 200, `"slug":"colour"`)
+	expect(user, "POST", "/entities/"+color+"/names", `[{"language":"en","kind":"alias","name":"Hue"}]`, 200, `"name":"Hue"`)
+	expect(user, "POST", "/entities/"+cid(99)+"/names", `[{"language":"en","name":"x"}]`, 404, "")
+	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"related","to":"`+saga+`"}]`, 200, `"relation":"related"`)
+	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"Bad Rel","to":"`+saga+`"}]`, 400, "relation")
+	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"related","to":"`+cid(99)+`"}]`, 404, "")
+	expect(user, "PUT", "/contents/"+cid(1)+"/entities", `{"memberships":[{"group_id":"`+color+`"},{"group_id":"`+saga+`","position":3}]}`, 200, `"position":3`)
+	expect(user, "PUT", "/contents/"+cid(1)+"/entities", `{"memberships":[{"group_id":"`+color+`","position":1}]}`, 400, "ordered")
+	expect(user, "PUT", "/contents/"+cid(9)+"/entities", `{"memberships":[]}`, 404, "")
+	expect(user, "GET", "/contents/"+cid(1)+"/entities", "", 200, `"entities":[`)
+	expect(user, "POST", "/entities/"+saga+"/members", `[{"group_id":"`+color+`","content_id":"`+cid(1)+`"}]`, 400, "names group")
+	expect(user, "PUT", "/entities/"+saga+"/members/order", `{"members":[{"content_id":"`+cid(1)+`"}]}`, 200, `"count":1`)
+	expect(user, "GET", "/entities/"+saga+"/members?cursor=%21", "", 400, "cursor")
+	expect(user, "POST", "/entities/"+color+"/merge", `{"into":"`+saga+`"}`, 409, "")
+	expect(user, "DELETE", "/entities/"+color, "", 200, `"state":"deleted"`)
+	expect("", "GET", "/entities/"+color, "", 404, "")
 
 	none, err := f.s.Handler(testauth.Auth{Authz: testauth.None{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/groups", strings.NewReader(`[{"kind":"tag","slug":"site"}]`))
+	req := httptest.NewRequest("POST", "/entities", strings.NewReader(`[{"kind":"tag","slug":"site"}]`))
 	req.Header.Set("Authorization", "Bearer "+user)
 	none.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

@@ -43,13 +43,19 @@ var routes = []httpapi.Route[*Store]{
 		Doc:   "One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code.",
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGetVersion)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/contents", Resource: "contents", Auth: httpapi.Public,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage", Resource: "contents", Auth: httpapi.Public,
 		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
-		Query: append([]httpapi.Param{httpapi.Text("kind", "only this kind"),
-			httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
+		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), languageParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}},
+		Serve: httpapi.H((*Store).handleManage)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/{kind}", Resource: "contents", Auth: httpapi.Public,
+		Doc: "Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.",
+		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"),
+			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), languageParam}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
@@ -276,6 +282,7 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, status int, id s
 		writeErr(w, err)
 		return
 	}
+	v.management = r.Method != http.MethodGet && r.Method != http.MethodHead
 	got, err := s.Contents(r.Context(), v, []string{id})
 	if err != nil {
 		writeErr(w, err)
@@ -313,8 +320,8 @@ func (s *Store) handleTotals(w http.ResponseWriter, r *http.Request) {
 	if h, _, ok := strings.Cut(host, ":"); ok {
 		host = h
 	}
-	site, _ := s.cfg.SiteFor(strings.ToLower(host))
-	q.Site = site.Name
+	site, _ := s.cfg.DomainFor(strings.ToLower(host))
+	q.Domain = site.Name
 	t, err := s.Totals(r.Context(), q)
 	switch {
 	case errors.Is(err, ErrInvalid):
@@ -568,6 +575,7 @@ func (s *Store) respondVersion(w http.ResponseWriter, r *http.Request, status in
 		writeErr(w, err)
 		return
 	}
+	v.management = true
 	got, err := s.Contents(r.Context(), v, []string{r.PathValue("id")})
 	if err != nil {
 		writeErr(w, err)
@@ -615,15 +623,27 @@ func (s *Store) handleOrderVersions(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 	actor, err := writer(r.Context())
 	q := r.URL.Query()
+	kind := r.PathValue("kind")
+	if err == nil && q.Has("kind") {
+		err = invalid("select the content kind in the path")
+	}
+	if kind != "" && err == nil {
+		if _, ok := s.cfg.Kinds[kind]; !ok {
+			err = ErrNotFound
+		}
+	}
 	limit, offset := page(r)
 	var ids []string
 	if err == nil {
-		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: q.Get("kind"), State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
+		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
 			Text: q.Get("q"), Limit: limit, Offset: offset})
 	}
 	var v *Viewer
 	if err == nil {
 		v, err = s.viewer(r, ViewerOptions{})
+		if v != nil {
+			v.management = true
+		}
 	}
 	var got []*Content
 	if err == nil {

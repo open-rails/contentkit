@@ -111,6 +111,12 @@ func (f barrierFixture) seed(t *testing.T, st *Store) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.RecordPopulation(ctx, f.tenant, []PopulationObservation{
+		{ID: "gone-active", ContentKind: "gallery", Subject: f.gone, ObservedAt: f.at, EligibilityKnown: true},
+		{ID: "keeper-active", ContentKind: "gallery", Subject: f.keeper, ObservedAt: f.at, EligibilityKnown: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // assertInvisible checks every read surface for the erased subject and every
@@ -118,6 +124,18 @@ func (f barrierFixture) seed(t *testing.T, st *Store) {
 func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 	t.Helper()
 	ctx := context.Background()
+	population, err := st.conn.Query(ctx, "SELECT uniqExact(subject) FROM "+st.db+".population_observations WHERE tenant=? AND "+st.notErased(), f.tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eligible uint64
+	if population.Next() {
+		err = population.Scan(&eligible)
+	}
+	population.Close()
+	if err != nil || eligible != 1 {
+		t.Fatalf("%s: erased subject still eligible: %d %v", phase, eligible, err)
+	}
 	refs := []ContentRef{f.e1, f.e2}
 	if s, err := st.States(ctx, f.tenant, f.gone, refs); err != nil || len(s) != 0 {
 		t.Fatalf("%s: States leaked %+v %v", phase, s, err)
@@ -223,6 +241,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB),
 VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at, ingested_at)
 VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.population_observations (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
+VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{f.tenant, kind, key, f.at}},
 	} {
 		if err := conn.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("plant residue: %v\n%s", err, q.sql)

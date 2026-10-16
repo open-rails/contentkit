@@ -2,7 +2,7 @@ import type { CommentBan, CommentStanding, Comment, Content, Poll, ReactionCount
 
 /** What an interaction targets: a content item (optionally one of its versions) or a group. */
 export interface Target {
-  type: "contents" | "groups";
+  type: "contents" | "entities";
   id: string;
   /** One version of a content item. */
   version?: string;
@@ -65,7 +65,7 @@ export type ContentChange =
   | { type: "rules.changed"; rules: RuleSet }
   /** A version's reader metadata changed: its reader plan reads again. */
   | { type: "reader.changed"; content: string; version: string }
-  | { type: "groups.changed" }
+  | { type: "entities.changed" }
   /** The reader's content filters changed: every list reads again. */
   | { type: "contentFilters.changed" }
   | { type: "history.changed" }

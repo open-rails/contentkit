@@ -1,80 +1,144 @@
-# Content filters and entrypoint defaults
+# Domain content rules and reader filters
 
-Content filters are an app's configurable reading preferences. They hide tagged
-content from ordinary discovery lists and searches; they do not revoke access
-or prevent opening a direct content URL. A tag's own page can still show its
-explicitly requested content. Actual access rules, `require_groups` and
-`exclude_restrictions` continue to apply independently.
+A domain is a hostname entrypoint into one app's catalog. Host aliases can share
+one policy. The first domain is the fallback for unknown hosts and in-process
+calls without a request hostname. Hosts and trusted reverse proxies must preserve
+the original Host; choosing a domain never changes account tenancy or grants.
 
-Declare filters in the content model (`Config.Content`). Each filter names an
-active, unscoped group by kind and slug. The groups must already exist: create
-them through ContentKit's group API or an explicit import/setup command.
-Declaring a filter does not create groups, seed content or run a database
-migration. The settings UI omits filters whose groups do not exist.
+Every domain scopes its requirements and filters by content kind:
 
 ```yaml
-languages: [en]
+languages: [en, ja]
 kinds:
   gallery:
     route: g
     presentation: reader
     versions: {languages: one}
     groups: [tag]
+  blog:
+    route: blog
+    presentation: post
+    versions: {languages: one}
 group_kinds:
   tag: {route: tags}
-content_filters:
-  - group: {kind: tag, slug: spoilers}
-    default_visible: false
-    labels: {en: Spoilers}
-  - group: {kind: tag, slug: graphic}
-    default_visible: true
-    labels: {en: Graphic scenes}
-sites:
+domains:
   - name: main
     hosts: [catalog.example.test]
-  - name: alternate
-    hosts: [alternate.example.test]
-    content_filter_defaults:
-      - {group: {kind: tag, slug: spoilers}, visible: true}
-      - {group: {kind: tag, slug: graphic}, visible: false}
+    gallery:
+      filters:
+        - {entity: {kind: tag, slug: spoilers}, visible: false}
+        - {entity: {kind: tag, slug: restricted}, visible: false, user_toggle: false}
+  - name: gay
+    hosts: [doujins.gay, www.doujins.gay]
+    gallery:
+      require_entities: [{kind: tag, slug: yaoi}]
+      filters:
+        - {entity: {kind: tag, slug: yuri}, visible: false}
+        - {entity: {kind: tag, slug: futanari}, visible: false}
+        - {entity: {kind: tag, slug: furry}, visible: false}
 ```
 
-An unspecified site default inherits the app's `default_visible`. An explicit
-`visible: false` overrides an app default of `true`. Filter references and site
-names must be unique; a site default must name a declared content filter.
-Host matching ignores case and port. The first site is the fallback for
-unmatched hosts and for in-process calls without a request host.
+The top-level `kinds` defines the content model. Within each domain, content
+kind names such as `gallery` directly contain that kind's policy; no inner
+`kinds` wrapper is needed. A kind omitted from a domain is unfiltered:
+these gallery rules do not affect blog posts. There is no global filter list
+or separate `require_kinds` switch.
 
-For an ordinary reader, visibility is resolved in this order:
+`name` and `hosts` are reserved for domain metadata and cannot be content kind
+names. ContentKit rejects them during configuration validation.
 
-1. The app's default.
-2. The matched site's override, if any.
-3. The reader's explicit saved override, if any.
+Applications may load policy from their own configuration and pass it to
+ContentKit. Doujins and Hentai0 use `content_filters.domains` in `config.yaml`
+and `config.example.yaml`; their structural content models stay separate.
 
-Saved overrides belong to the account within this app, so an explicit choice
-continues to win when that person visits another entrypoint of the same app.
-It does not become a preference in another app sharing the tenant account.
-Anonymous readers have only the resolved site defaults.
+## Rules within a content kind
 
-`GET /v1/me/content-filters` returns the current site's `default_visible`, the
-effective `visible` value and whether it was `overridden`. Saving uses
-`PUT /v1/me/content-filters`; its `filters` list replaces the saved overrides.
-Omit a filter from that list to reset it to the current site's default. For
-example, the following resets all filter overrides and disables the separate
-include-deleted preference:
+- An entity omitted from that kind's filters is allowed and has no user toggle.
+- `visible` is the default visibility of matching content of that kind.
+- `user_toggle` defaults to true. A reader may change an optional filter.
+- `visible: false` with `user_toggle: false` is a hard exclusion: matching
+  content cannot be listed, searched, opened directly or served as media on
+  that domain, including to staff using public routes.
+- `visible: true` with `user_toggle: false` permits matching content without a
+  toggle. It does not require content to have that entity.
+- Every `require_entities` entry must be associated with the content item.
+  Requirements combine with AND and are never reader toggles. Requiring Yaoi
+  under `gallery` excludes non-Yaoi galleries while leaving blogs unaffected.
+
+Soft hidden filters affect ordinary discovery, not direct links or an
+explicitly requested entity page. Hard rules apply to direct access too.
+Contradictory required/hidden rules and invalid content/entity kinds fail
+configuration validation. Mixed-kind queries apply each item's own policy.
+
+Hard rules also deny new media authorizations through the app. The stock media
+gateway validates signed capabilities without reading the catalog: previously
+issued private-media URLs remain valid until expiry, and public preview assets
+remain public. Domain filtering is not instant revocation of already issued
+media capabilities.
+
+## Entity names and internal entities
+
+Create referenced entities before enabling hard rules. An unresolved hard
+exclusion or requirement fails closed for its content kind; missing optional
+filters are omitted.
+
+References use stable entity kind and slug, written directly in configuration.
+Display names, translated names and aliases belong to the entity record. The
+settings UI uses those names and normal language fallback.
+
+An entity marked `internal` is available to authorized management APIs, imports
+and publishing, but is absent from public lookup, lists, search, autocomplete
+and content metadata across all content kinds. Its names do not contribute to
+public search documents. Authorized publishing still resolves its identity and
+aliases.
+
+Internal entities never become user toggles. Hentai0 can fix an internal
+`restricted` entity hidden under `video` on hmovie-moe.us and allow it on
+hentai0.com. The entity's metadata remains private on both domains; marking an
+entity internal alone does not hide its associated content everywhere.
+
+## Reader preferences
+
+`GET /v1/content-filters` returns the current domain's available public toggles,
+grouped by content kind in `kinds`, with localized entities and effective/default
+values. Hard policy and internal references are not exposed through `/v1/kinds`.
+
+Signed-in readers save choices through `PUT /v1/me/content-filters`:
 
 ```json
-{"filters": [], "include_deleted": false}
+{"kinds":{"gallery":[{"entity_id":"<entity-id>","visible":false}]},"include_deleted":false}
 ```
 
-Lists, searches and recommendations share the catalog's resolved preferences.
-Public catalog totals use site defaults, independent of any reader's saved
-overrides, and cache separately by site. Direct URLs and sitemaps retain their
-existing access/site rules; soft preferences do not make content private.
+Only the kinds present in the update are replaced, and only their currently
+toggleable domain choices are affected. Omitted kinds and other domains are
+preserved. An empty kind array resets that kind's current-domain choices.
+The same entity can be hidden for galleries and shown for another content kind.
+Preferences cannot override fixed rules, requirements or unconfigured entities.
 
-The server derives the entrypoint from the request host already bound by its
-route gate. Hosts and trusted development/reverse proxies must preserve the
-original `Host` when routing these requests to the app. Do not add a query
-parameter or arbitrary forwarded header that changes this selection. The app's
-tenant/app authorization binding stays fixed: choosing a hostname never
-selects a different tenant or grants permissions.
+Guests keep the same scoped choices in localStorage and send a bounded
+`ContentKit-Reader-Preferences` header. The header does not grant access or
+choose the domain. Signed-in requests use account preferences instead.
+
+After registration, `POST /v1/me/content-filters/initialize` adopts valid guest
+choices only when the authenticated account has no saved preferences. It
+validates choices across all the app's domains and kinds. Ordinary login never
+overwrites an account with guest preferences. Language remains a separate
+account preference.
+
+Existing unscoped browser and database choices are retained as a fallback for
+configured kinds. Explicit scoped values win. Resetting a kind records a
+scoped default so an older unscoped value cannot unexpectedly reappear.
+
+## Upgrading an existing deployment
+
+Replace domain-level `filters`, `require_entities` and `require_kinds` with
+policies directly under `domains[]`, keyed by content kind (for example,
+`domains[].gallery`). Apply schema migrations before starting a
+new reader. Readers and media workers from before internal entities were
+introduced do not understand that flag: drain them before activating internal
+markers or converting public entities to internal. A host backfill must retain
+old restriction flags while an old reader still serves requests.
+
+Normal task startup can migrate after stopping the old stack. A live cutover
+requires schema preparation and coordinated reader/worker replacement before
+internal marker activation; see the host's production rollout instructions.

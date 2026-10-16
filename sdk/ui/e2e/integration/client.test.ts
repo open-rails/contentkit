@@ -128,7 +128,7 @@ describe("single PUT", () => {
     const f = await media(rec).put(image(4, "x.png"), { ref, path: "inline/x.png", createOnly: true, edit: { rotate: 90 }, onProgress: (p) => phases.push(p.phase) });
     expect(f).toMatchObject({ path: expect.stringMatching(/^inline\/i-[0-9a-f-]{36}\.png$/), upload: true, edit: { rotate: 90 } });
     expect(f.pending).toBeUndefined();
-    expect(rec.commits[0]).toEqual([{ op: "put", path: f.path, blob: expect.stringMatching(STAGED), create_id: expect.any(String), edit: { rotate: 90 } }]);
+    expect(rec.commits[0]).toEqual([{ op: "put", path: f.path, source_name: "x.png", blob: expect.stringMatching(STAGED), create_id: expect.any(String), edit: { rotate: 90 } }]);
     expect(phases.at(-1)).toBe("processing");
     expect(reads(rec)).toBeGreaterThanOrEqual(1);
   });

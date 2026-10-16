@@ -35,7 +35,7 @@ export interface SearchBoxProps {
   appearance?: ContentKitUiAppearance;
 }
 
-type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string; searchedAt?: string };
+type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
 
 const TYPE_ICONS: Record<string, { icon: IconSvgElement; color: string }> = {
   artist: { icon: UserIcon, color: "text-blue-500 dark:text-blue-400" },
@@ -82,17 +82,12 @@ function SearchTypeIcon({ kind }: { kind: string }) {
   return <HugeiconsIcon icon={type?.icon ?? Search01Icon} strokeWidth={2} className={cn("size-4 shrink-0", type?.color ?? "text-muted-foreground")} data-search-kind={kind} aria-hidden />;
 }
 
-function SearchDate({ value, formatter }: { value?: string; formatter: Intl.DateTimeFormat }) {
-  if (!value || Number.isNaN(Date.parse(value))) return null;
-  return <time dateTime={value} className="shrink-0 text-xs text-muted-foreground">{formatter.format(new Date(value))}</time>;
-}
-
 /**
  * A search field suggesting contents and groups as the reader types, and
  * recent searches while it is empty; Enter searches, or opens the suggestion chosen.
  */
 export function SearchBox(p: SearchBoxProps) {
-  const { t, error, language } = useMessages();
+  const { t, error } = useMessages();
   const id = useId();
   const navigate = useContext(ContentKitContext)?.navigate;
   const [text, setText] = useState(p.defaultValue ?? "");
@@ -104,16 +99,15 @@ export function SearchBox(p: SearchBoxProps) {
   const header = p.presentation === "header";
   const anchor = useHeaderAnchor(open, header, root, input);
   const { top } = anchor;
-  const dates = useMemo(() => new Intl.DateTimeFormat(language, { dateStyle: "short" }), [language]);
   const empty = !text.trim();
-  const found = useTypeahead(text, { kind: p.kind, group_kinds: p.groupKinds, client: p.client });
+  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client });
   const recent = useRecentSearches({ enabled: p.recent !== false && open && empty, client: p.client });
   const items = useMemo<Suggestion[]>(
     () =>
       empty
-        ? recent.searches.map((r) => ({ type: "recent" as const, query: r.query, searchedAt: r.searched_at }))
-        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.groups.map((group) => ({ type: "group" as const, group }))],
-    [empty, recent.searches, found.contents, found.groups],
+        ? recent.searches.map((r) => ({ type: "recent" as const, query: r.query }))
+        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.entities.map((group) => ({ type: "group" as const, group }))],
+    [empty, recent.searches, found.contents, found.entities],
   );
   const current = empty || found.query === text.trim();
   const visible = current ? items : [];
@@ -208,7 +202,6 @@ export function SearchBox(p: SearchBoxProps) {
             <>
               <HugeiconsIcon icon={header ? Search01Icon : Clock01Icon} strokeWidth={2} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate">{s.query}</span>
-              {header && anchor.width >= 320 && <SearchDate value={s.searchedAt} formatter={dates} />}
               <button
                 type="button"
                 className="rounded p-0.5 text-muted-foreground hover:text-foreground"

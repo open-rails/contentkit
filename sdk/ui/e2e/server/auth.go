@@ -42,7 +42,7 @@ var (
 	// roles are what /__test/users hands out.
 	roles = map[string]iam.Role{
 		"staff": rbac.Root.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
-			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.GroupsWrite]),
+			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.EntitiesWrite]),
 		"moderator": rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
 		"editor":    rbac.Root.Role("editor", perm[access.ContentWrite], perm[access.PollsWrite]),
 	}

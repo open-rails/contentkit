@@ -55,21 +55,23 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     E2E_MINIO_PORT: String(minioPort),
     E2E_GATEWAY_PORT: String(gatewayPort),
     E2E_WORKER_PORT: String(workerPort),
+    ...(process.env.CKUI_E2E_CH_ADDR ? { CKUI_E2E_CH_DATABASE: project.replaceAll("-", "_") } : {}),
   };
   const dc = (...args: string[]) =>
     execFileSync("docker", ["compose", "-p", project, "-f", compose, ...args], { env: composeEnv, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
   let server: ChildProcess | undefined;
   const stop = async () => {
-    if (server && server.exitCode === null) {
-      server.kill("SIGTERM");
-      await new Promise((r) => server!.once("exit", r));
-    }
+    // The child tears compose down on exit, so capture diagnostics first.
     if (env("CKUI_E2E_KEEP_LOGS")) {
       try {
         process.stderr.write(dc("--profile", "worker", "logs", "--no-color", "media-worker", "media-gateway"));
       } catch {
         // already gone
       }
+    }
+    if (server && server.exitCode === null) {
+      server.kill("SIGTERM");
+      await new Promise((r) => server!.once("exit", r));
     }
     try {
       dc("--profile", "worker", "down", "-v", "--remove-orphans", "-t", "2");

@@ -18,13 +18,13 @@ func (s *Store) ref(kind string, id GroupID) contentref.ContentRef {
 }
 
 // markDirty queues one keyword document per configured language for each
-// group; groups that are not active have theirs deleted.
+// group; inactive and internal groups have theirs deleted.
 func (s *Store) markDirty(ctx context.Context, q Querier, groups []Group) error {
 	marks := make([]search.DirtyMark, 0, len(groups)*len(s.cfg.Languages))
 	for _, g := range groups {
 		for _, lang := range s.cfg.Languages {
 			marks = append(marks, search.DirtyMark{DocumentKey: search.DocumentKey{ContentRef: s.ref(g.Kind, g.ID), Language: lang},
-				Deleted: g.State != StateActive, Reason: "groups"})
+				Deleted: g.State != StateActive || g.Internal, Reason: "groups"})
 		}
 	}
 	if err := search.MarkDirty(ctx, q, s.schema, marks); err != nil || len(marks) == 0 || s.documents == nil {
@@ -46,7 +46,7 @@ func (s *Store) DocumentKinds() []string { return slices.Sorted(maps.Keys(s.cfg.
 // titled by that language's canonical name (falling back to English, then
 // any language), with the language's aliases and every other name as
 // aliases and overflow as keywords. Missing, merged and deleted groups yield
-// no document.
+// no document. Internal classifications are never search documents.
 func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 	tenant := s.tenant
 	if _, err := s.groupKind(kind); err != nil {
@@ -72,7 +72,7 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 		return out, nil
 	}
 	err = s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND kind = $2 AND state = 'active' AND id = ANY($3::text[])`,
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND kind = $2 AND state = 'active' AND NOT internal AND id = ANY($3::text[])`,
 			s.table("content_groups")), s.tenant, kind, list)
 		if err != nil {
 			return err
@@ -174,7 +174,7 @@ func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string
 	}
 	var refs []contentref.ContentRef
 	err := s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND kind = $2 AND state = 'active' AND id > $3 ORDER BY id LIMIT $4`,
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND kind = $2 AND state = 'active' AND NOT internal AND id > $3 ORDER BY id LIMIT $4`,
 			s.table("content_groups")), s.tenant, kind, cursor, limit)
 		if err != nil {
 			return err

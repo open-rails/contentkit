@@ -171,7 +171,7 @@ describe("content modules against the real ContentKit", () => {
     expect(await ck("moderator").comments.standing(video)).toMatchObject({ moderate: true, ban_scopes: ["global"] });
     expect(await ck("alice").comments.standing(await item({ access: "none" }))).toMatchObject({ can_comment: false });
     await expect(ck("alice").comments.standing(await item({ hidden: true }))).rejects.toEqual(code("not_found"));
-    await expect(ck("alice").comments.list({ type: "groups", id: (await item()).id })).rejects.toEqual(code("not_found"));
+    await expect(ck("alice").comments.list({ type: "entities", id: (await item()).id })).rejects.toEqual(code("not_found"));
 
     const spammer = ck(await h.user());
     for (let i = 0; i < 20; i++) await spammer.comments.create(video, { body: `post ${i}` });
@@ -374,14 +374,14 @@ describe("content modules against the real ContentKit", () => {
   it("groups and codes go through the same mount", async () => {
     const staff = ck("staff");
     const slug = `tag-${randomUUID().slice(0, 8)}`;
-    const [group] = await staff.groups.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name: "Night Sky" }] }]);
+    const [group] = await staff.entities.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name: "Night Sky" }] }]);
     expect(group).toMatchObject({ kind: "tag", slug, state: "active" });
-    expect(changes).toContainEqual({ type: "groups.changed" });
-    expect((await ck().groups.list({ kind: "tag", slug, language: "en" })).groups.map((g) => g.name)).toEqual(["Night Sky"]);
-    const names = await staff.groups.names(group!.id, "add", [{ language: "en", kind: "alias", name: "Starry" }]);
+    expect(changes).toContainEqual({ type: "entities.changed" });
+    expect((await ck().entities.list({ kind: "tag", slug, language: "en" })).entities.map((g) => g.name)).toEqual(["Night Sky"]);
+    const names = await staff.entities.names(group!.id, "add", [{ language: "en", kind: "alias", name: "Starry" }]);
     expect(names.map((n) => n.name).sort()).toEqual(["Night Sky", "Starry"]);
-    expect((await ck().groups.get(group!.id, "en")).counts).toEqual([]);
-    await expect(ck("alice").groups.create([{ kind: "tag", slug: `${slug}-x` }])).rejects.toEqual(code("forbidden"));
+    expect((await ck().entities.get(group!.id, "en")).counts).toEqual([]);
+    await expect(ck("alice").entities.create([{ kind: "tag", slug: `${slug}-x` }])).rejects.toEqual(code("forbidden"));
 
     const post = await ck("editor").contents.publish((await ck("editor").contents.create({ kind: "blog", text: { en: { title: "Coded post", body: "b" } } })).id);
     expect(await ck().codes.resolve(post.code.toLowerCase())).toMatchObject({ content_kind: "blog", content_id: post.id, path: `/en/blog/${post.code}/coded-post` });

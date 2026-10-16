@@ -204,7 +204,7 @@ type Content struct {
 	// cover) while it is active.
 	Owner    *groups.GroupCard `json:"owner,omitempty"`
 	Creators []Creator         `json:"creators"`
-	Groups   []GroupSummary    `json:"groups"`
+	Groups   []GroupSummary    `json:"entities"`
 	Versions []Version         `json:"versions"`
 	// Views counts its distinct viewers of all time plus its imported legacy
 	// view count, as cards' counts.views do; absent when its kind's locked

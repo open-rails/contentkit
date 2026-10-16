@@ -228,6 +228,25 @@ func (g *Grant) URL(f File, dl bool) (string, error) {
 	return g.url(f.Blob, f.Download, dl, g.cookie())
 }
 
+// editorSourceURL is used only by explicit editor reads. Retained uploads
+// remain inspectable independently of the viewer's ServeOriginals policy.
+// A source in download/ needs its own key-scoped token: item tokens never
+// open that area, even for editors.
+func (g *Grant) editorSourceURL(f File, dl bool) (string, error) {
+	if !g.Editor() || !g.Full() || !f.IsUpload() || f.Blob == "" || f.Gone {
+		return "", ErrNotAllowed
+	}
+	if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
+		name := ""
+		if dl {
+			name = f.Download
+		}
+		u, _, err := g.r.DownloadURL(g.Item, f, name, g.Expires.Sub(g.r.o.Now()))
+		return u, err
+	}
+	return g.url(f.Blob, f.Download, dl, g.cookie())
+}
+
 // cookie reports cookie delivery. An application has no browser to hold the
 // cookie (a site forwarding its people's reads): its URLs carry the token.
 func (g *Grant) cookie() bool {
@@ -259,8 +278,8 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 
 // DownloadURL is the URL of f, a file of item in download/, carrying a
 // download token of its one key that expires after ttl and serving it as an
-// attachment named name. Only the version download route hands one out,
-// after its own access check and quota.
+// attachment named name. The version download route uses its own access
+// check and quota; explicit editor reads also issue these for upload sources.
 func (r *Reader) DownloadURL(item Item, f File, name string, ttl time.Duration) (string, time.Time, error) {
 	key, err := item.Blob(f.Blob)
 	if err != nil {
@@ -373,7 +392,8 @@ type ReadOptions struct {
 	Offset, Limit int    // the range that gets URLs
 	Download      bool   // URLs serve each file as a download under its name
 	// Editor adds an editor's uploads with their edit, frame, meta,
-	// pending, failure and editor view, unattached ones included.
+	// pending, failure, editor view and retained source URL, unattached ones
+	// included. Source URLs are independent of the viewer's ServeOriginals.
 	Editor bool
 }
 
@@ -391,6 +411,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		o.Limit = r.o.DefaultLimit
 	}
 	o.Limit = min(o.Limit, r.o.MaxLimit)
+	if o.Editor {
+		ctx = resolve.WithEditorRead(ctx)
+	}
 	g, err := r.Grant(ctx, ref, actor)
 	if err != nil {
 		return nil, nil, err
@@ -430,8 +453,14 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		case editor:
 			fi.From = f.From
 		}
-		if g.Allowed(f) && n >= o.Offset && n < o.Offset+o.Limit {
-			if fi.URL, err = g.URL(f, o.Download); err != nil {
+		if n >= o.Offset && n < o.Offset+o.Limit {
+			switch {
+			case editor && f.IsUpload() && f.Blob != "" && !f.Gone:
+				fi.URL, err = g.editorSourceURL(f, o.Download)
+			case g.Allowed(f):
+				fi.URL, err = g.URL(f, o.Download)
+			}
+			if err != nil {
 				return nil, nil, err
 			}
 		}

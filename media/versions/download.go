@@ -413,7 +413,7 @@ func (s *Service) downloadGroups(ctx context.Context, v version) ([]DownloadGrou
 	rows, err := s.o.Pool.Query(ctx, `SELECT DISTINCT g.kind, g.slug, COALESCE((SELECT n.name FROM `+pgxIdent(s.o.Schema, "content_group_names")+` n
  WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug),
  g.attributes
-FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active'
+FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active' AND NOT g.internal
 WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active'
 AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
 ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kinds.Languages[0])
@@ -496,7 +496,7 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File, error) {
 	var out []media.File
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) {
+		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) || !media.PageIncluded(f) {
 			continue
 		}
 		if f.Fail() != nil || f.Blob == "" {

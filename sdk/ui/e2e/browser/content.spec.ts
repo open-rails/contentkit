@@ -20,7 +20,7 @@ for (const theme of ["light", "dark"] as const) {
   test(`listing: sort, trait, attribute and language filters in the URL (${theme})`, async ({ page }, info) => {
     const ck = await staffClient();
     const r = run();
-    const [tag] = await ck.groups.create([{ kind: "tag", slug: `listing-${r}`, names: [name(`Listing ${r}`)] }]);
+    const [tag] = await ck.entities.create([{ kind: "tag", slug: `listing-${r}`, names: [name(`Listing ${r}`)] }]);
     const t = [tag!.id];
     await seedContent(ck, { kind: "comic", titles: { en: `Apple ${r}` }, attributes: { format: "manga" }, groups: t, versions: [{ languages: ["en"], traits: ["colored"] }] });
     await seedContent(ck, { kind: "comic", titles: { en: `Banana ${r}` }, attributes: { format: "doujin" }, groups: t, versions: [{ languages: ["en"] }] });
@@ -79,7 +79,7 @@ test("listing: a video card previews its stream muted on hover", async ({ page }
 test("rails: a featured group in its order and windows, a list, no continue watching without the signal plane", async ({ page }, info) => {
   const ck = await staffClient();
   const r = run();
-  const [tag, rail] = await ck.groups.create([
+  const [tag, rail] = await ck.entities.create([
     { kind: "tag", slug: `rails-${r}`, names: [name(`Rails ${r}`)] },
     { kind: "rail", slug: `featured-${r}`, names: [name(`Featured ${r}`)] },
   ]);
@@ -88,7 +88,7 @@ test("rails: a featured group in its order and windows, a list, no continue watc
   const two = await seedContent(ck, { kind: "comic", titles: { en: `Two ${r}` }, groups: t, versions: [{ languages: ["en"] }] });
   const later = await seedContent(ck, { kind: "comic", titles: { en: `Later ${r}` }, groups: t, versions: [{ languages: ["en"] }] });
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
-  await ck.groups.addMembers(rail!.id, [{ content_id: two.id }, { content_id: one.id, active_until: tomorrow }, { content_id: later.id, active_from: tomorrow }]);
+  await ck.entities.addMembers(rail!.id, [{ content_id: two.id }, { content_id: one.id, active_until: tomorrow }, { content_id: later.id, active_from: tomorrow }]);
 
   await page.goto(demo("content.html", null, { view: "rails", featured: rail!.id, groups: tag!.id }));
   const featured = page.locator("[data-ckui=content-rail][data-surface=featured]");

@@ -65,7 +65,7 @@ var sitemapRoutes = []httpapi.Route[handler]{
 		Query: []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 1000 by default, at most 10000")},
 		Responses: []httpapi.Reply{httpapi.OK(SitemapPage{})}}, Serve: httpapi.H(handler.sitemapContents)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/sitemap/groups", Resource: "discovery", Auth: httpapi.Open,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/sitemap/entities", Resource: "discovery", Auth: httpapi.Open,
 		Doc: "Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.",
 		Query: []httpapi.Param{httpapi.Text("kind", "the group kind; required"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 1000 by default, at most 10000")},
@@ -160,7 +160,7 @@ FROM %[1]s g
 CROSS JOIN LATERAL (SELECT ARRAY(SELECT x.l FROM unnest(@d_langs::text[]) AS x(l) WHERE EXISTS (SELECT 1 FROM %[2]s f
  WHERE f.tenant_id = g.tenant_id AND f.group_ids @> ARRAY[g.id] AND f.languages @> ARRAY[x.l] AND %[4]s)) AS languages) l
 JOIN %[3]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
-WHERE g.tenant_id = @d_tenant AND g.kind = @d_kind AND g.state = 'active' AND g.id > @d_after AND cardinality(l.languages) > 0
+WHERE g.tenant_id = @d_tenant AND g.kind = @d_kind AND g.state = 'active' AND NOT g.internal AND g.id > @d_after AND cardinality(l.languages) > 0
 ORDER BY g.id LIMIT @d_limit`, s.t.groups, s.t.facets, s.t.codes, pred)
 	})
 }

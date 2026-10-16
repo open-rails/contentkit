@@ -1,11 +1,25 @@
 // Discovery: cards, grids, rails, search, content filters, history, release dates.
 export const discovery = {
   readerSettings: {
+    filterTitle: "Content filters",
+    filterDescription: "Choose the content you want to see.",
+    savingPreferences: "Saving your preferences…",
+    preferencesNotSaved: "Your preferences haven't been saved yet.",
     title: "Reader settings",
     description: "Choose your language and the content you see.",
     filters: "Show Content:",
   },
+  releases: {
+    premiumMore_one: "{count} more item",
+    premiumMore_other: "{count} more items",
+    premiumHint: "Members-only previews · Click to view",
+    filteredMore_one: "{count} item filtered out",
+    filteredMore_other: "{count} items filtered out",
+    manageFilters: "Change content filters",
+    filterContext: "Filters for {date}. An item can match more than one filter.",
+  },
   contents: {
+    showMore: "Show more",
     unknownAccess: "Unavailable right now",
     members: "Members",
     joinFree: "Free to join",
@@ -53,6 +67,9 @@ export const discovery = {
     removeRecent: "Remove “{q}”",
   },
   listing: {
+    popularPeriod: "Popularity period",
+    pastDays_one: "Past {count} day",
+    pastDays_other: "Past {count} days",
     sort: "Sort",
     sort_newest: "Newest",
     sort_oldest: "Oldest",

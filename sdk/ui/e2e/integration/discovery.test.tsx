@@ -46,10 +46,10 @@ describe("discovery against the real ContentKit", () => {
       );
     };
   const tag = async (slug: string, name = slug): Promise<GroupCard> => {
-    const found = (await staff.groups.list({ kind: "tag", slug })).groups[0];
+    const found = (await staff.entities.list({ kind: "tag", slug })).entities[0];
     if (found) return found;
-    const [g] = await staff.groups.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name }] }]);
-    return (await staff.groups.list({ kind: "tag", slug })).groups[0] ?? ({ ...g!, name, count: 0 } as GroupCard);
+    const [g] = await staff.entities.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name }] }]);
+    return (await staff.entities.list({ kind: "tag", slug })).entities[0] ?? ({ ...g!, name, count: 0 } as GroupCard);
   };
 
   it("useContents: one card per content, sorts, filters and pages, locks or hides what the reader cannot open", async () => {
@@ -102,7 +102,7 @@ describe("discovery against the real ContentKit", () => {
     // Keyword documents trail writes by the search sync job: wait until both are indexed.
     await waitFor(async () => {
       const [found, typed] = await Promise.all([c.discovery.search({ q: word, kind: "comic" }), c.discovery.typeahead({ q: word })]);
-      expect([found.contents.map((x) => x.id), typed.groups.map((g) => g.id)]).toEqual([[one!.id], [t.id]]);
+      expect([found.contents.map((x) => x.id), typed.entities.map((g) => g.id)]).toEqual([[one!.id], [t.id]]);
     }, indexed);
 
     const { result, rerender } = renderHook(({ q }: { q: string }) => useSearch({ q, kind: "comic" }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: "" } });
@@ -110,10 +110,10 @@ describe("discovery against the real ContentKit", () => {
     expect(result.current.loading).toBe(false);
     rerender({ q: word });
     await waitFor(() => expect(result.current.items.map((x) => x.id)).toEqual([one!.id]), wait);
-    expect(result.current.items[0]!.groups.tag?.map((g) => g.id)).toEqual([t.id]);
+    expect(result.current.items[0]!.entities.tag?.map((g) => g.id)).toEqual([t.id]);
 
     const { result: ta } = renderHook(({ q }: { q: string }) => useTypeahead(q, { debounce: 10 }), { wrapper: wrap(c, { viewer: null }), initialProps: { q: word.slice(0, 6) } });
-    await waitFor(() => expect([ta.current.contents.map((x) => x.id), ta.current.groups.map((g) => g.id)]).toEqual([[one!.id], [t.id]]), wait);
+    await waitFor(() => expect([ta.current.contents.map((x) => x.id), ta.current.entities.map((g) => g.id)]).toEqual([[one!.id], [t.id]]), wait);
     expect(ta.current.query).toBe(word.slice(0, 6));
   });
 
@@ -164,14 +164,14 @@ describe("discovery against the real ContentKit", () => {
     const reader = await h.user();
     const c = client(h, cfg, reader);
     const { result } = renderHook(() => ({ filters: useContentFilters({ language: "en" }), list: useContents({ kind: "comic", groups: [t.id] }) }), { wrapper: wrap(c, { viewer: reader.id }) });
-    await waitFor(() => expect(result.current.filters.filters?.filters.map((f) => f.group.slug)).toEqual(["gore"]), wait);
-    expect(result.current.filters.filters!.filters[0]).toMatchObject({ label: "Gore", default_visible: false, visible: false, overridden: false });
+    await waitFor(() => expect(result.current.filters.filters?.kinds.comic?.map((f) => f.entity.slug)).toEqual(["gore"]), wait);
+    expect(result.current.filters.filters!.kinds.comic![0]).toMatchObject({ entity: { name: "Gore" }, default_visible: false, visible: false, overridden: false });
     await waitFor(() => expect(result.current.list.items.map((x) => x.id)).toEqual([plain!.id]), wait);
 
-    await act(() => result.current.filters.setVisible(gore.id, true));
-    expect(result.current.filters.filters!.filters[0]).toMatchObject({ visible: true, overridden: true });
+    await act(() => result.current.filters.setVisible("comic", gore.id, true));
+    expect(result.current.filters.filters!.kinds.comic![0]).toMatchObject({ visible: true, overridden: true });
     await waitFor(() => expect(result.current.list.items.map((x) => x.id).sort()).toEqual([plain!.id, gory!.id].sort()), wait);
-    await act(() => result.current.filters.save({ filters: [], include_deleted: false }));
+    await act(() => result.current.filters.save({ kinds: { comic: [] }, include_deleted: false }));
     await waitFor(() => expect(result.current.list.items.map((x) => x.id)).toEqual([plain!.id]), wait);
   });
 
@@ -192,13 +192,13 @@ describe("discovery against the real ContentKit", () => {
   it("ContentRail: a featured group's members in its order and windows, any list, no continue watching without the signal plane", async () => {
     const r = run();
     const t = await tag(`rails-${r}`);
-    const [rail] = await staff.groups.create([{ kind: "rail", slug: `featured-${r}`, names: [{ language: "en", kind: "name", name: `Featured ${r}` }] }]);
+    const [rail] = await staff.entities.create([{ kind: "rail", slug: `featured-${r}`, names: [{ language: "en", kind: "name", name: `Featured ${r}` }] }]);
     const [one, two, later] = await seedContents(
       staff,
       ["One", "Two", "Later"].map((n) => ({ kind: "comic", titles: { en: `${n} ${r}` }, groups: [t.id], versions: [{ languages: ["en"] }] })),
     );
     const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
-    await staff.groups.addMembers(rail!.id, [{ content_id: two!.id }, { content_id: one!.id, active_until: tomorrow }, { content_id: later!.id, active_from: tomorrow }]);
+    await staff.entities.addMembers(rail!.id, [{ content_id: two!.id }, { content_id: one!.id, active_until: tomorrow }, { content_id: later!.id, active_from: tomorrow }]);
     const reader = await h.user();
     render(
       <>
@@ -218,7 +218,7 @@ describe("discovery against the real ContentKit", () => {
 
   it("owner_group: a group's own feed, and each card's owner chip", async () => {
     const r = run();
-    const [owner] = await staff.groups.create([{ kind: "artist", slug: `owner-${r}`, names: [{ language: "en", kind: "name", name: `Studio ${r}` }] }]);
+    const [owner] = await staff.entities.create([{ kind: "artist", slug: `owner-${r}`, names: [{ language: "en", kind: "name", name: `Studio ${r}` }] }]);
     const t = await tag(`owned-${r}`);
     const [owned] = await seedContents(staff, [
       { kind: "comic", titles: { en: `Owned ${r}` }, owner: owner!.id, groups: [t.id], versions: [{ languages: ["en"] }] },

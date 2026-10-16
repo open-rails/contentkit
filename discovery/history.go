@@ -176,6 +176,8 @@ type SignalInput struct {
 	RenderID string `json:"render_id,omitempty"`
 	Surface  string `json:"surface,omitempty"`
 	Position uint32 `json:"position,omitempty"`
+	// ActivityToken is the server's immutable access snapshot from /activity-contexts.
+	ActivityToken string `json:"activity_token,omitempty"`
 }
 
 // subject is the actor's signal subject: the person, else a hash of the
@@ -254,8 +256,31 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 		if x.VersionID != "" && !versioned {
 			return fmt.Errorf("%w: version %s of content %s", ErrNotFound, x.VersionID, x.ContentID)
 		}
+		var receipt *activityReceipt
+		if x.ActivityToken != "" {
+			r, err := s.readActivityReceipt(x.ActivityToken, subject, ActivityTarget{ContentID: x.ContentID, VersionID: x.VersionID})
+			if err != nil {
+				if expiredActivity(err) {
+					continue
+				}
+				return err
+			}
+			receipt = &r
+			if f, ok := t.versions[r.ResolvedVersion]; ok {
+				facts = f
+			}
+		}
 		sig := signal.Signal{ContentRef: ref, Subject: subject, Type: x.Type, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC(),
 			DurationS: x.DurationS, Resume: x.Resume}
+		if receipt != nil {
+			sig.Access = &receipt.Access
+			sig.OccurredAt = receipt.Access.ObservedAt
+			if x.Type == TypeView {
+				// One signed open is one view session, regardless of how many
+				// client event identifiers are submitted with its receipt.
+				sig.EventID = receipt.ID
+			}
+		}
 		switch x.Type {
 		case TypeView:
 			sig.Progress, sig.ProgressMax = x.Progress, progressMax(t.presentation, facts)
@@ -371,8 +396,10 @@ type ExposureInput struct {
 
 // Placement is one shown content item at its 1-based position.
 type Placement struct {
-	ContentID string `json:"content_id"`
-	Position  uint32 `json:"position"`
+	ContentID     string `json:"content_id"`
+	Position      uint32 `json:"position"`
+	VersionID     string `json:"version_id,omitempty"`
+	ActivityToken string `json:"activity_token,omitempty"`
 }
 
 // RecordExposures records result lists for click attribution.
@@ -436,9 +463,22 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 			if !ok {
 				return fmt.Errorf("%w: content %s", ErrNotFound, p.ContentID)
 			}
-			x.Shown = append(x.Shown, signal.Placement{ContentRef: contentref.New(s.o.Tenant, kind, p.ContentID), Position: p.Position})
+			placement := signal.Placement{ContentRef: contentref.NewVersion(s.o.Tenant, kind, p.ContentID, p.VersionID), Position: p.Position}
+			if p.ActivityToken != "" {
+				r, err := s.readActivityReceipt(p.ActivityToken, subject, ActivityTarget{ContentID: p.ContentID, VersionID: p.VersionID})
+				if err != nil {
+					if expiredActivity(err) {
+						continue
+					}
+					return err
+				}
+				placement.Access = &r.Access
+			}
+			x.Shown = append(x.Shown, placement)
 		}
-		out = append(out, x)
+		if len(x.Shown) > 0 {
+			out = append(out, x)
+		}
 	}
 	return s.o.Hub.RecordExposures(ctx, out)
 }

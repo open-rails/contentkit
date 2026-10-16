@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -71,6 +72,15 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	if text == "" {
 		return empty, fmt.Errorf("%w: q is required", ErrInvalid)
 	}
+	var err error
+	order := o.Sort
+	if order == "" {
+		order = SortRelevance
+	}
+	o.Filter, err = publicationCursor(o.Filter, o.Cursor, order)
+	if err != nil {
+		return empty, err
+	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return empty, err
@@ -79,6 +89,17 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
 		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
+		if name, period, _ := strings.Cut(o.Sort, ":"); err == nil && name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
+			if period == "" {
+				period = popularity.DefaultPeriod
+			}
+			window, windowErr := popularity.WindowForPeriod(period, s.now())
+			if windowErr != nil {
+				return empty, windowErr
+			}
+			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+			srt.raw = o.Sort
+		}
 		if err != nil {
 			return empty, err
 		}
@@ -97,7 +118,12 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 			return empty, err
 		}
 		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
-		return ContentPage{Contents: cards, NextCursor: next}, err
+		for i := range cards {
+			if ranking, ok := srt.rankings[cards[i].ID]; ok {
+				cards[i].Ranking = &ranking
+			}
+		}
+		return ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {
@@ -130,7 +156,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
 	out := ContentPage{Contents: cards}
 	if res.HasMore && len(res.Hits) > 0 {
-		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1]}.encode()
+		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1], AsOf: q.asOf}.encode()
 	}
 	return out, err
 }
@@ -151,7 +177,7 @@ type TypeaheadOptions struct {
 // Typeahead is the suggestions: content cards and groups, best first.
 type Typeahead struct {
 	Contents []Card             `json:"contents"`
-	Groups   []groups.GroupCard `json:"groups"`
+	Groups   []groups.GroupCard `json:"entities"`
 }
 
 // Typeahead suggests contents the reader's listing shows and active groups,
@@ -206,7 +232,7 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	}
 	ghits, err := s.o.Hub.Typeahead(ctx, text, hub.TypeaheadOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: kinds, Limit: limit,
 		Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.groups +
-			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active')`}})
+			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`}})
 	if err != nil {
 		return out, err
 	}

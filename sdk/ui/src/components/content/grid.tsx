@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
@@ -29,9 +29,33 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
   client?: ContentKitClient;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Opt into a fluid grid, optionally with a desktop column ceiling. */
+  grid?: CardGridLayout;
 }
 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-x-4 gap-y-6";
+
+export interface CardGridLayout {
+  /** Minimum desktop card width: CSS pixels or a CSS length such as clamp(...). Cards fill the available space. */
+  minCardWidth: number | string;
+  /** Maximum desktop columns. Omit to use all available width without a ceiling. */
+  maxColumns?: number;
+  /** Equal-width columns below the desktop breakpoint. Default 2. */
+  mobileColumns?: number;
+}
+
+/** Shared by complete lists, release-day sections and grid-style previews. */
+export function cardGridLayout(layout?: CardGridLayout): { className: string; style?: CSSProperties } {
+  if (!layout) return { className: GRID };
+  const width = typeof layout.minCardWidth === "string" ? layout.minCardWidth.trim() || "160px" : `${Number.isFinite(layout.minCardWidth) ? Math.max(1, layout.minCardWidth) : 160}px`;
+  const columns = layout.mobileColumns !== undefined && Number.isFinite(layout.mobileColumns) ? Math.max(1, Math.floor(layout.mobileColumns)) : 2;
+  const maximum = layout.maxColumns !== undefined && Number.isFinite(layout.maxColumns) ? Math.max(1, Math.floor(layout.maxColumns)) : undefined;
+  const trackWidth = maximum === undefined ? width : `max(${width}, calc((100% - ${maximum - 1}rem) / ${maximum}))`;
+  return {
+    className: "grid grid-cols-[repeat(var(--ckui-card-mobile-columns),minmax(0,1fr))] gap-x-4 gap-y-6 md:grid-cols-[repeat(auto-fill,minmax(min(100%,var(--ckui-card-min-width)),1fr))]",
+    style: { "--ckui-card-min-width": trackWidth, "--ckui-card-mobile-columns": columns } as CSSProperties,
+  };
+}
 
 /** A list's cards in a responsive grid, paged, with exposures and click signals. */
 export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList<Card>; render: string }) {
@@ -40,17 +64,18 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
   const { kinds } = useKinds({ client: p.client });
   const exposure = useExposure(list.items, { surface: p.surface ?? "list", render, client: p.client });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
-  const { hasMore, loadingMore, loadMore } = list;
+  const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
-    if (p.infinite && near && hasMore && !loadingMore) void loadMore();
-  }, [p.infinite, near, hasMore, loadingMore, loadMore]);
+    if (p.infinite && near && hasMore && !loadingMore && !error) void loadMore();
+  }, [p.infinite, near, hasMore, loadingMore, loadMore, error]);
   const tiers = p.tiers ?? kinds?.tiers;
+  const layout = cardGridLayout(p.grid);
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-grid" aria-busy={list.loading}>
       {list.loading && !list.items.length ? (
-        <div className={GRID}>
+        <div className={layout.className} style={layout.style}>
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className={p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full"} />
+            <Skeleton key={i} className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
           ))}
         </div>
       ) : list.error && !list.items.length ? (
@@ -65,7 +90,7 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
           {p.empty ?? t("contents.empty")}
         </div>
       ) : (
-        <ol className={GRID}>
+        <ol className={layout.className} style={layout.style}>
           {list.items.map((card, i) => (
             <li key={card.id} ref={exposure.track(card.id, i + 1)}>
               {p.renderCard ? (
@@ -73,10 +98,19 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
               ) : (
                 <ContentCard
                   card={card}
+                  client={p.client}
                   href={p.href}
                   shape={p.shape}
+                  aspectRatio={p.aspectRatio}
+                  titlePosition={p.titlePosition}
+                  loadMedia={p.loadMedia}
                   groupKinds={p.groupKinds}
                   chips={p.chips}
+                  filterEntity={p.filterEntity}
+                  entityStyle={p.entityStyle}
+                  entityLayout={p.entityLayout}
+                  metadata={p.metadata}
+                  showCounts={p.showCounts}
                   tiers={tiers}
                   labels={p.labels}
                   owner={p.owner}
@@ -90,9 +124,10 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
         </ol>
       )}
       {list.hasMore && (
-        <div ref={sentinel} className="grid justify-items-center">
+        <div ref={sentinel} className="grid justify-items-center gap-2">
+          {list.error && list.items.length > 0 && <p role="alert" className="text-destructive">{contentError(m, list.error)}</p>}
           <Button variant="outline" size="sm" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
-            {list.loadingMore ? t("contents.loading") : t("contents.loadMore")}
+            {list.loadingMore ? t("contents.loading") : list.error ? t("common.retry") : t("contents.loadMore")}
           </Button>
         </div>
       )}
@@ -181,10 +216,19 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
           ((card) => (
             <ContentCard
               card={card}
+              client={p.client}
               href={p.href}
               shape={p.shape}
+              aspectRatio={p.aspectRatio}
+              titlePosition={p.titlePosition}
+              loadMedia={p.loadMedia}
               groupKinds={p.groupKinds}
               chips={p.chips}
+              filterEntity={p.filterEntity}
+              entityStyle={p.entityStyle}
+              entityLayout={p.entityLayout}
+              metadata={p.metadata}
+              showCounts={p.showCounts}
               tiers={p.tiers}
               labels={p.labels}
               owner={p.owner}
@@ -249,6 +293,7 @@ export function ContentRail({ title, similar, recommendations, history, group, l
   const surface = p.surface ?? (recommendations ? "recommendations" : history ? "history" : group ? "featured" : listing ? "list" : "similar");
   const exposure = useExposure(rail.items, { surface, render: JSON.stringify([similar, recommendations, history, group, listing, q]), client: p.client });
   const source = similar || recommendations || history || group || listing;
+  const layout = p.grid ? cardGridLayout(p.grid) : undefined;
   if (!source || rail.unavailable || (!rail.loading && !rail.items.length)) return null;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="content-rail" data-surface={surface}>
@@ -256,20 +301,29 @@ export function ContentRail({ title, similar, recommendations, history, group, l
         <h2 className="text-base font-semibold">{title}</h2>
         {more}
       </div>
-      <ol className="flex snap-x gap-4 overflow-x-auto pb-2">
+      <ol className={layout?.className ?? "flex snap-x gap-4 overflow-x-auto pb-2"} style={layout?.style}>
         {(rail.loading && !rail.items.length ? Array.from({ length: 6 }, () => null) : rail.items).map((card, i) => (
-          <li key={card?.id ?? i} className="w-36 shrink-0 snap-start sm:w-44" ref={card ? exposure.track(card.id, i + 1) : undefined}>
+          <li key={card?.id ?? i} className={layout ? undefined : "w-36 shrink-0 snap-start sm:w-44"} ref={card ? exposure.track(card.id, i + 1) : undefined}>
             {!card ? (
-              <Skeleton className={p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full"} />
+              <Skeleton className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
             ) : p.renderCard ? (
               p.renderCard(card, i + 1)
             ) : (
               <ContentCard
                 card={card}
+                client={p.client}
                 href={p.href}
                 shape={p.shape}
+                aspectRatio={p.aspectRatio}
+                titlePosition={p.titlePosition}
+                loadMedia={p.loadMedia}
                 groupKinds={p.groupKinds}
                 chips={p.chips}
+                filterEntity={p.filterEntity}
+                entityStyle={p.entityStyle}
+                entityLayout={p.entityLayout}
+                metadata={p.metadata}
+                showCounts={p.showCounts}
                 tiers={p.tiers ?? kinds?.tiers}
                 labels={p.labels}
                 owner={p.owner}

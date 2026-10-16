@@ -106,7 +106,7 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
     const fetches = vi.spyOn(globalThis, "fetch");
     await act(async () => void (await result.current.save()));
     expect(result.current.status).toBe("done");
-    expect(r.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^u-/), edit }]);
+    expect(r.commits[0]).toEqual([{ op: "put", path: "avatar.png", source_name: "a.png", replace: true, blob: expect.stringMatching(/^u-/), edit }]);
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ path: "avatar.png", edit }));
     expect(source.revoke).toHaveBeenCalled();
     // Only the API and the bucket: no image of the retired avatar is fetched.

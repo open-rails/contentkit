@@ -415,6 +415,9 @@ func (st *Store) popular(ctx context.Context, tenant string, contentKind string,
 	if err := opts.Window.Validate(); err != nil {
 		return nil, err
 	}
+	if opts.Normalization != nil {
+		return st.normalizedPopular(ctx, tenant, contentKind, ids, opts)
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 20

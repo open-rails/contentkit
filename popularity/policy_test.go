@@ -21,7 +21,7 @@ func TestPolicyRegistry(t *testing.T) {
 	if _, err := ByName("v0"); err == nil || !strings.Contains(err.Error(), `unknown policy "v0"`) {
 		t.Fatalf("unknown policy must refuse: %v", err)
 	}
-	if names := Names(); len(names) != 1 || names[0] != "v1" {
+	if names := Names(); len(names) != 2 || names[0] != "v1" || names[1] != "v2" {
 		t.Fatalf("names %v", names)
 	}
 	if err := PolicyV1.Validate(); err != nil {

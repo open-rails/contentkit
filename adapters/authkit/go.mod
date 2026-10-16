@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.30.0
-	github.com/open-rails/contentkit v0.92.0
+	github.com/open-rails/contentkit v0.93.0
 )
 
 require (
@@ -23,6 +23,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/webauthn v0.18.2 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
+	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
@@ -35,7 +36,7 @@ require (
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/open-rails/helpers v1.13.0 // indirect
-	github.com/open-rails/migratekit v1.11.0 // indirect
+	github.com/open-rails/migratekit v1.11.2 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect

@@ -51,7 +51,7 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   onChange={(change) => queryClient.invalidateQueries({ queryKey: ["media", change.ref.id] })}
   onError={(error, { operation }) => report(operation, error)}
 >
-  <ContentKitUiProvider appearance={{ theme: "inherit" }} language={lang} density={[2, 3]}>
+  <ContentKitUiProvider appearance={{ theme: "inherit" }} language={lang} density={[1, 3]}>
     <App />
   </ContentKitUiProvider>
 </ContentKitProvider>;
@@ -74,7 +74,7 @@ the second `subscribe` / `onChange` argument, or `null` when the scope changed d
 operation. This does not change the operation's result or its authentication.
 
 - **Mounts.** Without `mounts`, modules live under `{baseUrl}/v1`: content,
-  groups and the content model at its root, `/media` (reads, HLS),
+  entities and the content model at its root, `/media` (reads, HLS),
   `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
   `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
@@ -87,13 +87,15 @@ operation. This does not change the operation's result or its authentication.
 - **Content modules**, one per resource, each method one route of the
   generated route table with its generated types: `contents`, `catalog`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
-  `moderation`, `groups`, `codes`. Lists take `limit`/`offset` (the review
+  `moderation`, `entities`, `codes`. Lists take `limit`/`offset` (the review
   queue and group listings a `cursor`); `contents.manage` lists what the caller
   manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
   counts what is open; staff lists are `polls.adminList` (`state`, `q`),
-  `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
-  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's,
-  `groups.uploadCover(group, file)` its cover; `client.kinds()` the content model.
+  `comments.adminList` (`contentKind`, `author`); `entities.members(id)` pages
+  an entity's memberships, `entities.ofContent(id)` / `setOfContent` a content's,
+  `entities.uploadImage(entity, "cover", file)` its cover; `client.kinds()` the content model.
+  `contents.manage({kind: "gallery"})` uses `/manage/gallery`; omitting `kind`
+  lists manageable content across kinds at `/manage`.
 - **Images of content and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
@@ -121,7 +123,7 @@ operation. This does not change the operation's result or its authentication.
 - **`ContentKitUiProvider`**: `appearance` (`theme`
   `light`/`dark`/`auto`/`inherit`, `variables` as `--ckui-*`), `language`
   (loads its built-in bundle), `messages` (bundles over it), `t` (host
-  translate hook), `density` (default `[2, 3]`), `inlinePreview` (default true).
+  translate hook), `density` (default `[1, 3]`), `inlinePreview` (default true).
 
 ## Hooks
 
@@ -288,17 +290,108 @@ cover at 3:1.
 
 ### Card lists: decorations and locked cards
 
-Every card list (`ContentGrid`, `ContentListing`, `ContentRail`,
+Every card list (`ContentGrid`, `ContentListing`, `ContentRail`, `DailyReleases`,
 `SearchResults`, `ContentHistory`) and `ContentCard` take `decorate(card)`:
 the host's badges, drawn over the cover (place them yourself; clicks reach
 the card, and click signals stay intact). Cards carry what badges need:
 `access.level` and `access.tiers` (the effective rule, the same for every
-reader), `version.has_audio`, `viewer.favorited` and `groups`.
+reader), `version.has_audio`, `viewer.favorited` and `entities`.
+
+Hosts can tailor the details without replacing the card. For example,
+`metadata={{ languages: false, traits: ["colored"], duration: false }}` keeps
+the page count and the Colored trait, and `showCounts={false}` hides reaction
+totals. `groupKinds={["series"]}` selects series chips;
+`filterEntity={(entity, kind) => ...}` filters them before the chip limit.
+Defaults continue to show all normal metadata, entity chips and totals.
+
+For a poster-style card, set `aspectRatio="182 / 260"`,
+`titlePosition="cover"` and `entityStyle="text"`. The title is a single
+accessible link over the cover's bottom gradient; entities remain clickable
+without chip borders. The ratio overrides `shape` and also applies to loading
+placeholders. These options work through every card grid, rail and daily feed;
+omitting them retains the default ratio, title below the image and chips.
+Plain-text entities sit directly below the cover, followed by other metadata.
+
+```tsx
+<ContentGrid query={{ kind: "gallery" }}
+  aspectRatio="182 / 260" titlePosition="cover" entityStyle="text"
+  groupKinds={["series"]} showCounts={false}
+  metadata={{ languages: false, traits: ["colored"], duration: false }} />
+```
+
+Card grids use **width-driven tiling**: preserve roughly the same apparent
+card size as the container grows, adding or removing columns to use the
+available space. The application supplies its card-width target; ContentKit
+UI derives the column count. Cards may grow slightly to fill each row.
+
+For example, `grid={{ minCardWidth: 280, mobileColumns: 2 }}` keeps two columns
+on small screens and a stable 280 CSS-pixel minimum on desktop, with no column
+ceiling. This shared behavior applies to card grids, daily releases, Popular
+and `ContentRail` grid previews; an unconfigured rail remains horizontal.
+
+Use a stable CSS-pixel width for ordinary listing cards. `maxColumns` is an
+explicit opt-in for surfaces that intentionally cap their columns.
+`minCardWidth` also accepts CSS lengths for application-specific layouts.
+
+Custom page-thumbnail or media grids can use the same primitive: call
+`cardGridLayout({ minCardWidth: 280, mobileColumns: 2 })` and apply its
+`className` and `style` to a `ContentKitUiRoot`. This keeps their track widths,
+gaps and responsive behavior identical to content-card lists.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
 cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
 the open ones and puts the rest behind a counted toggle that loads them on
 opening (`useLockedCount` counts them).
+
+### Daily releases
+
+```tsx
+<DailyReleases query={{ kind: "gallery", days: 10 }} initialVisible={30} />
+```
+
+`DailyReleases` fetches all card metadata for the calendar window in one
+`GET /releases` request. It uses the browser's IANA time zone unless
+`query.time_zone` is supplied. Days appear newest first as keyboard-accessible
+disclosures, with reduced-motion support. The initial card budget is shared
+across days, newest first. Opening older days or choosing **Show more** reveals
+already-fetched cards; it does not make another listing request.
+
+Only revealed cards occupy the grid, and images/previews mount when those cards
+enter the viewport. Collapsing a day removes its media. The standard card
+properties (`href`, `decorate`, `groupKinds`, `tiers`, and so on) remain available.
+For a custom layout, `useDailyReleases(query)` exposes the same shared read and
+`client.discovery.releases(query)` exposes the typed request directly.
+
+Opt into `collapsePremium` to replace a day's locked tier previews with one
+counted tile at their first original position. Opening it restores their order
+within the existing card budget; **Show more** still controls the rest. This
+only reveals previews and never grants access. Native layout/reveal animations
+respect reduced motion, and keyboard activation focuses the first revealed
+card. `summaryLabels.premium(count)` and `.filtered(count)` can supply a host's
+nouns; the shared defaults use localized item labels.
+
+Each day's `filtered_count` is a distinct-content total hidden only by the
+reader's toggleable preferences. A filtered tile opens `ContentFilterDialog`
+with `filtered_entities` counts for that day and the same configured controls
+as `ReaderSettings`. Per-entity counts may overlap; they must not be added to
+compute the total. Changing a preference refreshes the feed and counts while
+the dialog remains open. Hard domain rules and internal classifications are
+never controls or count labels. A day with only filtered items remains visible.
+For custom interfaces, pass selection-specific `counts` to
+`ContentFilterSettings` or the controlled `ContentFilterDialog`; omit `counts`
+for ordinary settings without listing totals.
+
+`published_within` filters a listing by publication age independently of its
+ranking window. For example, `{ sort: "popular:7d", published_within: "7d" }`
+ranks only content published during the past seven days.
+
+`<PopularContentGrid query={{ kind: "gallery" }} />` supplies four visible tabs
+for 7-day, 90-day, 365-day and all-time activity and loads further pages as the
+reader scrolls. Publication age is unrestricted, so older content can trend
+again. Supply `query.published_within` only when a release-age cutoff is wanted.
+`period` and `onPeriodChange`
+optionally keep its state in the host's URL. For a homepage preview, pass
+`popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
 
 ### MediaFolderEditor
 
@@ -595,6 +688,13 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
 
+- **`PageReview`**: retained page sources, original filenames, automatic cleanup
+  reasons, previews, inclusion overrides and ordering. `ContentManager` includes
+  it for reader versions; use `content` and `version` to embed it separately.
+  `usePageReview()` exposes the same revision-checked API. Explicitly segmented
+  versions keep their selection/order and show read-only review controls so
+  cleanup cannot move pages across release/access boundaries.
+
 - **`ReaderManifestEditor`**: a reader version's manifest over its published
   pages and audio: scroll anchors, audio cues (matched to pages or anchors by
   file name in one step), background tracks and auto-advance. Page order is
@@ -630,6 +730,10 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   at `basePath/{kind}/{id}` with `GroupEditor` and `GroupMembers`. Props:
   `groupKinds` (default the model's site-owned ones), `kinds`, `labels`,
   `contentKind`, `renderContent`, `pageSize`. `useGroupManagerAccess()`.
+  Its staff listing includes internal entities, with an “Internal use only”
+  setting in the editor. Public directories and search never include those
+  entities. Use `management` on a standalone `GroupEditor` or `GroupPicker`
+  to opt into the same staff API; ordinary user-owned editors stay public.
 
   ```tsx
   <GroupManager client={contentkit} basePath="/admin/groups" navigation={nav} labels={{ artist: "Artists" }} />
@@ -753,13 +857,98 @@ the host owns search-page navigation.
 ```tsx
 <SearchBox presentation="header" onSearch={(query) => navigate(`/search?q=${encodeURIComponent(query)}`)} />
 <ReaderSettings
+  kinds={["gallery"]}
   languages={[{ value: "en", label: "English" }, { value: "es", label: "Español" }]}
   language={language}
   onLanguageChange={changeLanguage}
 />
 ```
 
-Render these under `ContentKitProvider`. Keep its `viewer` current: guests can
-change language, while signed-in readers also see the site's configured content
-filters. Filter toggles save through ContentKit immediately. The language callback
-belongs to the host so it can update its route and stored preference together.
+Render these under `ContentKitProvider` with `viewer={null}` for guests. Guest
+language choices and filter overrides are stored per app in localStorage and
+shared across tabs. Account filter choices come from ContentKit's database;
+account languages use the provider's `languagePreference` adapter. Each domain
+only offers its configured, user-toggleable entities; internal classifications
+and required or locked rules never appear in reader settings. Labels use the
+entities' localized names. Saving this domain's settings preserves choices for
+entities offered by other domains and other content kinds. `kinds` limits the
+controls shown by either `ReaderSettings` or `ContentFilterSettings`; omit it to
+show all configured kinds. Multiple kinds get separate headings; `labels` can
+supply their display names. The same entity can have independent gallery and
+blog preferences. Resets follow the current domain default, including after it
+changes. Old unscoped browser choices remain a fallback until replaced
+by a choice for that content kind.
+
+The HTTP shape groups preferences by kind:
+
+```json
+{"kinds":{"gallery":[{"entity_id":"tag-id","visible":false}]},"include_deleted":false}
+```
+
+`PUT /me/content-filters` replaces only the submitted kinds. An empty gallery
+list resets that kind to its domain defaults without changing blog preferences.
+The registration initializer also accepts `legacy_filters` so old browser
+choices can be transferred without dropping preferences for another domain.
+
+```tsx
+<ContentKitProvider
+  client={contentkit}
+  viewer={user?.id ?? null}
+  language={routeLanguage}
+  languagePreference={{
+    load: (accountId) => loadAccountLanguage(accountId),
+    save: (language, accountId) => saveAccountLanguage(accountId, language),
+  }}
+>
+  {children}
+</ContentKitProvider>
+```
+
+The adapter must check the expected account before reading or writing. Return
+null from `load` when no language is saved. A localized URL does not change a
+stored preference: only an explicit language selection does. The language
+callback still belongs to the host's router.
+
+On a confirmed **new registration**, call
+`contentkit.preferences.inheritAfterRegistration(userId)`. Never call it for an
+ordinary sign-in. The captured guest choices are retried once that account's
+authenticated transport is ready; failed transfers remain pending in localStorage.
+Existing account filter records are preserved. A confirmed new registration
+inherits the guest language over its initial default; retries preserve a later
+language choice. Ordinary sign-ins never import guest preferences.
+`useReaderPreferences()` exposes the preferred language, pending/error state and
+a retry action. ReaderSettings shows an incomplete transfer and lets the reader
+retry it. Guest preferences are retained separately after registration and logout.
+
+### Activity tracking
+
+`useViewSignal(contentId, versionId)` starts an observation when its returned
+callback first reports progress. The shared `Beacons` client immediately requests
+an activity context from ContentKit, then includes that signed receipt in each
+revision. Its server timestamp stays fixed for the entire view. Pass a version
+when one is displayed; receipt requests use the provider's current language, or
+the client's configured request language outside React.
+
+`useExposure(items, options)` records cumulative rendered and visible placements.
+It splits long lists into stable segments of at most 32 placements, increments
+each segment's stage revision, and attributes clicks to the matching segment.
+Each newly observed placement receives its own server context. The client does
+not supply premium status or eligibility claims. Receipt requests are batched in
+groups of at most 100 targets.
+
+For a custom integration, `client.discovery.activityContexts(targets, session,
+language)` exposes `POST /activity-contexts`. Request its contexts when the
+observation starts, not when a delayed event batch is flushed. An explicit
+`enabled: false` response permits legacy tracking for an embedding without a
+signer; a failed or invalid receipt never silently becomes an untrusted event.
+
+The provider's identity changes invalidate buffered observations and active
+view sessions. Events collected for one account or guest are never reassigned
+to the next account. Custom callers using `Beacons.exposure` should call
+`endExposure(renderId)` after the list leaves the page to release receipt state;
+`useExposure` does this automatically.
+
+Tracking flushes pack complete events into byte-bounded requests and serialize
+keepalive sends across clients. Large queues flush while the page is active.
+A single cumulative event that exceeds the keepalive budget uses normal fetch;
+its delivery during page exit remains best effort.

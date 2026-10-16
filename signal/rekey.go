@@ -49,13 +49,21 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.
 
 	copyExposures := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
- content_kinds, content_ids, content_version_ids, positions, occurred_at, version, ingested_at)
+ content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, version, ingested_at)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, ?,
-       content_kinds, content_ids, content_version_ids, positions, occurred_at, version, now64(6)
+       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, version, now64(6)
 FROM %s.exposures
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
 	if err := st.conn.Exec(ctx, copyExposures, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
 		return fmt.Errorf("signal: rekey exposures: %w", err)
+	}
+	copyPopulation := fmt.Sprintf(`INSERT INTO %s.population_observations
+(tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known,version)
+SELECT tenant,content_kind,subject_kind,?,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known,version
+FROM %s.population_observations
+WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
+	if err := st.conn.Exec(ctx, copyPopulation, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
+		return fmt.Errorf("signal: rekey population: %w", err)
 	}
 
 	if err := st.reprojectSubject(ctx, tenant, next); err != nil {

@@ -145,7 +145,7 @@ func names(k *media.Kind, m *media.Manifest) (pages, files map[string]bool) {
 		switch {
 		case !f.IsUpload() || f.Unattached:
 		case inPattern(k.Publish.Pages, f.Path):
-			pages[k.NameOf(f.Path)] = true
+			pages[pageID(k, f)] = true
 		case audio != "" && inPattern(audio, f.Path):
 			files[k.NameOf(f.Path)] = true
 		}

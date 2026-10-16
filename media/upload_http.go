@@ -66,7 +66,7 @@ func (h uploadHandler) presign(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	out := PresignReply{Path: p.Path, Blob: p.Blob, Exists: p.Exists, ProcessOnUpload: p.ProcessOnUpload}
+	out := PresignReply{Path: p.Path, SourceName: p.SourceName, Blob: p.Blob, Exists: p.Exists, ProcessOnUpload: p.ProcessOnUpload}
 	if p.Put != nil {
 		out.Put = request(*p.Put)
 	}
@@ -191,7 +191,7 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 // uploadInfo is an upload as an editor reads it, without URLs.
 func uploadInfo(f File) FileInfo {
 	return FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Upload: true,
-		Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
+		CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
 }
 
 func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {

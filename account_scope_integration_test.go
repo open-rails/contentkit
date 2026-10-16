@@ -59,7 +59,8 @@ func TestTenantAppErasureAndRestrictions(t *testing.T) {
 			scope := Scope{TenantID: tenantID, AppID: NewAppID()}
 			cfg := scopeConfig(engineSchema(t, pool), scope, fmt.Sprintf("app_%d", appIndex))
 			cfg.Accounts = &AccountsConfig{Schema: accountSchema}
-			e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Authorization: appAccountPolicy{scope}})
+			e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}, Authorization: appAccountPolicy{scope},
+				Users: ownedFixtureRecipients{user.ID: {ID: user.ID}}})
 			if err != nil {
 				t.Fatal(err)
 			}

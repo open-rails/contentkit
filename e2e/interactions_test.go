@@ -38,7 +38,7 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	if id == "" || len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res)
 	}
-	g := "/groups/" + id
+	g := "/entities/" + id
 
 	var rc content.ReactionCounts
 	f.want(http.StatusOK, user, "POST", g+"/like", nil, &rc)
@@ -47,7 +47,7 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 		t.Fatalf("after dislike %+v", rc)
 	}
 	var mine discovery.InteractionPage
-	f.want(http.StatusOK, user, "GET", "/me/reactions?target=groups", nil, &mine)
+	f.want(http.StatusOK, user, "GET", "/me/reactions?target=entities", nil, &mine)
 	if len(mine.Items) != 1 || mine.Items[0].Group == nil || string(mine.Items[0].Group.ID) != id || mine.Items[0].Value != -1 {
 		t.Fatalf("my reactions %+v", mine)
 	}
@@ -165,11 +165,11 @@ func TestTypeaheadFollowsGroupWrites(t *testing.T) {
 	shows := func(within time.Duration) bool {
 		name := "Nebula " + uuid.NewString()[:8]
 		var made []groups.Group
-		f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: strings.ReplaceAll(strings.ToLower(name), " ", "-"),
+		f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: strings.ReplaceAll(strings.ToLower(name), " ", "-"),
 			Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}}, &made)
 		for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 			var got discovery.Typeahead
-			f.want(http.StatusOK, "", "GET", "/typeahead?group_kinds=tag&q="+url.QueryEscape(name), nil, &got)
+			f.want(http.StatusOK, "", "GET", "/typeahead?entity_kinds=tag&q="+url.QueryEscape(name), nil, &got)
 			if len(got.Groups) == 1 && got.Groups[0].ID == made[0].ID {
 				return true
 			}
@@ -246,8 +246,8 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 	}
 	g1, g2 := res.IDs["content"]["gallery:1"], res.IDs["content"]["gallery:2"]
 	var color groups.GroupDetail
-	f.want(http.StatusOK, staff, "POST", "/groups/"+res.IDs["group"]["tag:1"]+"/merge", groups.MergeInput{Into: groups.GroupID(res.IDs["group"]["tag:2"])}, nil)
-	f.want(http.StatusOK, "", "GET", "/groups/"+res.IDs["group"]["tag:2"], nil, &color)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+res.IDs["group"]["tag:1"]+"/merge", groups.MergeInput{Into: groups.GroupID(res.IDs["group"]["tag:2"])}, nil)
+	f.want(http.StatusOK, "", "GET", "/entities/"+res.IDs["group"]["tag:2"], nil, &color)
 
 	key := func(kind, k string) contenturl.AliasKey {
 		return contenturl.AliasKey{Source: "hentai0-legacy", Kind: kind, Key: k}

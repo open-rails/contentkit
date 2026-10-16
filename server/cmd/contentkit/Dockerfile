@@ -4,6 +4,7 @@ ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY adapters/openrails/go.mod adapters/openrails/go.sum adapters/openrails/
+COPY adapters/authkit/go.mod adapters/authkit/go.sum adapters/authkit/
 COPY server/go.mod server/go.sum server/
 RUN cd server && go mod download
 COPY . .

@@ -61,7 +61,7 @@ function knownKinds(wanted: readonly string[] | undefined, configured: object): 
 }
 
 function groupKinds(wanted: readonly string[] | undefined, model: ContentModel): string[] {
-  return knownKinds(wanted ?? Object.keys(model.group_kinds).filter((kind) => model.group_kinds[kind]?.owner !== "user").sort(), model.group_kinds);
+  return knownKinds(wanted ?? Object.keys(model.entity_kinds).filter((kind) => model.entity_kinds[kind]?.owner !== "user").sort(), model.entity_kinds);
 }
 
 function decode(part: string | undefined): string | undefined {

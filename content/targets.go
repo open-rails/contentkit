@@ -19,7 +19,7 @@ type TargetType string
 
 const (
 	TargetContent TargetType = "contents"
-	TargetGroup   TargetType = "groups"
+	TargetGroup   TargetType = "entities"
 )
 
 // A content item's comments setting (resolve.Resolution.Comments); groups'

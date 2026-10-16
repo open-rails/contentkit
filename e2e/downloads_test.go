@@ -60,7 +60,7 @@ func (d *downloads) join(c catalog.Content, slugs ...string) {
 		i := slices.IndexFunc(d.translators, func(g groups.Group) bool { return g.Slug == slug })
 		ms = append(ms, groups.Membership{GroupID: d.translators[i].ID, VersionID: c.Versions[0].ID})
 	}
-	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/groups", groups.ContentGroups{Memberships: ms}, nil)
+	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: ms}, nil)
 }
 
 // policy is a host's download policy, as Doujins' legacy rules go: a
@@ -138,7 +138,7 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 		deps.Billing, deps.Downloads = ckopenrails.Billing(merchant), policy{}
 	})
 	d.f = serve(t, e)
-	d.f.want(http.StatusCreated, d.staff, "POST", "/groups", []groups.GroupInput{
+	d.f.want(http.StatusCreated, d.staff, "POST", "/entities", []groups.GroupInput{
 		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"},
 			{Language: "ja", Kind: groups.NameCanonical, Name: "ドウジンズ"}}},
 		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}},

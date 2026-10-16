@@ -18,7 +18,7 @@ var moduleTitles = map[httpapi.Module]string{
 	httpapi.Upload:        "Media uploads",
 	httpapi.Media:         "Media reads and playback",
 	httpapi.Codes:         "Content codes",
-	httpapi.Groups:        "Groups: listings, pages, writes and memberships",
+	httpapi.Entities:      "Entities: listings, pages, writes and memberships",
 	httpapi.Notifications: "Notifications",
 	httpapi.Versions:      "Content versions: reader plan, reader metadata, forks, downloads",
 	httpapi.Offers:        "Offers, free group joins and the library",
@@ -54,6 +54,7 @@ func (m *model) routesMD() []byte {
 	b.WriteString("Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.\n\n")
 	b.WriteString("**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.\n\n")
 	b.WriteString("Every error is `{\"error\", \"code\", …}`; the codes are at the end.\n")
+	b.WriteString("\nAnonymous readers can send `ContentKit-Reader-Preferences: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}`. Reads that apply content filters merge these choices over the entrypoint defaults; authenticated accounts always use their saved settings. The header is limited to 8 KiB and 128 configured filters, rejects malformed values and duplicate or unknown IDs, and never grants access. Allow this header in the host's CORS policy. Browser clients should persist choices locally and prune removed filter IDs against `GET /v1/content-filters` without the header. After registration, `POST /v1/me/content-filters/initialize` adopts choices only for its matching `account_id` and only if no settings exist.\n")
 	for _, mod := range httpapi.Modules {
 		var list []httpapi.Spec
 		for _, r := range m.routes {

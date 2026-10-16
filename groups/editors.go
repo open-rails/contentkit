@@ -24,7 +24,7 @@ type writer struct {
 
 // As returns the store acting as actor, judged by a. Its reads show actor's
 // standing with sellable groups. Its writes: staff holding
-// access.GroupsWrite in a's root scope (and the engine's own client) write
+// access.EntitiesWrite in a's root scope (and the engine's own client) write
 // anything; anyone else writes only user-owned groups, under the creator
 // rules of CreateGroups and UpdateGroups. Without As a store reads as an
 // anonymous viewer and writes as the host, unchecked.
@@ -48,13 +48,13 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 	if w == nil {
 		return true, nil
 	}
-	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.GroupsWrite)) })
+	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.EntitiesWrite)) })
 	return w.staff, w.err
 }
 
 // edits reports whether the non-staff writer edits g.
 func (w *writer) edits(ctx context.Context, s *Store, g Group) (bool, error) {
-	if s.cfg.GroupKinds[g.Kind].Owner != "user" {
+	if g.Internal || s.cfg.GroupKinds[g.Kind].Owner != "user" {
 		return false, nil
 	}
 	return gate.GroupEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.GroupSettingsManage(g.Kind))
@@ -97,8 +97,8 @@ func (s *Store) creator(ctx context.Context, inputs []GroupInput) (string, error
 			return "", fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, kind)
 		case gk.Owner != "user":
 			return "", fmt.Errorf("%w: %s groups are the site's", ErrForbidden, kind)
-		case in.ID != "" || in.AuthScope != "":
-			return "", fmt.Errorf("%w: only staff choose a group's id or auth scope", ErrForbidden)
+		case in.ID != "" || in.AuthScope != "" || in.Internal:
+			return "", fmt.Errorf("%w: only staff choose a group's id, auth scope or internal classification", ErrForbidden)
 		case in.OwnerUserID != "" && in.OwnerUserID != a.AccountID():
 			return "", fmt.Errorf("%w: a person creates only groups of their own", ErrForbidden)
 		}

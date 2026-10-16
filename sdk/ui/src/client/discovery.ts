@@ -1,7 +1,11 @@
 import type {
+  ActivityContexts,
+  ActivityContextsInput,
+  ActivityTarget,
   ContentFilters,
   ContentFiltersUpdate,
   ContentPage,
+  DailyReleases,
   ExposureInput,
   Exposures,
   RecentSearches,
@@ -11,7 +15,7 @@ import type {
   Typeahead,
 } from "./generated/wire.js";
 import type { Http } from "./http.js";
-import { call } from "./route.js";
+import { call, routeURL } from "./route.js";
 import { browserSearchHistory, type BrowserSearchHistory } from "./browser-search-history.js";
 
 /** A popularity period. */
@@ -42,6 +46,8 @@ export interface ContentFilterQuery {
   attribute?: readonly string[];
   /** Published on this day (YYYY-MM-DD) or month (YYYY-MM). */
   released_on?: string;
+  /** Only contents published within this age window; independent of the popularity score window. */
+  published_within?: Period;
   /** IANA time zone of released_on and release dates; UTC by default. */
   tz?: string;
   /** The signed-in reader's unseen, in-progress or completed contents. */
@@ -59,7 +65,7 @@ export interface ReaderQuery {
 
 /** The group kinds cards name; every kind with a page by default. */
 export interface CardQuery {
-  card_groups?: readonly string[];
+  card_entities?: readonly string[];
 }
 
 export interface PageQuery {
@@ -67,7 +73,26 @@ export interface PageQuery {
   limit?: number;
 }
 
-export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & { sort?: ListSort };
+export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & {
+  sort?: ListSort;
+  /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
+  activity_from?: string;
+  /** Exclusive UTC date (YYYY-MM-DD); requires activity_from, kind and sort=popular. */
+  activity_until?: string;
+};
+export type PopularPeriod = "7d" | "90d" | "365d" | "all";
+export type PopularQuery = Omit<ContentQuery, "sort" | "activity_from" | "activity_until">;
+
+/** Rank activity in the selected window; publication age is an optional separate filter. */
+export function popularQuery(period: PopularPeriod = "7d", filters: PopularQuery = {}): ContentQuery {
+  return { ...filters, sort: `popular:${period}` };
+}
+
+/** Rank activity between two UTC dates: from inclusive, until exclusive. */
+export function popularBetween(from: string, until: string, filters: PopularQuery & { kind: string }): ContentQuery {
+  return { ...filters, sort: "popular", activity_from: from, activity_until: until };
+}
+
 export type SearchQuery = ContentFilterQuery &
   ReaderQuery &
   CardQuery &
@@ -86,19 +111,21 @@ export interface RecentSearchesQuery {
 }
 export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
+/** Complete daily metadata for one calendar window, without pagination. */
+export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & { days?: number; time_zone?: string };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
   /** Only contents of this kind. */
   kind?: string;
   /** The group kinds suggested; every kind with a page by default. */
-  group_kinds?: readonly string[];
+  entity_kinds?: readonly string[];
   /** Per section: 8 by default, at most 20. */
   limit?: number;
 }
 
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_groups", "group_kinds"]);
+const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {
@@ -156,10 +183,17 @@ export class DiscoveryClient {
   releaseDates(q: ReleaseDatesQuery = {}, signal?: AbortSignal): Promise<ReleaseDates> {
     return call(this.http, "GET", "/release-dates", { query: query(q) as never, signal });
   }
-  contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
-    return call(this.http, "GET", "/me/content-filters", { query: { language }, signal });
+  /** Every visible card in each day; opening or expanding a day needs no further request. */
+  releases(q: DailyReleasesQuery = {}, signal?: AbortSignal): Promise<DailyReleases> {
+    return call(this.http, "GET", "/releases", { query: query(q) as never, signal });
   }
-  /** Replaces the reader's filter settings; every read applies them. */
+  /** Only the current domain's reader-toggleable entities, named in the requested language. */
+  async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
+    const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
+    this.http.acceptGuestFilters(result.kinds);
+    return result;
+  }
+  /** Replaces this domain's reader settings; other domains' choices remain intact. */
   async setContentFilters(update: ContentFiltersUpdate, language?: string): Promise<ContentFilters> {
     const emit = this.http.captureChanges();
     const out: ContentFilters = await call(this.http, "PUT", "/me/content-filters", { query: { language }, body: update });
@@ -175,6 +209,11 @@ export class DiscoveryClient {
     const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/me/history", { query: o });
     emit({ type: "history.changed" });
+  }
+  /** Capture server-owned access and eligibility at an observation's start. */
+  activityContexts(targets: readonly ActivityTarget[], session?: string, language = this.http.language()): Promise<ActivityContexts> {
+    const body: ActivityContextsInput = { targets: [...targets], session, language };
+    return call(this.http, "POST", "/activity-contexts", { body });
   }
   /** Views and clicks; signed out, of the session named. */
   signals(signals: SignalInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {

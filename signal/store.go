@@ -2,7 +2,6 @@ package signal
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -130,18 +129,14 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	touched := map[ProjectionKey]struct{}{}
 	for i := range signals {
 		s := signals[i]
+		if s.Type == TypeView && s.Access != nil && s.Access.ViewerAccess != "full" {
+			s.Type = TypePreview
+		}
 		if _, erased := fenced[[2]string{s.Subject.Kind(), s.Subject.Key()}]; erased {
 			continue
 		}
-		payload := ""
-		if len(s.Payload) > 0 {
-			b, err := json.Marshal(s.Payload)
-			if err != nil {
-				return fmt.Errorf("signal: marshal payload: %w", err)
-			}
-			payload = string(b)
-		}
-		if err := checkLen("Payload", payload, MaxPayloadBytes); err != nil {
+		payload, err := signalPayload(s)
+		if err != nil {
 			return err
 		}
 		// Use a server-side SELECT filter instead of a client-side fence check

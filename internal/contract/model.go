@@ -128,7 +128,7 @@ func classify(t reflect.Type) (kind, error) {
 	case reflect.Float32, reflect.Float64:
 		return kindNumber, nil
 	case reflect.Slice, reflect.Array:
-		if t.Elem().Kind() == reflect.Uint8 {
+		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
 			return kindString, nil // base64
 		}
 		return kindArray, nil

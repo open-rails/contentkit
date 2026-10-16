@@ -57,7 +57,6 @@ func TestVisibilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	everyLive := []string{plain, restricted, gay, gory, reddish, members, unlisted, premium, channel, ppv}
 	for _, c := range []struct {
 		name, actor, host string
 		o                 ViewerOptions
@@ -75,10 +74,10 @@ func TestVisibilityIntegration(t *testing.T) {
 		{"hide mode: only what the viewer opens", anon, "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish}},
 		{"hide mode for a tier holder", "pam", "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish, members, premium}},
 		{"a viewer's overrides: show gore, hide red", "carol", "main.test", ViewerOptions{},
-			[]string{plain, restricted, gay, gory, premium, channel, ppv}},
+			[]string{plain, restricted, gay, gory, reddish, premium, channel, ppv}},
 		{"a language lists only items with a live version serving it", anon, "main.test", ViewerOptions{Language: "ja"}, []string{plain, reddish}},
-		{"staff see everything, every site", "staff", "moe.test", ViewerOptions{}, append(everyLive, draft)},
-		{"view-restricted sees everything", "viewer", "gay.test", ViewerOptions{}, append(everyLive, draft)},
+		{"staff stay inside domain", "staff", "moe.test", ViewerOptions{}, []string{plain, gay, gory, reddish, members, unlisted, premium, channel, ppv, draft}},
+		{"view-restricted stays inside domain", "viewer", "gay.test", ViewerOptions{}, []string{gay}},
 		{"a creator also lists their draft", "alice", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, reddish, premium, channel, ppv, draft}},
 		{"an owner group's editor lists its drafts", "ed", "main.test", ViewerOptions{EditorGroups: []string{studio}},
@@ -118,8 +117,8 @@ func TestVisibilityIntegration(t *testing.T) {
 	if got := f.read(anon, "moe.test", restricted)[0]; got != nil {
 		t.Fatal("a restricted item reads on the restricted site")
 	}
-	if got := f.read("staff", "moe.test", restricted)[0]; got == nil || !got.Editor {
-		t.Fatal("staff do not read the restricted item on the restricted site")
+	if got := f.read("staff", "moe.test", restricted)[0]; got != nil {
+		t.Fatal("staff escaped the domain restriction")
 	}
 	if got := f.read("ed", "main.test", draft)[0]; got == nil || !got.Editor || !got.Versions[0].Decision.Allowed {
 		t.Fatalf("the owner group's editor reads the draft: %+v", got)

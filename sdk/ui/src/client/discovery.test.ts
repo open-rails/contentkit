@@ -1,11 +1,25 @@
 import { expect, expectTypeOf, it, vi } from "vitest";
 import { createContentKitClient } from "./client.js";
 import type { MineQuery } from "./content/favorites.js";
-import type { ContentQuery, HistoryQuery, RailQuery, RecentSearchesQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "./discovery.js";
+import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, RecentSearchesQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "./discovery.js";
+import { popularBetween } from "./discovery.js";
 import type { Method, RouteQuery } from "./route.js";
 
 // Parameters the route takes that the type lacks, and the reverse; both never.
 type Gap<T, M extends Method, P extends string> = Exclude<keyof RouteQuery<M, P>, keyof T> | Exclude<keyof T, keyof RouteQuery<M, P>>;
+
+it("queries historical activity with exclusive end date and no publication-age filter", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/app", fetch: async (input) => {
+    requests.push(new URL(String(input)));
+    return Response.json({ contents: [] });
+  } });
+  await client.discovery.list(popularBetween("2026-04-01", "2026-05-01", { kind: "gallery", language: "en" }));
+  expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({
+    sort: "popular", activity_from: "2026-04-01", activity_until: "2026-05-01", kind: "gallery", language: "en",
+  });
+  expect(requests[0]!.searchParams.has("published_within")).toBe(false);
+});
 
 it("does not invent anonymous server history sessions, but retains explicit sessions", async () => {
   const fetcher = vi.fn(async (_url: RequestInfo | URL) => Response.json({ contents: [], searches: [] }));
@@ -27,6 +41,7 @@ it("discovery query types take exactly their routes' parameters (checked by tsc)
   expectTypeOf<Gap<RailQuery, "GET", "/contents/{id}/similar">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<RailQuery, "GET", "/recommendations">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<ReleaseDatesQuery, "GET", "/release-dates">>().toEqualTypeOf<never>();
+  expectTypeOf<Gap<DailyReleasesQuery, "GET", "/releases">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<HistoryQuery, "GET", "/me/history">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<RecentSearchesQuery, "GET", "/me/searches">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<MineQuery, "GET", "/me/favorites">>().toEqualTypeOf<never>();

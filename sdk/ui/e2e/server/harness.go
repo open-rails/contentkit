@@ -45,16 +45,17 @@ const (
 )
 
 type harness struct {
-	pool     *pgxpool.Pool
-	auth     *authkit.Client
-	outbox   *authtest.Outbox
-	store    *mediaS3.Store
-	ck       *contentkit.Engine
-	members  *contentkit.Engine // takes nothing anonymous
-	onUpload *contentkit.Engine // processes uploads as they land
-	river    *river.Client[pgx.Tx]
-	items    *items
-	faults   *faults
+	cleanupSignals func(context.Context) error
+	pool           *pgxpool.Pool
+	auth           *authkit.Client
+	outbox         *authtest.Outbox
+	store          *mediaS3.Store
+	ck             *contentkit.Engine
+	members        *contentkit.Engine // takes nothing anonymous
+	onUpload       *contentkit.Engine // processes uploads as they land
+	river          *river.Client[pgx.Tx]
+	items          *items
+	faults         *faults
 	// Fixture views of ContentKit's storage, standing in for the media
 	// worker: the registry, manifests and token ring.
 	reg        *media.Registry
@@ -80,7 +81,7 @@ var site = func() kinds.Config {
 		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Groups: []string{"tag", "series", "character"}}
 	}
 	return kinds.Config{Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"},
-		ContentFilters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Labels: map[string]string{"en": "Gore", "ja": "ゴア"}}},
+		Domains: []kinds.Domain{{Name: "main", Kinds: map[string]kinds.KindPolicy{"comic": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false}}}}}},
 		Kinds: map[string]kinds.Kind{
 			"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"), "channel": item("channel", "reader"),
 			"file": item("file", "reader"), "video": item("v", "player"), "watch": item("watch", "player"), "abr": item("abr", "player"),
@@ -154,6 +155,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			Delivery:    contentkit.DeliveryConfig{SigningKey: c.tokenKey, Window: time.Second},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true},
 			Issuance: contentkit.IssuanceConfig{Disabled: true}},
+	}
+	if h.cleanupSignals, err = prepareSignals(ctx, c, &cfg); err != nil {
+		return nil, fmt.Errorf("signal fixture: %w", err)
 	}
 	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Users: h.auth.UserInfo(), Store: h.store,
 		Moderator: moderator{}, Classifier: classifier{}, BodyProcessor: newPostHTML()}
@@ -259,6 +263,13 @@ func (h *harness) close() {
 	if h.auth != nil {
 		if err := h.auth.Close(ctx); err != nil {
 			log.Printf("close authkit: %v", err)
+		}
+	}
+	if h.cleanupSignals != nil {
+		cleanup := h.cleanupSignals
+		h.cleanupSignals = nil
+		if err := cleanup(ctx); err != nil {
+			log.Printf("drop signal fixture: %v", err)
 		}
 	}
 	if h.pool != nil {

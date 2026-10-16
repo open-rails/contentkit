@@ -53,6 +53,7 @@ import (
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/offers"
+	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -86,6 +87,7 @@ type Engine struct {
 	offers           *offers.Service
 	discover         *discovery.Service
 	importer         *importer.Service
+	publishing       *publishing.Store
 	media            *engineMedia
 	avatars          *engineAvatars
 	modules          map[httpapi.Module]http.Handler
@@ -607,9 +609,15 @@ func (e *Engine) mount(deps Deps) error {
 		if e.modules[httpapi.Versions], err = m.versions.Handler(e.auth, e.log); err != nil {
 			return err
 		}
+		if e.publishing, err = publishing.New(publishing.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
+			Catalog: e.catalog, Groups: e.groups, Registry: m.reg, Uploads: m.uploads, Manifests: m.jobs.Manifests(),
+			Versions: m.versions, Auth: e.auth, Authority: publishingAuthority{e}, Logger: e.log, Clock: deps.Clock}); err != nil {
+			return err
+		}
+		e.modules[httpapi.Publishing] = e.publishing.Handler()
 	}
 	c := e.cfg.Content
-	if e.modules[httpapi.Groups], err = e.groups.Handler(e.auth); err != nil {
+	if e.modules[httpapi.Entities], err = e.groups.Handler(e.auth); err != nil {
 		return err
 	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
@@ -652,7 +660,7 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog}
+		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")
@@ -660,6 +668,9 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 	}
 	if e.media != nil {
 		o.Media = e.media.versions
+		if o.ActivitySigner == nil {
+			o.ActivitySigner = e.media.reader
+		}
 	}
 	if e.offers != nil {
 		o.Sales = e.offers

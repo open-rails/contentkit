@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,14 +35,25 @@ func siteConfig() kinds.Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"},
-		Sites: []kinds.Site{
-			{Name: "main", Hosts: []string{"main.test"}},
-			{Name: "gay", Hosts: []string{"gay.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}},
-			{Name: "clean", Hosts: []string{"clean.test"}, ExcludeRestrictions: []string{"restricted"}},
-		},
-		ContentFilters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}, Labels: map[string]string{"en": "Big breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, DefaultVisible: true},
+		Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}}, "video": {Filters: []kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "video": {Filters: []kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "clean", Hosts: []string{"clean.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: append([]kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}, "video": {Filters: append([]kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}},
 		},
 		Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
@@ -91,6 +103,10 @@ func newFixture(t *testing.T, ch signal.Conn, chDB string) *fixture {
 }
 
 func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Config) *fixture {
+	return newFixtureBilling(t, ch, chDB, cfg, nil)
+}
+
+func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Config, billing access.Billing) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
@@ -104,7 +120,7 @@ func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Confi
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg})
+	gate, err := access.NewGate(access.GateConfig{Tenant: tenant, Kinds: cfg, Billing: billing})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +139,23 @@ func newFixtureConfig(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Confi
 	}
 	if f.h, err = f.svc.Handler(testauth.Auth{Authz: staffOnly{}, Claims: map[string][]string{"fan": {"premium"}}}); err != nil {
 		t.Fatal(err)
+	}
+	hasRestricted := false
+	for _, d := range cfg.Domains {
+		for _, p := range d.Kinds {
+			for _, rule := range p.Filters {
+				if rule.Group.Kind == "tag" && rule.Group.Slug == "restricted" {
+					hasRestricted = true
+				}
+			}
+		}
+	}
+	if hasRestricted {
+		f.group("tag", "restricted")
+		internal := true
+		if _, err := f.groups.UpdateGroups(ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["restricted"]), Internal: &internal}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return f
 }
@@ -150,7 +183,13 @@ func (f *fixture) group(kind string, slugs ...string) {
 	f.t.Helper()
 	var in []groups.GroupInput
 	for _, s := range slugs {
-		in = append(in, groups.GroupInput{Kind: kind, Slug: s, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(s[:1]) + s[1:]}}})
+		if f.ids[s] != "" {
+			continue
+		}
+		in = append(in, groups.GroupInput{Kind: kind, Slug: s, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(s[:1]) + strings.ReplaceAll(s[1:], "-", " ")}}})
+	}
+	if len(in) == 0 {
+		return
 	}
 	out, err := f.groups.CreateGroups(f.ctx, in)
 	if err != nil {
@@ -202,6 +241,9 @@ func (f *fixture) seed(items ...item) {
 		return &r
 	}
 	for _, it := range items {
+		if slices.Contains(it.restrictions, "restricted") && f.ids["restricted"] != "" && !slices.Contains(it.groups, "restricted") {
+			it.groups = append(it.groups, "restricted")
+		}
 		if it.kind == "" {
 			it.kind = "gallery"
 		}
@@ -350,4 +392,15 @@ func q(path string, kv ...string) string {
 		v.Add(kv[i], kv[i+1])
 	}
 	return path + "?" + v.Encode()
+}
+
+func guestKinds(in map[string][]FilterSetting) map[string][]GuestFilterSetting {
+	out := map[string][]GuestFilterSetting{}
+	for kind, fs := range in {
+		for _, f := range fs {
+			v := f.Visible
+			out[kind] = append(out[kind], GuestFilterSetting{EntityID: f.EntityID, Visible: &v})
+		}
+	}
+	return out
 }

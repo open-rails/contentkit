@@ -47,8 +47,8 @@ it("every content string is in every bundle with the same placeholders", async (
 
 it("plural picks the language's form", () => {
   const m = createTranslator(resolveMessages(), undefined, "en");
-  expect(m.plural("comments.count", 1)).toBe("1 comment");
-  expect(m.plural("comments.count", 2)).toBe("2 comments");
+  expect(m.plural("comments.count", 1)).toBe("1 Comment");
+  expect(m.plural("comments.count", 2)).toBe("2 Comments");
   expect(createTranslator(resolveMessages(ja), undefined, "ja").plural("poll.votes", 1)).toBe("1 票");
 });
 

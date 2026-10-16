@@ -29,7 +29,7 @@ export interface CommentsProps {
   item: Target;
   /** One language's thread: shown, and joined by new comments. */
   language?: string;
-  /** The item's comment count, for the heading; without it the heading has none. */
+  /** The item's total comment count. Otherwise inferred when the whole thread is loaded. */
   count?: number;
   /** Initial order: newest (default) or best (top). */
   sort?: Sort;
@@ -104,7 +104,7 @@ export function Comments(p: CommentsProps) {
   const ctx = useContext(ContentKitContext);
   const [sort, setSort] = useState<Sort>(p.sort ?? "newest");
   const comments = useComments(p.item, { sort, language: p.language, pageSize: p.pageSize ?? 20, client: p.client });
-  const { standing, reload: reloadStanding } = useCanComment(p.item, { client: p.client });
+  const { standing, reload: reloadStanding } = useCanComment(p.item, { language: p.language, client: p.client });
   const { config } = useContentConfig({ client: p.client });
   const report = useErrorReporter(p.onError);
   const signIn = p.onSignIn ?? ctx?.onSignIn;
@@ -152,7 +152,10 @@ export function Comments(p: CommentsProps) {
   };
   const ban = standing?.ban ?? refusal;
   const canWrite = standing ? standing.can_comment : true;
-  const heading = p.heading === undefined ? (p.count === undefined ? t("comments.title") : m.plural("comments.count", p.count)) : p.heading;
+  // Standing counts the entire visible thread, even while only page one is
+  // loaded. Older servers can infer a total only after the list is complete.
+  const count = p.count ?? standing?.count ?? (!comments.loading && !comments.error && !comments.hasMore ? comments.items.length : undefined);
+  const heading = p.heading === undefined ? (count === undefined ? t("comments.title") : m.plural("comments.count", count)) : p.heading;
 
   if (standing?.comments === "hidden") return null;
   if (standing?.locked)
@@ -262,7 +265,7 @@ function CommentList() {
       </div>
     );
   }
-  if (!comments.items.length) return <p className="text-muted-foreground">{t("comments.empty")}</p>;
+  if (!comments.items.length) return null;
   return (
     <>
       <ul className="grid divide-y divide-border">

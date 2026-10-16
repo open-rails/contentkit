@@ -234,6 +234,13 @@ export const es: ContentKitUiMessageBundle = {
     failed: "No se pudo iniciar la descarga. Inténtalo de nuevo.",
   },
   errors: {
+    ambiguous_entity: "Hay varias entradas con este nombre. Selecciona la entrada correcta.",
+    unknown_entity: "No se encontró esta entrada. Selecciona una existente o permite crearla.",
+    operation_conflict: "Este envío ya contiene contenido diferente. Crea un nuevo envío.",
+    operation_busy: "Este envío se está actualizando. Inténtalo de nuevo en unos momentos.",
+    source_conflict: "Esta fuente ya se ha enviado.",
+    content_changed: "El contenido cambió después del envío. Revísalo antes de publicarlo.",
+    invalid_archive: "No se pudo procesar este ZIP. Comprueba que contiene archivos compatibles.",
     download_unavailable: "Esto no está disponible para descargar ahora.",
     no_download: "Todavía no hay nada que descargar.",
     generic: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",

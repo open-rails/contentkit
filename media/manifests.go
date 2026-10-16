@@ -107,6 +107,23 @@ func (m *Manifests) Registry() *Registry { return m.reg }
 // Store is the bucket.
 func (m *Manifests) Store() Store { return m.store }
 
+// WithLock runs fn while holding the configured manifest lock. fn may read
+// this manifest but must not mutate it (mutations acquire the same lock).
+// It lets a consumer atomically check media readiness and publish its catalog
+// record without a concurrent upload changing the checked source.
+func (m *Manifests) WithLock(ctx context.Context, ref contentref.ContentRef, fn func() error) error {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return fn()
+}
+
 // Get returns ref's manifest and ETag, or ErrNotFound. Cached copies are
 // revalidated with a conditional GET, so a read is never stale. The
 // manifest is shared: never modify it (Clone it).

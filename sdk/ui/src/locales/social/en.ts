@@ -57,8 +57,8 @@ export const social = {
 
   comments: {
     title: "Comments",
-    count_one: "{count} comment",
-    count_other: "{count} comments",
+    count_one: "{count} Comment",
+    count_other: "{count} Comments",
     placeholder: "Add a comment…",
     replyPlaceholder: "Write a reply…",
     name: "Name",

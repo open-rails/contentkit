@@ -160,7 +160,7 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 	}
 	for _, ref := range refs {
 		g, ok := byID[groups.GroupID(ref.ContentID)]
-		if !ok || g.Kind != ref.ContentKind || ref.ContentVersionID != nil {
+		if !ok || g.Internal || g.Kind != ref.ContentKind || ref.ContentVersionID != nil {
 			continue
 		}
 		if g.State == groups.StateMerged {
@@ -168,7 +168,7 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 				continue
 			}
 		}
-		if g.State != groups.StateActive {
+		if g.State != groups.StateActive || g.Internal {
 			continue
 		}
 		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}

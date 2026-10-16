@@ -75,9 +75,9 @@ func TestTotalsIntegration(t *testing.T) {
 			"gallery": total(3, 6, map[string][2]int64{"en": {3, 4}, "ja": {1, 3}}),
 			"blog":    total(1, 1, map[string][2]int64{"en": {1, 1}}),
 		}},
-		{"the restricted site", TotalsQuery{Kinds: []string{"gallery"}, Site: "moe"}, map[string]Total{
+		{"the restricted site", TotalsQuery{Kinds: []string{"gallery"}, Domain: "moe"}, map[string]Total{
 			"gallery": total(2, 5, map[string][2]int64{"en": {2, 3}, "ja": {1, 3}})}},
-		{"the gay site", TotalsQuery{Kinds: []string{"gallery"}, Site: "gay"}, map[string]Total{
+		{"the gay site", TotalsQuery{Kinds: []string{"gallery"}, Domain: "gay"}, map[string]Total{
 			"gallery": total(1, 1, map[string][2]int64{"en": {1, 1}, "ja": {1, 1}})}},
 		{"languages asked for, uncounted ones zero", TotalsQuery{Kinds: []string{"blog"}, Languages: []string{"ja"}}, map[string]Total{
 			"blog": total(1, 1, map[string][2]int64{"ja": {0, 0}})}},
@@ -92,7 +92,7 @@ func TestTotalsIntegration(t *testing.T) {
 			}
 		})
 	}
-	for _, q := range []TotalsQuery{{Kinds: []string{"video"}}, {Languages: []string{"de"}}, {Site: "nowhere"}} {
+	for _, q := range []TotalsQuery{{Kinds: []string{"video"}}, {Languages: []string{"de"}}, {Domain: "nowhere"}} {
 		if _, err := f.s.Totals(f.ctx, q); err == nil {
 			t.Errorf("%+v accepted", q)
 		}
@@ -126,7 +126,7 @@ func TestTotalsIntegration(t *testing.T) {
 	if want := total(3, 6, map[string][2]int64{"ja": {1, 3}}); !reflect.DeepEqual(remote.Kinds["gallery"], want) || remote.Kinds["blog"].Public != 1 {
 		t.Fatalf("remote totals %+v", remote.Kinds)
 	}
-	if _, err := client.Totals(f.ctx, TotalsQuery{Kinds: []string{"gallery"}, Site: "moe"}); err == nil {
+	if _, err := client.Totals(f.ctx, TotalsQuery{Kinds: []string{"gallery"}, Domain: "moe"}); err == nil {
 		t.Fatal("the client took a site")
 	}
 }

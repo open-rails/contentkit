@@ -55,7 +55,7 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
 
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), wait);
-  expect(record.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^u-/), edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } }]);
+  expect(record.commits[0]).toEqual([{ op: "put", path: "avatar.png", source_name: "a.png", replace: true, blob: expect.stringMatching(/^u-/), edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } }]);
   expect(onChange).toHaveBeenCalledOnce();
   // The worker published the avatar's renditions.
   await waitFor(() => expect(container.querySelector("img")?.getAttribute("data-rendition")).toBeTruthy(), wait);

@@ -151,6 +151,9 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	if err != nil {
 		return err
 	}
+	if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
+		return err
+	}
 	ready, err := s.publishPages(ctx, k, t)
 	if err != nil {
 		return err

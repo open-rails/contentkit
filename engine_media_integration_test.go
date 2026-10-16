@@ -47,6 +47,12 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	blog.Public, blog.Private = nil, []media.Private{{Name: "inline", From: "{name}", To: "inline/{name}.webp", Image: &media.Image{Width: 800}}}
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
+	blogKind := cfg.Content.Kinds["blog"]
+	blogKind.Groups = []string{"tag"}
+	cfg.Content.Kinds["blog"] = blogKind
+	cfg.Content.Domains = []kinds.Domain{
+		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Kinds: map[string]kinds.KindPolicy{"blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}},
+	}
 	cfg.Media = &MediaConfig{
 		Config:      media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{blog, folder("poll")}},
 		Delivery:    DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
@@ -65,7 +71,7 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	if len(e.Probes()) != 1 || e.Probes()[0].Check(ctx) != nil {
 		t.Fatalf("media store probe %+v", e.Probes())
 	}
-	routes, err := e.Routes(Routes{Prefix: "/api/ck", Groups: ContentRoutes | UploadRoutes | MediaRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/api/ck", Groups: ContentRoutes | UploadRoutes | MediaRoutes | EntityRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +120,20 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	s.call(http.StatusOK, anon, "GET", item, nil, &viewer)
 	if viewer.Uploads != nil {
 		t.Fatalf("anonymous read of the published item %+v", viewer)
+	}
+	// An internal classifier is a fixed domain exclusion even with the
+	// default user_toggle setting. Media must obey it independently of UI.
+	var markers []groups.Group
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []groups.GroupInput{{
+		Kind: "tag", Slug: "restricted", Internal: true,
+		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Restricted"}},
+	}}, &markers)
+	s.call(http.StatusOK, staff, "PUT", "/api/ck/v1/contents/"+post.ID+"/entities", groups.ContentGroups{
+		Memberships: []groups.Membership{{GroupID: markers[0].ID}},
+	}, nil)
+	s.call(http.StatusOK, anon, "GET", "http://example.com"+item, nil, nil)
+	for _, actor := range []access.Actor{anon, user, staff} {
+		s.call(http.StatusNotFound, actor, "GET", "http://safe.example"+item, nil, nil)
 	}
 	s.call(http.StatusNoContent, staff, "DELETE", "/api/ck/v1/contents/"+post.ID, nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", item, nil, nil)

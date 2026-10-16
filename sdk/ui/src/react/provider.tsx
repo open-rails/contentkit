@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitChange } from "../client/http.js";
 import type { ContentURLs } from "../urls/index.js";
 import { ContentKitContext, type ContentKitErrorHandler, type Navigate } from "./context.js";
 import { storeFor } from "./store.js";
+import type { LanguagePreference } from "../client/reader-preferences.js";
 
 export interface ContentKitProviderProps {
   client: ContentKitClient;
@@ -11,6 +12,8 @@ export interface ContentKitProviderProps {
   viewer?: string | null;
   /** Request language; keep it in sync with the client's language callback. */
   language?: string;
+  /** Account storage for the preferred language; return null when unset. */
+  languagePreference?: LanguagePreference;
   /** Change when the current viewer's permissions or entitlements change. */
   accessRevision?: string | number;
   /** Asks the visitor to sign in: comments, reactions, favorites and votes prompt with it rather than act anonymously. */
@@ -27,8 +30,11 @@ export interface ContentKitProviderProps {
 }
 
 /** Client, URL config, callbacks and the shared read store for every hook below. Renders no DOM. */
-export function ContentKitProvider({ client, viewer, language, accessRevision, onSignIn, urls, navigate, onChange, onError, children }: ContentKitProviderProps) {
-  const readScope = JSON.stringify({ viewer, language, accessRevision });
+export function ContentKitProvider({ client, viewer, language, languagePreference, accessRevision, onSignIn, urls, navigate, onChange, onError, children }: ContentKitProviderProps) {
+  const browser = client.preferences.browser;
+  const preferences = useSyncExternalStore(browser.subscribe, browser.snapshot, browser.snapshot);
+  const readScope = JSON.stringify({ viewer, language, accessRevision, guestFilters: viewer === null ? { kinds: preferences.kinds, legacy_filters: preferences.legacy_filters } : undefined });
+  useLayoutEffect(() => { client.preferences.configure(viewer, languagePreference); }, [client, viewer, languagePreference]);
   useLayoutEffect(() => { client.setReadScope(readScope); }, [client, readScope]);
   const changed = useRef(onChange);
   useEffect(() => {

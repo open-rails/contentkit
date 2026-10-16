@@ -234,6 +234,13 @@ export const ko: ContentKitUiMessageBundle = {
     failed: "다운로드를 시작할 수 없습니다. 다시 시도하세요.",
   },
   errors: {
+    ambiguous_entity: "이 이름과 일치하는 항목이 여러 개 있습니다. 원하는 항목을 선택하세요.",
+    unknown_entity: "이 항목을 찾을 수 없습니다. 기존 항목을 선택하거나 새 항목 생성을 허용하세요.",
+    operation_conflict: "이 제출에는 이미 다른 콘텐츠가 포함되어 있습니다. 새로 제출하세요.",
+    operation_busy: "이 제출을 업데이트하고 있습니다. 잠시 후 다시 시도하세요.",
+    source_conflict: "이 소스는 이미 제출되었습니다.",
+    content_changed: "제출 후 콘텐츠가 변경되었습니다. 게시하기 전에 검토하세요.",
+    invalid_archive: "이 ZIP을 처리할 수 없습니다. 지원되는 파일이 포함되어 있는지 확인하세요.",
     download_unavailable: "지금은 다운로드할 수 없습니다.",
     no_download: "아직 다운로드할 항목이 없습니다.",
     generic: "서버에서 문제가 발생했습니다. 다시 시도하세요.",

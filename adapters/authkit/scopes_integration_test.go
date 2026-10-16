@@ -150,7 +150,7 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 	authtest.GrantRole(t, w.ak, iam.RootGroup(), iam.UserSubject(staffUser.ID), w.staff)
 
 	var made []groups.Group
-	w.call(201, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio", Names: name("Studio")}}, &made)
+	w.call(201, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio", Names: name("Studio")}}, &made)
 	studio := made[0]
 	if studio.OwnerUserID != creator.ID || studio.AuthScope != string(studio.ID) {
 		t.Fatalf("created %+v", studio)
@@ -159,25 +159,25 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 	if g.DeletedAt != nil || g.Persona.String() != "channel" || roles[iam.UserSubject(creator.ID)] != g.Persona.OwnerRole() {
 		t.Fatalf("scope %+v roles %v", g, roles)
 	}
-	w.call(403, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "mine"}}, nil)
-	w.call(403, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "theirs", OwnerUserID: editor.ID}}, nil)
-	w.call(403, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "scoped", AuthScope: studio.AuthScope}}, nil)
-	w.call(201, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "second"}}, nil)
+	w.call(403, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "mine"}}, nil)
+	w.call(403, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "theirs", OwnerUserID: editor.ID}}, nil)
+	w.call(403, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "scoped", AuthScope: studio.AuthScope}}, nil)
+	w.call(201, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "second"}}, nil)
 	var refusal struct{ Code string }
-	w.call(409, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "third"}}, &refusal)
+	w.call(409, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "third"}}, &refusal)
 	if refusal.Code != "limit_reached" {
 		t.Fatalf("the cap answered %q", refusal.Code)
 	}
-	w.call(201, staffToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "staffs", OwnerUserID: editor.ID}}, nil)
+	w.call(201, staffToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "staffs", OwnerUserID: editor.ID}}, nil)
 
-	path := "/groups/" + string(studio.ID)
+	path := "/entities/" + string(studio.ID)
 	w.call(403, editorToken, "PATCH", path, groups.GroupUpdate{Text: []groups.Text{{Language: "en", Description: "x"}}}, nil)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(studio.AuthScope), iam.UserSubject(editor.ID), w.editor)
 	var edited groups.Group
 	w.call(200, editorToken, "PATCH", path, groups.GroupUpdate{Names: name("Studio Two"), Attributes: map[string]any{}}, &edited)
 	w.call(403, editorToken, "PATCH", path, groups.GroupUpdate{Slug: ptr("renamed")}, nil)
 	var mine groups.MyGroupPage
-	w.call(200, editorToken, "GET", "/me/groups?kind=channel", nil, &mine)
+	w.call(200, editorToken, "GET", "/me/entities?kind=channel", nil, &mine)
 	if len(mine.Groups) != 2 || !mine.Groups[0].Editor && !mine.Groups[1].Editor {
 		t.Fatalf("the editor's groups %+v", mine)
 	}
@@ -187,18 +187,18 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 			t.Fatalf("the editor's %s: %+v", g.Slug, g)
 		}
 	}
-	w.call(200, creatorToken, "GET", "/me/groups", nil, &mine)
+	w.call(200, creatorToken, "GET", "/me/entities", nil, &mine)
 	if len(mine.Groups) != 2 || !mine.Groups[0].Owner || !mine.Groups[1].Owner || !mine.Groups[0].Writer {
 		t.Fatalf("the creator's groups %+v", mine)
 	}
 	// A holder of channel:content:write alone finds the channel as its writer.
 	writer, writerToken := w.person()
 	authtest.GrantRole(t, w.ak, iam.GroupByID(studio.AuthScope), iam.UserSubject(writer.ID), w.writer)
-	w.call(200, writerToken, "GET", "/me/groups", nil, &mine)
+	w.call(200, writerToken, "GET", "/me/entities", nil, &mine)
 	if g := mine.Groups; len(g) != 1 || g[0].ID != studio.ID || !g[0].Writer || g[0].Editor || g[0].Owner || g[0].Member {
 		t.Fatalf("the writer's groups %+v", mine)
 	}
-	w.call(200, strangerToken, "GET", "/me/groups", nil, &mine)
+	w.call(200, strangerToken, "GET", "/me/entities", nil, &mine)
 	if len(mine.Groups) != 0 {
 		t.Fatalf("a stranger's groups %+v", mine)
 	}
@@ -215,7 +215,7 @@ func TestCreatorWritesOverAuthKit(t *testing.T) {
 		t.Fatal("the deleted channel's scope is live")
 	}
 	w.call(403, editorToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, nil)
-	w.call(201, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "third"}}, nil)
+	w.call(201, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "third"}}, nil)
 	w.call(409, creatorToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, nil)
 	var restored groups.Group
 	w.call(200, staffToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, &restored)

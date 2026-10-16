@@ -17,14 +17,14 @@ import (
 // Interaction targets: content items or groups.
 const (
 	TargetContents = "contents"
-	TargetGroups   = "groups"
+	TargetGroups   = "entities"
 )
 
 // MineOptions select one page of the signed-in reader's favorites or
 // reactions.
 type MineOptions struct {
 	Reader
-	// Target is contents (the default) or groups.
+	// Target is contents (the default) or entities.
 	Target string
 	// Kind is one content kind or group kind; every kind by default.
 	Kind string
@@ -40,7 +40,7 @@ type MineOptions struct {
 // to, as its card shows it now.
 type Interaction struct {
 	Content *Card             `json:"content,omitempty"`
-	Group   *groups.GroupCard `json:"group,omitempty"`
+	Group   *groups.GroupCard `json:"entity,omitempty"`
 	// Value is the reaction: 1 like, -1 dislike; 1 for a favorite.
 	Value int16 `json:"value"`
 	// At is when the reader favorited or last reacted.
@@ -101,7 +101,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 			return out, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, o.Kind)
 		}
 	default:
-		return out, fmt.Errorf("%w: target %q is contents or groups", ErrInvalid, o.Target)
+		return out, fmt.Errorf("%w: target %q is contents or entities", ErrInvalid, o.Target)
 	}
 	if o.Kind != "" {
 		kinds = []string{o.Kind}
@@ -113,7 +113,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 	limit := pageLimit(o.Limit, 24)
 	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
-	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active')`, s.t.groups)
+	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.groups)
 	if o.Target == TargetContents {
 		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind}); err != nil {
 			return out, err
@@ -209,7 +209,7 @@ func decodeMineCursor(raw string) (time.Time, string, error) {
 }
 
 var mineParams = []httpapi.Param{
-	httpapi.Text("target", "contents (the default) or groups"),
+	httpapi.Text("target", "contents (the default) or entities"),
 	httpapi.Text("kind", "only this content kind or group kind"),
 	cardGroups,
 	httpapi.Text("cursor", "the previous page's next_cursor"),
@@ -232,7 +232,7 @@ func (h handler) mineOptions(r *http.Request) (MineOptions, error) {
 	limit, err := intParam(r, "limit")
 	q := r.URL.Query()
 	return MineOptions{Reader: readerOf(r), Target: q.Get("target"), Kind: q.Get("kind"), Value: q.Get("value"),
-		CardGroups: list(q.Get("card_groups")), Cursor: q.Get("cursor"), Limit: limit}, err
+		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit}, err
 }
 
 func (h handler) favorites(w http.ResponseWriter, r *http.Request) {

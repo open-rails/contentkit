@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
@@ -21,6 +22,9 @@ import (
 // editors. Editors also get every language's text, every version and the
 // moderation state.
 func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Content, error) {
+	if v.management {
+		ctx = resolve.WithEditorRead(ctx)
+	}
 	out := make([]*Content, len(ids))
 	views, err := v.decide(ctx, ids, true)
 	if err != nil {
@@ -137,7 +141,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	if err := s.fillCovers(ctx, built, v.language); err != nil {
 		return nil, err
 	}
-	names, err := s.groupSummaries(ctx, groupIDs, v.language)
+	names, err := s.groupSummaries(ctx, groupIDs, v.language, v.management && v.staff)
 	if err != nil {
 		return nil, err
 	}
@@ -180,8 +184,13 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	if err := s.fillOffers(ctx, v, built); err != nil {
 		return nil, err
 	}
-	if err := s.fillOwners(ctx, v.language, built); err != nil {
+	if err := s.fillOwners(ctx, v.language, built, v.management && v.staff); err != nil {
 		return nil, err
+	}
+	if !v.management || !v.staff {
+		if err := s.redactInternalEntities(ctx, built); err != nil {
+			return nil, err
+		}
 	}
 	for i, id := range ids {
 		out[i] = built[id]
@@ -191,7 +200,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 
 // fillOwners attaches the items' owner groups' cards, avatars and covers
 // resolved, in one call.
-func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content) error {
+func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content, management bool) error {
 	if s.groups == nil {
 		return nil
 	}
@@ -204,7 +213,7 @@ func (s *Store) fillOwners(ctx context.Context, language string, built map[strin
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.groups.Cards(ctx, ids, groups.CardOptions{Language: language, Covers: true})
+	cards, err := s.groups.Cards(ctx, ids, groups.CardOptions{Language: language, Covers: true, IncludeInternal: management})
 	if err != nil {
 		return err
 	}
@@ -604,7 +613,7 @@ func (s *Store) links(ctx context.Context, items map[string]*itemRow) (map[strin
 
 // groupSummaries names the active groups among ids in language, with their
 // pages' paths, as group cards do.
-func (s *Store) groupSummaries(ctx context.Context, ids []string, language string) (map[string]GroupSummary, error) {
+func (s *Store) groupSummaries(ctx context.Context, ids []string, language string, management bool) (map[string]GroupSummary, error) {
 	out := map[string]GroupSummary{}
 	if len(ids) == 0 || s.groups == nil {
 		return out, nil
@@ -613,7 +622,7 @@ func (s *Store) groupSummaries(ctx context.Context, ids []string, language strin
 	for i, id := range ids {
 		gids[i] = groups.GroupID(id)
 	}
-	cards, err := s.groups.Cards(ctx, gids, groups.CardOptions{Language: language})
+	cards, err := s.groups.Cards(ctx, gids, groups.CardOptions{Language: language, IncludeInternal: management})
 	if err != nil {
 		return nil, err
 	}

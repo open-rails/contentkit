@@ -1,0 +1,91 @@
+package catalog
+
+import (
+	"context"
+	"slices"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/offers"
+)
+
+// redactInternalEntities removes operator-only classification and offer keys
+// from public DTOs after access has been decided. It never changes Allowed.
+func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Content) error {
+	var ids []string
+	add := func(id string) {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	collect := func(d Decision) {
+		for _, raw := range append(append([]string{}, d.Sell...), d.Requires) {
+			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyGroup {
+				add(key.Group())
+			}
+		}
+	}
+	for _, c := range items {
+		add(c.OwnerGroupID)
+		add(c.Access.Group)
+		collect(c.Decision)
+		for _, v := range c.Versions {
+			if v.Access != nil {
+				add(v.Access.Group)
+			}
+			collect(v.Decision)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id FROM `+s.t.groups+` WHERE tenant_id=$1 AND id=ANY($2::text[]) AND internal`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	internal := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		internal[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	privateKey := func(raw string) bool {
+		key, err := access.ParseKey(raw)
+		return err == nil && key.Kind() == access.KeyGroup && internal[key.Group()]
+	}
+	redact := func(d *Decision) {
+		if privateKey(d.Requires) {
+			// No offered purchase may skip this required membership.
+			d.Sell, d.Requires, d.Offers = nil, "", nil
+			return
+		}
+		d.Sell = slices.DeleteFunc(slices.Clone(d.Sell), privateKey)
+		d.Offers = slices.DeleteFunc(slices.Clone(d.Offers), func(sale offers.Sale) bool { return sale.Key.Kind() == access.KeyGroup && internal[sale.Key.Group()] })
+	}
+	rule := func(r *access.Rule) {
+		if r == nil || !internal[r.Group] {
+			return
+		}
+		// The public shape says only that access is locked. The original group
+		// rule remains stored and was already evaluated by the access gate.
+		*r = access.Rule{Level: access.PPV, Preview: r.Preview, FreeAfter: r.FreeAfter}
+	}
+	for _, c := range items {
+		if internal[c.OwnerGroupID] {
+			c.OwnerGroupID, c.Owner = "", nil
+		}
+		rule(&c.Access)
+		redact(&c.Decision)
+		for i := range c.Versions {
+			v := &c.Versions[i]
+			rule(v.Access)
+			redact(&v.Decision)
+		}
+	}
+	return nil
+}

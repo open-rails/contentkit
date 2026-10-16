@@ -55,6 +55,9 @@ type Options struct {
 	Resolver resolve.Resolver
 	// Gate decides each card's access.
 	Gate *access.Gate
+	// ActivitySigner preserves trusted event-time access facts. Nil retains
+	// legacy telemetry without normalized-population qualification.
+	ActivitySigner ActivitySigner
 	// Groups names the groups on cards and in typeahead.
 	Groups *groups.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
@@ -71,7 +74,8 @@ type Options struct {
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
 	Tenure access.TenureReader
-	// Policy ranks popular sorts; zero is popularity.PolicyV1.
+	// Policy ranks popular sorts; zero is popularity.PolicyV2 with an explicit
+	// whole-query legacy fallback when trusted population history is absent.
 	Policy popularity.Policy
 	Logger *slog.Logger
 	Now    func() time.Time
@@ -79,8 +83,9 @@ type Options struct {
 
 // Service serves discovery for one tenant.
 type Service struct {
-	o Options
-	t tables
+	o          Options
+	t          tables
+	historical *popularity.Ranker
 }
 
 type tables struct {
@@ -99,7 +104,7 @@ func New(o Options) (*Service, error) {
 		return nil, fmt.Errorf("discovery: Kinds: %w", err)
 	}
 	if o.Policy.Name == "" {
-		o.Policy = popularity.PolicyV1
+		o.Policy = popularity.PolicyV2
 	}
 	if err := o.Policy.Validate(); err != nil {
 		return nil, err
@@ -116,6 +121,12 @@ func New(o Options) (*Service, error) {
 		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments: q("content_comments")}}
+	var err error
+	s.historical, err = popularity.New(popularity.Config{Source: o.Hub, Policy: o.Policy, Availability: s,
+		Cache: popularity.NewMemoryCache(0), MaxDepth: PopularityDepth})
+	if err != nil {
+		return nil, err
+	}
 	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
 		return nil, errors.New("discovery: Candidates needs the signal plane")
 	}

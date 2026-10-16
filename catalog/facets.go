@@ -102,6 +102,9 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		s.tenant, ids, string(data)); err != nil {
 		return err
 	}
+	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
+		return err
+	}
 	return s.markDocuments(ctx, q, ids)
 }
 
@@ -162,7 +165,11 @@ func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs
 	if err := s.markDocuments(ctx, q, ids); err != nil {
 		return err
 	}
-	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id`, s.tenant, ids)
+	// Catalog revisions track association changes independently of the imported
+	// source timestamp. Advancing in this transaction lets optimistic editors
+	// and background publication observe them under the same content-row lock.
+	rows, err := q.Query(ctx, `WITH changed AS (UPDATE `+s.t.items+` SET revision=revision+1
+ WHERE tenant_id = $1 AND id = ANY($2) RETURNING id, kind) SELECT id,kind FROM changed ORDER BY id`, s.tenant, ids)
 	if err != nil {
 		return err
 	}

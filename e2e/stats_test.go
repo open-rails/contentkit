@@ -20,9 +20,9 @@ func TestSitemapsAndStats(t *testing.T) {
 	f := serve(t, w.engine(nil))
 	g, _ := w.published(f, staff, "gallery")
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "color",
+	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "color",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}}, &made)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g+"/groups", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: made[0].ID}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+g+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: made[0].ID}}}, nil)
 	f.want(http.StatusCreated, user, "POST", "/contents/"+g+"/comments", content.CommentInput{Body: "nice"}, nil)
 
 	var page discovery.SitemapPage
@@ -30,11 +30,11 @@ func TestSitemapsAndStats(t *testing.T) {
 	if len(page.Entries) != 1 || page.Entries[0].ID != g || len(page.Entries[0].Languages) != 1 || page.Entries[0].Path == "" {
 		t.Fatalf("content sitemap %+v", page)
 	}
-	f.want(http.StatusOK, "", "GET", "/sitemap/groups?kind=tag", nil, &page)
+	f.want(http.StatusOK, "", "GET", "/sitemap/entities?kind=tag", nil, &page)
 	if len(page.Entries) != 1 || page.Entries[0].ID != string(made[0].ID) {
 		t.Fatalf("group sitemap %+v", page)
 	}
-	f.want(http.StatusBadRequest, "", "GET", "/sitemap/groups?kind=nope", nil, nil)
+	f.want(http.StatusBadRequest, "", "GET", "/sitemap/entities?kind=nope", nil, nil)
 
 	var top discovery.TopContents
 	f.want(http.StatusForbidden, user, "GET", "/stats/top?kind=gallery&metric=comments", nil, nil)

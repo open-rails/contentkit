@@ -2,11 +2,25 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    filterTitle: "コンテンツフィルター",
+    filterDescription: "表示するコンテンツを選択してください。",
+    savingPreferences: "設定を保存しています…",
+    preferencesNotSaved: "設定はまだ保存されていません。",
     title: "閲覧設定",
     description: "言語と表示するコンテンツを選択します。",
     filters: "表示するコンテンツ：",
   },
+  releases: {
+    premiumMore_one: "ほか {count} 件",
+    premiumMore_other: "ほか {count} 件",
+    premiumHint: "会員向けプレビュー · クリックして表示",
+    filteredMore_one: "{count} 件を非表示",
+    filteredMore_other: "{count} 件を非表示",
+    manageFilters: "コンテンツフィルターを変更",
+    filterContext: "{date} のフィルター。1つのコンテンツが複数のフィルターに該当する場合があります。",
+  },
   contents: {
+    showMore: "もっと表示",
     unknownAccess: "現在利用できません",
     members: "メンバー限定",
     joinFree: "無料で参加",
@@ -54,6 +68,9 @@ export const discovery: typeof en = {
     removeRecent: "「{q}」を削除",
   },
   listing: {
+    popularPeriod: "人気の集計期間",
+    pastDays_one: "過去{count}日間",
+    pastDays_other: "過去{count}日間",
     sort: "並べ替え",
     sort_newest: "新着",
     sort_oldest: "古い順",

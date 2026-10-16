@@ -18,6 +18,8 @@ export const groups: typeof en = {
     noMatch: "Kein Treffer.",
   },
   groupEditor: {
+    internal: "Nur für den internen Gebrauch",
+    internalHint: "Auf öffentlichen Seiten, in der Suche und in den Leseeinstellungen verborgen. Mitarbeitende können diese Entität in Domain-Regeln verwenden.",
     uploadAvatar: "Avatar hochladen",
     removeAvatar: "Avatar entfernen",
     images: "Bilder",

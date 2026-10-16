@@ -78,6 +78,56 @@ export interface Screened {
   refused: { file: File; error: ContentKitError }[];
 }
 
+const encoder = new TextEncoder();
+const digit = (n: number) => n >= 48 && n <= 57;
+const lowerASCII = (n: number) => n >= 65 && n <= 90 ? n + 32 : n;
+
+/** ZIP ingestion's numeric, case-insensitive order, then original UTF-8 name. */
+export function naturalNameCompare(left: string, right: string): number {
+  const a = encoder.encode(left), b = encoder.encode(right);
+  let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    if (digit(a[i]!) && digit(b[j]!)) {
+      let ae = i, be = j;
+      while (ae < a.length && digit(a[ae]!)) ae++;
+      while (be < b.length && digit(b[be]!)) be++;
+      let av = i, bv = j;
+      while (av < ae && a[av] === 48) av++;
+      while (bv < be && b[bv] === 48) bv++;
+      if (ae - av !== be - bv) return ae - av - (be - bv);
+      while (av < ae) {
+        if (a[av] !== b[bv]) return a[av]! - b[bv]!;
+        av++; bv++;
+      }
+      i = ae; j = be;
+    } else {
+      const difference = lowerASCII(a[i]!) - lowerASCII(b[j]!);
+      if (difference) return difference;
+      i++; j++;
+    }
+  }
+  const remaining = a.length - i - (b.length - j);
+  if (remaining) return remaining;
+  for (let at = 0; at < Math.min(a.length, b.length); at++) if (a[at] !== b[at]) return a[at]! - b[at]!;
+  return a.length - b.length;
+}
+
+/** Sort only new page files within each rule, retaining every non-page slot. */
+export function sortPageFiles(accepted: readonly Screened["accepted"][number][]): Screened["accepted"] {
+  const groups = new Map<string, { files: Screened["accepted"]; next: number }>();
+  for (const entry of accepted) {
+    if (!entry.rule.page) continue;
+    let group = groups.get(entry.rule.path);
+    if (!group) groups.set(entry.rule.path, group = { files: [], next: 0 });
+    group.files.push(entry);
+  }
+  for (const group of groups.values()) group.files.sort((a, b) => naturalNameCompare(a.file.name, b.file.name));
+  return accepted.map((entry) => {
+    const group = entry.rule.page ? groups.get(entry.rule.path) : undefined;
+    return group ? group.files[group.next++]! : entry;
+  });
+}
+
 /**
  * Checks files against the rules before any upload: a type some rule takes
  * (the first that does), its size, and the rule's file cap counting
@@ -123,6 +173,23 @@ export function uniqueName(name: string, taken: Iterable<string>): string {
   for (let n = 2; ; n++) {
     const candidate = `${base}-${n}${ext}`;
     if (!stems.has(stem(candidate))) return candidate;
+  }
+}
+
+/** Preserve numeric page/range identities; a collision must not invent a joined range. */
+export function uniquePageName(name: string, taken: Iterable<string>): string {
+  const key = (value: string) => {
+    const base = stem(value);
+    return /^\d+(?:-\d+)?$/.test(base) ? base.split("-").map((n) => n.replace(/^0+/, "") || "0").join("-") : base;
+  };
+  const names = new Set([...taken].map(key));
+  if (!names.has(key(name))) return name;
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let n = 2; ; n++) {
+    const candidate = `${base} (${n})${ext}`;
+    if (!names.has(key(candidate))) return candidate;
   }
 }
 

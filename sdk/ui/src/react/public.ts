@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { ReadResult, RefBody } from "../client/generated/wire.js";
@@ -8,40 +8,39 @@ import type { PublicPreset } from "../client/public.js";
 import { useOptionalContentKitClient, useReadScope } from "./context.js";
 import { useKinds } from "./groups.js";
 import { useMediaRead } from "./read.js";
-import { useContentScope } from "./use-resource.js";
+import { keyOf, useContentScope, useResource } from "./use-resource.js";
+import { resourcesFor } from "./resources.js";
 
 export interface UsePresets {
   /** Every kind's public presets; empty until they load (or when the server has none). */
   presets: PresetRule[];
   loaded: boolean;
   error?: ContentKitError;
+  /** Retry a failed read; successful public presets remain cached. */
+  reload: () => void;
 }
 
-const settled = new WeakMap<ContentKitClient, { presets: PresetRule[]; error?: ContentKitError }>();
-const inflight = new WeakMap<ContentKitClient, Promise<void>>();
+// Seed remounts synchronously with successful, immutable public metadata.
+// Failures stay in the mounted resource and are never cached here.
+const settled = new WeakMap<ContentKitClient, PresetRule[]>();
 
-/** The public presets (`GET /media/presets`), fetched once per client. */
+/** Public presets, shared across consumers; failed reads can be retried. */
 export function usePresets(o: { client?: ContentKitClient | null } = {}): UsePresets {
   const client = useOptionalContentKitClient(o.client);
-  const [, rerender] = useState(0);
-  const done = client ? settled.get(client) : undefined;
+  const store = client ? resourcesFor(client) : null;
+  const key = client ? keyOf("presets") : null;
+  const initial = client ? settled.get(client) : undefined;
+  const r = useResource<PresetRule[]>(store, key, { type: "presets" }, async () => {
+    const presets = await client!.media.presets();
+    settled.set(client!, presets);
+    return presets;
+  }, { initial });
   useEffect(() => {
-    if (!client || settled.has(client)) return;
-    let live = true;
-    let load = inflight.get(client);
-    if (!load) {
-      load = client.media.presets().then(
-        (presets) => void settled.set(client, { presets }),
-        (error: ContentKitError) => void settled.set(client, { presets: [], error }),
-      ).finally(() => inflight.delete(client));
-      inflight.set(client, load);
-    }
-    void load.then(() => live && rerender((n) => n + 1));
-    return () => {
-      live = false;
-    };
-  }, [client]);
-  return { presets: done?.presets ?? [], loaded: !!done || !client, error: done?.error };
+    // A remount may join a failed slot before its deferred cleanup. Retry
+    // once on mounting, rather than retrying continuously after each error.
+    if (key && store?.snapshot(key).error) store.load(key, true);
+  }, [key, store]);
+  return { presets: r.data ?? [], loaded: r.loaded || !!initial || !client, error: r.error, reload: r.reload };
 }
 
 export interface PublicImageOptions {
@@ -74,7 +73,7 @@ export interface UsePublicImage {
 export function usePublicImage(item: RefBody, preset: string, o: PublicImageOptions = {}): UsePublicImage {
   const { kind, id, version } = item;
   const client = useOptionalContentKitClient(o.client);
-  const { presets, loaded } = usePresets({ client });
+  const { presets, loaded, error: presetError, reload: reloadPresets } = usePresets({ client });
   const rule = presets.find((p) => p.kind === kind && p.name === preset);
   const listed = o.image !== undefined;
   // The read waits for the presets, so it lists only the preset's upload.
@@ -87,7 +86,9 @@ export function usePublicImage(item: RefBody, preset: string, o: PublicImageOpti
     const def = rule && defaultImage(rule, id, version);
     return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
   }, [listed, o.image, r.read, preset, rule, id, version]);
-  return { ...image, rule, loading: !loaded || r.loading, error: r.error, reload: r.reload };
+  const reloadRead = r.reload;
+  const reload = useCallback(() => { if (presetError) reloadPresets(); reloadRead(); }, [presetError, reloadPresets, reloadRead]);
+  return { ...image, rule, loading: !loaded || r.loading, error: r.error ?? presetError, reload };
 }
 
 /**

@@ -65,7 +65,7 @@ export function GroupHeader(p: GroupHeaderProps) {
   const lang = p.language ?? g.name_language;
   const text = g.text.find((x) => x.language === lang) ?? g.text.find((x) => x.description);
   const others = g.names.filter((n) => n.name !== g.name);
-  const declared = kinds?.group_kinds?.[g.kind]?.attributes ?? {};
+  const declared = kinds?.entity_kinds?.[g.kind]?.attributes ?? {};
   const attributes = Object.entries(g.attributes).filter(([, v]) => v !== null && v !== undefined && v !== "");
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
   return root(

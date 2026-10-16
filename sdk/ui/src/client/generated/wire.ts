@@ -24,11 +24,34 @@ export interface Activity {
   days: ActivityDay[];
 }
 
+export interface ActivityContext {
+  content_id: string;
+  version_id?: string;
+  token: string;
+  occurred_at: string;
+}
+
+export interface ActivityContexts {
+  enabled: boolean;
+  contexts: ActivityContext[];
+}
+
+export interface ActivityContextsInput {
+  session?: string;
+  language?: string;
+  targets: ActivityTarget[];
+}
+
 export interface ActivityDay {
   date: string;
   views: number;
   viewers: number;
   users: number;
+}
+
+export interface ActivityTarget {
+  content_id: string;
+  version_id?: string;
 }
 
 export interface AdminComment {
@@ -112,6 +135,12 @@ export interface AnswerRecord {
   updated_at?: string;
 }
 
+export interface Archive {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
 export interface Attribute {
   type: string;
   values?: string[];
@@ -161,7 +190,7 @@ export interface Batch {
   source: string;
   preference_floor?: number;
   provision_scopes?: boolean;
-  groups?: GroupRecord[];
+  entities?: GroupRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
   offers?: OfferRecord[];
@@ -190,13 +219,14 @@ export interface Card {
   language: string;
   cover: PublicRendition[];
   version: CardVersion;
-  groups: Record<string, Chip[]>;
+  entities: Record<string, Chip[]>;
   owner?: GroupCard;
   counts: Counts;
   access: CardAccess;
   viewer?: ViewerState;
   published_at?: string;
   attributes: Record<string, unknown>;
+  ranking?: ContentRanking;
 }
 
 export interface CardAccess {
@@ -304,6 +334,7 @@ export interface CommentRecord {
 export interface CommentStanding {
   can_comment: boolean;
   comments: string;
+  count?: number;
   locked: boolean;
   ban?: BanNotice;
   anonymous: boolean;
@@ -328,6 +359,8 @@ export interface CompleteReply {
   type: string;
   size: number;
 }
+
+export type CompleteRequest = Record<string, never>;
 
 export interface Config {
   anonymous: Anonymous;
@@ -359,7 +392,7 @@ export interface Content {
   owner_group_id?: string;
   owner?: GroupCard;
   creators: Creator[];
-  groups: GroupSummary[];
+  entities: GroupSummary[];
   versions: Version[];
   views?: number;
   viewer?: ViewerState;
@@ -375,27 +408,27 @@ export interface Content {
   deleted_at?: string;
 }
 
-export interface ContentFilter {
-  group: GroupRef;
-  default_visible: boolean;
-  labels?: Record<string, string>;
-}
-
 export interface ContentFilterState {
-  group: GroupCard;
-  label: string;
+  entity: GroupCard;
   default_visible: boolean;
   visible: boolean;
   overridden: boolean;
 }
 
 export interface ContentFilters {
-  filters: ContentFilterState[];
+  kinds: Record<string, ContentFilterState[]>;
+  include_deleted: boolean;
+}
+
+export interface ContentFiltersInitialization {
+  account_id: string;
+  kinds: Record<string, GuestFilterSetting[]>;
+  legacy_filters?: FilterSetting[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
-  filters: FilterSetting[];
+  kinds: Record<string, FilterSetting[]>;
   include_deleted: boolean;
 }
 
@@ -420,15 +453,14 @@ export interface ContentInput {
 export interface ContentMemberships {
   content_id: string;
   memberships: Membership[];
-  groups: GroupCard[];
+  entities: GroupCard[];
 }
 
 export interface ContentModel {
   languages: string[];
   tiers: string[];
   kinds: Record<string, Kind>;
-  group_kinds: Record<string, GroupKind>;
-  content_filters: ContentFilter[];
+  entity_kinds: Record<string, GroupKind>;
   signals: boolean;
   avatars?: PresetRule;
 }
@@ -436,6 +468,7 @@ export interface ContentModel {
 export interface ContentPage {
   contents: Card[];
   next_cursor?: string;
+  ranking?: RankingInfo;
 }
 
 export interface ContentPatch {
@@ -446,6 +479,12 @@ export interface ContentPatch {
   attributes?: Record<string, unknown>;
   creators?: Creator[];
   revision?: number;
+}
+
+export interface ContentRanking {
+  score: number;
+  participation: number;
+  adjusted_participation: number;
 }
 
 export interface ContentRecord {
@@ -530,6 +569,13 @@ export interface Crop {
   h: number;
 }
 
+export interface DailyReleases {
+  time_zone: string;
+  from_date: string;
+  through_date: string;
+  days: ReleaseDay[];
+}
+
 export interface DateCount {
   date: string;
   count: number;
@@ -589,6 +635,22 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
+}
+
+export interface EntityReference {
+  id?: string;
+  kind?: string;
+  name?: string;
+  language?: string;
+  scope?: EntityReference;
+}
+
+export interface EntityResolution {
+  id: string;
+  kind: string;
+  name: string;
+  created: boolean;
+  scope?: EntityResolution;
 }
 
 export interface ErrorDetails {
@@ -723,6 +785,7 @@ export interface FileInfo {
   dur?: number;
   download?: string;
   url?: string;
+  create_id?: string;
   upload?: boolean;
   staged?: boolean;
   from?: string;
@@ -737,7 +800,7 @@ export interface FileInfo {
 }
 
 export interface FilterSetting {
-  group_id: string;
+  entity_id: string;
   visible: boolean;
 }
 
@@ -763,6 +826,7 @@ export interface Group {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   state: "active" | "deleted" | "merged";
@@ -789,6 +853,7 @@ export interface GroupCard {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   name: string;
@@ -807,6 +872,7 @@ export interface GroupDetail {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   state: "active" | "deleted" | "merged";
@@ -838,6 +904,7 @@ export interface GroupInput {
   id?: string;
   kind: string;
   slug: string;
+  internal?: boolean;
   scope_id?: string;
   parent_id?: string;
   attributes?: Record<string, unknown>;
@@ -872,7 +939,7 @@ export interface GroupKind {
 }
 
 export interface GroupPage {
-  groups: GroupCard[];
+  entities: GroupCard[];
   next_cursor?: string;
 }
 
@@ -881,6 +948,7 @@ export interface GroupRecord {
   id?: string;
   kind: string;
   slug: string;
+  internal?: boolean;
   scope?: Ref;
   parent?: Ref;
   state?: string;
@@ -898,11 +966,6 @@ export interface GroupRecord {
   updated_at?: string;
 }
 
-export interface GroupRef {
-  kind: string;
-  slug: string;
-}
-
 export interface GroupSummary {
   id: string;
   kind: string;
@@ -914,6 +977,7 @@ export interface GroupSummary {
 
 export interface GroupUpdate {
   slug?: string;
+  internal?: boolean;
   scope_id?: string;
   parent_id?: string;
   state?: "active" | "deleted" | "merged";
@@ -937,6 +1001,12 @@ export interface GroupsText {
   language: string;
   description?: string;
   sort_key?: string;
+}
+
+export interface GuestFilterSetting {
+  entity_id: string;
+  visible?: boolean;
+  default?: boolean;
 }
 
 export interface HeldItem {
@@ -1002,7 +1072,7 @@ export interface Input {
 
 export interface Interaction {
   content?: Card;
-  group?: GroupCard;
+  entity?: GroupCard;
   value: number;
   at: string;
 }
@@ -1036,7 +1106,7 @@ export interface Kind {
   presentation: string;
   versions: VersionRules;
   segments?: boolean;
-  groups?: string[];
+  entities?: string[];
   attributes?: Record<string, Attribute>;
   sort?: string;
   locked?: Locked;
@@ -1131,6 +1201,7 @@ export interface MyGroup {
   id: string;
   kind: string;
   slug: string;
+  internal: boolean;
   scope_id?: string;
   parent_id?: string;
   name: string;
@@ -1151,7 +1222,7 @@ export interface MyGroup {
 }
 
 export interface MyGroupPage {
-  groups: MyGroup[];
+  entities: MyGroup[];
   next_cursor?: string;
 }
 
@@ -1195,9 +1266,11 @@ export interface OfferRecord {
 
 export interface Op {
   op: OpName;
+  source_name?: string;
   path?: string;
   blob?: string;
   create_id?: string;
+  replace?: boolean;
   index?: number;
   meta?: Record<string, unknown>;
   edit?: Edit;
@@ -1209,6 +1282,34 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
+}
+
+export interface Operation {
+  id: string;
+  state: "awaiting_upload" | "blocked" | "failed" | "processing" | "published" | "publishing" | "ready" | "review_required" | "scheduled";
+  content_id: string;
+  version_id: string;
+  publish_at?: string;
+  entities: EntityResolution[];
+  progress: Progress;
+  result?: OperationResult;
+  error?: OperationError;
+  upload?: PresignReply;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  field?: string;
+}
+
+export interface OperationResult {
+  path: string;
+  pages: number;
+  page_review?: PageReviewSummary;
 }
 
 export interface Order {
@@ -1229,6 +1330,85 @@ export interface Origin {
 export interface Page {
   items: Item[];
   next_cursor?: string;
+}
+
+export interface PageAnalysis {
+  recipe: string;
+  source_sha256: string;
+  status: string;
+  width?: number;
+  height?: number;
+  frames?: number;
+  pixel_sha256?: string;
+  pixel_format?: string;
+  profile_sha256?: string;
+  blank: string;
+  blank_reason?: string;
+  confidence: string;
+  metrics?: PageAnalysisMetrics;
+  flags?: string[];
+}
+
+export interface PageAnalysisMetrics {
+  pixels: number;
+  visible_pixels: number;
+  opaque_pixels: number;
+  foreground_pixels: number;
+  min_rgb: number[];
+  max_rgb: number[];
+}
+
+export interface PageDecision {
+  reason: string;
+  confidence: string;
+  related?: string[];
+}
+
+export interface PageReview {
+  revision: string;
+  pages: PageReviewEntry[];
+  selected: number;
+  flagged: number;
+}
+
+export interface PageReviewChange {
+  id: string;
+  mode: string;
+}
+
+export interface PageReviewEntry {
+  id: string;
+  path: string;
+  source_name: string;
+  source_entry?: string;
+  archive_sha256?: string;
+  source_sha256: string;
+  span?: PageSpan;
+  included: boolean;
+  mode: string;
+  decision: PageDecision;
+  flags: string[];
+  analysis?: PageAnalysis;
+  preview_url?: string;
+  source_url?: string;
+}
+
+export interface PageReviewPatch {
+  revision: string;
+  pages?: PageReviewChange[];
+  order?: string[];
+}
+
+export interface PageReviewSummary {
+  sources: number;
+  selected: number;
+  excluded: number;
+  flagged: number;
+}
+
+export interface PageSpan {
+  from: number;
+  to: number;
 }
 
 export interface PartBody {
@@ -1260,10 +1440,13 @@ export interface Pending {
 export interface Placement {
   content_id: string;
   position: number;
+  version_id?: string;
+  activity_token?: string;
 }
 
 export interface PlanPage {
   name: string;
+  span?: PageSpan;
   w: number;
   h: number;
   files: Record<string, string>;
@@ -1420,6 +1603,7 @@ export interface PresignBody {
 
 export interface PresignReply {
   path: string;
+  source_name?: string;
   blob: string;
   exists?: boolean;
   put?: RequestReply;
@@ -1430,6 +1614,12 @@ export interface PresignReply {
 export interface Preview {
   pages?: number;
   segments?: number;
+}
+
+export interface Progress {
+  stage: string;
+  completed: number;
+  total: number;
 }
 
 export interface PublicImage {
@@ -1469,6 +1659,15 @@ export interface RankedContent {
   title: string;
   path?: string;
   value: number;
+}
+
+export interface RankingInfo {
+  policy: string;
+  mode: string;
+  requested_from?: string;
+  requested_until?: string;
+  covered_from?: string;
+  covered_until?: string;
 }
 
 export interface ReactionCounts {
@@ -1565,10 +1764,33 @@ export interface ReleaseDates {
   next_cursor?: string;
 }
 
+export interface ReleaseDay {
+  date: string;
+  contents: Card[];
+  filtered_count: number;
+  filtered_entities: ReleaseFilteredEntity[];
+}
+
+export interface ReleaseFilteredEntity {
+  content_kind: string;
+  entity: GroupCard;
+  count: number;
+}
+
 export interface Rendition {
   url: string;
   w: number;
   h: number;
+}
+
+export interface Request {
+  content: ContentInput;
+  entities?: EntityReference[];
+  archive: Archive;
+  publish?: "draft" | "when_ready";
+  publish_at?: string;
+  create_missing_entities?: boolean;
+  source?: Source;
 }
 
 export interface RequestReply {
@@ -1652,6 +1874,7 @@ export interface SignalInput {
   render_id?: string;
   surface?: string;
   position?: number;
+  activity_token?: string;
 }
 
 export interface SignalRecord {
@@ -1689,6 +1912,12 @@ export interface SitemapEntry {
 export interface SitemapPage {
   entries: SitemapEntry[];
   next_cursor?: string;
+}
+
+export interface Source {
+  provider: string;
+  id: string;
+  url?: string;
 }
 
 export interface StagedCopy {
@@ -1737,7 +1966,7 @@ export interface Totals {
 
 export interface Typeahead {
   contents: Card[];
-  groups: GroupCard[];
+  entities: GroupCard[];
 }
 
 export interface UploadLimits {
@@ -1752,6 +1981,7 @@ export interface UploadRule {
   max_bytes: number;
   max?: number;
   named?: boolean;
+  page?: boolean;
   body?: boolean;
   frames?: string;
   aspect?: string;

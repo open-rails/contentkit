@@ -11,7 +11,7 @@ import { ContentKitUiRoot } from "../scope.js";
 export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height"> {
   /** The item's published renditions; without any, the fallback shows. */
   image?: PublicPreset | null;
-  /** Density range for picking the width; default the provider's (2–3×). */
+  /** Density range for picking the width; default the provider's (1–3×). */
   density?: DensityRange;
   round?: boolean;
   /** Width / height of the box; default the preset's aspect. */

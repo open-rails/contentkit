@@ -34,9 +34,53 @@ app restriction does not by itself disable the tenant account.
 
 ## Content and access
 
+**Domain**:
+A hostname through which readers enter an app's catalog, with requirements and
+reader filters scoped to each content kind. Aliases may share one domain policy.
+_Avoid_: Site when referring to hostname-specific catalog policy
+
+**Domain requirement**:
+An entity that every item of a configured content kind must be associated with
+on a domain, regardless of reader preferences. Other content kinds are unaffected.
+
+**Reader filter**:
+A domain-offered choice to show or hide one content kind associated with an
+entity. A domain may fix that choice instead of allowing readers to change it.
+Preferences distinguish the content kind and entity, so hiding a tag in one
+kind does not hide it in another.
+
+**Internal entity**:
+An entity used for catalog administration or access policy whose identity,
+names and associations are absent from public discovery and presentation.
+
 **Catalog**:
-An app's collection of content, versions, groups, taxonomy and publication
+An app's collection of content, versions, entities and publication
 rules. Sharing accounts does not combine catalogs.
+
+**Entity**:
+An app-owned record associated with content, such as an artist, series,
+character, tag or collection. Multiple content items can refer to one entity.
+_Avoid_: Group when referring to ContentKit content associations
+
+**Entity kind**:
+A configured type of entity, defining whether a record is an artist, series,
+character, tag or another app-specific concept.
+
+**Association**:
+A link between content and an entity. An association reuses the entity's
+identity instead of copying its name into every content item.
+
+**Alias**:
+Another known name for the same entity. An alias identifies that entity;
+it does not create a second record.
+
+**Parent scope**:
+The entity that disambiguates a scoped entity, such as the series to which
+a character belongs. The same character name can occur in different series.
+
+**Publishing operation**:
+One durable submission of content, its associations and an archive, tracked
+from acceptance through processing to a ready draft or publication.
 
 **Ownership**:
 An account's relationship to content it created or controls in a particular

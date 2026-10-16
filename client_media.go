@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,7 +37,10 @@ const ingestPartSize = 32 << 20
 // nil), then commit. operationID is a UUID of this commit; sending the files
 // again (a new operationID) finds bytes the folder holds and uploads nothing
 // twice. Files with From are copied server-side, in one request. It is how
-// an importer fills an imported version's folder.
+// an importer fills an imported version's folder. This helper does not retain
+// upload plans: retry an uncertain commit with its exact CommitBody, not a
+// fresh invocation under the same operationID. PublishArchive provides a
+// durable, restartable workflow for an archive and its catalog metadata.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
 	if bucket == nil {
 		bucket = http.DefaultClient
@@ -50,11 +54,14 @@ func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media
 			copied = append(copied, i)
 			continue
 		}
+		if f.Body == nil {
+			return media.CommitReply{}, fmt.Errorf("contentkit: %s has no upload body", f.Path)
+		}
 		size, err := f.Body.Seek(0, io.SeekEnd)
 		if err != nil {
 			return media.CommitReply{}, err
 		}
-		sum, err := digest(f.Body, 0, size)
+		sum, err := digest(contextSeeker{ctx, f.Body}, 0, size)
 		if err != nil {
 			return media.CommitReply{}, err
 		}
@@ -94,40 +101,124 @@ func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media
 
 // multipart writes body in parts and answers the assembled upload's blob.
 func (c *Client) multipart(ctx context.Context, bucket *http.Client, m media.MultipartReply, body io.ReadSeeker, size int64) (string, error) {
-	part := max(int64(ingestPartSize), m.MinPartSize)
-	if m.MaxPartSize > 0 {
-		part = min(part, m.MaxPartSize)
-	}
-	if n := (size + part - 1) / part; m.MaxParts > 0 && n > int64(m.MaxParts) {
-		part = (size + int64(m.MaxParts) - 1) / int64(m.MaxParts)
-	}
-	var parts []media.PartBody
-	for off, n := int64(0), int32(1); off < size; off, n = off+part, n+1 {
-		sum, err := digest(body, off, min(part, size-off))
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, media.PartBody{Number: n, Size: min(part, size-off), SHA256: sum})
-	}
-	ticket := media.TicketBody{Ticket: m.Ticket}
-	signed, err := c.PostMediaUploadParts(ctx, media.PartsBody{Ticket: m.Ticket, Parts: parts})
-	if err == nil {
-		for i, p := range signed.Parts {
-			if p.Request == nil || i >= len(parts) {
-				err = fmt.Errorf("contentkit: part %d was not presigned", p.Number)
-				break
-			}
-			if err = upload(ctx, bucket, *p.Request, body, int64(p.Number-1)*part, parts[i].Size); err != nil {
-				break
-			}
-		}
-	}
-	if err != nil {
-		_ = c.PostMediaUploadAbort(context.WithoutCancel(ctx), ticket)
+	if err := c.transferParts(ctx, bucket, m, body, size, false, nil); err != nil {
 		return "", err
 	}
-	done, err := c.PostMediaUploadComplete(ctx, ticket)
+	done, err := c.PostMediaUploadComplete(ctx, media.TicketBody{Ticket: m.Ticket})
 	return done.Blob, err
+}
+
+type uploadPart struct {
+	media.PartBody
+	offset int64
+}
+
+// transferParts leaves failed uploads resumable. Only an explicit abort should
+// discard bytes that landed before a cancelled request or transient failure.
+func (c *Client) transferParts(ctx context.Context, bucket *http.Client, m media.MultipartReply, body io.ReadSeeker, size int64, resume bool, progress func(int64)) error {
+	if size <= 0 || body == nil || m.Ticket == "" || m.MinPartSize <= 0 || m.MaxPartSize < m.MinPartSize || m.MaxParts <= 0 {
+		return errors.New("contentkit: invalid multipart upload plan")
+	}
+	part := max(int64(ingestPartSize), m.MinPartSize)
+	part = min(part, m.MaxPartSize)
+	if n := (size-1)/part + 1; n > int64(m.MaxParts) {
+		part = (size-1)/int64(m.MaxParts) + 1
+	}
+	if part > m.MaxPartSize {
+		return errors.New("contentkit: multipart upload exceeds its part limits")
+	}
+	var parts []uploadPart
+	for off, n := int64(0), int32(1); off < size; off, n = off+part, n+1 {
+		sum, err := digest(contextSeeker{ctx, body}, off, min(part, size-off))
+		if err != nil {
+			return err
+		}
+		parts = append(parts, uploadPart{PartBody: media.PartBody{Number: n, Size: min(part, size-off), SHA256: sum}, offset: off})
+	}
+	landed := make(map[int32]bool)
+	var loaded int64
+	if resume {
+		stored, err := c.PostMediaUploadPartsList(ctx, media.TicketBody{Ticket: m.Ticket})
+		if err != nil {
+			var e *Error
+			if errors.As(err, &e) && e.Code == media.CodeNotFound {
+				// A lost completion response can leave an assembled object and
+				// no multipart upload. The caller's idempotent complete checks it.
+				return nil
+			}
+			return err
+		}
+		for _, p := range stored.Parts {
+			if p.Number < 1 || int(p.Number) > len(parts) || landed[p.Number] {
+				return errors.New("contentkit: multipart resume returned an unknown or duplicate part")
+			}
+			want := parts[p.Number-1]
+			if p.Size != want.Size || p.SHA256 != "" && p.SHA256 != want.SHA256 {
+				return errors.New("contentkit: multipart resume does not match this archive")
+			}
+			landed[p.Number] = true
+			loaded += want.Size
+		}
+	}
+	if progress != nil {
+		progress(loaded)
+	}
+	var pending []uploadPart
+	for _, p := range parts {
+		if !landed[p.Number] {
+			pending = append(pending, p)
+		}
+	}
+	for start := 0; start < len(pending); start += 100 {
+		batch := pending[start:min(start+100, len(pending))]
+		request := media.PartsBody{Ticket: m.Ticket, Parts: make([]media.PartBody, len(batch))}
+		for i, p := range batch {
+			request.Parts[i] = p.PartBody
+		}
+		signed, err := c.PostMediaUploadParts(ctx, request)
+		if err != nil {
+			return err
+		}
+		requests := make(map[int32]media.RequestReply, len(batch))
+		for _, p := range signed.Parts {
+			if p.Number < batch[0].Number || p.Number > batch[len(batch)-1].Number || landed[p.Number] || p.Request == nil {
+				return errors.New("contentkit: unexpected multipart signature")
+			}
+			if _, exists := requests[p.Number]; exists {
+				return errors.New("contentkit: duplicate multipart signature")
+			}
+			requests[p.Number] = *p.Request
+		}
+		if len(requests) != len(batch) {
+			return errors.New("contentkit: missing multipart signatures")
+		}
+		for _, p := range batch {
+			r, ok := requests[p.Number]
+			if !ok {
+				return fmt.Errorf("contentkit: part %d was not presigned", p.Number)
+			}
+			if err := upload(ctx, bucket, r, body, p.offset, p.Size); err != nil {
+				return err
+			}
+			loaded += p.Size
+			if progress != nil {
+				progress(loaded)
+			}
+		}
+	}
+	return nil
+}
+
+type contextSeeker struct {
+	ctx context.Context
+	io.ReadSeeker
+}
+
+func (r contextSeeker) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.ReadSeeker.Read(p)
 }
 
 // digest is the hex SHA-256 of body's n bytes from off.
@@ -161,8 +252,7 @@ func upload(ctx context.Context, bucket *http.Client, r media.RequestReply, body
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return fmt.Errorf("contentkit: bucket answered %d to an upload: %s", res.StatusCode, msg)
+		return &Error{Status: res.StatusCode, Code: "storage", Message: "bucket refused upload: " + http.StatusText(res.StatusCode), RetryAfter: retryAfter(res.Header)}
 	}
 	_, _ = io.Copy(io.Discard, res.Body)
 	return nil

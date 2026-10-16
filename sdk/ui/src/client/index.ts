@@ -23,9 +23,11 @@ export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type RuleSet, type Sort, type Target } from "./content/types.js";
-export { GroupsClient, type GroupImageSlot, type GroupQuery, type MemberQuery, type MyGroupQuery } from "./groups.js";
+export { EntitiesClient, type EntityImageSlot, type EntityQuery, type ManageEntityQuery, type MemberQuery, type MyEntityQuery } from "./entities.js";
 export {
   DiscoveryClient,
+  popularQuery,
+  popularBetween,
   type AccessMode,
   type CardQuery,
   type ContentFilterQuery,
@@ -33,10 +35,13 @@ export {
   type HistoryQuery,
   type ListSort,
   type Period,
+  type PopularPeriod,
+  type PopularQuery,
   type RailQuery,
   type ReaderQuery,
   type RecentSearchesQuery,
   type ReleaseDatesQuery,
+  type DailyReleasesQuery,
   type SearchQuery,
   type TypeaheadQuery,
 } from "./discovery.js";
@@ -48,6 +53,8 @@ export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions, 
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
+export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
+export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilterKinds, type ReaderFilterChoice } from "./browser-reader-preferences.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";
 export {

@@ -2,11 +2,25 @@ import type { discovery as en } from "./en.js";
 
 export const discovery: typeof en = {
   readerSettings: {
+    filterTitle: "Filtros de contenido",
+    filterDescription: "Elige el contenido que quieres ver.",
+    savingPreferences: "Guardando tus preferencias…",
+    preferencesNotSaved: "Tus preferencias aún no se han guardado.",
     title: "Ajustes de lectura",
     description: "Elige tu idioma y el contenido que ves.",
     filters: "Mostrar contenido:",
   },
+  releases: {
+    premiumMore_one: "{count} elemento más",
+    premiumMore_other: "{count} elementos más",
+    premiumHint: "Vistas previas para miembros · Haz clic para ver",
+    filteredMore_one: "{count} elemento filtrado",
+    filteredMore_other: "{count} elementos filtrados",
+    manageFilters: "Cambiar filtros de contenido",
+    filterContext: "Filtros para {date}. Un elemento puede coincidir con varios filtros.",
+  },
   contents: {
+    showMore: "Mostrar más",
     unknownAccess: "No disponible ahora",
     members: "Miembros",
     joinFree: "Unirse gratis",
@@ -54,6 +68,9 @@ export const discovery: typeof en = {
     removeRecent: "Quitar «{q}»",
   },
   listing: {
+    popularPeriod: "Período de popularidad",
+    pastDays_one: "Último {count} día",
+    pastDays_other: "Últimos {count} días",
     sort: "Ordenar",
     sort_newest: "Más recientes",
     sort_oldest: "Más antiguos",

@@ -20,6 +20,8 @@ type GroupInput struct {
 	ID   GroupID `json:"id,omitempty"`
 	Kind string  `json:"kind"`
 	Slug string  `json:"slug"`
+	// Internal classifications are visible only through management reads.
+	Internal bool `json:"internal,omitempty"`
 	// ScopeID is required for a kind scoped by another (a character's series).
 	ScopeID    GroupID        `json:"scope_id,omitempty"`
 	ParentID   GroupID        `json:"parent_id,omitempty"`
@@ -37,9 +39,10 @@ type GroupInput struct {
 // GroupUpdate changes one group's given fields; nil fields are unchanged.
 type GroupUpdate struct {
 	// ID names the group; routes take it from the path.
-	ID      GroupID  `json:"-"`
-	Slug    *string  `json:"slug,omitempty"`
-	ScopeID *GroupID `json:"scope_id,omitempty"`
+	ID       GroupID  `json:"-"`
+	Slug     *string  `json:"slug,omitempty"`
+	Internal *bool    `json:"internal,omitempty"`
+	ScopeID  *GroupID `json:"scope_id,omitempty"`
 	// ParentID "" detaches the group from its parent.
 	ParentID *GroupID `json:"parent_id,omitempty"`
 	// State restores (active) or deletes a group.
@@ -62,6 +65,8 @@ type GroupUpdate struct {
 // staffOnly names the fields of u only staff change.
 func (u GroupUpdate) staffOnly() string {
 	switch {
+	case u.Internal != nil:
+		return "internal"
 	case u.Slug != nil:
 		return "slug"
 	case u.ScopeID != nil:
@@ -81,6 +86,7 @@ type groupRow struct {
 	ID          string         `json:"id"`
 	Kind        string         `json:"kind"`
 	Slug        string         `json:"slug"`
+	Internal    bool           `json:"internal"`
 	ScopeID     string         `json:"scope_id"`
 	ParentID    *string        `json:"parent_id"`
 	Attributes  map[string]any `json:"attributes"`
@@ -278,7 +284,7 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		if creator != "" {
 			in.OwnerUserID = creator
 		}
-		row := groupRow{Ordinal: i, ID: string(in.ID), Kind: kind, Slug: slug, Attributes: in.Attributes,
+		row := groupRow{Ordinal: i, ID: string(in.ID), Kind: kind, Slug: slug, Internal: in.Internal, Attributes: in.Attributes,
 			OwnerUserID: optional(in.OwnerUserID), AuthScope: optional(in.AuthScope)}
 		if row.Avatar, err = validateAvatar(in.Avatar); err != nil {
 			return nil, err
@@ -327,9 +333,9 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		if err := s.lockOwners(ctx, q, rows); err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, id, kind, slug, scope_id, parent_id, attributes, cover, avatar, owner_user_id, auth_scope)
- SELECT $1, r.id, r.kind, r.slug, r.scope_id, r.parent_id, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope
- FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, scope_id text, parent_id text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
+		if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, id, kind, slug, internal, scope_id, parent_id, attributes, cover, avatar, owner_user_id, auth_scope)
+ SELECT $1, r.id, r.kind, r.slug, r.internal, r.scope_id, r.parent_id, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope
+ FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, internal boolean, scope_id text, parent_id text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
  ORDER BY r.ordinal`, s.table("content_groups")), s.tenant, data); err != nil {
 			return err
 		}
@@ -399,8 +405,8 @@ func (s *Store) byIDs(ctx context.Context, q Querier, ids []string) (map[GroupID
 	return out, nil
 }
 
-// Groups returns the requested groups that exist, in any state, in input
-// order.
+// Groups is a trusted raw lookup, including internal classifications and any
+// state, in input order. Reader-facing callers use Cards or Detail instead.
 func (s *Store) Groups(ctx context.Context, ids []GroupID) ([]Group, error) {
 	list, err := uniqueIDs(ids)
 	if err != nil {
@@ -490,6 +496,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if err != nil {
 				return err
 			}
+			if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: row.Kind, Slug: row.Slug, ScopeID: GroupID(row.ScopeID), State: State(row.State), Internal: row.Internal}); err != nil {
+				return err
+			}
 			row.Ordinal = i
 			rows = append(rows, row)
 			if moved {
@@ -503,6 +512,8 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 				if *u.State == StateActive {
 					restored = append(restored, row.groupRow)
 				}
+				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
+			} else if u.Internal != nil && *u.Internal != g.Internal {
 				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			if u.Names != nil || u.Slug != nil {
@@ -535,9 +546,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		if err := s.lockOwners(ctx, q, restored); err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s g SET slug = r.slug, scope_id = r.scope_id, parent_id = r.parent_id, state = r.state,
+		if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s g SET slug = r.slug, internal = r.internal, scope_id = r.scope_id, parent_id = r.parent_id, state = r.state,
  attributes = coalesce(r.attributes, '{}'), cover = r.cover, avatar = r.avatar, owner_user_id = r.owner_user_id, auth_scope = r.auth_scope, updated_at = now(), revision = g.revision + 1
- FROM jsonb_to_recordset($2::jsonb) AS r(id text, slug text, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
+ FROM jsonb_to_recordset($2::jsonb) AS r(id text, slug text, internal boolean, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb, avatar text, owner_user_id text, auth_scope text)
  WHERE g.tenant_id = $1 AND g.id = r.id`, s.table("content_groups")), s.tenant, data); err != nil {
 			return err
 		}
@@ -608,7 +619,7 @@ func (s *Store) apply(g Group, u GroupUpdate) (updateRow, bool, error) {
 	if err != nil {
 		return updateRow{}, false, err
 	}
-	row := updateRow{groupRow: groupRow{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, ScopeID: string(g.ScopeID), Attributes: g.Attributes,
+	row := updateRow{groupRow: groupRow{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, Internal: g.Internal, ScopeID: string(g.ScopeID), Attributes: g.Attributes,
 		Cover: g.Cover, OwnerUserID: optional(g.OwnerUserID), AuthScope: optional(g.AuthScope)}, State: string(g.State)}
 	if g.Avatar != nil {
 		row.Avatar = optional(g.Avatar.Image)
@@ -618,6 +629,10 @@ func (s *Store) apply(g Group, u GroupUpdate) (updateRow, bool, error) {
 		row.ParentID = &p
 	}
 	moved := false
+	if u.Internal != nil {
+		row.Internal = *u.Internal
+		moved = g.Internal != *u.Internal
+	}
 	if u.Slug != nil {
 		if row.Slug, err = validateSlug(*u.Slug); err != nil {
 			return row, false, err
@@ -643,7 +658,7 @@ func (s *Store) apply(g Group, u GroupUpdate) (updateRow, bool, error) {
 			p := string(*u.ParentID)
 			row.ParentID = &p
 		}
-		moved = string(g.ParentID) != *orEmpty(row.ParentID)
+		moved = moved || string(g.ParentID) != *orEmpty(row.ParentID)
 	}
 	if u.State != nil {
 		if *u.State != StateActive && *u.State != StateDeleted {

@@ -234,7 +234,8 @@ func banRoutes() []httpapi.Route[*Runtime] {
 	out := append(append([]httpapi.Route[*Runtime](nil), userBanRoutes...), groupModerationRoutes...)
 	for _, typ := range TargetTypes {
 		out = append(out, httpapi.Route[*Runtime]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
-			Doc: "Whether the caller may comment on " + targetNoun(typ) + ", and the ban that stops it.", Query: targetQuery(typ),
+			Doc:       "Whether the caller may comment on " + targetNoun(typ) + ", the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
+			Query:     targetQuery(typ, httpapi.Text("language", "only this language's thread; all languages by default")),
 			Responses: []httpapi.Reply{httpapi.OK(CommentStanding{})}, Errors: []string{CodeNotFound}},
 			Serve: func(rt *Runtime) http.HandlerFunc { return rt.targetHandler(typ, rt.handleCanComment) }})
 	}
@@ -378,6 +379,10 @@ type CommentStanding struct {
 	CanComment bool `json:"can_comment"`
 	// Comments is the target's comments setting: open, closed or hidden.
 	Comments string `json:"comments"`
+	// Count is the visible top-level thread size, including tombstones and
+	// the caller's held/rejected roots, in the requested language. Zero is
+	// present for an empty thread; hidden or locked comments withhold it.
+	Count *int `json:"count,omitempty"`
 	// Locked: the caller can't open the content (or the version) and its
 	// kind's locked view hides comments, so they are withheld from them and
 	// take none of their writes.
@@ -404,14 +409,14 @@ type CommentStanding struct {
 func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
-	_, res, err := rt.resolveTarget(ctx, target, actor, false)
+	ref, res, err := rt.resolveTarget(ctx, target, actor, false)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{},
 		Comments: cmp.Or(res.Comments, CommentsOpen)}
-	out.Locked = !rt.shows(target, res, kinds.ShowComments)
+	out.Locked = !rt.shows(ref, res, kinds.ShowComments)
 	out.CanComment = !out.Locked && (out.UserID != "" || out.Anonymous) && out.Comments == CommentsOpen
 	err = rt.checkCommentBan(ctx, viewerID(actor), res)
 	if err == nil {
@@ -432,6 +437,14 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, ta
 		if rt.requirePerm(ctx, actor, access.CommentsBan) == nil {
 			out.BanScopes = append(out.BanScopes, BanGlobal)
 		}
+	}
+	if !out.Locked && out.Comments != CommentsHidden {
+		n, err := rt.comments.threadCount(ctx, actor, ref, req.URL.Query().Get("language"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		out.Count = &n
 	}
 	writeJSON(w, http.StatusOK, out)
 }

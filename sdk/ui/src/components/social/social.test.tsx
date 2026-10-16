@@ -61,13 +61,13 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   const posted = comment("c9", { body: "hello there", user_id: "alice", author: { id: "alice", username: "alice" } });
   const s = server({
     "GET /contents/v1/comments": () => [comment("c1"), comment("c2", { deleted: true, body: "[deleted]", author: undefined, user_id: undefined }), comment("c3", { user_id: "alice", author: { id: "alice", username: "alice" }, moderation: "held", moderation_reason: "needs a look" })],
-    "GET /contents/v1/can-comment": () => standing(),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count: 99 }),
     "POST /contents/v1/comments": ({ body }) => (expect(body).toEqual({ body: "hello there" }), json(201, posted)),
   });
   const user = userEvent.setup();
   render(<Comments item={item} count={3} />, { wrapper: wrap(s.client) });
   expect(await screen.findByText("body c1")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "3 comments" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "3 Comments" })).toBeInTheDocument();
   expect(screen.getByText("This comment was deleted.")).toBeInTheDocument();
   expect(screen.getByText("Awaiting review")).toBeInTheDocument();
   expect(screen.getAllByText("3 minutes ago")).toHaveLength(3);
@@ -85,11 +85,85 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
 });
 
+it("Comments: authoritative standing count survives pagination and posts without reloading the list", async () => {
+  let count = 23;
+  const s = server({
+    "GET /contents/v1/comments": () => Array.from({ length: 20 }, (_, i) => comment(`c${i}`)),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count }),
+    "POST /contents/v1/comments": () => { count++; return json(201, comment("new", { body: "fresh post" })); },
+  });
+  const user = userEvent.setup();
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("heading", { name: "23 Comments" })).toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "Add a comment…" }), "fresh post");
+  await user.click(screen.getByRole("button", { name: "Post" }));
+  expect(await screen.findByRole("heading", { name: "24 Comments" })).toBeInTheDocument();
+  expect(screen.getByText("fresh post")).toBeInTheDocument();
+  expect(s.calls.filter((call) => call.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
+  expect(s.calls.filter((call) => call.startsWith("GET /contents/v1/can-comment"))).toHaveLength(2);
+});
+
+it("Comments: only a completed, unpaginated thread supplies an inferred count", async () => {
+  let finish: (comments: Comment[]) => void = () => {};
+  const response = new Promise<Comment[]>((resolve) => { finish = resolve; });
+  const s = server({
+    "GET /contents/v1/comments": () => response,
+    "GET /contents/v1/can-comment": () => standing(),
+  });
+  const view = render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(screen.getByRole("heading", { name: "Comments" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "0 Comments" })).toBeNull();
+  await act(async () => { finish([]); });
+  expect(await screen.findByRole("heading", { name: "0 Comments" })).toBeInTheDocument();
+  expect(screen.queryByText("No comments yet. Be the first to comment!")).toBeNull();
+  view.unmount();
+
+  const partial = server({
+    "GET /contents/v1/comments": () => [comment("c1")],
+    "GET /contents/v1/can-comment": () => standing(),
+  });
+  render(<Comments item={item} pageSize={1} />, { wrapper: wrap(partial.client) });
+  expect(await screen.findByText("body c1")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Comments" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "1 Comment" })).toBeNull();
+});
+
+it("Comments: a failed read does not claim the thread has zero comments", async () => {
+  const s = server({
+    "GET /contents/v1/comments": () => json(503, { code: "unavailable" }),
+    "GET /contents/v1/can-comment": () => standing(),
+  });
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByText("Comments couldn't be loaded.")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Comments" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "0 Comments" })).toBeNull();
+});
+
+it.each([0, 23])("Comments: an authoritative %s count remains accurate when its list fails", async (count) => {
+  const s = server({
+    "GET /contents/v1/comments": () => json(503, { code: "unavailable" }),
+    "GET /contents/v1/can-comment": () => ({ ...standing(), count }),
+  });
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByText("Comments couldn't be loaded.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: `${count} Comments` })).toBeInTheDocument();
+});
+
+it("Comments: hidden comments never render an authoritative or host total", async () => {
+  const s = server({
+    "GET /contents/v1/comments": () => [],
+    "GET /contents/v1/can-comment": () => ({ ...standing({ comments: "hidden" }), count: 99 }),
+  });
+  const view = render(<Comments item={item} count={50} />, { wrapper: wrap(s.client) });
+  await waitFor(() => expect(view.container.querySelector('[data-ckui="comments"]')).toBeNull());
+  expect(screen.queryByRole("heading")).toBeNull();
+});
+
 it("Comments: where the kind's locked view hides them, an unlock note instead of the thread and its count; access arriving loads it", async () => {
   let open = false;
   const s = server({
     "GET /contents/v1/comments": () => (open ? [comment("c1")] : []),
-    "GET /contents/v1/can-comment": () => standing({ locked: !open, can_comment: open }),
+    "GET /contents/v1/can-comment": () => ({ ...standing({ locked: !open, can_comment: open }), count: 99 }),
   });
   const view = (revision: number) => (
     <ContentKitProvider client={s.client} viewer="alice" accessRevision={revision}>
@@ -173,7 +247,8 @@ it("Comments: a banned caller sees why instead of the composer", async () => {
   const notice = await screen.findByText("You can't comment on this creator's content.");
   expect(notice.closest("[data-ckui=ban-notice]")).toHaveTextContent("Reason: spam");
   expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.getByText("No comments yet. Be the first to comment!")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "0 Comments" })).toBeInTheDocument();
+  expect(screen.queryByText("No comments yet. Be the first to comment!")).toBeNull();
 });
 
 it("Comments: signed out, the server decides: a sign-in where it takes no anonymous comments or reactions, a name where it does", async () => {

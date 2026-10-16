@@ -132,12 +132,12 @@ func TestGroupMembers(t *testing.T) {
 	label := map[string]string{g1: "01", g2: "02", g3: "03", v2: "20"}
 
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
+	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{
 		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
 		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
 	}, &made)
 	color, empty := string(made[0].ID), string(made[1].ID)
-	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/members", []groups.Membership{
+	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/members", []groups.Membership{
 		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: groups.MembershipProposed},
 		{ContentID: g1, Role: "featured"},
 	}, nil)
@@ -145,7 +145,7 @@ func TestGroupMembers(t *testing.T) {
 	page := func(id string, q url.Values) groups.MemberPage {
 		t.Helper()
 		var p groups.MemberPage
-		f.want(http.StatusOK, staff, "GET", "/groups/"+id+"/members?"+q.Encode(), nil, &p)
+		f.want(http.StatusOK, staff, "GET", "/entities/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
 	key := func(ms []groups.Membership) string {
@@ -187,10 +187,10 @@ func TestGroupMembers(t *testing.T) {
 	if p := page(empty, nil); len(p.Members) != 0 || p.NextCursor != "" {
 		t.Fatalf("empty group: %+v", p)
 	}
-	f.want(http.StatusNotFound, staff, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/groups/not-an-id/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/groups/"+color+"/members?cursor=%21", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/groups/"+color+"/members", nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", "/entities/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/entities/not-an-id/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/entities/"+color+"/members?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/entities/"+color+"/members", nil, nil)
 }
 
 // An item's editor (a writer, not exempt) regenerates its media: an upload

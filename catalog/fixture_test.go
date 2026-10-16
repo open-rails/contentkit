@@ -37,12 +37,7 @@ func config() kinds.Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"},
-		Sites: []kinds.Site{
-			{Name: "main", Hosts: []string{"main.test"}},
-			{Name: "gay", Hosts: []string{"gay.test"}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}},
-			{Name: "moe", Hosts: []string{"moe.test"}, ExcludeRestrictions: []string{"restricted"}},
-		},
-		ContentFilters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}},
+		Domains:      []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "moe", Hosts: []string{"moe.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}, "blog": {Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}}},
 		Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Segments: true, Groups: []string{"tag", "channel"},
 				Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
@@ -121,6 +116,23 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.s.Close)
+	hasMarker := false
+	for _, d := range opts.Kinds.Domains {
+		for _, p := range d.Kinds {
+			for _, r := range p.Filters {
+				if r.Group.Kind == "tag" && r.Group.Slug == "restricted" {
+					hasMarker = true
+				}
+			}
+		}
+	}
+	if hasMarker {
+		marker := f.group("tag", "restricted")
+		internal := true
+		if _, err := f.groups.UpdateGroups(ctx, []groups.GroupUpdate{{ID: groups.GroupID(marker), Internal: &internal}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return f
 }
 
@@ -143,6 +155,12 @@ func (f *fixture) table(name string) string { return pgx.Identifier{f.schema, na
 // AuthKit scope) through the groups module.
 func (f *fixture) group(kind, slug string) string {
 	f.t.Helper()
+	var existing string
+	if err := f.pool.QueryRow(f.ctx, `SELECT id FROM `+f.table("content_groups")+` WHERE tenant_id=$1 AND kind=$2 AND slug=$3`, tenant, kind, slug).Scan(&existing); err == nil {
+		return existing
+	} else if err != pgx.ErrNoRows {
+		f.t.Fatal(err)
+	}
 	in := groups.GroupInput{Kind: kind, Slug: slug, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(slug[:1]) + slug[1:]}}}
 	if kind == "channel" {
 		in.AuthScope, in.OwnerUserID = "scope-"+slug, "owner-"+slug
@@ -209,6 +227,9 @@ func (f *fixture) create(actor string, in ContentInput) string {
 	ids, err := f.s.Create(f.ctx, f.as(actor), []ContentInput{in})
 	if err != nil {
 		f.t.Fatalf("create %+v: %v", in, err)
+	}
+	if slices.Contains(in.Restrictions, "restricted") {
+		f.join(f.group("tag", "restricted"), ids[0], "")
 	}
 	return ids[0]
 }

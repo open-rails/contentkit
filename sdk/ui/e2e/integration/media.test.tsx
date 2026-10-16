@@ -98,6 +98,6 @@ it("VideoPosterPicker takes frames from another video and uploads the chosen one
   // The full-size frame becomes an upload of the cover: no frame op on another item.
   expect(record.frames.some((f) => f.endsWith("@null"))).toBe(true);
   expect(record.presigns.at(-1)).toMatchObject({ path: "cover", type: "image/jpeg" });
-  expect(record.commits.at(-1)).toEqual([{ op: "put", path: "cover.jpg", blob: expect.stringMatching(/^u-/) }]);
+  expect(record.commits.at(-1)).toEqual([{ op: "put", path: "cover.jpg", source_name: "frame.jpg", replace: true, blob: expect.stringMatching(/^u-/) }]);
   expect(record.commits.flat().some((op) => op.op === "frame")).toBe(false);
 });

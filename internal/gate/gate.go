@@ -21,6 +21,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 )
 
 // Gate guards one module's routes.
@@ -189,12 +190,19 @@ func Host() access.Actor {
 	return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}
 }
 
-type siteKey struct{}
+// IsHost recognizes the engine's in-process authority by its private verified
+// type, never by a caller-supplied subject name.
+func IsHost(a access.Actor) bool {
+	_, ok := a.Verified.(hostVerified)
+	return ok
+}
 
-// Site is the request host the gate bound to ctx: it picks the site whose
-// scope every read applies (kinds.Config.SiteFor). "" outside a request.
-func Site(ctx context.Context) string {
-	s, _ := ctx.Value(siteKey{}).(string)
+type domainKey struct{}
+
+// Domain is the request host the gate bound to ctx: it picks the domain whose
+// scope every read applies (kinds.Config.DomainFor). "" outside a request.
+func Domain(ctx context.Context) string {
+	s, _ := ctx.Value(domainKey{}).(string)
 	return s
 }
 
@@ -246,7 +254,13 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 				return
 			}
 		}
-		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), siteKey{}, r.Host)
+		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), domainKey{}, r.Host)
+		if a.Anonymous {
+			ctx = readerprefs.WithHeader(ctx, r.Header.Values(readerprefs.Header))
+		}
+		if s.Auth == httpapi.Public && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			w.Header().Add("Vary", readerprefs.Header)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

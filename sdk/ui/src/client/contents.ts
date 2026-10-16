@@ -25,8 +25,8 @@ export const imageRef = (name: string) => IMAGE_SCHEME + name;
 /** Matches every image reference; the name is group 1. */
 export const imageRefs = () => /contentkit:(i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 
-/** GET /manage/contents filters, as the route names them. */
-export type ManageQuery = RouteQuery<"GET", "/manage/contents">;
+/** Management filters; kind selects /manage/{kind}, otherwise /manage. */
+export type ManageQuery = RouteQuery<"GET", "/manage"> & { kind?: string };
 
 /**
  * Content items: a viewer's reads, and the writes of their creators, their
@@ -44,7 +44,10 @@ export class ContentsClient {
   }
   /** Items the caller manages, newest first: all for root:content:write holders, else theirs or an owner group's. */
   manage(q: ManageQuery = {}, signal?: AbortSignal): Promise<Content[]> {
-    return call(this.http, "GET", "/manage/contents", { query: q, signal });
+    const { kind, ...query } = q;
+    return kind
+      ? call(this.http, "GET", "/manage/{kind}", { params: { kind }, query, signal })
+      : call(this.http, "GET", "/manage", { query, signal });
   }
   /** Creates a draft. */
   create(input: ContentInput): Promise<Content> {

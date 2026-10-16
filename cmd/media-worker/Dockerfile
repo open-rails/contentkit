@@ -1,6 +1,6 @@
 # Build from the repository root: docker build -f cmd/media-worker/Dockerfile .
 # libvips is linked (CGO), so each platform builds natively (emulated for the other).
-FROM golang:1.26.6-trixie AS build
+FROM golang:1.26.9-trixie@sha256:f06b7122f888680048afb247c4e5f49c0069eb6c4c1ccae0f3f4834527a8d22c AS build
 RUN apt-get update && apt-get install -y --no-install-recommends libvips-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -59,6 +59,20 @@ type Resolver interface {
 	Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]Resolution, error)
 }
 
+type editorReadKey struct{}
+
+// WithEditorRead marks an explicit media management read. It grants no
+// authority: resolvers must still verify that the actor edits the resource.
+func WithEditorRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, editorReadKey{}, true)
+}
+
+// EditorRead reports a media read that explicitly requested its editor view.
+func EditorRead(ctx context.Context) bool {
+	want, _ := ctx.Value(editorReadKey{}).(bool)
+	return want
+}
+
 // One resolves a single ref as a batch of one; an omitted ref yields the
 // zero (denying) Resolution.
 func One(ctx context.Context, r Resolver, ref contentref.ContentRef, actor access.Actor) (Resolution, error) {

@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import { ContentKitContext, useContentKitClient, useReadScope } from "./context.js";
@@ -16,36 +16,40 @@ const none = () => () => {};
 
 /** A shared read: fetched once per key while shown; initial is shown (and seeds the store) until it loads. */
 export function useResource<T>(
-  store: ResourceStore,
+  store: ResourceStore | null,
   key: string | null,
   tag: Tag,
   fetcher: Fetcher<T>,
   o: { initial?: T; more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>> } = {},
 ): Resource<T> & { reload: () => void } {
   const scope = useReadScope();
-  const fetch = useRef(fetcher);
-  const more = useRef(o.more);
-  const initial = useRef(o.initial);
+  // Each key owns its closure cell: switching this subscriber to another key
+  // cannot redirect a binding still used by a different subscriber.
+  const source = useMemo(() => ({ fetcher, more: o.more, initial: o.initial }),
+    // Fetcher identity changes on ordinary renders; only a key change creates a cell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [store, key]);
   useEffect(() => {
-    fetch.current = fetcher;
-    more.current = o.more;
-    initial.current = o.initial;
+    source.fetcher = fetcher;
+    source.more = o.more;
+    source.initial = o.initial;
   });
   const subscribe = useCallback(
-    (l: () => void) => (key ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
+    (l: () => void) => (key && store ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
     // The tag is part of the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [store, key, scope],
   );
-  const snapshot = useCallback(() => (key ? store.snapshot<T>(key) : IDLE), [store, key]);
+  const snapshot = useCallback(() => (key && store ? store.snapshot<T>(key) : IDLE), [store, key]);
   const entry = useSyncExternalStore(subscribe, snapshot, snapshot);
   useEffect(() => {
-    if (!key) return;
-    store.bind(key, (s) => fetch.current(s), more.current && ((c, s) => more.current!(c, s)));
-    if (initial.current !== undefined && !store.snapshot(key).loaded && !store.snapshot(key).loading) store.set(key, initial.current);
+    if (!key || !store) return;
+    const unbind = store.bind(key, (s) => source.fetcher(s), source.more && ((c, s) => source.more!(c, s)));
+    if (source.initial !== undefined && !store.snapshot(key).loaded && !store.snapshot(key).loading) store.set(key, source.initial);
     else store.load(key);
-  }, [store, key]);
-  const reload = useCallback(() => key && store.load(key, true), [store, key]);
+    return unbind;
+  }, [store, key, source]);
+  const reload = useCallback(() => key && store?.load(key, true), [store, key]);
   if (!entry.loaded && o.initial !== undefined) return { ...entry, data: o.initial, reload };
   return { ...entry, reload };
 }

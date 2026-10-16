@@ -51,7 +51,7 @@ ContentKit names its staff permissions, always the full
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
-| `access.GroupsWrite` | `root:groups:write` | create, edit, merge and delete groups, and set memberships |
+| `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete groups, and set memberships |
 
 A user-owned group kind with `auth_scope` (channels) has its own
 permissions, held in each group's AuthKit scope, whose persona declares
@@ -261,7 +261,7 @@ kind's policy:
 kinds:
   gallery:
     locked:
-      show: [cover, groups] # of description, cover, groups, attributes, length, reactions, favorites, views, comments
+      show: [cover, entities] # of description, cover, entities, attributes, length, reactions, favorites, views, comments
       preview: {pages: 3}   # optional: none unless set
 ```
 
@@ -346,7 +346,7 @@ content items (optionally one version, `?version=`) and groups, stored under
 the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
 content_id, content_version_id)`. Routes are
 `/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
-the same under `/v1/groups/{id}/`, then `/comments/{cid}/...`,
+the same under `/v1/entities/{id}/`, then `/comments/{cid}/...`,
 `/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
 `/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
 group answers as its survivor; a deleted one, or content the request's site
@@ -363,7 +363,7 @@ follow its kind's locked view (Locked content below): unless it shows
 (`GET .../can-comment`) says `locked`, and posting, replying, editing and
 reacting answer `403 comments_locked`; moderation queues keep them. The reader's favorites
 and reactions, as cards, are `GET /v1/me/favorites` and `GET
-/v1/me/reactions?target=contents|groups&kind=&value=like|dislike` (tag
+/v1/me/reactions?target=contents|entities&kind=&value=like|dislike` (tag
 preferences); their counts reach `content_facets` (`likes`, `dislikes`,
 `favorites`, `rating`) through the catalog's counts job.
 
@@ -526,10 +526,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|groups}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
-| `reaction` | `POST /{contents\|groups}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{contents\|groups}/{id}/favorite` | 20 per minute |
+| `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -700,13 +700,37 @@ that fits the reader (`display_language` first, then position).
   then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
-- `GET|PUT /me/content-filters`: the configured `content_filters`, each the
-  reader may show or hide, and `include_deleted`.
+- `GET /releases` (`days=10`, `time_zone=America/Denver`, the reader/content
+  filters and `card_entities`): a complete calendar-day window of card
+  metadata, newest first. `DailyReleases` reports `from_date`, `through_date`,
+  `time_zone` and every `ReleaseDay`, including empty days. It accepts 1–31
+  days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
+  cards from that response in the browser; mount thumbnails only as needed.
+  Future, unlisted and deleted publications are excluded.
+- Lists/search accept `published_within=7d|30d|90d|365d|all` independently of
+  the sort's score period. To rank this week's releases, pair
+  `sort=popular:7d` with `published_within=7d`; old releases with recent views
+  then stay out. The cursor pins the publication cutoff while paging. Popular
+  ordering uses the shared ContentKit quality score, not personal affinity.
+- `GET /content-filters` (public): the configured `content_filters`, their
+  entrypoint defaults and the current reader's effective settings.
+  `PUT /me/content-filters` saves account settings and `include_deleted`.
+  `POST /me/content-filters/initialize` adopts a new account's guest choices
+  only when no saved settings exist; its `account_id` must match the signed-in
+  account. Trigger initialization on registration, never ordinary sign-in.
+  Guest browsers persist choices locally and send
+  `ContentKit-Reader-Preferences: {"filters":[{"group_id":"configured-entity-id","visible":false}]}`.
+  The header is ignored for authenticated accounts, grants no access, and
+  accepts at most 8 KiB and 128 configured filters. Unknown or duplicate IDs
+  and malformed values return `400 invalid_request`. Allow the header in the
+  host's CORS policy, and prune stale browser choices against a public
+  `GET /content-filters` without the header before attaching them to reads.
+  Account language remains the host's existing profile preference.
 - `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
   liked and disliked, contents as cards or groups, most recent first.
-- `GET /sitemap/contents?kind=`, `GET /sitemap/groups?kind=` (open): the
+- `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
   and access don't apply.
@@ -1347,8 +1371,8 @@ version's effective groups, ancestors included: `EffectiveGroups`).
 derives from them. Engine jobs: `Recount` (every 15 minutes: (counts per group, content kind and
 language from the facets, and automatic covers) and `RefreshWindows`
 (every minute: featured-rail windows). The engine's search job builds group
-documents. The group route group serves `/v1/groups…` and
-`/v1/contents/{id}/groups`; writes need `root:groups:write`.
+documents. The group route group serves `/v1/entities…` and
+`/v1/contents/{id}/entities`; writes need `root:entities:write`.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 

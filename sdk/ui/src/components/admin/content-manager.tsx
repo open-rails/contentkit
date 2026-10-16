@@ -108,6 +108,7 @@ function Contents({ basePath, navigation, ...p }: Inner) {
         {t("contentManager.back")}
       </Button>
       <ContentEditor
+        management
         key={loc.view}
         {...p}
         id={loc.view === "new" ? null : loc.view}
@@ -264,6 +265,8 @@ interface Form {
 const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
 
 export interface ContentEditorProps {
+  /** Staff entity lookup, including internal classifications. */
+  management?: boolean;
   /** The item edited; null creates one of kind. */
   id: string | null;
   kind: string;
@@ -288,7 +291,7 @@ export interface ContentEditorProps {
  * schedule, cover and body per language, publish, unpublish and delete;
  * then listing and attributes, access rule and price, versions and groups.
  */
-export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError }: ContentEditorProps) {
+export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -486,7 +489,7 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
       </div>
       {dialog}
     </form>
-    {item && <ContentSections content={item} client={client} onError={onError} labels={labels} />}
+    {item && <ContentSections management={management} content={item} client={client} onError={onError} labels={labels} />}
     </>
   );
 }

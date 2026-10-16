@@ -86,9 +86,9 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if _, rail := alpha.Groups["rail"]; rail {
 		t.Fatal("a group kind without pages is named on cards")
 	}
-	_, page = f.list(host, "", q("/contents", "kind", "gallery", "card_groups", "artist"))
+	_, page = f.list(host, "", q("/contents", "kind", "gallery", "card_entities", "artist"))
 	if g := page.Contents[1].Groups; len(g) != 1 || len(g["artist"]) != 1 {
-		t.Fatalf("card_groups: %+v", g)
+		t.Fatalf("card_entities: %+v", g)
 	}
 
 	t.Run("display language picks the version and text", func(t *testing.T) {
@@ -153,7 +153,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			"title":          {f.cid(1), f.cid(3)},
 			"most_favorited": {f.cid(1), f.cid(3)},
 			"popular:7d":     {f.cid(3), f.cid(1)},
-			"popular":        {f.cid(1), f.cid(3)}, // a view baseline is no popularity
+			"popular":        {f.cid(1)}, // a view baseline is not activity in the default window
 			"most_viewed":    {f.cid(3), f.cid(1)},
 			"top_rated":      {f.cid(3), f.cid(1)},
 		}
@@ -179,25 +179,48 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 				path = q("/contents", "sort", sort, "limit", "1", "cursor", page.NextCursor)
 			}
 			slices.Sort(seen)
-			if want := []string{f.cid(1), f.cid(3), f.cid(7)}; !reflect.DeepEqual(seen, want) {
+			want := []string{f.cid(1), f.cid(3), f.cid(7)}
+			if sort == "popular:7d" {
+				want = want[:2] // The video has no qualifying window activity.
+			}
+			if !reflect.DeepEqual(seen, want) {
 				t.Errorf("sort %s paged %v, want %v", sort, seen, want)
 			}
 		}
 	})
 }
 
+func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
+	f := seeded(t)
+	id := groups.GroupID(f.ids["big-breasts"])
+	if err := f.groups.AddNames(f.ctx, []groups.GroupNames{{ID: id, Names: []groups.Name{
+		{Language: "ja", Kind: groups.NameCanonical, Name: "巨乳"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ language, want string }{{"ja", "巨乳"}, {"en", "Big breasts"}} {
+		var result ContentFilters
+		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
+			t.Fatalf("%s: status %d", tc.language, status)
+		}
+		if len(result.Kinds["gallery"]) != 2 || result.Kinds["gallery"][0].Group.Name != tc.want {
+			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Kinds["gallery"])
+		}
+	}
+}
+
 func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	f := seeded(t)
 	const host = "main.test"
 	var filters ContentFilters
-	if status, _ := f.call(http.MethodGet, host, "plain", "/me/content-filters", nil, &filters); status != http.StatusOK {
+	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
-	if len(filters.Filters) != 2 || filters.Filters[0].Label != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
-		filters.Filters[1].Label != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
+	if len(filters.Kinds["gallery"]) != 2 || filters.Kinds["gallery"][0].Group.Name != "Big breasts" || filters.Kinds["gallery"][0].Visible || filters.Kinds["gallery"][0].Overridden ||
+		filters.Kinds["gallery"][1].Group.Name != "Yaoi" || !filters.Kinds["gallery"][1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
-	if status, _ := f.call(http.MethodGet, host, "", "/me/content-filters", nil, nil); status != http.StatusUnauthorized {
+	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {
 		t.Fatalf("anonymous content filters: %d", status)
 	}
 	// A hidden group's content stays out of other lists, but its own page
@@ -218,20 +241,20 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 		}
 	}
 	for _, bad := range []ContentFiltersUpdate{
-		{Filters: []FilterSetting{{GroupID: f.ids["romance"], Visible: false}}},
-		{Filters: []FilterSetting{{GroupID: f.ids["yaoi"]}, {GroupID: f.ids["yaoi"], Visible: true}}},
+		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["romance"], Visible: false}}}},
+		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["yaoi"]}, {EntityID: f.ids["yaoi"], Visible: true}}}},
 	} {
 		if status, code := f.call(http.MethodPut, host, "plain", "/me/content-filters", bad, nil); status != http.StatusBadRequest {
 			t.Fatalf("PUT %+v: %d %s", bad, status, code)
 		}
 	}
-	show := ContentFiltersUpdate{Filters: []FilterSetting{{GroupID: f.ids["big-breasts"], Visible: true}, {GroupID: f.ids["yaoi"], Visible: false}}}
+	show := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: false}}}}
 	for _, user := range []string{"plain", "fan"} {
 		if status, _ := f.call(http.MethodPut, host, user, "/me/content-filters", show, &filters); status != http.StatusOK {
 			t.Fatalf("PUT: %d", status)
 		}
 	}
-	if !filters.Filters[0].Visible || !filters.Filters[0].Overridden || filters.Filters[1].Visible || !filters.Filters[1].Overridden {
+	if !filters.Kinds["gallery"][0].Visible || !filters.Kinds["gallery"][0].Overridden || filters.Kinds["gallery"][1].Visible || !filters.Kinds["gallery"][1].Overridden {
 		t.Fatalf("after PUT: %+v", filters)
 	}
 	got, page := f.list(host, "plain", q("/contents", "kind", "gallery"))
@@ -339,7 +362,7 @@ func TestSearchAndTypeahead(t *testing.T) {
 	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
-	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "group_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
+	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "entity_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
 		t.Fatalf("tag typeahead: %+v", ta)
 	}
 }
@@ -484,7 +507,7 @@ func TestSitemapFeed(t *testing.T) {
 		t.Errorf("paged = %v (%q, %q)", got, first.NextCursor, rest.NextCursor)
 	}
 
-	tags := feed("main.test", q("/sitemap/groups", "kind", "tag"))
+	tags := feed("main.test", q("/sitemap/entities", "kind", "tag"))
 	if got := ids(tags); !slices.IsSorted(got) || !reflect.DeepEqual(sorted(got), sorted([]string{f.ids["romance"], f.ids["big-breasts"], f.ids["yaoi"]})) {
 		t.Fatalf("tag sitemap = %v", got)
 	}
@@ -498,14 +521,14 @@ func TestSitemapFeed(t *testing.T) {
 	if yaoi := byID[f.ids["yaoi"]]; len(yaoi.Languages) != 1 || yaoi.Languages[0].Language != "ja" || yaoi.Path != "/ja/tags/"+yaoi.Code+"/yaoi" {
 		t.Fatalf("yaoi %+v", yaoi)
 	}
-	if got := ids(feed("clean.test", q("/sitemap/groups", "kind", "series"))); !reflect.DeepEqual(got, []string{f.ids["saga"]}) {
+	if got := ids(feed("clean.test", q("/sitemap/entities", "kind", "series"))); !reflect.DeepEqual(got, []string{f.ids["saga"]}) {
 		t.Errorf("series on a scoped site = %v", got)
 	}
-	if got := ids(feed("main.test", q("/sitemap/groups", "kind", "artist"))); !reflect.DeepEqual(got, []string{f.ids["alice"]}) {
+	if got := ids(feed("main.test", q("/sitemap/entities", "kind", "artist"))); !reflect.DeepEqual(got, []string{f.ids["alice"]}) {
 		t.Errorf("artists = %v", got)
 	}
-	for _, bad := range []string{q("/sitemap/contents"), q("/sitemap/contents", "kind", "comic"), q("/sitemap/groups", "kind", "rail"),
-		q("/sitemap/groups", "kind", "tag", "cursor", "!"), q("/sitemap/contents", "kind", "gallery", "limit", "0")} {
+	for _, bad := range []string{q("/sitemap/contents"), q("/sitemap/contents", "kind", "comic"), q("/sitemap/entities", "kind", "rail"),
+		q("/sitemap/entities", "kind", "tag", "cursor", "!"), q("/sitemap/contents", "kind", "gallery", "limit", "0")} {
 		if status, code := f.call(http.MethodGet, "main.test", "", bad, nil, nil); status != http.StatusBadRequest || code != "invalid_request" {
 			t.Errorf("%s: %d %s", bad, status, code)
 		}

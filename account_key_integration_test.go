@@ -6,12 +6,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/authkit/userinfo"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/helpers/notify"
 	notifypg "github.com/open-rails/helpers/notify/postgres"
 )
+
+// ownedFixtureRecipients is the fixed tenant directory for these core tests.
+// Unknown IDs stay absent; scoped publication never gets an all-true resolver.
+type ownedFixtureRecipients map[string]userinfo.User
+
+func (d ownedFixtureRecipients) Get(_ context.Context, ids []string) (map[string]userinfo.User, error) {
+	out := make(map[string]userinfo.User)
+	for _, id := range ids {
+		if user, ok := d[id]; ok {
+			out[id] = user
+		}
+	}
+	return out, nil
+}
+
+func (ownedFixtureRecipients) Search(context.Context, string, int) ([]userinfo.User, error) {
+	return nil, nil
+}
 
 func TestScopedAccountKeyAdoptionPreservesReceiptsAndErasure(t *testing.T) {
 	ctx := t.Context()
@@ -47,7 +66,9 @@ func TestScopedAccountKeyAdoptionPreservesReceiptsAndErasure(t *testing.T) {
 	if err = MigratePostgres(ctx, pool, cfg, MigrationOptions{LegacyAccountKey: "accounts"}); err != nil {
 		t.Fatal(err)
 	}
-	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: testauth.All{}}, Authorization: scopeTestAuthorization{}}
+	// Even a restored directory entry must remain fenced after account erasure.
+	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: testauth.All{}}, Authorization: scopeTestAuthorization{},
+		Users: ownedFixtureRecipients{user.ID: {ID: user.ID}, gone.ID: {ID: gone.ID}}}
 	recovery, err := NewForErasureReplay(ctx, cfg, deps)
 	if err != nil {
 		t.Fatal(err)

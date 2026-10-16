@@ -21,7 +21,7 @@ import (
 )
 
 // Interactions target ContentKit's own content items, their versions and
-// groups through /v1/contents/{id}/… and /v1/groups/{id}/…: comments in
+// groups through /v1/contents/{id}/… and /v1/entities/{id}/…: comments in
 // language threads, reactions and favorites; the reader's favorites and
 // reactions come back as cards; counts reach the listing; recent searches
 // are kept, cleared, pruned and erased.
@@ -61,7 +61,7 @@ func TestEngineInteractions(t *testing.T) {
 	tag := func(slug, name string) groups.GroupInput {
 		return groups.GroupInput{Kind: "tag", Slug: slug, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}
 	}
-	s.call(http.StatusCreated, staff, "POST", v+"/groups", []groups.GroupInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
 	moon, rainy, old := string(tags[0].ID), string(tags[1].ID), string(tags[2].ID)
 
 	// Comments join a language's thread; a reply joins its comment's.
@@ -116,23 +116,23 @@ func TestEngineInteractions(t *testing.T) {
 
 	// Groups take reactions, favorites and comments; a merged group answers
 	// as its survivor, a deleted one as nothing.
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+moon+"/like", nil, nil)
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+rainy+"/dislike", nil, nil)
-	s.call(http.StatusOK, u1, "POST", v+"/groups/"+moon+"/favorite", nil, nil)
-	s.call(http.StatusCreated, u1, "POST", v+"/groups/"+moon+"/comments", content.CommentInput{Body: "love this tag"}, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+moon+"/like", nil, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+rainy+"/dislike", nil, nil)
+	s.call(http.StatusOK, u1, "POST", v+"/entities/"+moon+"/favorite", nil, nil)
+	s.call(http.StatusCreated, u1, "POST", v+"/entities/"+moon+"/comments", content.CommentInput{Body: "love this tag"}, nil)
 	var standing content.CommentStanding
-	s.call(http.StatusOK, u1, "GET", v+"/groups/"+moon+"/can-comment", nil, &standing)
+	s.call(http.StatusOK, u1, "GET", v+"/entities/"+moon+"/can-comment", nil, &standing)
 	if !standing.CanComment {
 		t.Fatalf("standing %+v", standing)
 	}
-	s.call(http.StatusBadRequest, u1, "POST", v+"/groups/"+moon+"/like?version="+vid, nil, nil)
-	s.call(http.StatusOK, staff, "POST", v+"/groups/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
-	s.call(http.StatusOK, u2, "POST", v+"/groups/"+old+"/like", nil, &counts)
+	s.call(http.StatusBadRequest, u1, "POST", v+"/entities/"+moon+"/like?version="+vid, nil, nil)
+	s.call(http.StatusOK, staff, "POST", v+"/entities/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
+	s.call(http.StatusOK, u2, "POST", v+"/entities/"+old+"/like", nil, &counts)
 	if *counts.Likes != 2 {
 		t.Fatalf("a like through the merged group %+v", counts)
 	}
-	s.call(http.StatusOK, staff, "DELETE", v+"/groups/"+rainy, nil, nil)
-	s.call(http.StatusNotFound, u2, "POST", v+"/groups/"+rainy+"/like", nil, nil)
+	s.call(http.StatusOK, staff, "DELETE", v+"/entities/"+rainy, nil, nil)
+	s.call(http.StatusNotFound, u2, "POST", v+"/entities/"+rainy+"/like", nil, nil)
 
 	// The reader's reactions and favorites, as cards.
 	var page discovery.InteractionPage
@@ -141,11 +141,11 @@ func TestEngineInteractions(t *testing.T) {
 		page = discovery.InteractionPage{}
 		s.call(http.StatusOK, a, "GET", v+path, nil, &page)
 	}
-	mine(u1, "/me/reactions?target=groups&kind=tag")
+	mine(u1, "/me/reactions?target=entities&kind=tag")
 	if len(page.Items) != 1 || page.Items[0].Group == nil || page.Items[0].Group.Name != "Moonlit" || page.Items[0].Value != 1 {
 		t.Fatalf("tag reactions %+v", page)
 	}
-	mine(u2, "/me/reactions?target=groups&value=like")
+	mine(u2, "/me/reactions?target=entities&value=like")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("u2's tag likes %+v", page)
 	}
@@ -167,7 +167,7 @@ func TestEngineInteractions(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Content.ID != harbor.ID || page.NextCursor != "" {
 		t.Fatalf("favorites page 2 %+v", page)
 	}
-	mine(u1, "/me/favorites?target=groups")
+	mine(u1, "/me/favorites?target=entities")
 	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
 		t.Fatalf("group favorites %+v", page)
 	}
@@ -266,12 +266,15 @@ func TestEngineInteractions(t *testing.T) {
 // A content item's comments setting closes or hides its comments, and the
 // request's site scope applies to direct reads and interactions: content a
 // site excludes is not found there.
-func TestEngineCommentsSettingAndSiteScope(t *testing.T) {
+func TestEngineCommentsSettingAndDomainScope(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
-	cfg.Content.Sites = []kinds.Site{{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, ExcludeRestrictions: []string{"restricted"}}}
+	locked := false
+	cfg.Content.Domains = []kinds.Domain{
+		{Name: "main", Hosts: []string{"example.com"}},{Name:"safe",Hosts:[]string{"safe.example"},Kinds:map[string]kinds.KindPolicy{"gallery":{Filters:[]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}}},
+	}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
 	if err != nil {
 		t.Fatal(err)
@@ -334,12 +337,22 @@ func TestEngineCommentsSettingAndSiteScope(t *testing.T) {
 	s.call(http.StatusOK, staff, "PATCH", item, catalog.ContentPatch{Comments: ptr(content.CommentsOpen)}, nil)
 	s.call(http.StatusCreated, u1, "POST", item+"/comments", content.CommentInput{Body: "open again"}, nil)
 
-	// A site that excludes restricted content does not find it, directly
-	// or through interactions; the main site does.
-	r := create(catalog.ContentInput{Restrictions: []string{"restricted"}})
+	// An internal entity can impose a domain boundary without becoming a
+	// public tag. The boundary applies to staff using public routes too.
+	var restricted []groups.Group
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{{
+		Kind: "tag", Slug: "restricted", Internal: true,
+		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Restricted"}},
+	}}, &restricted)
+	r := create(catalog.ContentInput{})
+	s.call(http.StatusOK, staff, "PUT", v+"/contents/"+r.ID+"/entities", groups.ContentGroups{
+		Memberships: []groups.Membership{{GroupID: restricted[0].ID}},
+	}, nil)
 	main, safe := "http://example.com"+v+"/contents/"+r.ID, "http://safe.example"+v+"/contents/"+r.ID
 	s.call(http.StatusOK, u1, "GET", main, nil, nil)
 	s.call(http.StatusOK, u1, "POST", main+"/like", nil, nil)
+	s.call(http.StatusNotFound, staff, "GET", safe, nil, nil)
+	s.call(http.StatusNotFound, u1, "GET", v+"/entities/"+string(restricted[0].ID), nil, nil)
 	for _, call := range []struct{ method, path string }{{"GET", ""}, {"GET", "/comments"}, {"POST", "/like"}, {"GET", "/reaction"},
 		{"POST", "/favorite"}, {"GET", "/can-comment"}} {
 		s.call(http.StatusNotFound, u1, call.method, safe+call.path, nil, nil)

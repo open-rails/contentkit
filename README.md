@@ -1,7 +1,7 @@
 # contentkit
 
 `contentkit` is the deterministic content library for the Doujins, Hentai0
-and marketplace hosts: tenant-scoped **content** (items, versions, groups),
+and marketplace hosts: tenant-scoped **content** (items, versions, entities),
 **interactions** (comments, reactions, favorites, polls), **keyword search**
 over that content, the
 ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
@@ -62,7 +62,7 @@ another tenant is an error, never remapped.
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the `content_events` outbox, search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF |
-| `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
+| `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
 | `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; the popularity job; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
@@ -124,6 +124,12 @@ for _, r := range routes {
 the environment, an AuthKit resource server, OpenRails' remote client and
 health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 
+For machine publishing, [the archive publishing guide](docs/api/publishing.md)
+covers `Client.PublishArchive`, app-bound API keys and the resumable HTTP
+operation that submits a gallery with its artist, series and tags.
+The same guide covers retained source ZIPs, automatic page normalization and
+the shared editor's reversible [page review](docs/api/publishing.md#page-normalization-and-review).
+
 ## HTTP API
 
 `Routes` returns each selected route group as a subtree under
@@ -132,13 +138,14 @@ health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 
 | Group | Sub-path | Needs |
 |---|---|---|
-| `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage/contents`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
+| `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage or /v1/manage/{kind}`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
+| `PublishingRoutes` | `/v1/publishing-operations`: one ZIP and its metadata through processing and publication | `Config.Media` |
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
-| `GroupRoutes` | `/v1/groups`, `/v1/contents/{id}/groups`: listings and pages, writes for `root:groups:write` | always |
+| `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
 | `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
-| `OfferRoutes` | `/v1/contents/{id}/offer`, `/v1/groups/{id}/offer` and `join`, `/v1/me/library`, `/v1/offers` | `Deps.Billing` |
+| `OfferRoutes` | `/v1/contents/{id}/offer`, `/v1/entities/{id}/offer` and `join`, `/v1/me/library`, `/v1/offers` | `Deps.Billing` |
 
 | Tier | Admits |
 |---|---|
@@ -153,7 +160,7 @@ host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (creators, owner-group editors) are the catalog's. Behind a
 proxy, set `Request.RemoteAddr` to the client's address before the routes:
 anonymous reactions, votes and limits are keyed by it. No content kind may
-be named `media`, `codes`, `groups`, `contents`, `kinds`, `catalog` or `notifications`.
+be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table
 (`internal/httpapi`): method, path, tier, query, bodies and error codes. The
@@ -244,11 +251,11 @@ the OpenRails client, embedded or remote.
 
 `offers` sells content, versions and groups (`PUT|DELETE
 /contents/{id}/offer`, `/contents/{id}/versions/{vid}/offer`,
-`/groups/{id}/offer`). Its River job syncs each target to one OpenRails
+`/entities/{id}/offer`). Its River job syncs each target to one OpenRails
 product whose key and only entitlement is the access key, named after the
 title, with one price (`offers.PriceKey`): a reprice is a new price, a
 withdrawal archives the product and buyers keep their key. A free group
-offer (amount 0) is joined with `POST /groups/{id}/join`; `GET /me/library`
+offer (amount 0) is joined with `POST /entities/{id}/join`; `GET /me/library`
 lists the content a viewer bought.
 
 ## Media
@@ -429,7 +436,7 @@ per-language counts and automatic covers from the facets, and
 `RefreshWindows` re-derives facets as rail windows open and close.
 
 The engine builds the store from `Config.Content`, serves it as
-`GroupRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
+`EntityRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
 (every minute) as its jobs; groups' keyword documents are its search job's.
 
 ## Catalog

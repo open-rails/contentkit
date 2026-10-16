@@ -193,7 +193,7 @@ export class ItemUploadQueue {
     const ops = ready.flatMap((i): Op[] => {
       const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
       if (i.unattached) return [attach];
-      const put: Op = { op: "put", path: i.path, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) };
+      const put: Op = { op: "put", path: i.path, source_name: i.result!.sourceName, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) };
       // A lost staging response may hide a successful unattached create.
       return i.result!.processOnUpload ? [put, attach] : [put];
     });
@@ -222,7 +222,10 @@ export class ItemUploadQueue {
         if (changed) this.changed();
       },
     });
-    for (const i of ready) this.set(i.id, { status: "committed", unattached: false });
+    for (const i of ready) {
+      const file = files.find((f) => f.create_id === i.id) ?? files.find((f) => samePath(f.path, i.path));
+      this.set(i.id, { status: "committed", unattached: false, ...(file ? { path: file.path, result: { ...i.result!, path: file.path } } : {}) });
+    }
     this.changed();
     return files.filter((f) => !f.unattached);
   }
@@ -240,14 +243,14 @@ export class ItemUploadQueue {
   private stage(id: string): void {
     const item = this.find(id);
     if (!item?.result) return;
-    const { blob, type } = item.result;
-    const op: Op = { op: "put", path: item.path, blob, create_id: item.id, unattached: true, ...(item.meta ? { meta: item.meta } : {}) };
+    const { blob, type, sourceName } = item.result;
+    const op: Op = { op: "put", path: item.path, source_name: sourceName, blob, create_id: item.id, unattached: true, ...(item.meta ? { meta: item.meta } : {}) };
     const p = this.client
       .commit(this.o.ref, [op], { sources: { [blob]: { file: item.file, type } } })
       .then(
         (files) => {
-          const f = files.find((x) => x.unattached && samePath(x.path, stem(item.path)));
-          if (f && this.find(id)) this.patch(id, { unattached: true, path: f.path });
+          const f = files.find((x) => x.unattached && x.create_id === id) ?? files.find((x) => x.unattached && samePath(x.path, stem(item.path)));
+          if (f && this.find(id)) this.patch(id, { unattached: true, path: f.path, result: { ...item.result!, path: f.path } });
           this.schedulePoll();
           return f;
         },

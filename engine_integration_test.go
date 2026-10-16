@@ -188,7 +188,7 @@ func TestEngineIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app = 'contentkit' AND schema = $1", schema).Scan(&applied); err != nil || applied != len(chain) {
 		t.Fatalf("ledger rows %d, want %d: %v", applied, len(chain), err)
 	}
-	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|GroupRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
+	if g := e.RouteGroups(); g != ContentRoutes|CodeRoutes|EntityRoutes|NotificationRoutes|DiscoveryRoutes|ImportRoutes {
 		t.Fatalf("route groups %b", g)
 	}
 	if _, err := e.Routes(Routes{Prefix: "/api/ck"}); err == nil {
@@ -199,7 +199,7 @@ func TestEngineIntegration(t *testing.T) {
 			t.Fatalf("group %d served without its module", g)
 		}
 	}
-	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | GroupRoutes | NotificationRoutes | DiscoveryRoutes})
+	routes, err := e.Routes(Routes{Prefix: "/api/ck/", Groups: ContentRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestEngineIntegration(t *testing.T) {
 	s.call(http.StatusOK, user, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "POST", "/api/ck/v1/contents/"+gallery+"/favorite", nil, nil)
 	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/contents/"+cid(1)+"/like", nil, nil)
-	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/groups/"+gallery+"/like", nil, nil)
+	s.call(http.StatusNotFound, user, "POST", "/api/ck/v1/entities/"+gallery+"/like", nil, nil)
 	g1 := contentref.New(tenant, "gallery", gallery)
 	counts, err := e.content.Counts(ctx, []contentref.ContentRef{g1})
 	if err != nil || counts[g1.Key()] != (content.Counts{Likes: 1, Favorites: 1, CommentCount: 1}) {
@@ -236,10 +236,10 @@ func TestEngineIntegration(t *testing.T) {
 	if totals.Kinds["gallery"].Public != 1 || totals.Kinds["blog"].Public != 1 {
 		t.Fatalf("totals %+v", totals)
 	}
-	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
 		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Moonlit"}}}}, nil)
-	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
-	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/groups?kind=tag", nil, nil)
+	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/entities?kind=tag", nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/nowhere/at/all/x", nil, nil)
 
 	// Discovery shares /v1 with content and groups; without a signal plane its
@@ -250,7 +250,7 @@ func TestEngineIntegration(t *testing.T) {
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/contents?kind=gallery", nil, &listed)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/search?q=moonlit", nil, nil)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/typeahead?q=moon", nil, nil)
-	s.call(http.StatusOK, user, "GET", "/api/ck/v1/me/content-filters", nil, nil)
+	s.call(http.StatusOK, user, "GET", "/api/ck/v1/content-filters", nil, nil)
 	s.call(http.StatusNotImplemented, user, "GET", "/api/ck/v1/me/history", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "GET", "/api/ck/v1/recommendations", nil, nil)
 
@@ -328,10 +328,11 @@ func TestEngineIntegration(t *testing.T) {
 }
 
 // Without ClickHouse, or with one that is down, the engine runs on Postgres
-// alone: its content model says signals are off, lists (popular too),
+// alone: its content model says signals are off, ordinary lists,
 // details and search serve, and signals, exposures and history answer
 // not_configured, or unavailable while a configured plane is down, which
-// fails its probe and is retried in the background.
+// fails its probe and is retried in the background. Popularity has no
+// zero-activity fallback and reports an outage when its plane is configured.
 func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
@@ -375,7 +376,17 @@ func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 				var page struct {
 					Contents []struct{ ID string } `json:"contents"`
 				}
-				if s.call(http.StatusOK, anon, "GET", "/ck/v1/contents?kind=gallery&sort="+sort, nil, &page); len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
+				path := "/ck/v1/contents?kind=gallery&sort=" + sort
+				if sort == "popular" && ch.Addr != "" {
+					s.call(http.StatusServiceUnavailable, anon, "GET", path, nil, nil)
+					continue
+				}
+				s.call(http.StatusOK, anon, "GET", path, nil, &page)
+				if sort == "popular" {
+					if len(page.Contents) != 0 {
+						t.Fatalf("zero-activity popularity list %+v", page)
+					}
+				} else if len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
 					t.Fatalf("%s list %+v", sort, page)
 				}
 			}

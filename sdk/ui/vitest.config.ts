@@ -29,6 +29,18 @@ export default defineConfig({
         },
       },
       {
+        resolve: { alias },
+        test: {
+          name: "signals",
+          include: ["e2e/signals/**/*.test.ts"],
+          globalSetup: ["e2e/support/signals-setup.ts"],
+          environment: "node",
+          testTimeout: 180_000,
+          hookTimeout: 900_000,
+          maxWorkers: 1,
+        },
+      },
+      {
         // The jsdom files (hooks and components; each says so), as their own
         // run: with jsdom as the project's environment, or mixed with
         // node-environment files, vite externalized Node built-ins for them.

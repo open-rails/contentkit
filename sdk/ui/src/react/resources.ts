@@ -28,6 +28,7 @@ export interface Tag {
   type: string;
   readScope?: string;
   target?: Target;
+  language?: string;
   id?: string;
   scope?: string;
 }
@@ -36,8 +37,7 @@ interface Slot {
   tag: Tag;
   listeners: Set<() => void>;
   entry: Resource<unknown>;
-  fetcher?: Fetcher<unknown>;
-  more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>>;
+  bindings: Map<symbol, Binding>;
   ctl?: AbortController;
   moreCtl?: AbortController;
   /** Bumped by mark(): an optimistic write rolls back only if no newer one started. */
@@ -45,6 +45,13 @@ interface Slot {
   /** Identifies the full read; item patches and appended pages retain it. */
   readVersion: number;
 }
+
+interface Binding {
+  fetcher: Fetcher<unknown>;
+  more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>>;
+}
+
+const activeBinding = (s: Slot) => [...s.bindings.values()].at(-1);
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
 
@@ -64,7 +71,7 @@ export class ResourceStore {
 
   subscribe(key: string, tag: Tag, listener: () => void): () => void {
     let s = this.slots.get(key);
-    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), entry: IDLE, version: 0, readVersion: ++this.version }));
+    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), bindings: new Map(), entry: IDLE, version: 0, readVersion: ++this.version }));
     const slot = s;
     slot.listeners.add(listener);
     return () => {
@@ -83,22 +90,26 @@ export class ResourceStore {
     return (this.slots.get(key)?.entry ?? IDLE) as Resource<T>;
   }
 
-  /** The latest fetchers of a key: its first read, and a list's next page. */
-  bind(key: string, fetcher: Fetcher<unknown>, more?: Slot["more"]): void {
+  /** Registers one subscriber's key-bound fetchers; cleanup releases only it. */
+  bind(key: string, fetcher: Fetcher<unknown>, more?: Binding["more"]): () => void {
     const s = this.slots.get(key);
-    if (s) Object.assign(s, { fetcher, more });
+    if (!s) return () => {};
+    const owner = Symbol();
+    s.bindings.set(owner, { fetcher, more });
+    return () => { s.bindings.delete(owner); };
   }
 
   /** Fetches unless loaded or in flight; force refetches (a list from its first page). */
   load(key: string, force = false): void {
     const s = this.slots.get(key);
-    if (!s?.fetcher || (!force && (s.entry.loaded || s.ctl))) return;
+    const binding = s && activeBinding(s);
+    if (!s || !binding || (!force && (s.entry.loaded || s.ctl))) return;
     s.ctl?.abort();
     s.moreCtl?.abort();
     s.moreCtl = undefined;
     const ctl = (s.ctl = new AbortController());
     this.update(s, { loading: true, loadingMore: false, error: undefined });
-    s.fetcher(ctl.signal).then(
+    binding.fetcher(ctl.signal).then(
       (data) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
@@ -117,12 +128,13 @@ export class ResourceStore {
   /** Appends a list's next page; resolves once it landed. */
   async loadMore(key: string): Promise<void> {
     const s = this.slots.get(key);
+    const binding = s && activeBinding(s);
     const page = s?.entry.data as Page<{ id: string }> | undefined;
-    if (!s?.more || !page || page.next === null || s.moreCtl || s.ctl) return;
+    if (!s || !binding?.more || !page || page.next === null || s.moreCtl || s.ctl) return;
     const ctl = (s.moreCtl = new AbortController());
     this.update(s, { loadingMore: true });
     try {
-      const next = (await s.more(page.next, ctl.signal)) as Page<{ id: string }>;
+      const next = (await binding.more(page.next, ctl.signal)) as Page<{ id: string }>;
       if (s.moreCtl !== ctl) return;
       const cur = s.entry.data as Page<{ id: string }>;
       const seen = new Set(cur.items.map((x) => x.id));
@@ -203,6 +215,10 @@ export class ResourceStore {
         },
       );
     switch (c.type) {
+      case "media.committed":
+      case "media.processed":
+        this.invalidate((t) => t.type === "page-review" && t.id === c.ref.version);
+        break;
       case "notifications.updated":
         this.updateNotification(c.item, scope);
         break;
@@ -212,14 +228,17 @@ export class ResourceStore {
       case "comment.created": {
         const parent = c.comment.reply_to_id;
         const published = !c.comment.moderation;
-        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && sameTarget(t.target, c.target));
+        const thread = (t: Tag) => sameTarget(t.target, c.target) && (!t.language || t.language === c.comment.language);
+        const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && thread(t));
         patch<Page<Comment>>(add, (p) => (p.items.some((x) => x.id === c.comment.id) ? p : { ...p, items: parent ? [...p.items, c.comment] : [c.comment, ...p.items] }));
         if (parent && published) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: x.reply_count + 1 } : x));
         this.invalidate((t) => t.type === "latest" || t.type === "admin-comments");
+        if (!parent) this.invalidate((t) => t.type === "standing" && thread(t));
         break;
       }
       case "comment.updated":
         items<Comment>(comments, (x) => (x.id === c.comment.id ? { ...x, ...c.comment, author: c.comment.author ?? x.author } : x));
+        this.invalidate((t) => t.type === "standing");
         break;
       case "comment.reacted":
         items<Comment>(comments, (x) => (x.id === c.id ? { ...x, ...c.counts } : x));
@@ -234,33 +253,42 @@ export class ResourceStore {
         if (parent) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: Math.max(0, x.reply_count - 1) } : x));
         items<Comment>(["latest"], (x) => (x.id === c.id ? null : x));
         items<Comment & { deleted_at?: string }>(["admin-comments"], (x) => (x.id === c.id ? { ...x, deleted: true, deleted_at: new Date().toISOString() } : x));
+        this.invalidate((t) => t.type === "standing");
         break;
       }
       case "comment.restored":
-        this.invalidate((t) => comments.includes(t.type));
+        this.invalidate((t) => comments.includes(t.type) || t.type === "standing");
         break;
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameTarget(t.target, c.target), () => c.counts);
-        if (c.target.type === "contents") cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+        if (c.target.type === "contents") {
+          cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
+          this.invalidate((t) => t.type === "daily-releases");
+        }
         this.invalidate((t) => t.type === "reactions");
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameTarget(t.target, c.target), () => ({ favorited: c.favorited, count: c.count }));
-        if (c.target.type === "contents")
+        if (c.target.type === "contents") {
           cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
+          this.invalidate((t) => t.type === "daily-releases");
+        }
         this.invalidate((t) => t.type === "favorites");
         break;
       case "content.saved":
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
-        this.invalidate((t) => t.type === "contents" || t.type === "cards" || (t.type === "content-detail" && t.id === c.content.id));
+        this.invalidate((t) => t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || (t.type === "content-detail" && t.id === c.content.id));
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.content.id);
         break;
       case "content.changed":
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "content.deleted":
         items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted") || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -281,17 +309,17 @@ export class ResourceStore {
       case "ban.lifted":
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
-      case "groups.changed":
-        this.invalidate((t) => t.type.startsWith("group"));
+      case "entities.changed":
+        this.invalidate((t) => t.type.startsWith("group") || t.type === "daily-releases");
         break;
       case "contentFilters.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group"));
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases" || t.type === "standing");
         break;
       case "history.changed":
-        this.invalidate((t) => t.type === "history" || t.type === "cards");
+        this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases");
         break;
       case "searches.changed":
         this.invalidate((t) => t.type === "searches");
@@ -300,11 +328,11 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "moderation-rules" && t.scope === c.rules);
         break;
       case "reader.changed":
-        this.invalidate((t) => t.type === "reader-plan" && t.id === c.version);
+        this.invalidate((t) => (t.type === "reader-plan" || t.type === "page-review") && t.id === c.version);
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
-        if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));
+        if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type) || t.type === "standing");
         else this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
         break;
     }

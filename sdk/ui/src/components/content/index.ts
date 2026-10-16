@@ -1,8 +1,11 @@
-export { ContentCard, OwnerChip, PostCard, lockLabel, type ContentCardProps, type PostCardProps } from "./card.js";
-export { CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardListProps, type ContentRailProps, type LockedCards } from "./grid.js";
+export { ContentCard, OwnerChip, PostCard, lockLabel, type CardMetadata, type ContentCardProps, type PostCardProps } from "./card.js";
+export { cardGridLayout, CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardGridLayout, type CardListProps, type ContentRailProps, type LockedCards } from "./grid.js";
+export { DailyReleases, type DailyReleasesProps } from "./daily-releases.js";
+export { PopularContentGrid, type PopularContentGridProps } from "./popular.js";
 export { SearchBox, type SearchBoxProps } from "./search.js";
 export { ReaderSettings, type ReaderSettingsProps } from "./reader-settings.js";
-export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ReleaseDateIndexProps } from "./filters.js";
+export { ContentFilterDialog, type ContentFilterDialogProps } from "./filter-dialog.js";
+export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ContentFilterCount, type ReleaseDateIndexProps } from "./filters.js";
 export { ContentListing, sortLabel, type ContentListingProps } from "./listing.js";
 export { Paywall, VersionPicker, priceLabel, useVersionMenuItems, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
 export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, VersionCover, VersionsEditor, versionLabel } from "./editors.js";

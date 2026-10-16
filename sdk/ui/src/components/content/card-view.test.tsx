@@ -17,7 +17,7 @@ const card = (o: Partial<Card> = {}): Card => ({
   language: "en",
   cover: [],
   version: { id: "v1", code: "X1", languages: ["en"], traits: [], pages: 24, has_audio: false },
-  groups: { tag: [{ id: "g1", slug: "vanilla", name: "Vanilla" }] },
+  entities: { tag: [{ id: "g1", slug: "vanilla", name: "Vanilla" }] },
   counts: { likes: 3, dislikes: 0, favorites: 5, views: 40 },
   access: { allowed: true, level: "public" },
   attributes: {},

@@ -14,7 +14,9 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/readerprefs"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -22,7 +24,7 @@ import (
 // ViewerOptions describes one request's reader.
 type ViewerOptions struct {
 	Actor access.Actor
-	// Host is the request's host; it picks the site (kinds.Config.SiteFor).
+	// Host is the request's host; it picks the site (kinds.Config.DomainFor).
 	Host string
 	// Language, when set, lists only content with a live version serving it.
 	Language string
@@ -46,16 +48,15 @@ type ViewerOptions struct {
 type Viewer struct {
 	s              *Store
 	actor          access.Actor
-	site           kinds.Site
+	domain         kinds.Domain
 	language       string
 	mode           access.Mode
 	now            time.Time
 	staff          bool
+	management     bool
 	filter         *access.Filter
-	exclude        []string
-	require        []string
-	requireMissing bool
-	hidden         []string
+	policies       domainpolicy.Policies
+	hidden         map[string][]string
 	includeDeleted bool
 	editorGroups   []string
 	// asked are owner groups whose editorship this request already checked.
@@ -78,8 +79,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 			return nil, err
 		}
 	}
-	v.site, _ = s.cfg.SiteFor(o.Host)
-	v.exclude = append([]string{}, v.site.ExcludeRestrictions...)
+	v.domain, _ = s.cfg.DomainFor(o.Host)
 	rights, err := s.staffRights(ctx, o.Actor)
 	if err != nil {
 		// A read shows what the rule shows anyone; staff extras wait.
@@ -91,55 +91,50 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		return nil, err
 	}
 	v.filter = f
-	refs := append([]kinds.GroupRef{}, v.site.RequireGroups...)
-	for _, f := range s.cfg.ContentFilters {
-		refs = append(refs, f.Group)
-	}
-	ids, err := s.groupIDs(ctx, refs)
+	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, v.domain)
 	if err != nil {
 		return nil, err
 	}
-	v.require = []string{}
-	for _, r := range v.site.RequireGroups {
-		id, ok := ids[r]
-		if !ok {
-			v.requireMissing = true
-			continue
-		}
-		v.require = append(v.require, id)
-	}
-	hidden := map[string]bool{}
-	for _, f := range s.cfg.ContentFilters {
-		if id, ok := ids[f.Group]; ok && !v.site.DefaultVisible(f) {
-			hidden[id] = true
+	allowed := map[string]map[string]bool{}
+	for kind, p := range v.policies {
+		allowed[kind] = map[string]bool{}
+		for id := range p.Toggles {
+			allowed[kind][id] = true
 		}
 	}
+	values := map[string]string{}
 	if o.Actor.Member() {
 		var raw []byte
-		err := s.pool.QueryRow(ctx, `SELECT overrides, include_deleted FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
+		err := s.pool.QueryRow(ctx, `SELECT overrides,include_deleted FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
-		var overrides map[string]string
 		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &overrides); err != nil {
+			if err := json.Unmarshal(raw, &values); err != nil {
 				return nil, err
 			}
 		}
-		for id, o := range overrides {
-			hidden[id] = o == "hide"
+	} else if o.Actor.Anonymous {
+		choices, err := readerprefs.Overrides(ctx, allowed)
+		if err != nil {
+			return nil, invalid("%s", err)
+		}
+		for key, value := range choices {
+			values[key] = value
 		}
 	}
-	for _, id := range o.Requested {
-		delete(hidden, id)
-	}
-	v.hidden = []string{}
-	for id, h := range hidden {
-		if h {
-			v.hidden = append(v.hidden, id)
+	v.hidden = map[string][]string{}
+	for kind, p := range v.policies {
+		for id, defaultVisible := range p.Toggles {
+			visible, overridden := readerprefs.Stored(values, kind, id)
+			if !overridden {
+				visible = defaultVisible
+			}
+			if !visible && !slices.Contains(o.Requested, id) {
+				v.hidden[kind] = append(v.hidden[kind], id)
+			}
 		}
 	}
-	slices.Sort(v.hidden)
 	v.editorGroups = []string{}
 	if len(o.EditorGroups) > 0 && !v.staff {
 		got := s.readEditors(ctx, o.Actor, o.EditorGroups)
@@ -152,33 +147,6 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		slices.Sort(v.editorGroups)
 	}
 	return v, nil
-}
-
-// groupIDs resolves active groups by kind and slug (unscoped ones).
-func (s *Store) groupIDs(ctx context.Context, refs []kinds.GroupRef) (map[kinds.GroupRef]string, error) {
-	out := map[kinds.GroupRef]string{}
-	if len(refs) == 0 {
-		return out, nil
-	}
-	ks, ss := make([]string, len(refs)), make([]string, len(refs))
-	for i, r := range refs {
-		ks[i], ss[i] = r.Kind, r.Slug
-	}
-	rows, err := s.pool.Query(ctx, `SELECT g.kind, g.slug, g.id FROM `+s.t.groups+` g JOIN unnest($2::text[], $3::text[]) AS r(kind, slug)
- ON g.kind = r.kind AND g.slug = r.slug WHERE g.tenant_id = $1 AND g.state = 'active' AND g.scope_id = ''`, s.tenant, ks, ss)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r kinds.GroupRef
-		var id string
-		if err := rows.Scan(&r.Kind, &r.Slug, &id); err != nil {
-			return nil, err
-		}
-		out[r] = id
-	}
-	return out, rows.Err()
 }
 
 // editable reports an owner group the request already knows the viewer
@@ -222,14 +190,37 @@ func hasKey(m map[string]bool, k string) bool {
 }
 
 // Staff reports a viewer holding root:content:view-restricted or
-// root:content:write: they see everything.
+// root:content:write: they see everything inside the domain boundary.
 func (v *Viewer) Staff() bool { return v.staff }
 
-// Site is the site the viewer is on.
-func (v *Viewer) Site() kinds.Site { return v.site }
+// Domain is the request entrypoint and its visibility policy.
+func (v *Viewer) Domain() kinds.Domain { return v.domain }
 
 // Actor is the viewer's actor.
 func (v *Viewer) Actor() access.Actor { return v.actor }
+
+// HiddenContentFilters copies the optional, public entity filters currently
+// hidden by this viewer, by content kind. Required, fixed and internal rules
+// are domain policy, never optional filters.
+func (v *Viewer) HiddenContentFilters() map[string][]string {
+	out := make(map[string][]string, len(v.hidden))
+	for kind, ids := range v.hidden {
+		out[kind] = slices.Clone(ids)
+		slices.Sort(out[kind])
+	}
+	return out
+}
+
+// WithoutContentFilters returns a request-local viewer with only optional
+// entity preferences relaxed. The domain, entitlements, language, access mode
+// and captured clock remain the original request's. It never relaxes required,
+// fixed or internal domain policy.
+func (v *Viewer) WithoutContentFilters() *Viewer {
+	out := *v
+	out.hidden = nil
+	out.asked = maps.Clone(v.asked)
+	return &out
+}
 
 // Listed is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions the viewer's listing shows. A list shows one card per
@@ -252,26 +243,30 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		opens, accessArgs = "false", nil
 	}
 	versions := slices.Sorted(maps.Keys(v.filter.Versions()))
-	args := pgx.NamedArgs{"cv_now": v.now, "cv_exclude": v.exclude, "cv_require": v.require, "cv_hidden": v.hidden,
+	args := pgx.NamedArgs{"cv_now": v.now,
 		"cv_language": v.language, "cv_owned": v.filter.Contents(), "cv_owned_versions": versions,
 		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorGroups,
 		"cv_include_deleted": v.includeDeleted}
 	for k, a := range accessArgs {
 		args[k] = a
 	}
-	if v.staff {
-		return "true", args
-	}
 	live := f("live_from") + " <= @cv_now::timestamptz"
-	scope := "NOT (" + f("restrictions") + " && @cv_exclude::text[]) AND " + f("group_ids") + " @> @cv_require::text[]"
-	if v.requireMissing {
-		scope = "false"
+	scope, scopeArgs := v.policies.SQL(alias, "cv_domain")
+	for k, a := range scopeArgs {
+		args[k] = a
+	}
+	soft, softArgs := domainpolicy.HiddenSQL(v.hidden, alias, "cv_hidden")
+	for k, a := range softArgs {
+		args[k] = a
+	}
+	if v.staff {
+		return scope, args
 	}
 	listed := "(" + f("listing") + " = 'listed' OR (" + f("listing") + " = 'members' AND " + opens + "))"
 	if v.mode == access.Hide {
 		listed += " AND " + opens
 	}
-	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND NOT (" + f("group_ids") + " && @cv_hidden::text[]) AND " + listed + ")"
+	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft + " AND " + listed + ")"
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
@@ -279,7 +274,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		f("version_id") + " = ANY(@cv_owned_versions::text[]) OR @cv_owned_candidates::boolean))"
 	privileged := "(" + f("owner_group_id") + " = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
 		" cc WHERE cc.tenant_id = " + f("tenant_id") + " AND cc.content_id = " + f("content_id") + " AND cc.user_id = @cv_user)))"
-	return "(" + public + " OR " + held + " OR " + privileged + ")", args
+	return "(" + scope + " AND (" + public + " OR " + held + " OR " + privileged + "))", args
 }
 
 // Indexable is a boolean SQL predicate over the content_facets row aliased
@@ -288,13 +283,9 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // language and a reader's content filters do not apply. Args are pgx named
 // args prefixed ci_.
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
-	f := func(col string) string { return alias + "." + col }
-	if v.requireMissing {
-		return "false", pgx.NamedArgs{}
-	}
-	return "(NOT " + f("deleted") + " AND " + f("live_from") + " <= @ci_now::timestamptz AND " + f("listing") + " = 'listed' AND NOT (" +
-			f("restrictions") + " && @ci_exclude::text[]) AND " + f("group_ids") + " @> @ci_require::text[])",
-		pgx.NamedArgs{"ci_now": v.now, "ci_exclude": v.exclude, "ci_require": v.require}
+	scope, args := v.policies.SQL(alias, "ci_domain")
+	args["ci_now"] = v.now
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + alias + ".listing = 'listed' AND " + scope + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.
@@ -315,22 +306,7 @@ type facetRow struct {
 
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
 
-func (v *Viewer) inScope(r facetRow) bool {
-	if v.requireMissing {
-		return false
-	}
-	for _, x := range r.restrictions {
-		if slices.Contains(v.exclude, x) {
-			return false
-		}
-	}
-	for _, g := range v.require {
-		if !slices.Contains(r.groupIDs, g) {
-			return false
-		}
-	}
-	return true
-}
+func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.groupIDs) }
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {
@@ -447,8 +423,11 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
 		if iv.editor = known(id) || editors[rs[0].ownerGroup]; iv.editor {
-			iv.versions = rs
 			for _, r := range rs {
+				if !v.management && !v.inScope(r) {
+					continue
+				}
+				iv.versions = append(iv.versions, r)
 				iv.decisions[r.versionID] = Decision{Allowed: true}
 			}
 			continue
@@ -459,7 +438,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		}
 	}
 	for _, iv := range out {
-		iv.visible = iv.editor || len(iv.versions) > 0
+		iv.visible = len(iv.versions) > 0
 		slices.SortFunc(iv.versions, func(a, b facetRow) int {
 			if a.position != b.position {
 				return a.position - b.position
@@ -500,10 +479,11 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 	if len(ids) == 0 {
 		return map[string]*itemView{}, nil
 	}
-	v, err := s.Viewer(ctx, ViewerOptions{Actor: actor, Host: gate.Site(ctx)})
+	v, err := s.Viewer(ctx, ViewerOptions{Actor: actor, Host: gate.Domain(ctx)})
 	if err != nil {
 		return nil, err
 	}
+	v.management = resolve.EditorRead(ctx)
 	return v.decide(ctx, ids, false)
 }
 
