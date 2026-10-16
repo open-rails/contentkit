@@ -18,6 +18,7 @@ it("selects the activity window without excluding older publications", async () 
   const client = createContentKitClient({ baseUrl: "https://content.test/popular", fetch: async (input) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/kinds")) return Response.json(model);
+    if (url.pathname.endsWith("/media/presets")) return Response.json([]);
     requests.push(url);
     return Response.json({ contents: [card(url.searchParams.get("sort")?.split(":")[1] ?? "missing")] });
   } });
@@ -51,6 +52,7 @@ it("loads the next cursor when the shared grid's end reaches the viewport", asyn
   const client = createContentKitClient({ baseUrl: "https://content.test/scroll", fetch: async (input) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/kinds")) return Response.json(model);
+    if (url.pathname.endsWith("/media/presets")) return Response.json([]);
     requests.push(url);
     return Response.json(url.searchParams.has("cursor") ? { contents: [card("second")] } : { contents: [card("first")], next_cursor: "next-page" });
   } });
@@ -70,6 +72,7 @@ it("allows an explicit publication-age filter independently of the activity wind
   const client = createContentKitClient({ baseUrl: "https://content.test/recent-popular", fetch: async (input) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/kinds")) return Response.json(model);
+    if (url.pathname.endsWith("/media/presets")) return Response.json([]);
     requests.push(url);
     return Response.json({ contents: [card("older-window")] });
   } });
