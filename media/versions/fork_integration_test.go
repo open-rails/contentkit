@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -51,7 +52,7 @@ func TestFork(t *testing.T) {
 }
 
 // A page archive uploaded to a version expands into its pages in natural
-// order and goes.
+// order, retaining the source archive for authorized editor inspection.
 func TestImport(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	v := s.version(s.content("gallery", `{"level":"public"}`))
@@ -69,6 +70,10 @@ func TestImport(t *testing.T) {
 	}
 	if archive, ok := s.manifest(ref).Get("import/book.zip"); !ok || archive.Meta["archive_completed_sha256"] == nil {
 		t.Fatal("completed source archive was not retained")
+	}
+	read, err := s.reader.Read(s.ctx, ref, s.creator, media.ReadOptions{Prefix: "import/", Editor: true})
+	if err != nil || len(read.Files) != 1 || read.Files[0].URL == "" {
+		t.Fatalf("completed archive has no editor source capability: %+v %v", read, err)
 	}
 	// An archive of no images fails and stays, publishing nothing new.
 	s.mustUpload(s.creator, ref, "import/empty", "application/zip", zipOf(t, map[string][]byte{"a.txt": []byte("a")}))

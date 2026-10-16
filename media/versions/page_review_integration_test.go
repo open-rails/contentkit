@@ -21,6 +21,14 @@ func TestPageReviewOverrideRestoreAndReorder(t *testing.T) {
 	if err := json.Unmarshal(b, &review); resp.StatusCode != 200 || err != nil || len(review.Pages) != 5 {
 		t.Fatalf("review: %d %s %v", resp.StatusCode, b, err)
 	}
+	for _, page := range review.Pages {
+		if page.SourceURL == "" {
+			t.Errorf("editor review has no retained source URL for %s", page.ID)
+		}
+	}
+	if t.Failed() {
+		return
+	}
 	if resp, _ := s.call(s.stranger, "GET", url, nil); resp.StatusCode != 403 {
 		t.Fatalf("stranger review: %d", resp.StatusCode)
 	}
@@ -32,6 +40,11 @@ func TestPageReviewOverrideRestoreAndReorder(t *testing.T) {
 	}
 	if err := json.Unmarshal(b, &review); err != nil {
 		t.Fatal(err)
+	}
+	for _, page := range review.Pages {
+		if page.ID == excluded && (page.Included || page.SourceURL == "") {
+			t.Fatalf("excluded page lost its editor source capability: %+v", page)
+		}
 	}
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
 	if resp, _ := s.call(s.creator, "PATCH", url, versions.PageReviewPatch{Revision: old}); resp.StatusCode != 409 {
