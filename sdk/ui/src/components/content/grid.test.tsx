@@ -91,6 +91,19 @@ it.each(["grid", "history", "rail"] as const)("uses the %s client's cover preset
   expect(providerFetch).not.toHaveBeenCalled();
 });
 
+it("shows when each history item was last read and how many pages", async () => {
+  const at = new Date(Date.now() - 3 * 3600_000).toISOString();
+  const client = createContentKitClient({ baseUrl: "https://history.test", fetch: async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/kinds")) return Response.json({ languages: ["en"], tiers: [], kinds: { gallery: { route: "g", presentation: "reader", versions: {} } }, entity_kinds: {}, signals: true });
+    if (path.endsWith("/me/history")) return Response.json({ contents: [{ ...card("h"), viewer: { favorited: false, seen: true, completed: false, progress: 12, progress_max: 40, last_read_at: at } }] });
+    return Response.json({ code: "not_found" }, { status: 404 });
+  } });
+  render(<ContentKitProvider client={client} viewer="reader"><ContentHistory loadMedia={false} /></ContentKitProvider>);
+  const line = await screen.findByText("12 / 40 pages");
+  expect(within(line.closest('[data-ckui="history-progress"]') as HTMLElement).getByText("Read 3 hours ago")).toHaveAttribute("datetime", at);
+});
+
 it("decorates each cover with the host's badges, and a click still reports the card", async () => {
   const { client } = serve();
   const click = vi.spyOn(beaconsFor(client), "click");
