@@ -113,6 +113,9 @@ export const admin = {
     back: "All items",
     title: "Content",
     new: "New item",
+    bulkUpload: "Bulk upload",
+    bulkHintArchive: "Each ZIP becomes its own draft, titled from its file name.",
+    bulkHintFile: "Each file becomes its own draft, titled from its file name.",
     items: "Items",
     deleted: "Deleted",
     search: "Search",
@@ -229,6 +232,7 @@ export const admin = {
     paused: "Paused",
     pause: "Pause",
     resume: "Resume",
+    open: "Open",
   },
   moderationRules: {
     words: "Banned words",

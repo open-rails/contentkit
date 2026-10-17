@@ -23,6 +23,8 @@ import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
 import { ReaderContentEditor } from "./reader-content-editor.js";
+import { createDraft, uploadTarget } from "./bulk-drafts.js";
+import { UploadQueueBody } from "./upload-queue.js";
 import { ContentSections } from "../content/editors.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
@@ -253,6 +255,28 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   }, [text]);
   const { kinds: model } = useKinds({ client });
   const tiers = model?.tiers ?? [];
+  // Reader works take one ZIP per draft, players one video per draft.
+  const presentation = model?.kinds[kind]?.presentation;
+  const bulkable = presentation === "reader" || presentation === "player";
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const drafts = useRef(new Map<string, Content>()).current;
+  const report = useErrorReporter(onError);
+  const createItem = async (file: File) => {
+    const { content, ref } = await createDraft(client, kind, language ?? model?.languages[0] ?? "en", file, t("readerEditor.untitled"));
+    drafts.set(content.id, content);
+    return ref;
+  };
+  const openDraft = (ref: { id: string }) => {
+    const known = drafts.get(ref.id);
+    if (known) return open(known);
+    // Resumed after a reload: the draft is no longer in memory.
+    void client.contents.manage({ kind, ids: [ref.id], limit: 1 }).then(
+      ([c]) => {
+        if (c) open(c);
+      },
+      (e) => report(e, "upload"),
+    );
+  };
   const { store, scope } = useContentScope(client);
   const state = deleted ? "deleted" : status || undefined;
   const tag = { type: "contents", scope: deleted ? "deleted" : undefined } as const;
@@ -318,10 +342,32 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">{t("contentManager.title")}</h2>
-        <Button size="sm" onClick={() => loc.go("new")}>
-          {t("contentManager.new")}
-        </Button>
+        <div className="flex gap-2">
+          {bulkable && !deleted && (
+            <Button size="sm" variant="outline" aria-expanded={bulkOpen} onClick={() => setBulkOpen((o) => !o)}>
+              {t("contentManager.bulkUpload")}
+            </Button>
+          )}
+          <Button size="sm" onClick={() => loc.go("new")}>
+            {t("contentManager.new")}
+          </Button>
+        </div>
       </div>
+      {bulkable && bulkOpen && !deleted && (
+        <section className="grid gap-3 rounded-lg border border-border p-3" aria-label={t("contentManager.bulkUpload")} data-ckui="bulk-upload">
+          <p className="text-sm text-muted-foreground">{t(presentation === "reader" ? "contentManager.bulkHintArchive" : "contentManager.bulkHintFile")}</p>
+          <UploadQueueBody
+            client={client}
+            createItem={createItem}
+            target={(ref, file, signal) => uploadTarget(client, ref, file, signal)}
+            accept={presentation === "reader" ? ".zip,application/zip" : "video/*"}
+            concurrency={2}
+            storageKey={`ckui.bulk.${kind}`}
+            onOpen={openDraft}
+            onError={onError}
+          />
+        </section>
+      )}
       <div className="flex gap-2" role="group" aria-label={t("contentManager.title")}>
         <Button size="sm" variant={deleted ? "outline" : "default"} aria-pressed={!deleted} onClick={() => loc.go("", { q: query })}>
           {t("contentManager.items")}

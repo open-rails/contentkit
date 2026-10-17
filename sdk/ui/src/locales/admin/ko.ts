@@ -114,6 +114,9 @@ export const admin: typeof en = {
     back: "모든 게시물",
     title: "게시물",
     new: "새 게시물",
+    bulkUpload: "일괄 업로드",
+    bulkHintArchive: "각 ZIP 파일이 파일 이름을 제목으로 한 초안이 됩니다.",
+    bulkHintFile: "각 파일이 파일 이름을 제목으로 한 초안이 됩니다.",
     items: "게시물",
     deleted: "삭제됨",
     search: "게시물 검색",
@@ -230,6 +233,7 @@ export const admin: typeof en = {
     paused: "일시정지됨",
     pause: "일시정지",
     resume: "재개",
+    open: "열기",
   },
   moderationRules: {
     words: "금지어",

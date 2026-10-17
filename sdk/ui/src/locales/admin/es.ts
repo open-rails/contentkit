@@ -114,6 +114,9 @@ export const admin: typeof en = {
     back: "Todas las publicaciones",
     title: "Publicaciones",
     new: "Nueva publicación",
+    bulkUpload: "Carga masiva",
+    bulkHintArchive: "Cada ZIP se convierte en su propio borrador, titulado con su nombre de archivo.",
+    bulkHintFile: "Cada archivo se convierte en su propio borrador, titulado con su nombre de archivo.",
     items: "Publicaciones",
     deleted: "Eliminadas",
     search: "Buscar publicaciones",
@@ -230,6 +233,7 @@ export const admin: typeof en = {
     paused: "En pausa",
     pause: "Pausar",
     resume: "Reanudar",
+    open: "Abrir",
   },
   moderationRules: {
     words: "Palabras prohibidas",

@@ -114,6 +114,9 @@ export const admin: typeof en = {
     back: "すべての投稿",
     title: "投稿",
     new: "新しい投稿",
+    bulkUpload: "一括アップロード",
+    bulkHintArchive: "各ZIPがファイル名をタイトルにした下書きになります。",
+    bulkHintFile: "各ファイルがファイル名をタイトルにした下書きになります。",
     items: "投稿",
     deleted: "削除済み",
     search: "投稿を検索",
@@ -230,6 +233,7 @@ export const admin: typeof en = {
     paused: "一時停止中",
     pause: "一時停止",
     resume: "再開",
+    open: "開く",
   },
   moderationRules: {
     words: "禁止ワード",

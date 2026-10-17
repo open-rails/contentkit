@@ -18,6 +18,10 @@ export interface UploadQueueProps extends AdminFlowProps {
   createItem: (file: File) => Promise<RefBody>;
   /** The upload path in each item. Default "source". */
   path?: string;
+  /** Where a file uploads in its new item (path and media type), in place of path. */
+  target?: (ref: RefBody, file: File, signal: AbortSignal) => Promise<{ path: string; type?: string }>;
+  /** Opens a file's item: an Open button once it has one. */
+  onOpen?: (ref: RefBody) => void;
   /** The file picker's accept, e.g. "video/*". */
   accept?: string;
   /** Files uploading at once. Default 2. */
@@ -89,7 +93,12 @@ export function UploadQueue({ client: own, baseUrl, auth, guard, appearance, cla
 
 type Inner = Omit<UploadQueueProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
 
-function Queue({ client, createItem, path = "source", accept, concurrency = 2, onUploaded, storageKey = "ckui.uploads", onError }: Inner) {
+/** The queue inside an admin flow that already has its root (ContentManager's bulk upload). */
+export function UploadQueueBody(p: Inner) {
+  return <Queue {...p} />;
+}
+
+function Queue({ client, createItem, path = "source", target: place, accept, concurrency = 2, onUploaded, onOpen, storageKey = "ckui.uploads", onError }: Inner) {
   const m = useMessages();
   const { t } = m;
   const report = useErrorReporter(onError);
@@ -99,9 +108,9 @@ function Queue({ client, createItem, path = "source", accept, concurrency = 2, o
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const controllers = useRef(new Map<string, AbortController>());
-  const latest = useRef({ createItem, onUploaded });
+  const latest = useRef({ createItem, onUploaded, place });
   useEffect(() => {
-    latest.current = { createItem, onUploaded };
+    latest.current = { createItem, onUploaded, place };
   });
 
   const patch = useCallback((id: string, next: Partial<Entry>) => setEntries((es) => es.map((e) => (e.id === id ? { ...e, ...next } : e))), []);
@@ -120,10 +129,13 @@ function Queue({ client, createItem, path = "source", accept, concurrency = 2, o
           writeSaved(storageKey, (all) => void (all[entry.key] = { ref: made, name: entry.file.name, size: entry.file.size }));
         }
         const target = ref;
-        patch(entry.id, { status: "uploading", ref, error: undefined });
+        patch(entry.id, { ref, error: undefined });
+        const where = latest.current.place;
+        const dest = where ? await guarded(() => where(target, entry.file, ctl.signal)) : { path, type: undefined };
+        patch(entry.id, { status: "uploading" });
         const remember = (state: UploadState | null) =>
           writeSaved(storageKey, (all) => void (all[entry.key] = { ref: target, name: entry.file.name, size: entry.file.size, state: state ?? undefined }));
-        const options = { ref, path, signal: ctl.signal, onProgress: (progress: Progress) => patch(entry.id, { progress }), onState: remember };
+        const options = { ref, path: dest.path, type: dest.type, signal: ctl.signal, onProgress: (progress: Progress) => patch(entry.id, { progress }), onState: remember };
         const up = await guarded(async () => {
           try {
             return await client.media.upload(entry.file, { ...options, resume: saved?.state });
@@ -133,7 +145,7 @@ function Queue({ client, createItem, path = "source", accept, concurrency = 2, o
           }
         });
         patch(entry.id, { status: "committing" });
-        const files = await guarded(() => client.media.commit(target, [{ op: "put", path: up.path, blob: up.blob }], { signal: ctl.signal }));
+        const files = await guarded(() => client.media.commit(target, [{ op: "put", path: up.path, source_name: up.sourceName, blob: up.blob }], { signal: ctl.signal }));
         writeSaved(storageKey, (all) => void delete all[entry.key]);
         patch(entry.id, { status: "done", progress: undefined });
         const file = files.find((f) => samePath(f.path, up.path));
@@ -304,6 +316,11 @@ function Queue({ client, createItem, path = "source", accept, concurrency = 2, o
                   {(e.status === "paused" || e.status === "failed") && (
                     <Button size="xs" variant="outline" onClick={() => resume(e.id)}>
                       {t(e.status === "failed" ? "common.retry" : "uploadQueue.resume")}
+                    </Button>
+                  )}
+                  {onOpen && e.ref && (e.status === "done" || e.status === "failed") && (
+                    <Button size="xs" variant="outline" onClick={() => onOpen(e.ref!)}>
+                      {t("uploadQueue.open")}
                     </Button>
                   )}
                   {e.status !== "done" && (

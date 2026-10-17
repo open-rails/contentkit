@@ -114,6 +114,9 @@ export const admin: typeof en = {
     back: "所有文章",
     title: "文章",
     new: "新建文章",
+    bulkUpload: "批量上传",
+    bulkHintArchive: "每个 ZIP 都会成为一个以文件名为标题的草稿。",
+    bulkHintFile: "每个文件都会成为一个以文件名为标题的草稿。",
     items: "文章",
     deleted: "已删除",
     search: "搜索文章",
@@ -230,6 +233,7 @@ export const admin: typeof en = {
     paused: "已暂停",
     pause: "暂停",
     resume: "继续",
+    open: "打开",
   },
   moderationRules: {
     words: "屏蔽词",

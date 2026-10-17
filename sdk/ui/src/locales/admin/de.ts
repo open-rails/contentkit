@@ -114,6 +114,9 @@ export const admin: typeof en = {
     back: "Alle Beiträge",
     title: "Beiträge",
     new: "Neuer Beitrag",
+    bulkUpload: "Massen-Upload",
+    bulkHintArchive: "Jede ZIP-Datei wird zu einem eigenen Entwurf, benannt nach ihrem Dateinamen.",
+    bulkHintFile: "Jede Datei wird zu einem eigenen Entwurf, benannt nach ihrem Dateinamen.",
     items: "Beiträge",
     deleted: "Gelöscht",
     search: "Beiträge durchsuchen",
@@ -230,6 +233,7 @@ export const admin: typeof en = {
     paused: "Pausiert",
     pause: "Pausieren",
     resume: "Fortsetzen",
+    open: "Öffnen",
   },
   moderationRules: {
     words: "Gesperrte Wörter",
