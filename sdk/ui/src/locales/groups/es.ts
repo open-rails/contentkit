@@ -105,6 +105,9 @@ export const groups: typeof en = {
     versionId: "ID de la versión (opcional)",
     newMember: "Nuevo miembro",
     addMember: "Añadir miembro",
+    chipsPlaceholder: "Escribe o pega nombres separados por comas",
+    notFound: "No encontrado, no se guardará: {names}",
+    chipDetails: "Editar {name}",
   },
   membership: {
     unknown: "Ahora no podemos comprobar tu membresía.",

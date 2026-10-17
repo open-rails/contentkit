@@ -105,6 +105,9 @@ export const groups: typeof en = {
     versionId: "버전 ID(선택)",
     newMember: "새 구성원",
     addMember: "구성원 추가",
+    chipsPlaceholder: "이름을 입력하거나 붙여넣기 (쉼표로 구분)",
+    notFound: "찾을 수 없어 저장되지 않음: {names}",
+    chipDetails: "{name} 편집",
   },
   membership: {
     unknown: "지금은 멤버십을 확인할 수 없습니다.",

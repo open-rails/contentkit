@@ -105,6 +105,9 @@ export const groups: typeof en = {
     versionId: "版本 ID（可选）",
     newMember: "新成员",
     addMember: "添加成员",
+    chipsPlaceholder: "输入或粘贴名称，用逗号分隔",
+    notFound: "未找到，不会保存：{names}",
+    chipDetails: "编辑 {name}",
   },
   membership: {
     unknown: "暂时无法确认你的会员身份。",
