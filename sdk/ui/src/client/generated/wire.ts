@@ -380,6 +380,7 @@ export interface Content {
   language: string;
   title: string;
   slug?: string;
+  slugs?: Record<string, string>;
   description?: string;
   body?: string;
   decision: Decision;

@@ -253,6 +253,8 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       language = segs[0]!;
       segs = segs.slice(1);
     }
+    // A stray first segment before a known route (an unserved language) is dropped, so it redirects.
+    if (!language && segs.length > 2 && !routeSet.has(segs[0]!) && routeSet.has(segs[1]!)) segs = segs.slice(1);
     if (segs.length < 2 || !routeSet.has(segs[0]!)) return null;
     const code = parseCode(segs[1]!);
     if (code === null) return null;

@@ -174,10 +174,14 @@ type Content struct {
 	Code string `json:"code"`
 	Path string `json:"path"`
 	// Language is the language of the text below.
-	Language    string `json:"language"`
-	Title       string `json:"title"`
-	Slug        string `json:"slug,omitempty"`
-	Description string `json:"description,omitempty"`
+	Language string `json:"language"`
+	Title    string `json:"title"`
+	// Slug is Path's decorative tail in the page's language (entity and
+	// title, "/"-joined); Slugs is it per language. Links built from them
+	// equal Path.
+	Slug        string            `json:"slug,omitempty"`
+	Slugs       map[string]string `json:"slugs,omitempty"`
+	Description string            `json:"description,omitempty"`
 	// Body shows each inline image with a current public file as its URL;
 	// only editors and viewers Decision allows get it. Description is the
 	// teaser everyone reads.

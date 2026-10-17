@@ -13398,6 +13398,12 @@
           "slug": {
             "type": "string"
           },
+          "slugs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "description": {
             "type": "string"
           },

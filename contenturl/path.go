@@ -140,6 +140,11 @@ func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 			}
 		}
 	}
+	// A stray first segment before a known route, such as a language the site
+	// does not serve, is dropped: the path redirects to its canonical language.
+	if p.Language == "" && len(segs) > 2 && !routes.has(segs[0]) && routes.has(segs[1]) {
+		segs = segs[1:]
+	}
 	if len(segs) < 2 || !routes.has(segs[0]) {
 		return Parsed{}, false
 	}
