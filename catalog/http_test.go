@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -179,6 +180,24 @@ func TestRoutesIntegration(t *testing.T) {
 		t.Fatalf("state narrows a code %+v", list)
 	}
 	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?code=nope", nil, nil)
+
+	// Entity member lists hydrate by id: deleted ones included, same rights.
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?ids="+c.ID+","+id, nil, &list)
+	if got := []string{}; len(list) == 2 {
+		for _, x := range list {
+			got = append(got, x.ID)
+		}
+		if !slices.Contains(got, c.ID) || !slices.Contains(got, id) {
+			t.Fatalf("manage by ids %v", got)
+		}
+	} else {
+		t.Fatalf("manage by ids %+v", list)
+	}
+	f.want(http.StatusOK, "bob", "GET", "/v1/manage?ids="+c.ID, nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("ids outside the caller's rights %+v", list)
+	}
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?ids=nope", nil, nil)
 }
 
 func (f *fixture) doWith(actor, method, target string, headers map[string]string) *httptest.ResponseRecorder {

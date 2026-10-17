@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -47,14 +48,16 @@ var routes = []httpapi.Route[*Store]{
 		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
-			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"), languageParam}, httpapi.Page...),
+			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
+			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}},
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/{kind}", Resource: "contents", Auth: httpapi.Public,
 		Doc: "Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
-			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"), languageParam}, httpapi.Page...),
+			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
+			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
@@ -635,8 +638,14 @@ func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 	limit, offset := page(r)
 	var ids []string
 	if err == nil {
+		var only []string
+		for _, id := range strings.Split(strings.Join(q["ids"], ","), ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				only = append(only, id)
+			}
+		}
 		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
-			Text: q.Get("q"), Code: q.Get("code"), Limit: limit, Offset: offset})
+			Text: q.Get("q"), Code: q.Get("code"), IDs: only, Limit: limit, Offset: offset})
 	}
 	var v *Viewer
 	if err == nil {
@@ -684,9 +693,15 @@ type ManageQuery struct {
 	Text string
 	// Code selects the item with this content code; with State "" it matches
 	// deleted items too, so editor links keep resolving.
-	Code          string
+	Code string
+	// IDs selects these items (at most MaxManageIDs); with State "" it
+	// matches deleted items too, so member lists resolve every member.
+	IDs           []string
 	Limit, Offset int
 }
+
+// MaxManageIDs bounds ManageQuery.IDs.
+const MaxManageIDs = 100
 
 // Manage lists the ids of items actor manages, newest first: every item for
 // root:content:write holders; else what they created, or with OwnerGroup the
@@ -715,11 +730,19 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
 		}
 		code = string(c)
 	}
+	if len(q.IDs) > MaxManageIDs {
+		return nil, invalid("ids lists at most %d content ids", MaxManageIDs)
+	}
+	for _, id := range q.IDs {
+		if err := contentref.ValidateID(id); err != nil {
+			return nil, invalid("ids: %q is not a content id", id)
+		}
+	}
 	var state string
 	switch q.State {
 	case "":
 		state = "c.state <> 'deleted'"
-		if code != "" {
+		if code != "" || len(q.IDs) > 0 {
 			state = "true"
 		}
 	case StateDraft, StateDeleted:
@@ -740,8 +763,9 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
  AND ($7 = '' OR EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM `+s.qs+`.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
+ AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))
  ORDER BY c.created_at DESC, c.id DESC LIMIT $8 OFFSET $9`,
-		s.tenant, q.Kind, q.OwnerGroup, rights.write, group, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code)
+		s.tenant, q.Kind, q.OwnerGroup, rights.write, group, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs))
 	if err != nil {
 		return nil, err
 	}

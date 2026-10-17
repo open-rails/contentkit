@@ -4290,6 +4290,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "only these content ids (at most 100), in every state unless state narrows it",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "language",
             "in": "query",
             "description": "the language to show text in; the site's first language, then any, when it has none",
@@ -4403,6 +4416,19 @@
             "description": "only the item with this content code (any spelling), in every state unless state narrows it",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "only these content ids (at most 100), in every state unless state narrows it",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {

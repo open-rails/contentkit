@@ -995,6 +995,8 @@ type GetManageQuery struct {
 	Q string
 	// only the item with this content code (any spelling), in every state unless state narrows it
 	Code string
+	// only these content ids (at most 100), in every state unless state narrows it
+	Ids []string
 	// the language to show text in; the site's first language, then any, when it has none
 	Language string
 	// page size: 20 by default, at most 100
@@ -1016,6 +1018,9 @@ func (q GetManageQuery) values() url.Values {
 	}
 	if q.Code != "" {
 		v.Set("code", q.Code)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -1046,6 +1051,8 @@ type GetManageKindQuery struct {
 	Q string
 	// only the item with this content code (any spelling), in every state unless state narrows it
 	Code string
+	// only these content ids (at most 100), in every state unless state narrows it
+	Ids []string
 	// the language to show text in; the site's first language, then any, when it has none
 	Language string
 	// page size: 20 by default, at most 100
@@ -1067,6 +1074,9 @@ func (q GetManageKindQuery) values() url.Values {
 	}
 	if q.Code != "" {
 		v.Set("code", q.Code)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
