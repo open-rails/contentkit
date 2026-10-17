@@ -221,3 +221,10 @@ it("ends the meta line with the first named group, dot separated and linked", ()
   view.rerender(<ContentCard card={video} filterEntity={(_, kind) => kind !== "season"} metadata={{ languages: false, pages: false, duration: false, groups: ["season", "series"] }} />);
   expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("Original");
 });
+
+it("shrinks the one chip that cannot fit so its +N stays in view", () => withWidths(100, () => {
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("an unreasonably long tag", "b") } }} groupKinds={["tag"]} chips={2} chipOverflow chipFit />);
+  const list = view.container.querySelector('[data-ckui="card-groups"]')!;
+  expect(seen(list)).toEqual(["an unreasonably long tag", "+1"]);
+  expect(within(list as HTMLElement).getByText("an unreasonably long tag").closest("li")).toHaveClass("min-w-0", "shrink");
+}));

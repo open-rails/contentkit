@@ -115,9 +115,9 @@ function useLink(url: string | undefined, before?: () => void) {
   );
 }
 
-/** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show; null until measured. */
-function useChipFit(list: HTMLUListElement | null, total: number) {
-  const [fit, setFit] = useState<{ through: number; fitted: number } | null>(null);
+/** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show, `squeezed` when even the first one does not fit and must shrink; null until measured. `chipsKey` names the chips rendered, so new ones are measured. */
+function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: string) {
+  const [fit, setFit] = useState<{ through: number; fitted: number; squeezed: boolean } | null>(null);
   useLayoutEffect(() => {
     if (!list) return;
     const view = list.ownerDocument.defaultView;
@@ -139,14 +139,17 @@ function useChipFit(list: HTMLUListElement | null, total: number) {
         through = i + 1;
         fitted += 1;
       }
-      if (fitted === 0 && first >= 0) [through, fitted] = [first + 1, 1];
-      setFit((f) => f?.through === through && f.fitted === fitted ? f : { through, fitted });
+      const squeezed = fitted === 0 && first >= 0;
+      if (squeezed) [through, fitted] = [first + 1, 1];
+      setFit((f) => f?.through === through && f.fitted === fitted && f.squeezed === squeezed ? f : { through, fitted, squeezed });
     };
     measure();
+    // Each chip too: a breakpoint hiding one, or a web font loading, changes a chip but not the list.
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
     observer?.observe(list);
+    for (const li of list.children) observer?.observe(li);
     return () => observer?.disconnect();
-  }, [list, total]);
+  }, [list, total, chipsKey]);
   return fit;
 }
 
@@ -201,12 +204,15 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const [chipList, setChipList] = useState<HTMLUListElement | null>(null);
   const fitting = chipFit && entityLayout === "inline";
   const chipTotal = entityGroups.reduce((n, g) => n + g.total, 0);
-  const fit = useChipFit(fitting ? chipList : null, chipTotal);
+  const chipsKey = `${entityStyle}:${limit.base}:${limit.lg}:${entityGroups.map(({ kind, entities }) => `${kind}=${entities.map((e) => e.id).join(",")}`).join(";")}`;
+  const fit = useChipFit(fitting ? chipList : null, chipTotal, chipsKey);
   const fittedItems = () => {
     let index = 0;
     const items = entityGroups.flatMap(({ kind, entities }) => entities.map((entity, i) => {
-      const out = fit !== null && index++ >= fit.through;
-      return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn("shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>;
+      const at = index++;
+      const out = fit !== null && at >= fit.through;
+      const squeezed = fit?.squeezed && at === fit.through - 1;
+      return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn(squeezed ? "min-w-0 shrink [&>*]:block [&>*]:truncate" : "shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>;
     }));
     if (!chipOverflow) return items;
     // Always present, so its width is kept free; shown once measured with chips left out.
@@ -222,7 +228,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
     </div>
   ) : (
-    <ul ref={setChipList} className={fitting ? "relative flex flex-nowrap gap-1 overflow-hidden" : entityClassName} data-ckui="card-groups" data-layout="inline" data-fit={fitting ? "" : undefined}>
+    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-groups" data-layout="inline" data-fit={fitting ? "" : undefined}>
       {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
