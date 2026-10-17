@@ -30,6 +30,7 @@ function server(kinds = model, reply?: (url: URL) => Response | undefined) {
     const path = url.pathname.replace(/^\/v1/, "");
     if (path === "/kinds") return json(kinds);
     if (path === "/manage/entities") return json({ entities: [] });
+    if (/^\/manage\/[^/]+\/count$/.test(path)) return json({ total: 0 });
     if (path === "/manage" || path.startsWith("/manage/") || path === "/polls/admin") return json([]);
     if (path === "/stats/activity") return json({ days: [] });
     if (path === "/entities") return json({ entities: [] });
@@ -51,7 +52,7 @@ it("discovers kinds and languages, respects configured order and mounts only the
   const picker = await screen.findByRole("combobox", { name: "Content kind" });
   expect(within(picker).getAllByRole("option").map((x) => x.textContent)).toEqual(["Videos", "Articles"]);
   expect(picker).toHaveValue("video");
-  await screen.findByText("Nothing matches.");
+  await screen.findByText("No items yet.");
   expect(s.requests.some((r) => r.pathname.endsWith("/manage/video") && r.searchParams.get("language") === "en")).toBe(true);
   expect(paths(s).every((p) => p === "/kinds" || p.startsWith("/manage"))).toBe(true);
   await user.selectOptions(picker, "article");
@@ -108,7 +109,8 @@ it("drops a previous viewer's rows and rechecks permissions when the account sco
   let refuse = false;
   const s = server(model, (url) => {
     if (!url.pathname.includes("/manage")) return undefined;
-    return refuse ? denied() : json([{ id: "draft-one", title: "First account draft", kind: "article", state: "draft", live: false, language: "en", updated_at: "2026-10-01T00:00:00Z" }]);
+    if (url.pathname.endsWith("/count")) return refuse ? denied() : json({ total: 1 });
+    return refuse ? denied() : json([{ id: "draft-one", title: "First account draft", kind: "article", state: "draft", live: false, language: "en", access: { level: "public" }, updated_at: "2026-10-01T00:00:00Z" }]);
   });
   const body = (viewer: string) => <ContentKitProvider client={s.client} viewer={viewer}><ContentAdmin sections={["contents"]} contentKinds={["article"]} /></ContentKitProvider>;
   const view = render(body("first"));
@@ -127,7 +129,7 @@ it("adopts a different client's model without keeping the previous app's kind", 
   view.rerender(<ContentAdmin client={second.client} sections={["contents"]} />);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Content kind" })).toHaveValue("video"));
   expect(screen.queryByRole("option", { name: "Article" })).not.toBeInTheDocument();
-  expect(second.requests.filter((r) => r.pathname.includes("/manage/")).every((r) => r.pathname.endsWith("/manage/video"))).toBe(true);
+  expect(second.requests.filter((r) => r.pathname.includes("/manage/")).every((r) => /\/manage\/video(\/count)?$/.test(r.pathname))).toBe(true);
 });
 
 it("retries model discovery and makes an empty configured scope explicit", async () => {
