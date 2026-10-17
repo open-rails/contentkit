@@ -110,7 +110,6 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  argMax(tuple(occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,revision),version) AS c,
  argMax(access_context,version) AS a,max(version) AS ver
  FROM %s.engagement_segments WHERE tenant=? AND content_kind=? AND %s
- AND occurred_at>=(SELECT min(start_at) FROM intervals) AND occurred_at<(SELECT max(end_at) FROM intervals)
  AND content_id IN (SELECT content_id FROM intervals)
  GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id),
  interval_measurements AS (%s),

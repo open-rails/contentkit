@@ -103,9 +103,9 @@ func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any,
 		args = append(args, k)
 	}
 	timeColumn := "last_read_at"
+	sb.WriteString(" AND (active_ms>0 OR max_progress>0 OR completed OR resume!='')")
 	switch opts.Status {
 	case HistoryAny:
-		timeColumn = "last_signal_at"
 	case HistorySeen:
 		sb.WriteString(" AND max_progress > 0")
 	case HistoryInProgress:
@@ -296,10 +296,10 @@ func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Wind
 	// aggregation preserves exact work/version requests without scanning other IDs.
 	sourceFilter := strings.ReplaceAll(filter, workLevel, "")
 	sourceFilter = strings.ReplaceAll(sourceFilter, referenceFilter, "("+referenceFilter+" OR (content_kind,content_id,'') IN (SELECT "+refColumns+" FROM contentkit_read_refs))")
-	pred, predArgs := win.predicate("occurred_at")
-	canonical := st.measuredCanonical(sourceFilter + pred)
+	pred, predArgs := win.predicate("c.1")
+	canonical := "SELECT * FROM (" + st.measuredCanonical(sourceFilter) + ") WHERE 1" + pred
 	measured := measuredVersions(canonical)
-	feedback := st.canonicalEvents(sourceFilter + pred + " AND signal_type NOT IN ('view','preview')")
+	feedback := "SELECT * FROM (" + st.canonicalEvents(sourceFilter+" AND signal_type NOT IN ('view','preview')") + ") WHERE 1" + pred
 	q := fmt.Sprintf(`WITH measured_rows AS (%s
  SELECT %s,subject_kind,subject,qualified,completed,active_ms,attention_quality AS quality,days FROM scored
  UNION ALL

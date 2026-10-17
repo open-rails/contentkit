@@ -350,7 +350,7 @@ func TestIntegrationErasureBarrierProjectionRacesErasure(t *testing.T) {
 		done <- recordFixtureSignals(writer, ctx, f.tenant, []readingFixture{f.view(f.gone, f.e2, "gone-late")})
 	}()
 	gate.wait(t, ctx)
-	if n := f.rawRows(t, conn, "signals"); n != 4 {
+	if n := f.rawRows(t, conn, "engagement_segments"); n != 3 {
 		t.Fatalf("precondition: the late event is durable before its projection: %d", n)
 	}
 	erase(t, st, f.tenant, f.gone)
@@ -576,10 +576,10 @@ func TestIntegrationErasureBarrierTenantAndKindIsolation(t *testing.T) {
 		t.Fatalf("enforce a: %+v %v", r, err)
 	}
 	a.assertNoResidue(t, conn, "tenant a enforced")
-	if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon'", a.tenant); n != 1 {
+	if n := countWhere(t, conn, "engagement_segments", "tenant = ? AND subject_kind = 'anon'", a.tenant); n != 1 {
 		t.Fatalf("anonymous key spelled like the erased user must survive enforcement: %d", n)
 	}
-	if n := countWhere(t, conn, "signals", "tenant = ? AND subject = ?", b.tenant, b.gone.Key()); n != 3 {
+	if n := countWhere(t, conn, "engagement_segments", "tenant = ? AND subject = ?", b.tenant, b.gone.Key()); n != 2 {
 		t.Fatalf("tenant b rows must survive enforcement: %d", n)
 	}
 }
@@ -635,7 +635,7 @@ func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
 	n := 0
 	for _, c := range append(fc.queries, fc.execs...) {
 		q := c.query
-		if strings.Contains(q, "WHERE sipHash128(concat(t.1") {
+		if strings.Contains(q, "WHERE sipHash128(concat(t.1") || strings.HasPrefix(q, "DELETE FROM hub.engagement_pairs") {
 			continue // the writer's pre-insert fence check
 		}
 		if !strings.Contains(q, "hub.subject_content_state") && !strings.Contains(q, "hub.subject_content_daily") && !strings.Contains(q, "hub.signals") && !strings.Contains(q, "hub.engagement_") && !strings.Contains(q, "hub.legacy_reading_state") {

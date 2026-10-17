@@ -32,12 +32,16 @@ func (st *Store) Inventory(ctx context.Context, tenant string) ([]InventoryRow, 
 FROM (
     SELECT %[3]s, subject_kind, subject, signal_type, event_id, argMax(occurred_at, version) AS at, count() AS raw
     FROM %[1]s.signals
-    WHERE tenant = ? AND %[2]s
+    WHERE tenant = ? AND signal_type NOT IN ('view','preview') AND %[2]s
     GROUP BY %[3]s, subject_kind, subject, signal_type, event_id
+ UNION ALL
+ SELECT %[3]s,subject_kind,subject,'engagement' AS signal_type,receipt_id AS event_id,argMax(occurred_at,version) AS at,count() AS raw
+ FROM %[1]s.engagement_segments WHERE tenant=? AND %[2]s
+ GROUP BY %[3]s,subject_kind,subject,receipt_id
 )
 GROUP BY content_kind, signal_type
 ORDER BY content_kind, signal_type`, st.db, st.notErased(), refColumns)
-	rows, err := st.conn.Query(ctx, q, tenant)
+	rows, err := st.conn.Query(ctx, q, tenant, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: inventory: %w", err)
 	}

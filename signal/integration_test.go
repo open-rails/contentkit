@@ -234,7 +234,7 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 		t.Fatalf("second sweep must be a no-op: %+v", res)
 	}
 	// Losing one day must be detected even when another day has the current generation.
-	if err := conn.Exec(ctx, "DELETE FROM "+testDB+".subject_content_daily WHERE tenant = ? AND content_id = ? AND day = toDate(?)", tenant, g1, at(1, 0)); err != nil {
+	if err := conn.Exec(ctx, "DELETE FROM "+testDB+".engagement_daily WHERE tenant = ? AND content_id = ? AND day = toDate(?)", tenant, g1, at(1, 0)); err != nil {
 		t.Fatal(err)
 	}
 	res, err = st.RepairProjections(ctx, tenant, RepairOptions{})
@@ -378,8 +378,8 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all[0].ContentID != g1 {
-		t.Fatalf("all-signals history did not use signal recency: %+v", all)
+	if all[0].ContentID != b1 {
+		t.Fatalf("clicks must not replace reading recency: %+v", all)
 	}
 	seenAfterClear, err := st.History(ctx, tenant, user, HistoryOptions{Status: HistorySeen, Since: at(2, 0)})
 	if err != nil {

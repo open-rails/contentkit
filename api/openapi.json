@@ -12817,6 +12817,12 @@
               "$ref": "#/components/schemas/AnswerRecord"
             }
           },
+          "legacy_reading": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegacyReadingRecord"
+            }
+          },
           "signals": {
             "type": "array",
             "items": {
@@ -15933,6 +15939,43 @@
           "public",
           "tiers"
         ]
+      },
+      "LegacyReadingRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_key": {
+            "type": "string"
+          },
+          "first_read_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_read_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "progress": {
+            "type": "integer"
+          },
+          "progress_max": {
+            "type": "integer"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        }
       },
       "LibraryItem": {
         "type": "object",

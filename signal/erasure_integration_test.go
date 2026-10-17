@@ -107,7 +107,7 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 				t.Fatalf("%s.%s still holds %d rows", tenant, table, n)
 			}
 		}
-		if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon' AND subject = 'gone'", tenant); n != 1 {
+		if n := countWhere(t, conn, "engagement_segments", "tenant = ? AND subject_kind = 'anon' AND subject = 'gone'", tenant); n != 1 {
 			t.Fatalf("anonymous subject with the same key must survive: %d", n)
 		}
 		hist, err := st.History(ctx, tenant, gone, HistoryOptions{})
@@ -234,10 +234,10 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
 		t.Fatalf("rekeyed exposures: %d", n)
 	}
-	if n := countWhere(t, conn, "population_observations", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
+	if n := countWhere(t, conn, "measured_population_observations", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
 		t.Fatalf("rekeyed population observations: %d", n)
 	}
-	if n := countWhere(t, conn, "signals", "tenant = ? AND subject = ? AND JSONExtractString(payload,'contentkit_access','policy_revision')='at-read'", tenant, next.Key()); n != 2 {
+	if n := countWhere(t, conn, "engagement_segments", "tenant = ? AND subject = ? AND JSONExtractString(access_context,'policy_revision')='at-read'", tenant, next.Key()); n != 2 {
 		t.Fatalf("rekey changed event-time access: %d", n)
 	}
 	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject = ? AND JSONExtractString(access_contexts[1],'policy_revision')='at-read'", tenant, next.Key()); n != 1 {

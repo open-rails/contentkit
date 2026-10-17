@@ -14,16 +14,16 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	earlyID, lateID, outsideID, reactionID := cid(1), cid(2), cid(3), cid(4)
 	// Keep duplicate rows physically present so FINAL, not merge timing, must
 	// make retries contribute once to scores and completions.
-	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".signals"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".engagement_segments"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signals") })
+	t.Cleanup(func() { _ = conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".engagement_segments") })
 	for _, cohort := range []struct {
 		id  string
 		day int
 	}{{earlyID, 2}, {lateID, 28}} {
-		for i, score := range []int16{80, 0} {
-			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, 8, 10, 10, score, true)
+		for i, seconds := range []uint32{80, 40} {
+			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, seconds, 10, 10, 0, true)
 			s.EventID = fmt.Sprintf("%s-%d", cohort.id, i)
 			if err := recordFixtureSignals(st, ctx, "t", []readingFixture{s, s}); err != nil {
 				t.Fatal(err)
@@ -35,8 +35,8 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	like := click
 	like.ContentRef, like.Type, like.EventID = gallery("t", reactionID), "like", "like"
 	outside := view("t", outsideID, Subject{UserID: "u3"}, 1, 8, 10, 10, 100, true)
-	// A version view of "early" never counts as a work view.
-	edition := view("t", earlyID, Subject{UserID: "u9"}, 10, 8, 10, 10, 100, true)
+	// The same person reading a second edition remains one person for the work.
+	edition := view("t", earlyID, Subject{UserID: "u0"}, 10, 80, 10, 10, 0, true)
 	edition.ContentRef, edition.EventID = edition.WithVersion("v2"), "edition"
 	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{click, like, outside, edition}); err != nil {
 		t.Fatal(err)
@@ -58,8 +58,9 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 			if hit.Readers != 2 || hit.Version() != "" {
 				t.Fatalf("clicks, versions or duplicate deliveries inflated consumption: %+v", hit)
 			}
-			// The zero-score view counts in the mean; early and late have equal weight.
-			want := math.Log10(3) * (80.0 / 12)
+			// Actual 8s and 4s/page attention produces qualities 1 and .5;
+			// publication age and repeated editions cannot add extra quality votes.
+			want := math.Log10(3) * (150.0 / 12)
 			if math.Abs(hit.Score-want) > 1e-9 {
 				t.Fatalf("score for %s: got %g want %g", hit.ContentID, hit.Score, want)
 			}
@@ -75,10 +76,10 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	if !reflect.DeepEqual(counts, map[string]uint64{earlyID: 2, lateID: 2, reactionID: 0}) {
 		t.Fatalf("card counts disagree with popularity: %v", counts)
 	}
-	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signals"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".engagement_segments"); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+".signals FINAL"); err != nil {
+	if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+".engagement_segments FINAL"); err != nil {
 		t.Fatal(err)
 	}
 	if after := read(); !reflect.DeepEqual(before, after) {

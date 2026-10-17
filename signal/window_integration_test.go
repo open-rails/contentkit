@@ -80,7 +80,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{Window: window}); err != nil {
 		t.Fatal(err)
 	}
-	co, err = st.CoEngaged(ctx, tenant, gallery(tenant, middleID), CoEngagedOptions{Limit: 10})
+	co, err = st.CoEngaged(ctx, tenant, gallery(tenant, middleID), CoEngagedOptions{Window: window, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,24 +27,27 @@ func (st *Store) readingState() string {
  toFloat64(progress)/greatest(toFloat64(progress_max),1.),completed,resume,toFloat64(0)
  FROM %s.legacy_reading_state FINAL)
  GROUP BY tenant,subject_kind,subject,content_kind,content_id,content_version_id`, st.db, st.db)
-	return "SELECT r.tenant,r.subject_kind,r.subject,r.content_kind,r.content_id,r.content_version_id,r.first_seen_at,r.last_signal_at,r.last_read_at,r.active_ms,r.max_progress,r.progress_max,r.completed,r.resume,r.quality,coalesce(f.net_value,0.) AS net_value FROM (" + reading + ") r LEFT JOIN (" + st.feedbackState() + ") f ON f.tenant=r.tenant AND f.subject_kind=r.subject_kind AND f.subject=r.subject AND f.content_kind=r.content_kind AND f.content_id=r.content_id AND f.content_version_id=r.content_version_id"
+	return "SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id," +
+		"if(r.first_seen_at=toDateTime(0,'UTC'),f.first_signal_at,r.first_seen_at) AS first_seen_at," +
+		"greatest(r.last_signal_at,f.last_signal_at) AS last_signal_at,r.last_read_at,r.active_ms,r.max_progress,r.progress_max,r.completed,r.resume,r.quality,coalesce(f.net_value,0.) AS net_value FROM (" + reading + ") r FULL OUTER JOIN (" + st.feedbackState() + ") f USING(tenant,subject_kind,subject,content_kind,content_id,content_version_id)"
+
 }
 
 // Explicit reactions remain separate from measured consumption. Retired open
 // rows can coexist during rollout, but can never influence this relation.
 func (st *Store) feedbackState() string {
 	return fmt.Sprintf(`SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,
- sum(value) AS net_value FROM (
+ sum(value) AS net_value,min(at) AS first_signal_at,max(at) AS last_signal_at FROM (
  SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,event_id,signal_type,
- argMax(value,version) AS value FROM %s.signals
+ argMax(value,version) AS value,argMax(occurred_at,version) AS at FROM %s.signals
  WHERE signal_type NOT IN ('view','preview') AND %s
  GROUP BY tenant,subject_kind,subject,content_kind,content_id,content_version_id,event_id,signal_type)
  GROUP BY tenant,subject_kind,subject,content_kind,content_id,content_version_id`, st.db, st.notErased())
 }
 
 func (st *Store) measuredSubjectWorks(tenant string, window Window) (string, []any) {
-	pred, args := window.predicate("occurred_at")
-	canonical := st.measuredCanonical("1" + pred)
+	pred, args := window.predicate("c.1")
+	canonical := "SELECT * FROM (" + st.measuredCanonical("1") + ") WHERE 1" + pred
 	q := fmt.Sprintf(`WITH measured AS (%s SELECT content_kind,content_id,subject_kind,subject,
  max(qualified) AS qualified,max(completed) AS completed,sum(active_ms) AS active_ms,max(attention_quality) AS quality
  FROM scored GROUP BY content_kind,content_id,subject_kind,subject)

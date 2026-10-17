@@ -201,6 +201,7 @@ export interface Batch {
   polls?: PollRecord[];
   votes?: VoteRecord[];
   answers?: AnswerRecord[];
+  legacy_reading?: LegacyReadingRecord[];
   signals?: SignalRecord[];
   deletes?: DeleteRecord[];
 }
@@ -1134,6 +1135,19 @@ export interface Kind {
 export interface LanguageTotal {
   public: number;
   tiers: Record<string, number>;
+}
+
+export interface LegacyReadingRecord {
+  target: TargetRef;
+  user_id?: string;
+  anon_key?: string;
+  first_read_at?: string;
+  last_read_at: string;
+  progress: number;
+  progress_max: number;
+  completed: boolean;
+  resume?: string;
+  revision?: number;
 }
 
 export interface LibraryItem {

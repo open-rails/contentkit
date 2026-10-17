@@ -15,10 +15,10 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	// Keep superseded revisions physically present so raw rows are deterministic.
-	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".signals"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".engagement_segments"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Exec(context.Background(), "SYSTEM START MERGES "+testDB+".signals") })
+	t.Cleanup(func() { _ = conn.Exec(context.Background(), "SYSTEM START MERGES "+testDB+".engagement_segments") })
 	at := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
 	videoID, tagID, creatorID := cid(1), cid(7), cid(9)
 	mk := func(tenant, kind, id, subject, typ, eventID string, rev uint64) readingFixture {
@@ -56,15 +56,15 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 		}
 	}
 	want := map[key][4]uint64{
-		{"video", TypeView}: {2, 3, 2, 1}, {"video", "like"}: {1, 1, 1, 1},
-		{"tag", TypeView}: {2, 3, 2, 1}, {"creator", TypeView}: {1, 1, 1, 1},
+		{"video", TypeEngagement}: {2, 3, 2, 1}, {"video", "like"}: {1, 1, 1, 1},
+		{"tag", TypeEngagement}: {2, 3, 2, 1}, {"creator", TypeEngagement}: {1, 1, 1, 1},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("inventory %v want %v", got, want)
 	}
 
 	// Mutations run through the merge machinery.
-	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signals"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".engagement_segments"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PurgeContentKinds(ctx, "hentai0", []string{"tag", "creator", "season"}); err != nil {

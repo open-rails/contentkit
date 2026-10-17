@@ -145,7 +145,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 	// Intended semantics on the converged result.
 	u1g1 := want.States["u1"]["g1"]
 	if u1g1.ActiveMS != 240000 || u1g1.MaxProgress != 800 ||
-		!u1g1.Completed || u1g1.Resume != "p:8" ||
+		u1g1.Completed || u1g1.Resume != "p:8" ||
 		u1g1.NetValue != -1 {
 		t.Fatalf("u1/g1 must be revision 4 of s1 plus current preference -1: %+v", u1g1)
 	}
@@ -169,7 +169,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 		if got := snapshot(t, st, tenant); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed after merges:\n got %+v\nwant %+v", tenant, got, want)
 		}
-		for _, table := range []string{"subject_content_state", "subject_content_daily"} {
+		for _, table := range []string{"engagement_state", "engagement_daily"} {
 			if err := conn.Exec(ctx, "DELETE FROM "+testDB+"."+table+" WHERE tenant = ?", tenant); err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +251,7 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	if len(hits) != 1 || !hits[0].Equal(w) || !reflect.DeepEqual(hits[0].ContentMetrics, want) {
 		t.Fatalf("popular ranks works only, with the same metrics: %+v", hits)
 	}
-	clickOnly, err := st.Popular(ctx, "t", "gallery", PopularOptions{RankExpr: "toFloat64(events)"})
+	clickOnly, err := st.Popular(ctx, "t", "gallery", PopularOptions{RankExpr: "toFloat64(readers)"})
 	if err != nil || len(clickOnly) != 1 {
 		t.Fatalf("works without views never rank: %+v %v", clickOnly, err)
 	}
@@ -282,19 +282,25 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 		t.Fatalf("moved session: day5=%d day6=%d", viewsOn(5), viewsOn(6))
 	}
 
-	// A stale nonzero day row left by an interrupted projection.
-	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), 1)`); err != nil {
+	// Projection residue is never trusted as ranking evidence; repair must still
+	// replace its stale positive day with a generation-matched tombstone.
+	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.engagement_daily
+ (tenant,content_kind,content_id,content_version_id,subject_kind,subject,day,present,active_ms,covered_units,unit_attention,unit_total,unit_scale,version)
+ VALUES ('t','gallery',?,'fixture-edition','user','u','2026-05-03',true,1000,[0],map(toUInt32(0),toUInt64(1000)),6400,100,1)`, lid("g")); err != nil {
 		t.Fatal(err)
 	}
-	if viewsOn(3) != 1 {
-		t.Fatal("precondition: orphan row visible")
+	if viewsOn(3) != 0 {
+		t.Fatal("projection residue must not become measured source evidence")
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 1 {
 		t.Fatalf("orphan day repair: %+v %v", res, err)
 	}
+	var present bool
+	if err := conn.QueryRow(ctx, "SELECT present FROM "+testDB+".engagement_daily FINAL WHERE tenant='t' AND day='2026-05-03'").Scan(&present); err != nil || present {
+		t.Fatalf("repair must zero the physical orphan day: %t %v", present, err)
+	}
 	if viewsOn(3) != 0 || viewsOn(6) != 1 {
-		t.Fatalf("repair must zero the orphan day: day3=%d day6=%d", viewsOn(3), viewsOn(6))
+		t.Fatalf("repair changed canonical reading: day3=%d day6=%d", viewsOn(3), viewsOn(6))
 	}
 
 	// Concurrent writers of revisions 3..34: the highest revision always wins.

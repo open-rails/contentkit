@@ -179,8 +179,9 @@ func (st *Store) projectMeasured(ctx context.Context, tenant string, keys []Proj
 	// when an operator corrects or removes source data.
 	daily := fmt.Sprintf(`INSERT INTO %s.engagement_daily
  (tenant,%s,subject_kind,subject,day,present,active_ms,covered_units,unit_attention,unit_total,unit_scale,version)
+ SELECT * FROM (
  WITH canonical AS (%s)
- SELECT ?,%s,subject_kind,subject,day,max(is_source)>0,sum(raw_active),groupUniqArrayArray(raw_units),
+ SELECT ? AS tenant,%s,subject_kind,subject,day,max(is_source)>0,sum(raw_active),groupUniqArrayArray(raw_units),
  sumMap(raw_attention),max(raw_total),max(raw_scale),
  sum(sum(generation)) OVER (PARTITION BY %s,subject_kind,subject)
  FROM (
@@ -190,8 +191,8 @@ func (st *Store) projectMeasured(ctx context.Context, tenant string, keys []Proj
  SELECT %s,subject_kind,subject,day,toUInt8(0),toUInt64(0),CAST([],'Array(UInt32)'),
  CAST(map(),'Map(UInt32, UInt64)'),toUInt32(0),toUInt32(0),toUInt256(0)
  FROM %s.engagement_daily FINAL WHERE tenant=? AND %s AND %s)
- GROUP BY %s,subject_kind,subject,day
- HAVING toYYYYMM(day) IN ?`, st.db, refColumns, canonical, refColumns, refColumns, refColumns, refColumns, st.db, measuredKeyFilter, st.notErased(), refColumns)
+ GROUP BY %s,subject_kind,subject,day)
+ WHERE toYYYYMM(day) IN ?`, st.db, refColumns, canonical, refColumns, refColumns, refColumns, refColumns, st.db, measuredKeyFilter, st.notErased(), refColumns)
 	months, err := st.measuredMonths(ctx, tenant)
 	if err != nil {
 		return err
