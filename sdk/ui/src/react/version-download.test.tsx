@@ -47,6 +47,24 @@ it("cancels pending polling when its reader leaves", async () => {
   expect(await pending!).toMatchObject({ code: "aborted" });
 });
 
+it("keeps preparing a slow download, then stops after ten minutes", async () => {
+  vi.useFakeTimers();
+  const client = createContentKitClient({ baseUrl: "https://api.test" });
+  const request = vi.spyOn(client.versions, "download").mockResolvedValue({ status: "pending" });
+  const view = renderHook(() => useVersionDownload("c1", "v1", { client, start: vi.fn() }));
+  let outcome: unknown;
+  await act(async () => { view.result.current.download().catch((e: unknown) => { outcome = e; }); await vi.advanceTimersByTimeAsync(595_000); });
+  expect(outcome).toBeUndefined();
+  expect(view.result.current.preparing).toBe(true);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(outcome).toMatchObject({ code: "render_timeout" });
+  expect(view.result.current.preparing).toBe(false);
+  expect(view.result.current.message).toMatch(/couldn't start/i);
+  const polls = request.mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(request).toHaveBeenCalledTimes(polls);
+});
+
 it("ignores a late download grant after the version changes", async () => {
   const client = createContentKitClient({ baseUrl: "https://api.test" });
   let finish!: (value: never) => void;
