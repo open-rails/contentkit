@@ -214,7 +214,7 @@ it("anchors the header dropdown to the field width and follows resize and scroll
   expect(panel).toHaveStyle({ marginLeft: "120px", width: "400px" });
   expect(layer).toHaveAttribute("data-ckui-theme", "dark");
   expect(layer).toHaveClass("fixed", "inset-x-0");
-  expect(document.querySelector('[data-ckui="search-backdrop"]')).toHaveClass("bg-black/30", "backdrop-blur-sm");
+  expect(document.querySelector('[data-ckui="search-backdrop"]')).toHaveClass("bg-black/30");
   expect(screen.queryByRole("dialog")).toBeNull();
   bottom = 116;
   left = 160;

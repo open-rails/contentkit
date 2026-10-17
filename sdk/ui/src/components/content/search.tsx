@@ -305,7 +305,7 @@ export function SearchBox(p: SearchBoxProps) {
       </form>
       {open && (header ? createPortal(
         <ContentKitUiRoot appearance={p.appearance} className="fixed inset-x-0 bottom-0 z-[70] text-sm" style={{ top }} data-ckui="search-layer">
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" data-ckui="search-backdrop" aria-hidden />
+          <div className="absolute inset-0 bg-black/30" data-ckui="search-backdrop" aria-hidden />
           <div ref={panel} style={{ width: anchor.width, marginLeft: anchor.left }} className="relative origin-top animate-[search-expand_300ms_ease-out] rounded-lg border border-border bg-background text-foreground shadow-lg transition-none motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
             <div className="w-full px-3 pt-3">
               <div className="[--search-max-height:70vh] overflow-y-auto pb-7 md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>
