@@ -362,6 +362,25 @@ disclosures, with reduced-motion support. The initial card budget is shared
 across days, newest first. Opening older days or choosing **Show more** reveals
 already-fetched cards; it does not make another listing request.
 
+To browse old releases, set `query.end_date` to an inclusive `YYYY-MM-DD` in
+the listing's time zone. The same bounded window ends on that date; it does
+not load intervening years. Omit it for the latest releases, or combine it
+with `days: 1` for one exact day. Future and invalid dates return HTTP 400.
+Current visibility and access rules still apply to historical windows.
+`ReleaseDatePicker` supplies the native calendar, editable year and **Latest**
+reset. Keep its controlled value in your router to support shared URLs and
+back/forward navigation:
+
+```tsx
+<ReleaseDatePicker value={date} onValueChange={setDate} />
+<DailyReleases query={{ kind: "gallery", days: 10, end_date: date || undefined }} />
+```
+
+`isReleaseDate(date)` validates URL input before rendering the feed; the picker
+shows an error for invalid or future dates. `localReleaseDate()` provides
+today's browser-local date; supply the picker's `max` when the listing uses a
+different time zone.
+
 Only revealed cards occupy the grid, and images/previews mount when those cards
 enter the viewport. Collapsing a day removes its media. The standard card
 properties (`href`, `decorate`, `groupKinds`, `tiers`, and so on) remain available.

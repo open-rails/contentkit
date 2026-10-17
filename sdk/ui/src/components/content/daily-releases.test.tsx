@@ -24,6 +24,27 @@ const data = (): DailyReleaseData => ({ time_zone: "America/Denver", from_date: 
 
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
+it("requests a historical window directly and changes dates without fetching intervening releases", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/calendar", fetch: async (input) => {
+    const url = new URL(String(input));
+    if (!url.pathname.endsWith("/releases")) return Response.json([]);
+    requests.push(url);
+    const date = url.searchParams.get("end_date") ?? "2026-10-15";
+    return Response.json({ time_zone: "America/Denver", from_date: date, through_date: date, days: [{ date, contents: [], filtered_count: 0, filtered_entities: [] }] });
+  } });
+  const feed = (date?: string) => <ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery", days: 10, end_date: date, time_zone: "America/Denver" }} /></ContentKitProvider>;
+  const view = render(feed("2007-04-18"));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({ kind: "gallery", days: "10", end_date: "2007-04-18", time_zone: "America/Denver" });
+  view.rerender(feed("1998-12-31"));
+  await waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[1]!.searchParams.get("end_date")).toBe("1998-12-31");
+  view.rerender(feed());
+  await waitFor(() => expect(requests).toHaveLength(3));
+  expect(requests[2]!.searchParams.has("end_date")).toBe(false);
+});
+
 function observeMedia() {
   const observers: { callback: IntersectionObserverCallback; margin?: string; targets: Set<Element> }[] = [];
   vi.stubGlobal("IntersectionObserver", class {

@@ -11,6 +11,9 @@ export const discovery: typeof en = {
     filters: "表示するコンテンツ：",
   },
   releases: {
+    throughDate: "この日まで",
+    latest: "最新",
+    invalidDate: "今日以前の有効な日付を選んでください。",
     premiumMore_one: "ほか {count} 件",
     premiumMore_other: "ほか {count} 件",
     premiumHint: "会員向けプレビュー · クリックして表示",

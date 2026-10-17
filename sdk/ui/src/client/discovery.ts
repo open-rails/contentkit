@@ -119,7 +119,12 @@ export interface RecentSearchesQuery {
 export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
 /** Complete daily metadata for one calendar window, without pagination. */
-export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & { days?: number; time_zone?: string };
+export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & {
+  days?: number;
+  /** Inclusive YYYY-MM-DD in time_zone; today by default. Future dates are rejected. */
+  end_date?: string;
+  time_zone?: string;
+};
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;

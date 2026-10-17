@@ -9235,7 +9235,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+        "summary": "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
         "parameters": [
           {
             "name": "kind",
@@ -9405,9 +9405,17 @@
           {
             "name": "days",
             "in": "query",
-            "description": "calendar days including today: 10 by default, from 1 through 31",
+            "description": "calendar days including end_date: 10 by default, from 1 through 31",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "description": "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected",
+            "schema": {
+              "type": "string"
             }
           },
           {

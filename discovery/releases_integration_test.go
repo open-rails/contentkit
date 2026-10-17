@@ -22,9 +22,89 @@ func TestReleaseWindowCalendarDays(t *testing.T) {
 		{"2026-10-16T02:00:00Z", "", "2026-10-07", "2026-10-16", 0, 216},
 	} {
 		at, _ := time.Parse(time.RFC3339, tc.at)
-		from, today, _, err := releaseWindow(at, tc.days, tc.zone)
+		from, today, _, err := releaseWindow(at, tc.days, tc.zone, "")
 		if err != nil || from.Format(time.DateOnly) != tc.from || today.Format(time.DateOnly) != tc.through || today.Sub(from).Hours() != tc.hours {
 			t.Fatalf("%+v: %v %v %v", tc, from, today, err)
+		}
+	}
+}
+
+func TestReleaseWindowHistoricalDates(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-10-16T02:00:00Z")
+	for _, tc := range []struct {
+		date, zone, from string
+		days             int
+		hours            float64
+	}{
+		{"2007-03-12", "America/Denver", "2007-03-10", 3, 47},
+		{"2020-11-02", "America/Denver", "2020-10-31", 3, 49},
+		{"2000-02-29", "UTC", "2000-02-29", 1, 0},
+		{"0001-01-01", "UTC", "0001-01-01", 10, 0},
+	} {
+		from, through, _, err := releaseWindow(now, tc.days, tc.zone, tc.date)
+		if err != nil || from.Format(time.DateOnly) != tc.from || through.Format(time.DateOnly) != tc.date || through.Sub(from).Hours() != tc.hours {
+			t.Fatalf("%+v: %v %v %v", tc, from, through, err)
+		}
+	}
+	for _, date := range []string{"2026-10-16", "2027-01-01", "2026-02-30", "1900-02-29", "2026-1-01", "2026-01", "0000-01-01", "nonsense"} {
+		if _, _, _, err := releaseWindow(now, 10, "America/Denver", date); err == nil {
+			t.Fatalf("accepted invalid or locally future date %q", date)
+		}
+	}
+}
+
+func TestDailyReleasesHistoricalWindowKeepsBoundsAndSummaries(t *testing.T) {
+	f := newFixture(t, nil, "")
+	f.now, _ = time.Parse(time.RFC3339, "2026-10-16T02:00:00Z")
+	f.clock = f.now
+	f.svc.o.Now = func() time.Time { return f.now }
+	f.group("tag", "big-breasts")
+	age := func(raw string) time.Duration {
+		at, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f.now.Sub(at)
+	}
+	f.seed(
+		item{n: 1, titles: map[string]string{"en": "First midnight"}, age: age("2010-03-13T07:00:00Z"), versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Last instant"}, age: age("2010-03-15T05:59:59Z"), versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Next midnight"}, age: age("2010-03-15T06:00:00Z"), versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, titles: map[string]string{"en": "Before window"}, age: age("2010-03-13T06:59:59Z"), versions: []ver{{langs: []string{"en"}}}},
+		item{n: 5, titles: map[string]string{"en": "Removed later"}, age: age("2010-03-14T12:00:00Z"), deleted: true, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 6, titles: map[string]string{"en": "Historical premium"}, age: age("2010-03-14T12:00:00Z"), rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 7, titles: map[string]string{"en": "Filtered in window"}, age: age("2010-03-14T12:00:00Z"), groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 8, titles: map[string]string{"en": "Filtered after window"}, age: age("2010-03-15T06:00:00Z"), groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+	)
+	var out DailyReleases
+	if status, code := f.call(http.MethodGet, "main.test", "", "/releases?kind=gallery&days=2&end_date=2010-03-14&time_zone=America%2FDenver", nil, &out); status != http.StatusOK {
+		t.Fatalf("%d %s", status, code)
+	}
+	if out.FromDate != "2010-03-13" || out.ThroughDate != "2010-03-14" || len(out.Days) != 2 {
+		t.Fatalf("unexpected historical extent %+v", out)
+	}
+	got := map[string]string{}
+	for _, day := range out.Days {
+		for _, card := range day.Contents {
+			got[card.ID] = day.Date
+			if card.ID == f.cid(6) && card.Access.Allowed {
+				t.Fatal("historical selection granted premium access")
+			}
+		}
+	}
+	want := map[string]string{f.cid(1): "2010-03-13", f.cid(2): "2010-03-14", f.cid(6): "2010-03-14"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("historical releases %v want %v", got, want)
+	}
+	if day := out.Days[0]; day.FilteredCount != 1 || len(day.FilteredEntities) != 1 || day.FilteredEntities[0].Count != 1 {
+		t.Fatalf("historical filtered counts %+v", day)
+	}
+	if out.Days[1].FilteredCount != 0 {
+		t.Fatalf("other day's filtered count %+v", out.Days[1])
+	}
+	for _, date := range []string{"2026-10-16", "2026-02-30", "2026-01", "0000-01-01"} {
+		if status, _ := f.call(http.MethodGet, "main.test", "", "/releases?end_date="+date+"&time_zone=America%2FDenver", nil, nil); status != http.StatusBadRequest {
+			t.Fatalf("invalid date %s: %d", date, status)
 		}
 	}
 }

@@ -11,6 +11,9 @@ export const discovery: typeof en = {
     filters: "显示内容：",
   },
   releases: {
+    throughDate: "截至日期",
+    latest: "最新",
+    invalidDate: "请选择今天或之前的有效日期。",
     premiumMore_one: "还有 {count} 项",
     premiumMore_other: "还有 {count} 项",
     premiumHint: "会员专属预览 · 点击查看",

@@ -2128,8 +2128,10 @@ type GetReleasesQuery struct {
 	Mode string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
-	// calendar days including today: 10 by default, from 1 through 31
+	// calendar days including end_date: 10 by default, from 1 through 31
 	Days int
+	// inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected
+	EndDate string
 	// IANA zone for calendar-day boundaries; UTC by default
 	TimeZone string
 }
@@ -2184,13 +2186,16 @@ func (q GetReleasesQuery) values() url.Values {
 	if q.Days != 0 {
 		v.Set("days", fmt.Sprint(q.Days))
 	}
+	if q.EndDate != "" {
+		v.Set("end_date", q.EndDate)
+	}
 	if q.TimeZone != "" {
 		v.Set("time_zone", q.TimeZone)
 	}
 	return v
 }
 
-// GetReleases is GET /v1/releases (public). Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.
+// GetReleases is GET /v1/releases (public). Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.
 func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery.DailyReleases, error) {
 	var out discovery.DailyReleases
 	err := c.call(ctx, http.MethodGet, "/v1/releases", q.values(), nil, &out)
