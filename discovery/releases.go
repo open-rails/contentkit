@@ -151,7 +151,7 @@ type releasePick struct {
 }
 
 // releasePicks applies feed-only publication and language constraints even to
-// privileged viewers, then selects the same preferred edition as card lists.
+// privileged readers, then selects the same preferred edition as card lists.
 func (s *Service) releasePicks(ctx context.Context, q *sel, from, until, now time.Time) ([]releasePick, error) {
 	q = q.with("f.published_at >= @r_from AND f.published_at < @r_until AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted' AND (@r_language = '' OR @r_language = ANY(f.languages))",
 		pgx.NamedArgs{"r_from": from, "r_until": until, "r_now": now, "r_language": q.reader.Language})

@@ -210,31 +210,43 @@ func TestPopularityPublicationWindowAndCursor(t *testing.T) {
 	f.clock = f.now
 	f.svc.o.Now = func() time.Time { return f.now }
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Recent"}, age: time.Hour, popularity: `{"score":{"7d":4,"90d":4,"365d":4,"all":4}}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, titles: map[string]string{"en": "Quarter"}, age: 8 * 24 * time.Hour, popularity: `{"score":{"7d":100,"90d":3,"365d":3,"all":3}}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Year"}, age: 100 * 24 * time.Hour, popularity: `{"score":{"7d":100,"90d":100,"365d":2,"all":2}}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 4, titles: map[string]string{"en": "Old"}, age: 400 * 24 * time.Hour, popularity: `{"score":{"7d":100,"90d":100,"365d":100,"all":1}}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Recent"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Quarter"}, age: 8 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Year"}, age: 100 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, titles: map[string]string{"en": "Old"}, age: 400 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 	)
+	// Older works have more current standing this week; publication age alone
+	// keeps them out of the shorter publication windows.
+	votes := func(n, people int) {
+		for i := range people {
+			f.react(n, fmt.Sprintf("fan-%d", i), 1, f.now.Add(-30*time.Minute))
+		}
+	}
+	votes(1, 3)
+	votes(2, 4)
+	votes(3, 5)
+	votes(4, 6)
 	for _, tc := range []struct {
 		period string
-		count  int
-	}{{"7d", 1}, {"90d", 2}, {"365d", 3}, {"all", 4}} {
-		got, _ := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", "popular:"+tc.period, "published_within", tc.period))
-		if len(got) != tc.count || got[0] != f.cid(1) {
-			t.Fatalf("%s: %v", tc.period, got)
+		want   []string
+	}{{"7d", []string{f.cid(1)}}, {"90d", []string{f.cid(2), f.cid(1)}}, {"365d", []string{f.cid(3), f.cid(2), f.cid(1)}}, {"all", []string{f.cid(4), f.cid(3), f.cid(2), f.cid(1)}}} {
+		if got, _ := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", "popular:"+tc.period, "published_within", tc.period)); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s: %v, want %v", tc.period, got, tc.want)
 		}
 	}
 	// The first page pins the age window, even when a later page crosses UTC
 	// midnight. New publications after that point cannot enter the sequence.
-	f.seed(item{n: 5, titles: map[string]string{"en": "Window boundary"}, age: 6*24*time.Hour + 11*time.Hour, popularity: `{"score":{"7d":2}}`, versions: []ver{{langs: []string{"en"}}}})
+	f.seed(item{n: 5, titles: map[string]string{"en": "Window boundary"}, age: 6*24*time.Hour + 11*time.Hour, versions: []ver{{langs: []string{"en"}}}})
+	votes(5, 2)
 	o := ListOptions{Reader: Reader{Actor: access.Actor{Anonymous: true}, Host: "main.test"}, Filter: Filter{Kind: "gallery", PublishedWithin: "7d"}, Sort: "popular:7d", Limit: 1}
 	first, err := f.svc.List(f.ctx, o)
-	if err != nil || first.NextCursor == "" {
+	if err != nil || len(first.Contents) != 1 || first.Contents[0].ID != f.cid(1) || first.NextCursor == "" {
 		t.Fatalf("first %+v %v", first, err)
 	}
 	f.now = f.now.Add(24 * time.Hour)
 	f.clock = f.now
-	f.seed(item{n: 6, titles: map[string]string{"en": "New publication"}, age: time.Hour, popularity: `{"score":{"7d":1}}`, versions: []ver{{langs: []string{"en"}}}})
+	f.seed(item{n: 6, titles: map[string]string{"en": "New publication"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}})
+	votes(6, 1)
 	o.Cursor = first.NextCursor
 	next, err := f.svc.List(f.ctx, o)
 	if err != nil || len(next.Contents) != 1 || next.Contents[0].ID != f.cid(5) || next.NextCursor != "" {

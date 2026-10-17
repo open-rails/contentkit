@@ -473,14 +473,21 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortTitle:
 		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
 	case SortPopular:
-		o.expr, o.args["d_period"] = "coalesce((f.popularity->'score'->>@d_period::text)::float8, 0)", cmpOr(period, popularity.DefaultPeriod)
-		o.ranking = &popularity.RankingInfo{Policy: popularity.PolicyV1.Name, Mode: "legacy"}
+		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
+		if err != nil {
+			return o, err
+		}
+		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
 			o.expr = "f.rating"
-		} else {
-			o.expr, o.args["d_period"] = "coalesce((f.popularity->'rating'->>@d_period::text)::float8, 0)", period
+			break
 		}
+		window, err := popularity.WindowForPeriod(period, s.now())
+		if err != nil {
+			return o, err
+		}
+		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
 		o.expr, o.cast = "f.favorites::bigint", "bigint"
 

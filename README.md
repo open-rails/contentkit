@@ -65,7 +65,7 @@ another tenant is an error, never remapped.
 | `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
-| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; the popularity job; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
+| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |

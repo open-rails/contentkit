@@ -132,13 +132,6 @@ type cardOptions struct {
 	lean bool
 }
 
-// popularityFacet is content_facets.popularity: policy scores and window
-// ratings by period, and all-time readers.
-type popularityFacet struct {
-	Score  map[string]float64 `json:"score,omitempty"`
-	Rating map[string]float64 `json:"rating,omitempty"`
-}
-
 type cardRow struct {
 	Card
 	contentRule access.Rule

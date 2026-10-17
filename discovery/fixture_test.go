@@ -210,14 +210,13 @@ type item struct {
 	restrictions []string
 	attrs        map[string]any
 	deleted      bool
-	favorites    int    // the counts job's
-	popularity   string // discovery's popularity job's
+	favorites    int // the counts job's
 	versions     []ver
 	groups       []string // slugs, content-level memberships
 }
 
 // seed creates items through the catalog as staff, publishing each age ago.
-// Pages, favorites and popularity are written as the jobs that own them do.
+// Pages and favorite counts are written as the jobs that own them do.
 func (f *fixture) seed(items ...item) {
 	f.t.Helper()
 	staff := testauth.Actor(access.Actor{ID: "staff"}, staffOnly{})
@@ -298,11 +297,27 @@ func (f *fixture) seed(items ...item) {
 				f.t.Fatal(err)
 			}
 		}
-		if it.popularity == "" {
-			it.popularity = "{}"
-		}
-		f.exec(`UPDATE {s}.content_facets SET favorites = $2, popularity = $3 WHERE content_id = $1`, id, it.favorites, it.popularity)
+		f.exec(`UPDATE {s}.content_facets SET favorites = $2 WHERE content_id = $1`, id, it.favorites)
 	}
+}
+
+// react stores actor's current reaction to item n as the content runtime does,
+// last changed at; a "guest:" actor reacts by address.
+func (f *fixture) react(n int, actor string, value int, at time.Time) {
+	f.t.Helper()
+	user, ip := any(actor), any(nil)
+	if guest, ok := strings.CutPrefix(actor, "guest:"); ok {
+		user, ip = nil, guest
+	}
+	f.exec(`INSERT INTO {s}.content_reactions (tenant_id,content_kind,content_id,user_id,ip,value,created_at,updated_at,revision)
+ SELECT tenant_id,kind,id,$3,$4,$5,$6,$6,1 FROM {s}.content_items WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(n), user, ip, value, at)
+}
+
+// favorite stores user's current favorite of item n, last changed at.
+func (f *fixture) favorite(n int, user string, at time.Time) {
+	f.t.Helper()
+	f.exec(`INSERT INTO {s}.content_favorites (tenant_id,content_kind,content_id,user_id,value,created_at,updated_at,revision)
+ SELECT tenant_id,kind,id,$3,1,$4,$4,1 FROM {s}.content_items WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(n), user, at)
 }
 
 func (f *fixture) exec(sql string, args ...any) {

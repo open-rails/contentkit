@@ -12,7 +12,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
@@ -58,7 +57,6 @@ const (
 	reclassifyEvery     = 10 * time.Minute
 	recountEvery        = 15 * time.Minute
 	windowsEvery        = time.Minute
-	popularityEvery     = time.Hour
 	searchPruneEvery    = time.Hour
 	windowsLookback     = 5 * time.Minute // well past windowsEvery, so no window change is missed
 )
@@ -86,7 +84,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &popularityWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
@@ -112,7 +109,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			periodic("contentkit_coengagement", coEngagementEvery, coEngagementArgs{}, false)
 			periodic("contentkit_projection_repair", repairEvery, repairArgs{}, true)
 			periodic("contentkit_erasure", erasureEvery, erasureArgs{}, false)
-			periodic("contentkit_popularity", popularityEvery, popularityArgs{}, true)
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -143,9 +139,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 }
 
 // rebuild queues the jobs that rebuild what an import changed: search
-// documents, group counts and covers, listing counts and, after signals,
-// popularity. Before Start their periodic first runs do it.
-func (e *Engine) rebuild(ctx context.Context, signals bool) error {
+// documents, group counts and covers, and listing counts. Before Start their
+// periodic first runs do it.
+func (e *Engine) rebuild(ctx context.Context) error {
 	c := e.jobs.bound()
 	if c == nil {
 		return nil
@@ -155,9 +151,6 @@ func (e *Engine) rebuild(ctx context.Context, signals bool) error {
 	}
 	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)},
 		{Args: catalog.RefreshCountsJob(), InsertOpts: opts(catalog.Queue)}}
-	if signals && e.hub.SignalPlane() {
-		params = append(params, river.InsertManyParams{Args: popularityArgs{}, InsertOpts: opts(QueueContentKit)})
-	}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }
@@ -221,26 +214,6 @@ func (w *groupsWorker) Work(ctx context.Context, job *river.Job[groupsArgs]) err
 		return w.e.groups.RefreshWindows(ctx, windowsLookback)
 	}
 	return w.e.groups.Recount(ctx)
-}
-
-type popularityArgs struct{}
-
-func (popularityArgs) Kind() string { return "contentkit_popularity" }
-
-// popularityWorker copies the signal plane's popularity into content_facets
-// for popular and top_rated sorts.
-type popularityWorker struct {
-	river.WorkerDefaults[popularityArgs]
-	e *Engine
-}
-
-func (w *popularityWorker) Timeout(*river.Job[popularityArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *popularityWorker) Work(ctx context.Context, _ *river.Job[popularityArgs]) error {
-	if err := w.e.discover.RefreshPopularity(ctx); !errors.Is(err, discovery.ErrNoSignals) {
-		return err
-	}
-	return nil
 }
 
 type searchPruneArgs struct{}

@@ -44,8 +44,8 @@ type Options struct {
 	// plane: signals are skipped.
 	Signals *discovery.Service
 	// Rebuild queues the jobs that rebuild what an import changed: search
-	// documents, group counts, listing counts, and popularity after signals.
-	Rebuild func(ctx context.Context, signals bool) error
+	// documents, group counts and listing counts.
+	Rebuild func(ctx context.Context) error
 	Logger  *slog.Logger
 }
 
@@ -106,7 +106,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 		}
 	}
 	if len(res.Written) > 0 && s.o.Rebuild != nil {
-		if err := s.o.Rebuild(ctx, res.Written[SectionSignals] > 0); err != nil {
+		if err := s.o.Rebuild(ctx); err != nil {
 			s.o.Logger.WarnContext(ctx, "contentkit: import could not queue its rebuild; the periodic jobs will", "err", err)
 		}
 	}

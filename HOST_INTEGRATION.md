@@ -1470,14 +1470,14 @@ thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-The engine's `contentkit_popularity` job (hourly, with ClickHouse) copies
-`popularity.PolicyV1` scores per period (`7d`, `30d`, `90d`, `365d`, `all`),
-each window's rating (Wilson lower bound of the subjects whose feedback is
-positive) and all-time viewers into `content_facets.popularity`, so a filtered
-`popular` ranks measured people and bounded quality in the selected activity
-window, normalizing trusted free/premium populations. Missing population lineage
-uses current catalog reactions/favorites as an explicit standing fallback; it
-never reads retired open-derived scores. See
+A filtered `popular` list ranks measured people and bounded quality in the
+selected activity window live, normalizing trusted free/premium populations.
+Without a signal plane, or without population lineage for the window, it is the
+explicit standing order (`ranking.policy=standing_wilson`, `mode=standing`):
+one vote per person from current reactions and favorites last changed in the
+window, Wilson-scored and erasure-fenced. Windowed `top_rated` uses the same
+standing over reactions; all-time `top_rated` is the catalog's current rating.
+Nothing reads cached facet scores. See
 [docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
 
 ## Migration checklist

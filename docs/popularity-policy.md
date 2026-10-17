@@ -133,8 +133,10 @@ Normalization clips every candidate to one common trustworthy coverage window.
 When trusted population/availability history is unavailable, the ranker returns
 no scored hits, with `ranking.policy=none` and `ranking.mode=standing_unavailable`.
 It never silently substitutes unnormalized reader reach for a requested normalized
-ranking. The API also states the requested and covered windows. Discovery's
-separate catalog-standing order is not a measured popularity score. Explicitly
+ranking. The API also states the requested and covered windows. Discovery then
+serves its separate standing order (`standing_wilson`/`standing`): one vote per
+person from current reactions and favorites changed in the window. It is not a
+measured popularity score and cannot recover votes later removed. Explicitly
 selecting `v1` remains supported and reports mode `viewer_reach`.
 A broken population query is an error, not permission to invent a denominator or
 silently reclassify receipts.

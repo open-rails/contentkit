@@ -29,12 +29,11 @@ func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	f.group("series", "saga")
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Alpha", "ja": "アルファ"}, age: 72 * time.Hour, favorites: 5, attrs: map[string]any{"format": "manga"},
-			popularity: `{"score":{"7d":1.5,"30d":3}}`,
-			versions:   []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, groups: []string{"romance", "alice", "saga"}},
+			versions: []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, groups: []string{"romance", "alice", "saga"}},
 		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 48 * time.Hour, rule: `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`,
-			favorites: 9, popularity: `{"score":{"7d":9}}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
+			favorites: 9, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 24 * time.Hour, restrictions: []string{"restricted"}, favorites: 1,
-			attrs: map[string]any{"format": "doujin"}, popularity: `{"score":{"7d":4}}`, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
+			attrs: map[string]any{"format": "doujin"}, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
 		item{n: 4, titles: map[string]string{"en": "Delta"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
 		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
@@ -145,12 +144,21 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 	})
 	t.Run("sorts", func(t *testing.T) {
+		// Current standing: Charlie's two votes are this week; Alpha has one
+		// this week and two earlier this month; the hidden Bravo has one.
+		recent, earlier := f.now.Add(-time.Hour), f.now.AddDate(0, 0, -20)
+		f.react(3, "r1", 1, recent)
+		f.react(3, "r2", 1, recent)
+		f.react(1, "r1", 1, recent)
+		f.favorite(1, "e1", earlier)
+		f.react(1, "e2", 1, earlier)
+		f.favorite(2, "r1", recent)
 		cases := map[string][]string{
 			"oldest":         {f.cid(1), f.cid(3)},
 			"title":          {f.cid(1), f.cid(3)},
 			"most_favorited": {f.cid(1), f.cid(3)},
 			"popular:7d":     {f.cid(3), f.cid(1)},
-			"popular":        {f.cid(1)}, // only Alpha has a score in the default 30-day window
+			"popular":        {f.cid(1), f.cid(3)}, // the default 30-day window
 			"top_rated":      {f.cid(3), f.cid(1)},
 		}
 		for sort, want := range cases {
@@ -177,7 +185,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			slices.Sort(seen)
 			want := []string{f.cid(1), f.cid(3), f.cid(7)}
 			if sort == "popular:7d" {
-				want = want[:2] // The video has no qualifying window activity.
+				want = want[:2] // The video has no standing in the window.
 			}
 			if !reflect.DeepEqual(seen, want) {
 				t.Errorf("sort %s paged %v, want %v", sort, seen, want)

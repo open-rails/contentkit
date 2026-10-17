@@ -33,8 +33,11 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		}
 	}
 	post("u1", Signals{Signals: []SignalInput{click(f.cid(1), f.vid(1, 0), "u1-g1")}})
+	language := map[int]string{1: "en", 3: "ja"}
 	observed := []engagementtest.Observation{{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(1), f.vid(1, 0)),
-		Subject: signal.Subject{UserID: "u1"}, Type: engagementtest.TypeReading, EventID: "read-u1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400}}
+		Subject: signal.Subject{UserID: "u1"}, Type: engagementtest.TypeReading, EventID: "read-u1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400,
+		Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[1]})}}
+	population := []signal.Subject{{UserID: "u1"}, {UserID: "nonreader-1"}, {UserID: "nonreader-2"}}
 	for i := range 3 {
 		session := fmt.Sprintf("s%d", i)
 		post("", Signals{Session: session, Signals: []SignalInput{click(f.cid(1), "", "a-g1"), click(f.cid(3), "", "a-g3")}})
@@ -42,10 +45,15 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		population = append(population, subject)
 		for _, n := range []int{1, 3} {
 			observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(n), f.vid(n, 0)), Subject: subject,
-				Type: engagementtest.TypeReading, EventID: fmt.Sprintf("read-%s-g%d", session, n), OccurredAt: at, Progress: 5, ProgressMax: 20, DurationS: 100})
+				Type: engagementtest.TypeReading, EventID: fmt.Sprintf("read-%s-g%d", session, n), OccurredAt: at, Progress: 5, ProgressMax: 20, DurationS: 100,
+				Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[n]})})
 		}
+	}
+	for _, l := range []string{"en", "ja"} {
+		seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: l}, at.Add(-time.Hour), population, nil)
 	}
 	if err := f.svc.o.Hub.RecordSignals(f.ctx, engagementtest.Native(observed)); err != nil {
 		t.Fatal(err)
@@ -80,11 +88,9 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		}
 	}
 
-	if err := f.svc.RefreshPopularity(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) {
-		t.Fatalf("popular:all = %v %+v", got, page.Contents)
+	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) ||
+		page.Ranking == nil || page.Ranking.Mode != "population_normalized" {
+		t.Fatalf("popular:all = %v %+v", got, page.Ranking)
 	}
 
 	// One person per UTC day regardless of how many contents they read;

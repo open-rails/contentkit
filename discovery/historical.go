@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -46,10 +47,15 @@ func historicalSort(kind string, w signal.Window) string {
 // historicalOrder reuses the same bounded, policy-keyed ranking cache as the
 // popularity package. Only window activity can enter this list; publication
 // age, visibility and all reader filters remain in the ordinary page query.
+// Without a signal plane or audience lineage it is the labeled standing order,
+// never a warm measured cache or unnormalized reach.
 func (s *Service) historicalOrder(ctx context.Context, kind string, w signal.Window, reader Reader) (order, error) {
 	o := order{raw: historicalSort(kind, w), expr: "activity.score", desc: true, cast: "float8", args: pgx.NamedArgs{}}
 	if err := s.signals(); err != nil {
-		return o, err
+		if errors.Is(err, ErrSignalsDown) {
+			s.o.Logger.WarnContext(ctx, "discovery: signal plane down; popular lists use standing", "kind", kind)
+		}
+		return s.standingOrder(o.raw, w, true), nil
 	}
 	host := reader.Host
 	if host == "" {
@@ -59,6 +65,9 @@ func (s *Service) historicalOrder(ctx context.Context, kind string, w signal.Win
 	result, err := s.historical.WithScope(signal.ActivityScope{Domain: domain.Name, Language: reader.Language}).PopularResult(ctx, kind, w, PopularityDepth)
 	if err != nil {
 		return o, err
+	}
+	if result.Ranking.Mode == "standing_unavailable" {
+		return s.standingOrder(o.raw, w, true), nil
 	}
 	o.ranking = &result.Ranking
 	o.rankings = map[string]ContentRanking{}
