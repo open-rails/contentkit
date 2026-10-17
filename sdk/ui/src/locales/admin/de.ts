@@ -109,6 +109,7 @@ export const admin: typeof en = {
     status: "Status",
     allStatuses: "Jeder Status",
     loadFailed: "Die Beiträge konnten nicht geladen werden.",
+    notFound: "Dieser Eintrag existiert nicht oder du darfst ihn nicht verwalten.",
     empty: "Keine passenden Beiträge.",
     noDeleted: "Keine gelöschten Beiträge.",
     draft: "Entwurf",

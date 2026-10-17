@@ -100,9 +100,20 @@ function Contents({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
   const access = useContentManagerAccess({ client: p.client });
+  // Editor URLs name items by content code; the editor itself works on ids.
+  const known = useRef(new Map<string, string>()).current;
+  const open = (c: Content, replace = false) => {
+    known.set(c.code, c.id);
+    loc.go(c.code, undefined, replace ? { replace: true } : undefined);
+  };
+  const target = useCodeTarget(p.client, p.kind, loc.view && loc.view !== "new" ? loc.view : null, known);
   if (access.loading) return <Rows />;
   if (!access.allowed.contents) return <NoAccess>{t("contentManager.noAccess")}</NoAccess>;
-  if (!loc.view) return <List {...p} loc={loc} />;
+  if (!loc.view) return <List {...p} loc={loc} open={open} />;
+  if (loc.view !== "new" && !target.id) {
+    if (target.error) return <LoadFailed error={target.error} message={t("contentManager.loadFailed")} retry={target.retry} />;
+    return target.missing ? <NoAccess>{t("contentManager.notFound")}</NoAccess> : <Rows />;
+  }
   return (
     <>
       <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go("")}>
@@ -111,15 +122,42 @@ function Contents({ basePath, navigation, ...p }: Inner) {
       <ContentEditor
         management
         {...p}
-        id={loc.view === "new" ? null : loc.view}
-        onCreated={(c) => loc.go(c.id, undefined, { replace: true })}
+        id={loc.view === "new" ? null : target.id}
+        onCreated={(c) => open(c, true)}
         onDeleted={() => loc.go("", undefined, { replace: true })}
       />
     </>
   );
 }
 
-function List({ loc, client, kind, languages: offered, contentHref, pageSize = 20, onError }: Inner & { loc: AdminLocation }) {
+/** Resolves an editor URL's content code to its id within the caller's manage rights; known codes resolve at once. */
+function useCodeTarget(client: ContentKitClient, kind: string, code: string | null, known: Map<string, string>) {
+  const [found, setFound] = useState<{ code: string; id: string | null; error?: ContentKitError } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const cached = code ? known.get(code) : undefined;
+  useEffect(() => {
+    if (!code || cached) return;
+    const ctl = new AbortController();
+    client.contents.manage({ kind, code, limit: 1 }, ctl.signal).then(
+      (items) => {
+        const id = items[0]?.id ?? null;
+        if (id) known.set(code, id);
+        setFound({ code, id });
+      },
+      (e) => {
+        if (!ctl.signal.aborted) setFound({ code, id: null, error: toContentKitError(e) });
+      },
+    );
+    return () => ctl.abort();
+  }, [client, kind, code, cached, known, attempt]);
+  const retry = () => setAttempt((n) => n + 1);
+  if (!code) return { id: null, retry };
+  if (cached) return { id: cached, retry };
+  if (found?.code !== code) return { id: null, retry };
+  return { id: found.id, error: found.error, missing: !found.id && !found.error, retry };
+}
+
+function List({ loc, open, client, kind, languages: offered, contentHref, pageSize = 20, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -211,7 +249,7 @@ function List({ loc, client, kind, languages: offered, contentHref, pageSize = 2
                   {deleted ? (
                     <span className="font-medium break-words">{c.title}</span>
                   ) : (
-                    <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => loc.go(c.id)}>
+                    <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => open(c)}>
                       {c.title}
                     </button>
                   )}
@@ -234,7 +272,7 @@ function List({ loc, client, kind, languages: offered, contentHref, pageSize = 2
                           {t("contentManager.view")}
                         </a>
                       )}
-                      <Button size="sm" variant="outline" onClick={() => loc.go(c.id)}>
+                      <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
                       <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(c)}>

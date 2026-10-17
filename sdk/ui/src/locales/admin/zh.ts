@@ -109,6 +109,7 @@ export const admin: typeof en = {
     status: "状态",
     allStatuses: "所有状态",
     loadFailed: "无法加载文章。",
+    notFound: "该条目不存在，或你无权管理。",
     empty: "没有匹配的文章。",
     noDeleted: "没有已删除的文章。",
     draft: "草稿",

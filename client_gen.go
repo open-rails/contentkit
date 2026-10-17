@@ -993,6 +993,8 @@ type GetManageQuery struct {
 	OwnerGroup string
 	// only items whose title, description or body contains this text, ignoring case
 	Q string
+	// only the item with this content code (any spelling), in every state unless state narrows it
+	Code string
 	// the language to show text in; the site's first language, then any, when it has none
 	Language string
 	// page size: 20 by default, at most 100
@@ -1011,6 +1013,9 @@ func (q GetManageQuery) values() url.Values {
 	}
 	if q.Q != "" {
 		v.Set("q", q.Q)
+	}
+	if q.Code != "" {
+		v.Set("code", q.Code)
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -1039,6 +1044,8 @@ type GetManageKindQuery struct {
 	OwnerGroup string
 	// only items whose title, description or body contains this text, ignoring case
 	Q string
+	// only the item with this content code (any spelling), in every state unless state narrows it
+	Code string
 	// the language to show text in; the site's first language, then any, when it has none
 	Language string
 	// page size: 20 by default, at most 100
@@ -1057,6 +1064,9 @@ func (q GetManageKindQuery) values() url.Values {
 	}
 	if q.Q != "" {
 		v.Set("q", q.Q)
+	}
+	if q.Code != "" {
+		v.Set("code", q.Code)
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)

@@ -109,6 +109,7 @@ export const admin: typeof en = {
     status: "状態",
     allStatuses: "すべての状態",
     loadFailed: "投稿を読み込めませんでした。",
+    notFound: "この項目は存在しないか、管理する権限がありません。",
     empty: "該当する投稿はありません。",
     noDeleted: "削除済みの投稿はありません。",
     draft: "下書き",

@@ -109,6 +109,7 @@ export const admin: typeof en = {
     status: "상태",
     allStatuses: "모든 상태",
     loadFailed: "게시물을 불러오지 못했습니다.",
+    notFound: "이 항목이 없거나 관리할 권한이 없습니다.",
     empty: "일치하는 게시물이 없습니다.",
     noDeleted: "삭제된 게시물이 없습니다.",
     draft: "임시 저장",

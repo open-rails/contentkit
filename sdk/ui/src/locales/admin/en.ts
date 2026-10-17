@@ -108,6 +108,7 @@ export const admin = {
     status: "Status",
     allStatuses: "Every status",
     loadFailed: "Content couldn't be loaded.",
+    notFound: "This item doesn't exist or isn't yours to manage.",
     empty: "Nothing matches.",
     noDeleted: "Nothing deleted.",
     draft: "Draft",

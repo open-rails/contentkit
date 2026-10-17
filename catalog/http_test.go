@@ -158,6 +158,26 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, "bob", "GET", "/v1/manage?owner_group="+studio, nil, nil)
 	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?state=gone", nil, nil)
 	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage", nil, nil)
+
+	// Editor links carry the content code: any spelling, any state, same rights.
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage/gallery?code="+strings.ToLower(c.Code), nil, &list)
+	if len(list) != 1 || list[0].ID != c.ID {
+		t.Fatalf("manage by code %+v", list)
+	}
+	f.want(http.StatusOK, "bob", "GET", "/v1/manage?code="+c.Code, nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("code outside the caller's rights %+v", list)
+	}
+	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code, nil, &list)
+	if len(list) != 1 || list[0].ID != c.ID || list[0].State != StateDeleted {
+		t.Fatalf("deleted by code %+v", list)
+	}
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code+"&state=draft", nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("state narrows a code %+v", list)
+	}
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?code=nope", nil, nil)
 }
 
 func (f *fixture) doWith(actor, method, target string, headers map[string]string) *httptest.ResponseRecorder {

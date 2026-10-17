@@ -109,6 +109,7 @@ export const admin: typeof en = {
     status: "Estado",
     allStatuses: "Todos los estados",
     loadFailed: "No se pudieron cargar las publicaciones.",
+    notFound: "Este elemento no existe o no puedes gestionarlo.",
     empty: "Ninguna publicación coincide.",
     noDeleted: "No hay publicaciones eliminadas.",
     draft: "Borrador",

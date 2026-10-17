@@ -85,7 +85,10 @@ function server(options: { failText?: boolean; media?: ReadResult; review?: () =
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, body });
     if (method === "GET" && path === "/kinds") return Response.json(model);
-    if (method === "GET" && (path === "/manage/gallery" || path === "/manage")) return Response.json([item]);
+    if (method === "GET" && (path === "/manage/gallery" || path === "/manage")) {
+      const code = url.searchParams.get("code");
+      return Response.json(code && code !== item.code ? [] : [item]);
+    }
     if (method === "GET" && path === "/contents/c1") return Response.json(item);
     if (method === "POST" && path === "/contents") {
       item = { ...item, text: body.text, title: Object.values(body.text as NonNullable<Content["text"]>)[0]!.title };
@@ -341,13 +344,26 @@ it("keeps the draft editing session when the built-in history router changes syn
     const title = await screen.findByLabelText("Title");
     await user.type(title, "Synchronous route");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/standalone/galleries/c1"));
+    await waitFor(() => expect(window.location.pathname).toBe("/standalone/galleries/GALLERY01"));
     await screen.findByText("Saved.", { selector: "p[role=status]" });
     expect(screen.getByLabelText("Title")).toBe(title);
     expect(title).toHaveValue("Synchronous route");
   } finally {
     window.history.replaceState(null, "", "/");
   }
+});
+
+it("opens an editor URL by content code and reports an unknown code", async () => {
+  const s = server();
+  const manage = vi.spyOn(s.client.contents, "manage");
+  function Route({ path }: { path: string }) {
+    return <ContentManager client={s.client} kind="gallery" basePath="/galleries" navigation={{ pathname: path, search: "", navigate: () => {} }} />;
+  }
+  const { rerender } = render(<Route path="/galleries/GALLERY01" />);
+  expect(await screen.findByLabelText("Title")).toHaveValue("Old title");
+  expect(manage).toHaveBeenCalledWith({ kind: "gallery", code: "GALLERY01", limit: 1 }, expect.any(AbortSignal));
+  rerender(<Route path="/galleries/MISSING01" />);
+  expect(await screen.findByText("This item doesn't exist or isn't yours to manage.")).toBeVisible();
 });
 
 it("refreshes page selection after asynchronous ZIP extraction replaces the archive with pages", async () => {
