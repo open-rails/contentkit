@@ -1,5 +1,6 @@
 name: sdk-ui
 'on':
+  workflow_dispatch: {}
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]

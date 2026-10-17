@@ -265,7 +265,6 @@ describe("discovery against the real ContentKit", () => {
     const rec = recorder();
     const b = new Beacons(client(h, cfg, reader, { record: rec }), { delay: 10_000 });
     b.click(one!.id, { surface: "test", position: 1 });
-    b.view(one!.id).update({ progress: 3 });
     await b.flush();
     b.click(one!.id);
     b.exposure({ render_id: "r1", stage: "rendered", shown: [{ content_id: one!.id, position: 1 }] });

@@ -96,7 +96,7 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  WHERE JSONExtractString(c.a,'viewer_access')='full' AND c.c.1>=i.start_at AND c.c.1<i.end_at
  AND (i.audience='public' OR (JSONExtractBool(c.a,'eligibility_known') AND hasAny(JSONExtract(c.a,'eligible_tiers','Array(String)'),i.tiers)))
  AND (?='' OR JSONExtractString(c.a,'domain')=?) AND (?='' OR JSONExtractString(c.a,'language')=?)`
-	measured := measuredVersions(intervalCanonical)
+	measured := strings.TrimPrefix(measuredVersions("SELECT * FROM interval_measurements"), "WITH ")
 	query := fmt.Sprintf(`WITH
  intervals AS (SELECT * FROM contentkit_activity_intervals),
  cohorts AS (SELECT DISTINCT cohort_id,start_at,end_at,audience,tiers FROM intervals),
@@ -113,7 +113,9 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  AND occurred_at>=(SELECT min(start_at) FROM intervals) AND occurred_at<(SELECT max(end_at) FROM intervals)
  AND content_id IN (SELECT content_id FROM intervals)
  GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id),
- qualified_versions AS (%s SELECT content_kind AS interval_id,content_id,subject_kind,subject,qualified,completed,attention_quality,days FROM scored),
+ interval_measurements AS (%s),
+ %s,
+ qualified_versions AS (SELECT content_kind AS interval_id,content_id,subject_kind,subject,qualified,completed,attention_quality,days FROM scored),
  readers AS (SELECT interval_id,content_id,subject_kind,subject,max(completed) AS completed,max(attention_quality) AS quality,
  groupUniqArrayArray(days) AS days FROM qualified_versions WHERE qualified GROUP BY interval_id,content_id,subject_kind,subject),
  feedback_source AS (SELECT content_id,subject_kind,subject,signal_type,event_id,argMax(tuple(occurred_at,value),version) AS c
@@ -122,7 +124,7 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  feedback AS (SELECT i.interval_id,c.subject_kind,c.subject,sum(c.c.2) AS value
  FROM intervals i INNER JOIN feedback_source c ON i.content_id=c.content_id
  WHERE c.c.1>=i.start_at AND c.c.1<i.end_at AND c.c.2!=0 GROUP BY i.interval_id,c.subject_kind,c.subject),
- measured AS (SELECT r.interval_id,count() AS readers,countIf(r.completed) AS completers,sum(r.quality) AS engagement,
+ interval_metrics AS (SELECT r.interval_id,count() AS readers,countIf(r.completed) AS completers,sum(r.quality) AS engagement,
  countIf(length(r.days)>1) AS returning,countIf(f.value>0) AS positive,countIf(f.value<0) AS negative
  FROM readers r LEFT JOIN feedback f ON r.interval_id=f.interval_id AND r.subject_kind=f.subject_kind AND r.subject=f.subject GROUP BY r.interval_id),
  segments AS (
@@ -134,7 +136,7 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
   (coalesce(m.completers,0)+%g)/(readers+%g) AS finish,
   (coalesce(m.positive,0)+%g)/(coalesce(m.positive,0)+coalesce(m.negative,0)+%g) AS approve,
   coalesce(m.returning,0)/(readers+%g) AS revisit
- FROM intervals i LEFT JOIN population p ON p.cohort_id=i.cohort_id LEFT JOIN measured m ON m.interval_id=i.interval_id
+ FROM intervals i LEFT JOIN population p ON p.cohort_id=i.cohort_id LEFT JOIN interval_metrics m ON m.interval_id=i.interval_id
 ),
 normalized AS (
  SELECT content_id,sum(duration*raw_rate)/sum(duration) AS normalized_raw_rate,
@@ -148,7 +150,7 @@ normalized AS (
 )
 SELECT content_id,normalized_raw_rate,normalized_rate,normalized_engagement,normalized_completion,normalized_approval,normalized_revisit,
  invalid_population,(%s) AS rank_score
-FROM normalized WHERE normalized_rate>0 OR invalid_population ORDER BY rank_score DESC,content_id ASC LIMIT ?%s`, st.db, st.notErased(), st.db, st.notErased(), measured, st.db, st.notErased(),
+FROM normalized WHERE normalized_rate>0 OR invalid_population ORDER BY rank_score DESC,content_id ASC LIMIT ?%s`, st.db, st.notErased(), st.db, st.notErased(), intervalCanonical, measured, st.db, st.notErased(),
 		n.PriorWeight, n.Quality.Engagement*n.Quality.EngagementWeight, n.Quality.EngagementWeight,
 		n.Quality.Completion*n.Quality.CompletionWeight, n.Quality.CompletionWeight,
 		n.Quality.Approval*n.Quality.ApprovalWeight, n.Quality.ApprovalWeight, n.Quality.RevisitWeight,
