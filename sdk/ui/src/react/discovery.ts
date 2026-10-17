@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Beacons, eventId, type Attribution, type BeaconOptions, type ViewSession } from "../client/beacons.js";
+import { Beacons, eventId, type Attribution, type BeaconOptions } from "../client/beacons.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
@@ -73,6 +73,7 @@ export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient 
 
 export interface UseRail {
   items: Card[];
+  summary?: ContentPage["summary"];
   loading: boolean;
   error?: ContentKitError;
   /** The site runs without the signal plane (not_configured): leave the rail out. */
@@ -82,9 +83,9 @@ export interface UseRail {
 
 function useRail(key: string | null, fetch: (signal: AbortSignal) => Promise<ContentPage>, o: { client?: ContentKitClient }): UseRail {
   const { store } = useContentScope(o.client);
-  const r = useResource<Card[]>(store, key, { type: "cards" }, async (signal) => (await fetch(signal)).contents);
+  const r = useResource<ContentPage>(store, key, { type: "cards" }, fetch);
   const unavailable = r.error?.code === "not_configured";
-  return { items: r.data ?? [], loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
+  return { items: r.data?.contents ?? [], summary: r.data?.summary, loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
 
 /** Contents like one: co-engagement, or the site's configured source. */
@@ -129,7 +130,9 @@ export function useDailyReleases(q: DailyReleasesQuery | null = {}, o: { client?
   return { data: r.data, loading: !!query && (r.loading || !r.loaded), error: r.error, reload: r.reload };
 }
 
-export interface UseHistory extends UseList<Card> {
+export interface UseHistory extends UseContents {
+  /** A status-filtered guest selection has hidden candidates whose current version facts cannot be inspected. */
+  filterSummaryUnknown?: boolean;
   /** Erases the reader's history: of one content item, one kind, or (no argument) everything. */
   forget: (o?: { kind?: string; content_id?: string }) => Promise<void>;
 }
@@ -146,16 +149,16 @@ export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKit
   const subscribe = useCallback((listener: () => void) => guest && enabled ? browser.subscribe(listener) : () => {}, [browser, guest, enabled]);
   const snapshot = useCallback(() => guest && enabled ? browser.snapshot() : NO_READING, [browser, guest, enabled]);
   const local = useSyncExternalStore(subscribe, snapshot, () => NO_READING);
-  const selected = useMemo(() => local.filter(row => !query?.kind || row.kind === query.kind), [local, query?.kind]);
+  const selected = useMemo(() => local.filter(row => !query?.kind || row.kind === query.kind).slice(0, 100), [local, query?.kind]);
   const localRevision = guest ? selected.map(row => [row.id, row.at, row.checkpoints.map(checkpoint => [checkpoint.visit_id, checkpoint.segment_id, checkpoint.revision])]) : undefined;
   const list = useList(store, !query || viewer === undefined ? null : keyOf("history", scope, query, localRevision), { type: "history" }, async (cursor, signal) => {
-    if (!guest) return page(await client.discovery.history({ ...query, cursor: cursor as string | undefined }, signal));
+    if (!guest) return page(await client.discovery.history({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal));
     const offset = typeof cursor === "number" ? cursor : 0;
     const limit = Math.max(1, Math.min(100, query?.limit ?? 50));
     const batch = selected.slice(offset, offset + limit);
     if (!batch.length) return { items: [], next: null };
     // Public hydration enforces current hard-domain rules, access and optional preferences.
-    const out = await client.discovery.list({ ids: batch.map(row => row.id), kind: query?.kind, language: query?.language,
+    const out = await client.discovery.list({ ids: (query?.summary && !cursor ? selected : batch).map(row => row.id), summary: !cursor ? query?.summary : undefined, kind: query?.kind, language: query?.language,
       display_language: query?.display_language, mode: query?.mode, card_entities: query?.card_entities, limit: 100 }, signal);
     const cards = new Map(out.contents.map(card => [card.id, card]));
     const items = batch.flatMap(row => {
@@ -164,14 +167,15 @@ export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKit
       if (query?.status === "seen" && !viewer.seen || query?.status === "in_progress" && (!viewer.seen || viewer.completed) || query?.status === "completed" && !viewer.completed) return [];
       return [{ ...card, viewer }];
     });
-    return { items, next: offset + batch.length < selected.length ? offset + batch.length : null };
+    return { items, next: offset + batch.length < selected.length ? offset + batch.length : null, metadata: out.summary };
   });
   const forget = useCallback((filter: { kind?: string; content_id?: string } = {}) => {
     if (!isCurrent()) return Promise.resolve();
     if (guest) { browser.clear(filter); return Promise.resolve(); }
     return guarded(() => client.discovery.forgetHistory(filter));
   }, [browser, client, guest, guarded, isCurrent]);
-  return { ...list, forget };
+  const uncertain = guest && !!query?.status;
+  return { ...list, summary: uncertain ? undefined : list.metadata, filterSummaryUnknown: uncertain && (list.metadata?.filtered_count ?? 0) > 0, forget };
 }
 
 export interface UseRecentSearches {
@@ -222,24 +226,28 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
 /** A favorite or reaction with its content's or group's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? "" })), next: p.next_cursor ?? null });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
+
+export interface UseInteractions extends UseList<MyInteraction, InteractionPage["summary"]> { summary?: InteractionPage["summary"] }
 
 /** The signed-in reader's favorites, most recent first: content cards or groups. */
-export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
+export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseInteractions {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q)!;
-  return useList(store, viewer === null ? null : keyOf("favorites", scope, query), { type: "favorites" }, async (cursor, signal) =>
-    interactions(await client.favorites.mine({ ...query, cursor: cursor as string | undefined }, signal)),
+  const list = useList(store, viewer === null ? null : keyOf("favorites", scope, query), { type: "favorites" }, async (cursor, signal) =>
+    interactions(await client.favorites.mine({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query.summary }, signal)),
   );
+  return { ...list, summary: list.metadata };
 }
 
 /** What the signed-in reader liked (or, with value, disliked), most recent first. */
-export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {}, o: { client?: ContentKitClient } = {}): UseList<MyInteraction> {
+export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {}, o: { client?: ContentKitClient } = {}): UseInteractions {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q)!;
-  return useList(store, viewer === null ? null : keyOf("reactions", scope, query), { type: "reactions" }, async (cursor, signal) =>
-    interactions(await client.reactions.mine({ ...query, cursor: cursor as string | undefined }, signal)),
+  const list = useList(store, viewer === null ? null : keyOf("reactions", scope, query), { type: "reactions" }, async (cursor, signal) =>
+    interactions(await client.reactions.mine({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query.summary }, signal)),
   );
+  return { ...list, summary: list.metadata };
 }
 
 export interface UseContentFilters {
@@ -431,22 +439,6 @@ export function beaconsFor(client: ContentKitClient, o?: BeaconOptions): Beacons
 export function useBeacons(o: { client?: ContentKitClient } = {}): Beacons {
   const { client } = useContentScope(o.client);
   return beaconsFor(client);
-}
-
-/** A view of a content (or one version) while it is shown: report its progress as it changes. */
-export function useViewSignal(content: string | null | undefined, version?: string, o: Attribution & { client?: ContentKitClient } = {}): ViewSession["update"] {
-  const { client, scope, viewer, language } = useContentScope(o.client);
-  const b = beaconsFor(client);
-  const isCurrent = useCurrentDiscoveryScope(client, scope);
-  // Retire the mutable session whenever its owner or read scope changes.
-  const holder = useMemo(() => ({ session: undefined as ViewSession | undefined }), [b, content, version, scope]); // eslint-disable-line react-hooks/exhaustive-deps
-  return useCallback((u) => {
-    if (!content || !isCurrent() || (viewer !== undefined && client.preferences.identity() !== viewer)) return;
-    // Create after the committed provider has configured authentication, not
-    // during render while the transport can still belong to the old account.
-    holder.session ??= b.view(content, version, { render_id: o.render_id, surface: o.surface, position: o.position, language: o.language ?? language });
-    holder.session.update(u);
-  }, [b, client, content, version, viewer, language, o.language, o.render_id, o.surface, o.position, holder, isCurrent]);
 }
 
 export interface ExposureOptions {

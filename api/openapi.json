@@ -4698,7 +4698,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -9851,7 +9851,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.",
+        "summary": "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
         "parameters": [
           {
             "name": "q",
@@ -10174,6 +10174,14 @@
             }
           },
           {
+            "name": "summary",
+            "in": "query",
+            "description": "lower-bound counts within considered candidates",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "ContentKit-Reader-Preferences",
             "in": "header",
             "required": false,
@@ -10425,6 +10433,14 @@
             "description": "12 by default, at most 50",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "lower-bound counts within considered candidates",
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -10911,6 +10927,14 @@
             }
           },
           {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "card_entities",
             "in": "query",
             "description": "the group kinds cards name; every kind with a page by default",
@@ -11183,6 +11207,14 @@
             }
           },
           {
+            "name": "summary",
+            "in": "query",
+            "description": "matching content counts for this caller, on the first page only",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "language",
             "in": "query",
             "description": "only content with a live version in this language",
@@ -11295,6 +11327,14 @@
             "description": "page size: 24 by default, at most 100",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "matching content counts for this caller, on the first page only",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -11586,7 +11626,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.",
+        "summary": "A content kind's measured readership per UTC day, newest first: distinct qualified readers, focused active time and signed-in readers, from the signal plane.",
         "parameters": [
           {
             "name": "kind",
@@ -11643,7 +11683,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.",
+        "summary": "A content kind's live, listed content in the request's site ranked by readers (the signal plane's) or published comments over a period.",
         "parameters": [
           {
             "name": "kind",
@@ -11656,7 +11696,7 @@
           {
             "name": "metric",
             "in": "query",
-            "description": "views (the default) or comments",
+            "description": "readers (the default) or comments",
             "schema": {
               "type": "string"
             }
@@ -11777,6 +11817,125 @@
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth"
+        ]
+      }
+    },
+    "/v1/manage/search-suggestions": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "the partial name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_kinds",
+            "in": "query",
+            "description": "configured content kinds; all only when include_contents is explicitly true",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "entity_kinds",
+            "in": "query",
+            "description": "configured entity kinds; all only when include_entities is explicitly true",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "include_contents",
+            "in": "query",
+            "description": "explicitly request authorized content targets",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include_entities",
+            "in": "query",
+            "description": "explicitly request entity targets; requires entity-management authority",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "configured name language; normal text fallback applies",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "per section: 8 by default, from 1 through 20",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Typeahead"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "unauthorized",
+          "forbidden",
+          "unavailable"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
         ]
       }
     },
@@ -12140,10 +12299,10 @@
           "date": {
             "type": "string"
           },
-          "views": {
+          "readers": {
             "type": "integer"
           },
-          "viewers": {
+          "active_ms": {
             "type": "integer"
           },
           "users": {
@@ -12152,8 +12311,8 @@
         },
         "required": [
           "date",
-          "views",
-          "viewers",
+          "readers",
+          "active_ms",
           "users"
         ]
       },
@@ -13326,9 +13485,6 @@
               "$ref": "#/components/schemas/Version"
             }
           },
-          "views": {
-            "type": "integer"
-          },
           "viewer": {
             "$ref": "#/components/schemas/ViewerState"
           },
@@ -13712,9 +13868,6 @@
           "comments": {
             "type": "string"
           },
-          "view_baseline": {
-            "type": "integer"
-          },
           "access": {
             "$ref": "#/components/schemas/Rule"
           },
@@ -13872,9 +14025,6 @@
             "type": "integer"
           },
           "favorites": {
-            "type": "integer"
-          },
-          "views": {
             "type": "integer"
           }
         }
@@ -15621,6 +15771,9 @@
           },
           "next_cursor": {
             "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ListingSummary"
           }
         },
         "required": [
@@ -18333,15 +18486,6 @@
             "type": "string",
             "format": "date-time"
           },
-          "duration_s": {
-            "type": "integer"
-          },
-          "progress": {
-            "type": "integer"
-          },
-          "resume": {
-            "type": "string"
-          },
           "render_id": {
             "type": "string"
           },
@@ -18380,15 +18524,6 @@
           "occurred_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "duration_s": {
-            "type": "integer"
-          },
-          "progress": {
-            "type": "integer"
-          },
-          "resume": {
-            "type": "string"
           }
         }
       },
@@ -19042,7 +19177,7 @@
           "resume": {
             "type": "string"
           },
-          "last_view_at": {
+          "last_read_at": {
             "type": "string",
             "format": "date-time"
           }

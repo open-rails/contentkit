@@ -2248,7 +2248,7 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
@@ -2533,7 +2533,7 @@ func (q GetTypeaheadQuery) values() url.Values {
 	return v
 }
 
-// GetTypeahead is GET /v1/typeahead (public). Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.
+// GetTypeahead is GET /v1/typeahead (public). Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.
 func (c *Client) GetTypeahead(ctx context.Context, q GetTypeaheadQuery) (discovery.Typeahead, error) {
 	var out discovery.Typeahead
 	err := c.call(ctx, http.MethodGet, "/v1/typeahead", q.values(), nil, &out)
@@ -2580,6 +2580,8 @@ type GetContentSimilarQuery struct {
 	CardEntities []string
 	// 12 by default, at most 50
 	Limit int
+	// lower-bound counts within considered candidates
+	Summary *bool
 }
 
 func (q GetContentSimilarQuery) values() url.Values {
@@ -2641,6 +2643,9 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
 	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
+	}
 	return v
 }
 
@@ -2691,6 +2696,8 @@ type GetRecommendationsQuery struct {
 	CardEntities []string
 	// 12 by default, at most 50
 	Limit int
+	// lower-bound counts within considered candidates
+	Summary *bool
 }
 
 func (q GetRecommendationsQuery) values() url.Values {
@@ -2751,6 +2758,9 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
 	return v
 }
@@ -2947,6 +2957,8 @@ type GetMeHistoryQuery struct {
 	Kind string
 	// seen, in_progress or completed; any by default
 	Status string
+	// selection-wide filtered and locked counts on the first page
+	Summary *bool
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
 	// only content with a live version in this language
@@ -2968,6 +2980,9 @@ func (q GetMeHistoryQuery) values() url.Values {
 	}
 	if q.Status != "" {
 		v.Set("status", q.Status)
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
 	if len(q.CardEntities) > 0 {
 		v.Set("card_entities", strings.Join(q.CardEntities, ","))
@@ -3043,6 +3058,8 @@ type GetMeFavoritesQuery struct {
 	Cursor string
 	// page size: 24 by default, at most 100
 	Limit int
+	// matching content counts for this caller, on the first page only
+	Summary *bool
 	// only content with a live version in this language
 	Language string
 	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
@@ -3067,6 +3084,9 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -3101,6 +3121,8 @@ type GetMeReactionsQuery struct {
 	Cursor string
 	// page size: 24 by default, at most 100
 	Limit int
+	// matching content counts for this caller, on the first page only
+	Summary *bool
 	// only content with a live version in this language
 	Language string
 	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
@@ -3128,6 +3150,9 @@ func (q GetMeReactionsQuery) values() url.Values {
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -3279,7 +3304,7 @@ func (q GetStatsActivityQuery) values() url.Values {
 	return v
 }
 
-// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.
+// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership per UTC day, newest first: distinct qualified readers, focused active time and signed-in readers, from the signal plane.
 func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) (discovery.Activity, error) {
 	var out discovery.Activity
 	err := c.call(ctx, http.MethodGet, "/v1/stats/activity", q.values(), nil, &out)
@@ -3290,7 +3315,7 @@ func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) 
 type GetStatsTopQuery struct {
 	// the content kind; required
 	Kind string
-	// views (the default) or comments
+	// readers (the default) or comments
 	Metric string
 	// 7d, 30d (the default), 90d, 365d or all
 	Period string
@@ -3330,7 +3355,7 @@ func (q GetStatsTopQuery) values() url.Values {
 	return v
 }
 
-// GetStatsTop is GET /v1/stats/top (staff). A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.
+// GetStatsTop is GET /v1/stats/top (staff). A content kind's live, listed content in the request's site ranked by readers (the signal plane's) or published comments over a period.
 func (c *Client) GetStatsTop(ctx context.Context, q GetStatsTopQuery) (discovery.TopContents, error) {
 	var out discovery.TopContents
 	err := c.call(ctx, http.MethodGet, "/v1/stats/top", q.values(), nil, &out)
@@ -3341,6 +3366,57 @@ func (c *Client) GetStatsTop(ctx context.Context, q GetStatsTopQuery) (discovery
 func (c *Client) GetMeStats(ctx context.Context) (discovery.MyStats, error) {
 	var out discovery.MyStats
 	err := c.call(ctx, http.MethodGet, "/v1/me/stats", nil, nil, &out)
+	return out, err
+}
+
+// GetManageSearchSuggestionsQuery is the query of GetManageSearchSuggestions.
+type GetManageSearchSuggestionsQuery struct {
+	// the partial name
+	Q string
+	// configured content kinds; all only when include_contents is explicitly true
+	ContentKinds []string
+	// configured entity kinds; all only when include_entities is explicitly true
+	EntityKinds []string
+	// explicitly request authorized content targets
+	IncludeContents *bool
+	// explicitly request entity targets; requires entity-management authority
+	IncludeEntities *bool
+	// configured name language; normal text fallback applies
+	DisplayLanguage string
+	// per section: 8 by default, from 1 through 20
+	Limit int
+}
+
+func (q GetManageSearchSuggestionsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if len(q.ContentKinds) > 0 {
+		v.Set("content_kinds", strings.Join(q.ContentKinds, ","))
+	}
+	if len(q.EntityKinds) > 0 {
+		v.Set("entity_kinds", strings.Join(q.EntityKinds, ","))
+	}
+	if q.IncludeContents != nil {
+		v.Set("include_contents", fmt.Sprint(*q.IncludeContents))
+	}
+	if q.IncludeEntities != nil {
+		v.Set("include_entities", fmt.Sprint(*q.IncludeEntities))
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetManageSearchSuggestions is GET /v1/manage/search-suggestions (public). Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.
+func (c *Client) GetManageSearchSuggestions(ctx context.Context, q GetManageSearchSuggestionsQuery) (discovery.Typeahead, error) {
+	var out discovery.Typeahead
+	err := c.call(ctx, http.MethodGet, "/v1/manage/search-suggestions", q.values(), nil, &out)
 	return out, err
 }
 

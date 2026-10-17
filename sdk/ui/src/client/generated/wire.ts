@@ -44,8 +44,8 @@ export interface ActivityContextsInput {
 
 export interface ActivityDay {
   date: string;
-  views: number;
-  viewers: number;
+  readers: number;
+  active_ms: number;
   users: number;
 }
 
@@ -394,7 +394,6 @@ export interface Content {
   creators: Creator[];
   entities: GroupSummary[];
   versions: Version[];
-  views?: number;
   viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
@@ -498,7 +497,6 @@ export interface ContentRecord {
   deleted_at?: string;
   listing?: string;
   comments?: string;
-  view_baseline?: number;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
@@ -550,7 +548,6 @@ export interface Counts {
   likes?: number;
   dislikes?: number;
   favorites?: number;
-  views?: number;
 }
 
 export interface CoverageRange {
@@ -1099,6 +1096,7 @@ export interface Interaction {
 export interface InteractionPage {
   items: Interaction[];
   next_cursor?: string;
+  summary?: ListingSummary;
 }
 
 export interface Item {
@@ -1899,9 +1897,6 @@ export interface SignalInput {
   event_id: string;
   revision?: number;
   occurred_at: string;
-  duration_s?: number;
-  progress?: number;
-  resume?: string;
   render_id?: string;
   surface?: string;
   position?: number;
@@ -1916,9 +1911,6 @@ export interface SignalRecord {
   event_id: string;
   revision?: number;
   occurred_at: string;
-  duration_s?: number;
-  progress?: number;
-  resume?: string;
 }
 
 export interface Signals {
@@ -2119,7 +2111,7 @@ export interface ViewerState {
   progress: number;
   progress_max: number;
   resume?: string;
-  last_view_at?: string;
+  last_read_at?: string;
 }
 
 export interface VoteRecord {
