@@ -53,6 +53,7 @@ export const discovery: typeof en = {
     pageProgress_other: "{progress} / {count} 页",
     minuteProgress_one: "{progress} / {count} 分钟",
     minuteProgress_other: "{progress} / {count} 分钟",
+    notInLanguage: "没有{language}版本，正在显示{shown}版本。",
     search: "搜索",
     searchPlaceholder: "搜索…",
     clearSearch: "清除搜索",

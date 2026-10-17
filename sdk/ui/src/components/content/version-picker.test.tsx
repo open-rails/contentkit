@@ -8,7 +8,7 @@ import { createContentKitClient } from "../../client/index.js";
 import type { Version } from "../../client/generated/wire.js";
 import { ContentKitProvider, type Navigate } from "../../react/index.js";
 import type { PlayerMenuItem } from "../video-player.js";
-import { VersionPicker, useVersionMenuItems } from "./paywall.js";
+import { LanguageFallbackNotice, VersionPicker, useVersionMenuItems } from "./paywall.js";
 
 const version = (id: string, code: string, languages: string[], traits: string[] = []): Version => ({
   id,
@@ -74,4 +74,15 @@ it("without ?v= opens the reader's language's first version by position", () => 
   const sorted = [{ ...versions[0]!, position: 1 }, { ...versions[1]!, position: 0 }, { ...versions[2]!, position: 2 }];
   render(<VersionPicker versions={sorted} />, { wrapper: wrap({ language: "en" }) });
   expect(screen.getByRole("radio", { name: /Colored/ })).toHaveAttribute("aria-checked", "true");
+});
+
+it("notes when the page's language isn't served, showing the fallback and each served language", async () => {
+  const onChange = vi.fn();
+  const { rerender } = render(<LanguageFallbackNotice versions={versions} language="de" onChange={onChange} />, { wrapper: wrap({ language: "de" }) });
+  expect(screen.getByRole("note")).toHaveTextContent("Not available in German, showing English.");
+  expect(screen.getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(screen.getByRole("button", { name: "Japanese" }));
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "v3" }));
+  rerender(<LanguageFallbackNotice versions={versions} language="en" />);
+  expect(screen.queryByRole("note")).toBeNull();
 });

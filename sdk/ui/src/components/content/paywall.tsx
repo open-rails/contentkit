@@ -167,6 +167,37 @@ function useChoices(versions: readonly Version[], value: string | null | undefin
   }, [versions, selected, reader, change]);
 }
 
+export interface LanguageFallbackNoticeProps extends Omit<VersionPickerProps, "labels"> {
+  /** The page's language: the notice shows when the shown version doesn't serve it. */
+  language: string;
+}
+
+/**
+ * A quiet note that the content isn't available in the page's language, which
+ * version it shows instead, and each language it does serve to switch to.
+ */
+export function LanguageFallbackNotice({ versions, value, onChange, language, className, appearance }: LanguageFallbackNoticeProps) {
+  const { t } = useMessages();
+  const languageName = useLanguageName();
+  const { current, languages, change } = useChoices(versions, value, onChange);
+  if (!current || !language || current.languages.includes(language)) return null;
+  const sorted = [...versions].sort((a, b) => a.position - b.position);
+  return (
+    <ContentKitUiRoot appearance={appearance} role="note" className={cn("flex flex-wrap items-center gap-2 text-sm text-muted-foreground", className)} data-ckui="language-fallback">
+      <span>{t("contents.notInLanguage", { language: languageName(language), shown: languageName(primary(current)) })}</span>
+      {languages.length > 1 &&
+        languages.map((l) => {
+          const v = sorted.find((x) => primary(x) === l)!;
+          return (
+            <Button key={l} size="xs" variant={l === primary(current) ? "secondary" : "outline"} aria-pressed={l === primary(current)} onClick={() => change(v)}>
+              {languageName(l)}
+            </Button>
+          );
+        })}
+    </ContentKitUiRoot>
+  );
+}
+
 /**
  * Chooses among a content's versions: a language first when they differ in
  * language, then its variants (traits, labels). The choice is the page's ?v=
