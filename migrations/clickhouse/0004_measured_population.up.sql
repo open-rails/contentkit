@@ -30,4 +30,3 @@ CREATE TABLE IF NOT EXISTS measured_population_coverage {{ON_CLUSTER}} (
 )
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}')
 ORDER BY (tenant, content_kind, domain, language);
-

@@ -10,7 +10,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/open-rails/contentkit/contentref"
 )
 
 // Conn is the minimal ClickHouse surface the Store needs; clickhouse-go's
