@@ -152,8 +152,7 @@ Repeating completion is safe. A status response resembles:
   "progress": {"stage": "complete", "completed": 20, "total": 20},
   "result": {
     "path": "/en/g/EXAMPLE/example-gallery",
-    "pages": 20,
-    "page_review": {"sources": 23, "selected": 20, "excluded": 3, "flagged": 4}
+    "pages": 20
   },
   "created_at": "2026-10-15T12:00:00Z",
   "updated_at": "2026-10-15T12:00:05Z"
@@ -200,53 +199,35 @@ New numeric filenames are normalized once: `1.png`, `2.png`, `10.png` become
 `001.png`, `002.png`, `010.png` in natural numeric order. Numeric gaps are kept,
 and larger numbers are not truncated. A joined spread such as `002-003.png`
 remains one reader image; by default it replaces separate pages 2 and 3 in the
-reading order. The original names remain in the review record. Existing reader
-keys and manually reordered pages are not renamed during reprocessing.
+reading order. Stored names and reader keys never change; editors and downloads
+name pages by their place (`01.png`, `02.png`, … padded to the page count).
 
-Exact duplicates and confidently empty pages are automatically excluded.
-Uncertain blank pages, unusual numbering and conflicting ranges stay available
-with review flags. Native analysis examines the original pixels before cropping
-or resizing, and a failure to classify a valid image does not block publication.
-If automatic cleanup would leave no pages, one source remains included with an
-explicit empty-selection review flag. An editor cannot exclude every page.
-The normal three-request upload flow needs no additional QA-start or approval
-request. `result.page_review` summarizes the selected and flagged sources.
+Exact duplicates, confidently empty pages and singles covered by a two-page
+spread are removed automatically, and an archive's pages are put in natural
+name order. Native analysis examines the original pixels before cropping or
+resizing, and a failure to classify a valid image does not block publication.
+If automatic cleanup would leave no pages, one source remains included. The
+normal three-request upload flow needs no QA-start or approval request.
 
-An editor can inspect every retained page through:
+Each automatic change is a quiet, dismissible notice for editors:
 
 ```http
-GET /v1/contents/{content-id}/versions/{version-id}/pages
+GET  /v1/contents/{content-id}/versions/{version-id}/page-notices
+POST /v1/contents/{content-id}/versions/{version-id}/page-notices/{notice}/dismiss
+POST /v1/contents/{content-id}/versions/{version-id}/page-notices/{notice}/restore
 ```
 
-The response includes a `revision`, ordered `pages`, original names, canonical
-IDs, automatic decisions, confidence, flags and signed editor preview/source
-URLs. The standard ContentKit version editor exposes these same controls.
-The Go client exposes `GetContentVersionPages` and `PatchContentVersionPages`;
-the browser client uses `versions.pages` and `versions.updatePages`.
-
-To restore a source, use its canonical ID and the revision just read:
-
-```http
-PATCH /v1/contents/{content-id}/versions/{version-id}/pages
-Content-Type: application/json
-
-{"revision":"<current revision>","pages":[{"id":"002","mode":"include"}]}
-```
-
-The modes are `include`, `exclude` and `auto`. Explicit choices survive later
-analysis and rendition regeneration. An optional `order` array must contain
-every retained page ID exactly once, including excluded sources; moving pages
-changes their order, not their stable IDs. A stale revision returns HTTP 409:
-reload the report before editing again. Review changes and automatic decisions
-are recorded for audit. These editor-only operations are optional corrections,
-not extra steps in ordinary publishing.
+A `removed` notice lists the removed pages and why (`blank`, `duplicate`,
+`spread`); restoring puts them back where they were. A `reordered` notice gives
+each page's archive position (`from`) and applied position (`to`); reorder by
+moving pages instead. Neither ever blocks saving or publishing. The Go client
+exposes `GetContentVersionPageNotices`, `PostContentVersionPageNoticeDismiss`
+and `PostContentVersionPageNoticeRestore`; the browser client uses
+`versions.pageNotices`, `dismissPageNotice` and `restorePageNotice`.
 
 Versions with explicit chapter/segment ranges preserve their existing selection
-and source order. They carry `segmented_selection_preserved` review flags, and
-the review UI is read-only for inclusion and ordering. This avoids moving a
-page across an existing release or access boundary; it does not pause ordinary
-publishing. Segment-aware remapping must be handled explicitly before those
-versions can use automatic exclusion or structural page review.
+and source order, so automatic removal never moves a page across a release or
+access boundary; restoring such pages needs the chapters edited first.
 
 For browsing existing items, `GET /v1/manage/gallery?q=...` selects a configured
 kind directly in the path. `/v1/manage` lists across kinds. Both apply the same authorization.

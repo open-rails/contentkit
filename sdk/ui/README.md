@@ -755,12 +755,12 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   Management authorization remains enforced by the server. Set
   `presentation="header"` for the shared centered-header dropdown.
 
-- **`PageReview`**: retained page sources, original filenames, automatic cleanup
-  reasons, previews, inclusion overrides and ordering. `ContentManager` includes
-  it for reader versions; use `content` and `version` to embed it separately.
-  `usePageReview()` exposes the same revision-checked API. Explicitly segmented
-  versions keep their selection/order and show read-only review controls so
-  cleanup cannot move pages across release/access boundaries.
+- **`PageNotices`**: quiet, collapsed notes about automatic page changes:
+  pages removed as blank, duplicate or covered by a spread (one-click Restore)
+  and archives put in name order (Dismiss). It renders nothing without notices
+  and never blocks saving or publishing. `ContentManager` includes it for reader
+  versions; `usePageNotices()` exposes the same API. Page tiles are named by
+  their place and reordered by dragging the whole tile.
 
 - **`ReaderManifestEditor`**: a reader version's manifest over its published
   pages and audio: scroll anchors, audio cues (matched to pages or anchors by

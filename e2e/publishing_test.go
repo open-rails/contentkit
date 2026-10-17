@@ -12,7 +12,6 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -212,82 +211,46 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_memberships"}.Sanitize()+" WHERE tenant_id=$1 AND content_id=$2 AND state='active'", env.Tenant, final.ContentID).Scan(&groups); err != nil || groups != 3 {
 		t.Fatalf("resolved groups: %d %v", groups, err)
 	}
-	// Review the actual retained archive sources through the app-bound key.
-	// Excluding one changes the published reader, not the source inventory.
-	review, err := client.GetContentVersionPages(ctx, final.ContentID, final.VersionID)
-	if err != nil || len(review.Pages) != 3 || review.Selected != 3 || review.Revision == "" {
-		t.Fatalf("page review: %+v %v", review, err)
+	// The archive listed page10 before page2 and page1; natural order is a
+	// quiet notice the app-bound key can read and dismiss, never restore.
+	notices, err := client.GetContentVersionPageNotices(ctx, final.ContentID, final.VersionID)
+	if err != nil || len(notices.Notices) != 1 || notices.Notices[0].Kind != "reordered" {
+		t.Fatalf("page notices: %+v %v", notices, err)
 	}
-	sources := map[string]string{}
-	for _, page := range review.Pages {
-		if page.SourceSHA256 == "" {
-			t.Fatalf("source has no checksum: %+v", page)
-		}
-		sources[page.Path] = page.SourceSHA256
+	var applied []string
+	for _, page := range notices.Notices[0].Pages {
+		applied = append(applied, fmt.Sprintf("%s:%d>%d", page.SourceName, page.From, page.To))
 	}
-	originalRevision, excluded := review.Revision, review.Pages[1].ID
-	review, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{
-		Revision: originalRevision, Pages: []versions.PageReviewChange{{ID: excluded, Mode: "exclude"}},
-	})
-	if err != nil || review.Selected != 2 || len(review.Pages) != 3 || review.Revision == originalRevision {
-		t.Fatalf("exclude page: %+v %v", review, err)
+	if strings.Join(applied, ",") != "page1.png:3>1,page2.png:2>2,page10.png:1>3" {
+		t.Fatalf("archive order to applied order: %v", applied)
 	}
-	_, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{Revision: originalRevision})
-	var staleReview *contentkit.Error
-	if !errors.As(err, &staleReview) || staleReview.Status != http.StatusConflict {
-		t.Fatalf("stale review accepted: %v", err)
+	notice := notices.Notices[0].ID
+	_, err = client.PostContentVersionPageNoticeRestore(ctx, final.ContentID, final.VersionID, notice)
+	var nothing *contentkit.Error
+	if !errors.As(err, &nothing) || nothing.Status != http.StatusBadRequest {
+		t.Fatalf("a reorder has nothing to restore: %v", err)
 	}
-	readerNames := func() []string {
-		reply, err := client.GetContentVersionReader(ctx, final.ContentID, final.VersionID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if reply.Status == http.StatusAccepted {
-			return nil
-		}
-		var plan versions.ReaderPlan
-		if err := reply.Decode(&plan); err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, segment := range plan.Segments {
-			for _, page := range segment.Pages {
-				names = append(names, page.Name)
-			}
-		}
-		return names
+	if err = client.PostContentVersionPageNoticeDismiss(ctx, final.ContentID, final.VersionID, notice); err != nil {
+		t.Fatal(err)
 	}
-	eventually(t, "excluded page to leave the published reader", func() bool {
-		names := readerNames()
-		return len(names) == 2 && !slices.Contains(names, excluded)
-	})
-	review, err = client.GetContentVersionPages(ctx, final.ContentID, final.VersionID)
+	if notices, err = client.GetContentVersionPageNotices(ctx, final.ContentID, final.VersionID); err != nil || len(notices.Notices) != 0 {
+		t.Fatalf("dismissed notice: %+v %v", notices, err)
+	}
+	reply, err := client.GetContentVersionReader(ctx, final.ContentID, final.VersionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	order := make([]string, len(review.Pages))
-	for i, page := range review.Pages {
-		order[len(order)-1-i] = page.ID
+	var plan versions.ReaderPlan
+	if reply.Status != http.StatusOK || reply.Decode(&plan) != nil || plan.Pages == nil || *plan.Pages != 3 {
+		t.Fatalf("a dismissal changed the reader: %+v", plan)
 	}
-	review, err = client.PatchContentVersionPages(ctx, final.ContentID, final.VersionID, versions.PageReviewPatch{
-		Revision: review.Revision, Pages: []versions.PageReviewChange{{ID: excluded, Mode: "include"}}, Order: order,
-	})
-	if err != nil || review.Selected != 3 || len(review.Pages) != 3 {
-		t.Fatalf("restore and reorder: %+v %v", review, err)
-	}
-	for _, page := range review.Pages {
-		if sources[page.Path] != page.SourceSHA256 {
-			t.Fatalf("review changed original source: %+v", page)
-		}
-	}
-	eventually(t, "restored reader order", func() bool { return slices.Equal(readerNames(), order) })
 	checker, err := suiteChecker()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, route := range []string{"versions GET /contents/{id}/versions/{version}/pages", "versions PATCH /contents/{id}/versions/{version}/pages"} {
+	for _, route := range []string{"versions GET /contents/{id}/versions/{version}/page-notices", "versions POST /contents/{id}/versions/{version}/page-notices/{notice}/dismiss", "versions POST /contents/{id}/versions/{version}/page-notices/{notice}/restore"} {
 		if !checker.Served()[route] {
-			t.Fatalf("page review route was not checked: %s", route)
+			t.Fatalf("page notice route was not checked: %s", route)
 		}
 	}
 	changed := request
