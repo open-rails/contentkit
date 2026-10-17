@@ -1005,3 +1005,36 @@ func TestKeywordDocuments(t *testing.T) {
 		t.Fatalf("tag page %v %v %v", listed, done, err)
 	}
 }
+
+// An edge added while a merge retires one of its groups waits for the merge
+// and is refused, rather than staying attached to the retired group.
+func TestEdgeToAGroupBeingMergedIsRefused(t *testing.T) {
+	f := newFixture(t)
+	g := f.create(GroupInput{Kind: "series", Slug: "from"}, GroupInput{Kind: "series", Slug: "into"}, GroupInput{Kind: "series", Slug: "peer"})
+	from, into, peer := g[0], g[1], g[2]
+	merge, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer merge.Rollback(f.ctx)
+	groups := pgx.Identifier{f.schema, "content_groups"}.Sanitize()
+	if _, err := merge.Exec(f.ctx, `SELECT 1 FROM `+groups+` WHERE id = $1 FOR UPDATE`, string(from.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := merge.Exec(f.ctx, `UPDATE `+groups+` SET state = 'merged', merged_into = $2 WHERE id = $1`, string(from.ID), string(into.ID)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.s.AddEdges(f.ctx, []Edge{{From: from.ID, Relation: "related", To: peer.ID}}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("the edge did not wait for the merge: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := merge.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("edge to a merged group: %v", err)
+	}
+}

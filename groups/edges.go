@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -67,7 +68,18 @@ func (s *Store) AddEdges(ctx context.Context, edges []Edge) error {
 	if err != nil {
 		return err
 	}
+	ids := make([]string, 0, 2*len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.From, r.To)
+	}
+	slices.Sort(ids)
 	return s.run(ctx, func(q Querier) error {
+		// Hold the endpoints against a merge or delete retiring one of them
+		// until the edge is in; ordered like their FOR UPDATE.
+		if _, err := q.Exec(ctx, fmt.Sprintf(`SELECT 1 FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR SHARE`,
+			s.table("content_groups")), s.tenant, slices.Compact(ids)); err != nil {
+			return err
+		}
 		var inactive int
 		if err := q.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM jsonb_to_recordset($2::jsonb) AS r("from" text, "to" text), LATERAL unnest(ARRAY[r."from", r."to"]) AS e(id)
  WHERE NOT EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = $1 AND g.id = e.id AND g.state = 'active')`, s.table("content_groups")), s.tenant, data).Scan(&inactive); err != nil {
