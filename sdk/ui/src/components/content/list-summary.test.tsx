@@ -253,14 +253,14 @@ it("uses the shared premium reveal in related rails", async () => {
   expect(await screen.findByText("Gallery paid")).toBeVisible();
 });
 
-it("keeps guest favorites empty without asking the account endpoint", async () => {
+it("asks guests to sign in for favorites without asking the account endpoint", async () => {
   const s = server([card("private")]);
   render(
     <ContentKitProvider client={s.client} viewer={null}>
       <ContentFavorites empty="Favorite galleries will appear here" />
     </ContentKitProvider>,
   );
-  expect(await screen.findByText("Favorite galleries will appear here")).toBeVisible();
+  expect(await screen.findByText("Sign in to save favorites")).toBeVisible();
   expect(s.reads.some((u) => u.pathname === "/v1/me/favorites")).toBe(false);
 });
 
