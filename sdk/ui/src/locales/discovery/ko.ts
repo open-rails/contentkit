@@ -81,7 +81,6 @@ export const discovery: typeof en = {
     sort_popular: "인기",
     sort_top_rated: "높은 평점",
     sort_most_favorited: "즐겨찾기순",
-    sort_most_viewed: "조회수순",
     sort_random: "무작위",
     sort_position: "순서",
     period_7d: "이번 주",

@@ -1013,35 +1013,58 @@ language choice. Ordinary sign-ins never import guest preferences.
 a retry action. ReaderSettings shows an incomplete transfer and lets the reader
 retry it. Guest preferences are retained separately after registration and logout.
 
-### Activity tracking
+### Measured engagement
 
-`useViewSignal(contentId, versionId)` starts an observation when its returned
-callback first reports progress. The shared `Beacons` client immediately requests
-an activity context from ContentKit, then includes that signed receipt in each
-revision. Its server timestamp stays fixed for the entire view. Pass a version
-when one is displayed; receipt requests use the provider's current language, or
-the client's configured request language outside React.
+`useReadingEngagement(contentId, versionId, options)` measures loaded, visible
+content while the page is focused. Keep the hook above the horizontal/vertical
+reader switch so a mode change retains its visit. Attach `engagement.page(index,
+filename)` to the actual image element (zero-based index), or `engagement.video`
+to the playing video. `engagement.setResume(filenameOrAnchor)` records the opaque
+reader selector separately from measured coverage. Optional
+`[data-reader-viewport]` on the reader container clips page measurements to that
+viewport, including long-page breakpoint readers.
 
-`useExposure(items, options)` records cumulative rendered and visible placements.
-It splits long lists into stable segments of at most 32 placements, increments
-each segment's stage revision, and attributes clicks to the matching segment.
-Each newly observed placement receives its own server context. The client does
-not supply premium status or eligibility claims. Receipt requests are batched in
-groups of at most 100 targets.
+Opening the route, preloading an image and changing the page selector produce
+no engagement on their own. The tracker measures the visible part of each image
+and focused active milliseconds; multiple visible pages share elapsed attention.
+Static-page attention pauses after 60 seconds without genuine input (configurable
+with `idleAfter`). Visible, focused playback continues without requiring mouse
+motion, but pauses, buffering and seeks do not become watched coverage. Suspended
+timer gaps over five seconds are discarded rather than guessed.
 
-For a custom integration, `client.discovery.activityContexts(targets, session,
-language)` exposes `POST /activity-contexts`. Request its contexts when the
-observation starts, not when a delayed event batch is flushed. An explicit
-`enabled: false` response permits legacy tracking for an embedding without a
-signer; a failed or invalid receipt never silently becomes an untrusted event.
+Page changes stay local. Cumulative snapshots flush at most every 120 seconds
+(`checkpointInterval` may shorten this), and on hiding/exiting the page or
+unmounting the reader. `engagement.flush()` offers an explicit checkpoint.
+Each segment captures its own immutable server activity receipt when observation
+starts, retaining event-time premium/free access across retries; a later receipt
+never reclassifies earlier attention. Revisions replace the same segment, rather
+than incrementing visit or page-open counters. Positive short partials are kept
+so later measured attention can accumulate; qualification happens server-side.
 
-The provider's identity changes invalidate buffered observations and active
-view sessions. Events collected for one account or guest are never reassigned
-to the next account. Custom callers using `Beacons.exposure` should call
-`endExposure(renderId)` after the list leaves the page to release receipt state;
-`useExposure` does this automatically.
+Use `enabled` to honor the host's consent and authentication-readiness policy.
+With an explicitly signed-out provider (`viewer={null}`), positive partials also
+save browser-local resume/history across tabs. This remains useful when the signal
+plane is unavailable, without inventing remote analytics. Account history stays
+server-owned. An account switch discards old in-flight observations instead of
+assigning them to the next account. The optional `kind` groups local guest history
+only; remote requests never trust a browser-supplied content kind.
 
-Tracking flushes pack complete events into byte-bounded requests and serialize
-keepalive sends across clients. Large queues flush while the page is active.
-A single cumulative event that exceeds the keepalive budget uses normal fetch;
-its delivery during page exit remains best effort.
+For a custom integration, `EngagementTracker` accepts injected `begin` and
+`submit` callbacks. `client.discovery.activityContexts(targets, session, language)`
+exposes `POST /activity-contexts`; `client.discovery.engagement(snapshots, options)`
+exposes `POST /engagement`. Capture receipts when their segments begin, not when
+delayed batches flush. A missing, disabled or invalid receipt prevents remote
+engagement submission and never falls back to legacy route-open tracking.
+
+`useExposure(items, options)` separately records cumulative rendered and visible
+list placements and attributes clicks to their original ranks. Hidden paid tiles
+are not impressions. An explicit item `position` preserves gaps from omitted
+cards. Each new placement receives a server context; the client supplies no
+premium-status or eligibility claims. End custom `Beacons.exposure` receipt state
+with `endExposure(renderId)` when its list leaves the page; `useExposure` does this
+automatically. These bounded exposure/click packets serialize keepalive requests;
+exit delivery remains best effort.
+
+The staff dashboard and SDK statistics queries use measured people and active
+time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
+for daily distinctness, qualification and active-time units.

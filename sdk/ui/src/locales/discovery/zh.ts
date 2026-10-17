@@ -81,7 +81,6 @@ export const discovery: typeof en = {
     sort_popular: "热门",
     sort_top_rated: "高分",
     sort_most_favorited: "最多收藏",
-    sort_most_viewed: "最多观看",
     sort_random: "随机",
     sort_position: "顺序",
     period_7d: "本周",

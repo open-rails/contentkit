@@ -81,7 +81,6 @@ export const discovery: typeof en = {
     sort_popular: "Populares",
     sort_top_rated: "Mejor valorados",
     sort_most_favorited: "Más favoritos",
-    sort_most_viewed: "Más vistos",
     sort_random: "Aleatorio",
     sort_position: "En orden",
     period_7d: "esta semana",

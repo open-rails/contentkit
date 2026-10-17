@@ -80,7 +80,6 @@ export const discovery = {
     sort_popular: "Popular",
     sort_top_rated: "Top rated",
     sort_most_favorited: "Most favorited",
-    sort_most_viewed: "Most viewed",
     sort_random: "Random",
     sort_position: "In order",
     period_7d: "this week",
