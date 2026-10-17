@@ -19,8 +19,8 @@ type ListingSummary struct {
 	FilteredCount    int                     `json:"filtered_count"`
 	FilteredEntities []ReleaseFilteredEntity `json:"filtered_entities"`
 	LockedCount      int                     `json:"locked_count"`
-	// Truncated makes counts lower bounds when keyword retrieval filled its
-	// bounded candidate window. Ordinary lists have exact selection counts.
+	// Truncated makes counts lower bounds for bounded keyword or recommendation
+	// candidate windows. Ordinary lists have exact selection counts.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
@@ -30,6 +30,7 @@ type ListingSummary struct {
 type summaryCandidates struct {
 	visible, relaxed []string
 	truncated        bool
+	selection        func(*sel) *sel
 }
 
 func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *sel, sort order, candidates *summaryCandidates) (*ListingSummary, error) {
@@ -40,6 +41,9 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		return nil, err
 	}
 	if candidates != nil {
+		if candidates.selection != nil {
+			visible = candidates.selection(visible)
+		}
 		visible = summaryCandidateSelection(visible, candidates.visible)
 		out.Truncated = candidates.truncated
 	}
@@ -89,6 +93,9 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		return nil, err
 	}
 	if candidates != nil {
+		if candidates.selection != nil {
+			relaxed = candidates.selection(relaxed)
+		}
 		relaxed = summaryCandidateSelection(relaxed, candidates.relaxed)
 	}
 	err = s.summaryRows(ctx, relaxed, sort, func(row cardRow) {

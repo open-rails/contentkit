@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/signal"
@@ -19,20 +20,26 @@ type RecommendationOptions struct {
 	CardGroups []string
 	// Limit defaults to 12 and is capped at 50.
 	Limit int
+	// Summary counts omissions within the bounded recommendation candidates.
+	Summary bool
 }
 
 // admission is Admit over the reader's visibility and filter, keeping the
 // version each admitted content shows.
 type admission struct {
-	s      *Service
-	q      *sel
-	picked map[string]pick
+	s          *Service
+	q          *sel
+	picked     map[string]pick
+	candidates map[string]struct{}
 }
 
 func (a *admission) admit(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error) {
 	ids := make([]string, len(refs))
 	for i, r := range refs {
 		ids[i] = r.ContentID
+		if a.candidates != nil {
+			a.candidates[r.ContentID] = struct{}{}
+		}
 	}
 	picks, err := a.s.pickAmong(ctx, a.q, ids)
 	if err != nil {
@@ -57,7 +64,19 @@ func (a *admission) cards(ctx context.Context, hits []Hit, o RecommendationOptio
 		}
 	}
 	cards, err := a.s.cards(ctx, a.q, picks, cardOptions{chips: o.CardGroups})
-	return ContentPage{Contents: cards}, err
+	out := ContentPage{Contents: cards}
+	if err == nil && o.Summary {
+		ids := make([]string, 0, len(a.candidates))
+		for id := range a.candidates {
+			ids = append(ids, id)
+		}
+		sort, sortErr := a.s.parseSort(ctx, SortNewest, Filter{})
+		if sortErr != nil {
+			return out, sortErr
+		}
+		out.Summary, err = a.s.listingSummary(ctx, o.Filter, a.q, sort, &summaryCandidates{visible: ids, relaxed: ids, truncated: true})
+	}
+	return out, err
 }
 
 func recLimit(n int) int {
@@ -70,6 +89,7 @@ func recLimit(n int) int {
 // Similar lists contents like the anchor content that the reader's listing
 // shows; of the anchor's kind unless the filter names one.
 func (s *Service) Similar(ctx context.Context, anchorID string, o RecommendationOptions) (ContentPage, error) {
+	ctx = access.WithMemo(ctx)
 	empty := ContentPage{Contents: []Card{}}
 	recs, err := s.recommender()
 	if err != nil {
@@ -102,6 +122,9 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 		return empty, err
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
+	if o.Summary {
+		a.candidates = map[string]struct{}{}
+	}
 	hits, err := recs.Similar(ctx, anchor, SimilarOptions{Limit: recLimit(o.Limit), ContentKinds: []string{o.Kind}, Admit: a.admit})
 	if err != nil {
 		return empty, err
@@ -113,6 +136,7 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 // history, filled from what is popular lately, then ever, then newest, that
 // their listing shows; seen and disliked content left out.
 func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) (ContentPage, error) {
+	ctx = access.WithMemo(ctx)
 	empty := ContentPage{Contents: []Card{}}
 	recs, err := s.recommender()
 	if err != nil {
@@ -126,6 +150,9 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 		return empty, err
 	}
 	a := &admission{s: s, q: q, picked: map[string]pick{}}
+	if o.Summary {
+		a.candidates = map[string]struct{}{}
+	}
 	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.AccountID()}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Backfill: s.newest(q), Admit: a.admit})
 	if err != nil {
