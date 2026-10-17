@@ -36,7 +36,7 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 			check := func(err error) {
 				t.Helper()
 				var binding *policyBindingError
-				if !errors.Is(err, ErrConflict) || !errors.As(err, &binding) || binding.entity != bound.ID || binding.domain != "restricted" {
+				if !errors.Is(err, ErrConflict) || !errors.As(err, &binding) || binding.entity != bound.ID || binding.domain != domain.Name {
 					t.Fatalf("expected typed policy conflict, got %v", err)
 				}
 			}

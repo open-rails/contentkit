@@ -70,7 +70,7 @@ func (c ContentFilters) Clone() ContentFilters {
 // entity display names belong to entity records, never policy config.
 type Domain struct {
 	Name            string                `json:"name" yaml:"name"`
-	Hosts           []string              `json:"hosts" yaml:"hosts"`
+	Hosts           []string              `json:"hosts,omitempty" yaml:"hosts,omitempty"`
 	RequireEntities map[string][]GroupRef `json:"require_entities,omitempty" yaml:"require_entities,omitempty"`
 	Filters         []ContentFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
 }

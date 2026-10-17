@@ -10,7 +10,7 @@ func TestGuestDefaultUsesCurrentDomainAndSurvivesRegistration(t *testing.T) {
 	cfg := siteConfig()
 	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}}
 	cfg.ContentFilters = kinds.ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []kinds.Domain{
-		{Name: "a", Hosts: []string{"a.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: false}}},
+		{Name: "main", Hosts: []string{"a.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: false}}},
 		{Name: "b", Hosts: []string{"b.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true}}},
 	}}
 	f := newFixtureConfig(t, nil, "", cfg)
