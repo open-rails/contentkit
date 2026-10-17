@@ -40,7 +40,8 @@ for (const mode of ["alone", "router"] as const) {
       await expect(page).toHaveURL(/\/admin\/posts\/[0-9A-HJKMNP-TV-Z]{9,10}$/);
       const code = page.url().split("/").pop()!;
       const ck = contentKit(h, editor);
-      const id = (await ck.codes.resolve(code)).content_id;
+      const [draft] = await ck.contents.manage({ code });
+      const id = draft!.id;
       const form = flow.locator("[data-ckui=content-form]");
       await expect(form.getByText("Draft", { exact: true })).toBeVisible();
       await expect(body.locator("strong")).toHaveText("Bold words.");
