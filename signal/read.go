@@ -77,11 +77,11 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 	if err != nil {
 		return nil, fmt.Errorf("signal: states references: %w", err)
 	}
-	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
+	args := append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject))
 	q := fmt.Sprintf(`SELECT %s
 FROM (%s)
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
-		stateColumns, st.readingState(), st.subjectNotErased(), referenceFilter)
+		stateColumns, st.readingState(subjectScope+" AND "+referenceFilter), st.subjectNotErased(), referenceFilter)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -135,8 +135,8 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT %s
 FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(), st.subjectNotErased(), workLevel)
-	args, timeColumn, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(subjectScope), st.subjectNotErased(), workLevel)
+	args, timeColumn, err := historyFilter(&sb, append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +166,8 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
 FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.readingState(), st.subjectNotErased(), workLevel)
-	args, _, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.readingState(subjectScope), st.subjectNotErased(), workLevel)
+	args, _, err := historyFilter(&sb, append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)), opts)
 	if err != nil {
 		return 0, err
 	}
@@ -196,8 +196,8 @@ func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, co
 	}
 	q := fmt.Sprintf(`SELECT content_id
 FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = ?%s AND max_progress > 0`, st.readingState(), st.subjectNotErased(), workLevel)
-	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), contentKind)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = ?%s AND max_progress > 0`, st.readingState(subjectScope), st.subjectNotErased(), workLevel)
+	rows, err := st.conn.Query(ctx, q, append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), contentKind)...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: seen ids: %w", err)
 	}
@@ -220,10 +220,10 @@ func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject
 		return nil, err
 	}
 	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT content_kind, content_id
 FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0`, st.feedbackState(), st.subjectNotErased(), workLevel)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0`, st.feedbackState(subjectScope), st.subjectNotErased(), workLevel)
 	if kinds := trimAll(contentKinds); len(kinds) > 0 {
 		sb.WriteString(" AND content_kind IN ?")
 		args = append(args, kinds)
@@ -255,17 +255,17 @@ func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, 
 		limit = 10
 	}
 	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
+	args := append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject))
 	fmt.Fprintf(&sb, `SELECT %s
 FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(), st.subjectNotErased(), workLevel)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(subjectScope), st.subjectNotErased(), workLevel)
 	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
 		sb.WriteString(" AND content_kind IN ?")
 		args = append(args, kinds)
 	}
 	if opts.ExcludeNegative {
-		sb.WriteString(" AND (content_kind,content_id) NOT IN (SELECT content_kind,content_id FROM (" + st.feedbackState() + ") WHERE tenant=? AND subject_kind=? AND subject=? AND net_value<0)")
-		args = append(args, tenant, subject.Kind(), subject.Key())
+		sb.WriteString(" AND (content_kind,content_id) NOT IN (SELECT content_kind,content_id FROM (" + st.feedbackState(subjectScope) + ") WHERE tenant=? AND subject_kind=? AND subject=? AND net_value<0)")
+		args = append(args, tenant, subject.Kind(), subject.Key(), tenant, subject.Kind(), subject.Key())
 	}
 	sb.WriteString(" AND quality > 0 ORDER BY quality DESC, last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ?")
 	args = append(args, limit)
