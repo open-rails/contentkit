@@ -77,16 +77,17 @@ type Config struct {
 
 // Ranker applies one policy to one tenant's signal plane.
 type Ranker struct {
-	source          Source
-	policy          Policy
-	catalog         Catalog
-	cache           Cache
-	cacheTTL        time.Duration
-	groupCandidates int
-	maxDepth        int
-	availability    AvailabilityProvider
-	scope           signal.ActivityScope
-	normalization   *signal.NormalizationOptions
+	source              Source
+	policy              Policy
+	catalog             Catalog
+	cache               Cache
+	cacheTTL            time.Duration
+	groupCandidates     int
+	maxDepth            int
+	availability        AvailabilityProvider
+	scope               signal.ActivityScope
+	normalization       *signal.NormalizationOptions
+	standingUnavailable bool
 }
 
 // New validates the policy and returns the Ranker.
@@ -157,6 +158,9 @@ func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.
 }
 
 func (r *Ranker) popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
+	if r.standingUnavailable {
+		return []Hit{}, nil
+	}
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
 	}
@@ -212,6 +216,9 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 		q, window, _, err := r.query(ctx, contentKind, window)
 		if err != nil {
 			return nil, err
+		}
+		if q.standingUnavailable {
+			return []Hit{}, nil
 		}
 		if !q.policy.Normalized() {
 			return q.Candidates(ctx, contentKind, ids, window)

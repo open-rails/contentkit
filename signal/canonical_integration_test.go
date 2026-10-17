@@ -295,8 +295,18 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 1 {
 		t.Fatalf("orphan day repair: %+v %v", res, err)
 	}
+	rows, err := conn.Query(ctx, "SELECT present FROM "+testDB+".engagement_daily FINAL WHERE tenant='t' AND day='2026-05-03'")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var present bool
-	if err := conn.QueryRow(ctx, "SELECT present FROM "+testDB+".engagement_daily FINAL WHERE tenant='t' AND day='2026-05-03'").Scan(&present); err != nil || present {
+	if !rows.Next() {
+		rows.Close()
+		t.Fatal("repair lost the orphan-day tombstone")
+	}
+	err = rows.Scan(&present)
+	rows.Close()
+	if err != nil || present {
 		t.Fatalf("repair must zero the physical orphan day: %t %v", present, err)
 	}
 	if viewsOn(3) != 0 || viewsOn(6) != 1 {

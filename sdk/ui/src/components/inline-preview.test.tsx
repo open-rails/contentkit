@@ -207,3 +207,18 @@ it("grid tiles preview in place", async () => {
   fireEvent.pointerLeave(tile);
   expect(h.destroyed).toBe(true);
 });
+
+
+it("measures the real video after playback starts, never its hover preview", async () => {
+  const observe = vi.fn();
+  const view = render(<VideoPlayer base="/hls/measured/" duration={40} engagement={{ video: observe }} />);
+  const [box] = players();
+  await hoverPreviews(box!);
+  const video = box!.querySelector("video")!;
+  act(() => void video.dispatchEvent(new Event("playing")));
+  expect(observe.mock.calls.filter(([element]) => element !== null)).toHaveLength(0);
+  fireEvent.click(box!.querySelector("button")!);
+  await waitFor(() => expect(observe).toHaveBeenCalledWith(video));
+  view.unmount();
+  expect(observe).toHaveBeenLastCalledWith(null);
+});

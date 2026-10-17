@@ -21,7 +21,7 @@ type populationCoverage interface {
 }
 
 // RankingInfo names the actual policy and common activity window, including an
-// explicit legacy fallback when no trusted audience history exists.
+// explicit unavailable result when no trusted audience history exists.
 type RankingInfo struct {
 	Policy         string `json:"policy"`
 	Mode           string `json:"mode"`
@@ -52,16 +52,21 @@ func (r *Ranker) WithScope(scope signal.ActivityScope) *Ranker {
 }
 
 func (r *Ranker) query(ctx context.Context, kind string, window signal.Window) (*Ranker, signal.Window, RankingInfo, error) {
-	info := RankingInfo{Policy: r.policy.Name, Mode: "legacy", RequestedFrom: activityDate(window.From), RequestedUntil: activityDate(window.To),
+	info := RankingInfo{Policy: r.policy.Name, Mode: "viewer_reach", RequestedFrom: activityDate(window.From), RequestedUntil: activityDate(window.To),
 		CoveredFrom: activityDate(window.From), CoveredUntil: activityDate(window.To)}
 	if !r.policy.Normalized() {
 		return r, window, info, nil
 	}
 	copy := *r
-	if r.availability == nil {
-		copy.policy = PolicyV1
-		info.Policy = PolicyV1.Name
+	unavailable := func() (*Ranker, signal.Window, RankingInfo, error) {
+		// Missing audience lineage cannot safely become unnormalized reach.
+		// The host's catalog may supply a current explicit-feedback fallback.
+		copy.standingUnavailable = true
+		info.Policy, info.Mode = "none", "standing_unavailable"
 		return &copy, window, info, nil
+	}
+	if r.availability == nil {
+		return unavailable()
 	}
 	a, err := r.availability.Availability(ctx, kind, window, r.scope)
 	if err != nil {
@@ -84,9 +89,7 @@ func (r *Ranker) query(ctx context.Context, kind string, window signal.Window) (
 		}
 	}
 	if !a.Known {
-		copy.policy = PolicyV1
-		info.Policy = PolicyV1.Name
-		return &copy, window, info, nil
+		return unavailable()
 	}
 	// Audience intervals may be sub-day; the canonical signal window stays
 	// whole-day while normalization clips every numerator/denominator to a.
