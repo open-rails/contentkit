@@ -168,7 +168,7 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 		return err
 	}
 	defer tx.Rollback(ctx)
-	r := &resolver{s: s, source: run.b.Source, known: map[extKey]string{}, collect: true}
+	r := &resolver{s: s, source: run.b.Source, known: map[extKey]string{}, loaded: map[extKey]bool{}, collect: true}
 	for i := from; i < to; i++ {
 		_, _, _ = sec.prepare(r, i)
 	}
@@ -336,7 +336,8 @@ type resolver struct {
 	keys    []extKey
 	direct  []string // ids named directly, whose facts load reads
 	known   map[extKey]string
-	minted  []mapping // the record's identities
+	loaded  map[extKey]bool // identities read from the store, not minted by this chunk
+	minted  []mapping       // the record's identities
 
 	contentKind    map[string]string
 	versionContent map[string]string
@@ -375,7 +376,9 @@ func (r *resolver) own(entity, external, given string, createdAt *time.Time) (st
 	if !stored {
 		r.known[k] = id // later records of the chunk name it
 	}
-	r.minted = append(r.minted, mapping{Entity: entity, ExternalID: external, ID: id, fresh: !stored})
+	// An id minted for an earlier record of the chunk is still fresh: that
+	// record may fail and roll back its mapping.
+	r.minted = append(r.minted, mapping{Entity: entity, ExternalID: external, ID: id, fresh: !r.loaded[k]})
 	return id, nil
 }
 
@@ -429,7 +432,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 				rows.Close()
 				return err
 			}
-			r.known[k] = id
+			r.known[k], r.loaded[k] = id, true
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {

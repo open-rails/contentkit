@@ -485,6 +485,24 @@ func TestImportPartialFailureResumes(t *testing.T) {
 	}
 }
 
+// A record that fails after naming an identity does not take that identity's
+// mapping with it: a later record of the chunk with the same identity is
+// written and mapped.
+func TestImportMapsIdentityAfterFailedFirstOccurrence(t *testing.T) {
+	f := newEngine(t)
+	gallery := func(state string) importer.ContentRecord {
+		return importer.ContentRecord{ExternalID: "gallery:5", ID: id("gallery", 5), Kind: "gallery", State: state,
+			Text: map[string]catalog.Text{"en": {Title: "G"}}, Versions: []importer.VersionRecord{{ExternalID: "version:gallery:5", Languages: []string{"en"}}}}
+	}
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery("live"), gallery("published")}})
+	if len(res.Failed) != 1 || res.Written["contents"] != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	if got := f.scalar(t, `SELECT string_agg(id, ',') FROM $s.content_external_ids WHERE entity = 'content' AND external_id = $1`, "gallery:5"); got != id("gallery", 5) {
+		t.Fatalf("mapping for the written record = %q, want %q", got, id("gallery", 5))
+	}
+}
+
 // Every imported version has a code, unique within its content: a given one
 // is kept, the others assigned; re-importing keeps them, and a code another
 // version holds, or a different one for a stored version, is a conflict.
