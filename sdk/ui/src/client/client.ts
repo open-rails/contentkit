@@ -1,3 +1,4 @@
+import { guestReadingHistory, type GuestReadingHistory } from "./guest-reading-history.js";
 import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
 import { ContentsClient } from "./contents.js";
@@ -65,6 +66,8 @@ export interface ContentKitClient {
   readonly notifications: NotificationsClient;
   /** Browser guest preferences and explicit registration inheritance. */
   readonly preferences: ReaderPreferencesClient;
+  /** Browser-owned guest reading progress, isolated to this catalog mount. */
+  readonly guestHistory: GuestReadingHistory;
 
   /** What the content module allows: which interactions signed-out visitors may make. */
   config(signal?: AbortSignal): Promise<Config>;
@@ -102,6 +105,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     stats: new StatsClient(h),
     notifications: new NotificationsClient(h),
     preferences: new ReaderPreferencesClient(h),
+    guestHistory: guestReadingHistory(h.mount("discovery")),
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) => call(h, "GET", "/kinds", { signal }),
     import: (batch) => call(h, "POST", "/import", { body: batch }),

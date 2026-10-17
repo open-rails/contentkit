@@ -320,6 +320,9 @@ export class ResourceStore {
       case "access.changed":
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases" || t.type === "standing");
         break;
+      case "engagement.changed":
+        this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("stats") || (t.type === "content-detail" && !!t.id && c.ids.includes(t.id)));
+        break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases");
         break;

@@ -3,7 +3,7 @@ import { toContentKitError } from "./errors.js";
 import type { ActivityContext, ActivityTarget, ExposureInput, SignalInput } from "./generated/wire.js";
 
 export interface BeaconOptions {
-  /** A signed-out visitor's session; default one per browser tab. */
+  /** A signed-out visitor identity, persistent across this browser's tabs. */
   session?: () => string | undefined;
   /** How long events gather before they are sent, ms. Default 2000. */
   delay?: number;
@@ -54,18 +54,18 @@ function serializeKeepalive(send: () => Promise<void>): Promise<void> {
   keepaliveTail = pending.then(() => {}, () => {});
   return pending;
 }
-const SESSION_KEY = "contentkit.session";
+const SESSION_KEY = "contentkit.visitor.v1";
 export const eventId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 
 let unstored: string | undefined;
 
-/** A signed-out reader's session: one per browser tab, kept across reloads. */
+/** A random signed-out browser identity shared across tabs/reloads, never an account credential. */
 export function readerSession(): string {
   try {
-    const kept = sessionStorage.getItem(SESSION_KEY);
+    const kept = localStorage.getItem(SESSION_KEY);
     if (kept) return kept;
     const made = eventId();
-    sessionStorage.setItem(SESSION_KEY, made);
+    localStorage.setItem(SESSION_KEY, made);
     return made;
   } catch {
     return (unstored ??= eventId());

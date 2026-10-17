@@ -6,6 +6,8 @@ import type {
   ContentFiltersUpdate,
   ContentPage,
   DailyReleases,
+  EngagementBatch,
+  EngagementSnapshot,
   ExposureInput,
   Exposures,
   RecentSearches,
@@ -232,7 +234,14 @@ export class DiscoveryClient {
     const body: ActivityContextsInput = { targets: [...targets], session, language };
     return call(this.http, "POST", "/activity-contexts", { body });
   }
-  /** Views and clicks; signed out, of the session named. */
+  /** Cumulative measured attention. Successful checkpoints refresh history/progress caches. */
+  async engagement(snapshots: EngagementSnapshot[], o: { session?: string; keepalive?: boolean } = {}): Promise<void> {
+    const emit = this.http.captureChanges();
+    const body: EngagementBatch = { session: o.session, snapshots };
+    await call(this.http, "POST", "/engagement", { body, keepalive: o.keepalive });
+    emit({ type: "engagement.changed", ids: [...new Set(snapshots.map(s => s.content_id))] });
+  }
+  /** Clicks and explicit feedback; signed out, of the visitor named. */
   signals(signals: SignalInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {
     const body: Signals = { session, signals };
     return call(this.http, "POST", "/signals", { body, keepalive: o.keepalive });

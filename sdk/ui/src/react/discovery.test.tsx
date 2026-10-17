@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../client/client.js";
 import { ContentKitProvider } from "./provider.js";
-import { useRecentSearches, useSearch } from "./discovery.js";
+import { useHistory, useRecentSearches, useSearch } from "./discovery.js";
 
 afterEach(() => { cleanup(); localStorage.clear(); });
 
@@ -139,4 +139,33 @@ it("lets an authenticated search refresh server recents without adding to guest 
   const { result } = renderHook(() => ({ list: useSearch({ q: "account query" }), recent: useRecentSearches() }), { wrapper });
   await waitFor(() => expect(result.current.recent.searches[0]?.query).toBe("account query"));
   expect(client.discovery.browserSearches.list().map((row) => row.query)).toEqual(["guest retained"]);
+});
+
+
+it("hydrates guest reading IDs through public policy and keeps account history authoritative", async () => {
+  let viewer: string | null = null;
+  const calls: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/guest-reading", fetch: async input => {
+    const url = new URL(String(input)); calls.push(url);
+    if (url.pathname.endsWith("/me/history")) return Response.json({ contents: [{ id: "account-only" }] });
+    expect(url.pathname.endsWith("/contents")).toBe(true);
+    expect(url.searchParams.get("ids")!.split(",").sort()).toEqual(["allowed", "now-restricted"]);
+    return Response.json({ contents: [{ id: "allowed", kind: "gallery", version: { id: "edition", pages: 2 } }] });
+  } });
+  for (const content_id of ["allowed", "now-restricted"]) client.guestHistory.record({ content_id, version_id: "edition", visit_id: "visit", segment_id: content_id,
+    revision: 1, active_ms: 1500, activity_token: "", pages: [{ index: 1, active_ms: 1500, ranges: [{ from: 0, to: 10_000 }] }], resume: "002", kind: "gallery" });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => useHistory({ kind: "gallery" }), { wrapper });
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["allowed"]));
+  expect(result.current.items[0]!.viewer).toMatchObject({ seen: true, completed: false, progress: 100, progress_max: 200, resume: "002" });
+  expect(calls.some(url => url.pathname.endsWith("/me/history"))).toBe(false);
+  const staleForget = result.current.forget;
+  viewer = "account"; rerender();
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["account-only"]));
+  await act(() => staleForget());
+  expect(client.guestHistory.snapshot()).toHaveLength(2);
+  viewer = null; rerender();
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["allowed"]));
+  await act(() => result.current.forget());
+  await waitFor(() => expect(result.current.items).toEqual([]));
 });

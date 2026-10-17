@@ -1,21 +1,18 @@
-import { useContext, useMemo } from "react";
+import { useMemo } from "react";
 import type { HistoryQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
-import { ContentKitContext } from "../../react/context.js";
 import { useHistory } from "../../react/discovery.js";
 import { Button } from "#ckui/ui/button";
 import { useAction } from "../social/parts.js";
 import { ContentCard } from "./card.js";
 import { CardGrid, type CardListProps } from "./grid.js";
 
-/** The signed-in reader's history as cards, each removable, with a clear-all. */
+/** Account history or this browser's guest history, each removable, with a clear-all. */
 export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: HistoryQuery }) {
   const { t } = useMessages();
-  const ctx = useContext(ContentKitContext);
   const q = useMemo(() => ({ ...query, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
   const list = useHistory(q, { client: p.client });
   const forget = useAction("history.forget");
-  if (ctx?.viewer === null) return <p className="text-muted-foreground">{t("contents.historySignedOut")}</p>;
   return (
     <div className="grid gap-3" data-ckui="content-history">
       {list.items.length > 0 && (
@@ -63,4 +60,3 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
     </div>
   );
 }
-

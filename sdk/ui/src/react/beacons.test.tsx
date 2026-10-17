@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../client/client.js";
-import { beaconsFor, useExposure, useViewSignal } from "./discovery.js";
+import { beaconsFor, useExposure } from "./discovery.js";
 import { ContentKitProvider } from "./provider.js";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -35,27 +35,7 @@ it("emits cumulative rendered and visible snapshots with increasing revisions", 
   }
 });
 
-it("starts a fresh view after an account change and ignores old callbacks", async () => {
-  let viewer = "alice";
-  const sent: { authorization: string | null; signals: { content_id: string; progress: number }[] }[] = [];
-  const client = createContentKitClient({ baseUrl: "https://content.test/view-identity", token: () => viewer, fetch: async (url, init) => {
-    if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
-    if (String(url).endsWith("/activity-contexts")) return Response.json({ enabled: false, contexts: [] });
-    sent.push({ authorization: new Headers(init?.headers).get("Authorization"), signals: JSON.parse(String(init?.body)).signals });
-    return new Response(null, { status: 204 });
-  } });
-  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => useViewSignal("content", "version"), { wrapper });
-  const old = result.current;
-  act(() => old({ progress: 1 }));
-  viewer = "bob";
-  rerender();
-  act(() => { old({ progress: 2 }); result.current({ progress: 3 }); });
-  await act(async () => { await beaconsFor(client).flush(); });
-  await waitFor(() => expect(sent).toHaveLength(1));
-  expect(sent[0]?.authorization).toBe("Bearer bob");
-  expect(sent[0]?.signals).toMatchObject([{ content_id: "content", progress: 3 }]);
-});
+
 
 it("gives another account a new render identity and rejects stale exposure callbacks", () => {
   let viewer = "alice";
@@ -95,7 +75,7 @@ it("partitions long lists into bounded cumulative renders and binds clicks to th
   expect(last.shown).toHaveLength(22);
 });
 
-it("uses the provider's selected language for view receipts", async () => {
+it("uses the provider's selected language for list receipts", async () => {
   const languages: string[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/provider-language", fetch: async (url, init) => {
     if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
@@ -103,8 +83,7 @@ it("uses the provider's selected language for view receipts", async () => {
     return new Response(null, { status: 204 });
   } });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer="alice" language="fr">{children}</ContentKitProvider>;
-  const { result } = renderHook(() => useViewSignal("content"), { wrapper });
-  act(() => result.current({ progress: 1 }));
+  renderHook(() => useExposure([{ id: "content" }], { surface: "home", render: "list" }), { wrapper });
   await act(async () => { await beaconsFor(client).flush(); });
   expect(languages).toEqual(["fr"]);
 });
@@ -127,4 +106,31 @@ it("preserves already observed receipts across StrictMode effect replay", async 
   rerender({ items: [{ id: "one" }, { id: "two" }] });
   await act(async () => { await beaconsFor(client).flush(); });
   expect(targets).toEqual([["one"], ["two"]]);
+});
+
+it("reports only shown cards while preserving original rank gaps for exposures and clicks", () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  const callbacks: IntersectionObserverCallback[] = [];
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback) { callbacks.push(callback); }
+    observe() {} unobserve() {} disconnect() {}
+  });
+  const client = createContentKitClient({ baseUrl: "https://content.test/rank-gaps" });
+  const batcher = beaconsFor(client);
+  const exposure = vi.spyOn(batcher, "exposure").mockImplementation(() => {});
+  const click = vi.spyOn(batcher, "click").mockImplementation(() => {});
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer="alice">{children}</ContentKitProvider>;
+  const { result } = renderHook(() => useExposure([{ id: "first", position: 1 }, { id: "third", position: 3 }], { client, surface: "home", render: "cards" }), { wrapper });
+  const third = document.createElement("div");
+  result.current.track("third", 3)(third);
+  act(() => {
+    callbacks.at(-1)!([{ target: third, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+    vi.advanceTimersByTime(300);
+  });
+  const rendered = exposure.mock.calls.map(([event]) => event).find((event) => event.stage === "rendered");
+  const visible = exposure.mock.calls.map(([event]) => event).findLast((event) => event.stage === "visible");
+  expect(rendered?.shown).toEqual([{ content_id: "first", position: 1 }, { content_id: "third", position: 3 }]);
+  expect(visible?.shown).toEqual([{ content_id: "third", position: 3 }]);
+  result.current.click("third", 3);
+  expect(click).toHaveBeenCalledExactlyOnceWith("third", expect.objectContaining({ render_id: rendered?.render_id, position: 3 }));
 });

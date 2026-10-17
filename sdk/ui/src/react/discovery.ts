@@ -7,11 +7,13 @@ import { ContentKitError, toContentKitError } from "../client/errors.js";
 import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch, Typeahead } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
+import { guestStanding, type GuestReadingItem } from "../client/guest-reading-history.js";
 import { recentSearchLimit } from "../client/browser-search-history.js";
 
 const page = (p: ContentPage) => ({ items: p.contents, next: p.next_cursor ?? null, metadata: p.summary });
 export interface UseContents extends UseList<Card, ContentPage["summary"]> { summary?: ContentPage["summary"] }
 const NO_SEARCHES: RecentSearch[] = [];
+const NO_READING: readonly GuestReadingItem[] = Object.freeze([]);
 
 // A new identity even after A → B → A, so late requests cannot write into the new visit.
 function useCurrentDiscoveryScope(client: ContentKitClient, scope: string): () => boolean {
@@ -132,15 +134,42 @@ export interface UseHistory extends UseList<Card> {
   forget: (o?: { kind?: string; content_id?: string }) => Promise<void>;
 }
 
-/** What the signed-in reader engaged with, most recent first; nothing signed out, or when q is null. */
+/** Account history is authoritative; signed-out reading stays in this browser across tabs. */
 export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKitClient } = {}): UseHistory {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q);
   const guarded = useGuarded();
-  const list = useList(store, viewer === null || !query ? null : keyOf("history", scope, query), { type: "history" }, async (cursor, signal) =>
-    page(await client.discovery.history({ ...query, cursor: cursor as string | undefined }, signal)),
-  );
-  const forget = useCallback((f: { kind?: string; content_id?: string } = {}) => guarded(() => client.discovery.forgetHistory(f)), [client, guarded]);
+  const guest = viewer === null;
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  const browser = client.guestHistory;
+  const subscribe = useCallback((listener: () => void) => guest && query ? browser.subscribe(listener) : () => {}, [browser, guest, !!query]);
+  const snapshot = useCallback(() => guest && query ? browser.snapshot() : NO_READING, [browser, guest, !!query]);
+  const local = useSyncExternalStore(subscribe, snapshot, () => NO_READING);
+  const selected = useMemo(() => local.filter(row => !query?.kind || row.kind === query.kind), [local, query?.kind]);
+  const localRevision = guest ? selected.map(row => [row.id, row.at, row.checkpoints.map(checkpoint => [checkpoint.visit_id, checkpoint.segment_id, checkpoint.revision])]) : undefined;
+  const list = useList(store, !query || viewer === undefined ? null : keyOf("history", scope, query, localRevision), { type: "history" }, async (cursor, signal) => {
+    if (!guest) return page(await client.discovery.history({ ...query, cursor: cursor as string | undefined }, signal));
+    const offset = typeof cursor === "number" ? cursor : 0;
+    const limit = Math.max(1, Math.min(100, query?.limit ?? 50));
+    const batch = selected.slice(offset, offset + limit);
+    if (!batch.length) return { items: [], next: null };
+    // Public hydration enforces current hard-domain rules, access and optional preferences.
+    const out = await client.discovery.list({ ids: batch.map(row => row.id), kind: query?.kind, language: query?.language,
+      display_language: query?.display_language, mode: query?.mode, card_entities: query?.card_entities, limit: 100 }, signal);
+    const cards = new Map(out.contents.map(card => [card.id, card]));
+    const items = batch.flatMap(row => {
+      const card = cards.get(row.id); if (!card) return [];
+      const viewer = guestStanding(card, row);
+      if (query?.status === "seen" && !viewer.seen || query?.status === "in_progress" && (!viewer.seen || viewer.completed) || query?.status === "completed" && !viewer.completed) return [];
+      return [{ ...card, viewer }];
+    });
+    return { items, next: offset + batch.length < selected.length ? offset + batch.length : null };
+  });
+  const forget = useCallback((filter: { kind?: string; content_id?: string } = {}) => {
+    if (!isCurrent()) return Promise.resolve();
+    if (guest) { browser.clear(filter); return Promise.resolve(); }
+    return guarded(() => client.discovery.forgetHistory(filter));
+  }, [browser, client, guest, guarded, isCurrent]);
   return { ...list, forget };
 }
 
