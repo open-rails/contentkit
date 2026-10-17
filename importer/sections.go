@@ -333,7 +333,7 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 
 func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
 	row := run.b.LegacyReading[i]
-	target, err := r.target(row.Target, []string{EntityContent, EntityVersion})
+	target, err := r.target(row.Target, allowContent|allowVersion)
 	if err != nil {
 		return nil, row.UserID, err
 	}
