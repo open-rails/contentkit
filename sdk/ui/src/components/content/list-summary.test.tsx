@@ -8,6 +8,7 @@ import type { Card, GroupCard, ListingSummary } from "../../client/generated/wir
 import { ContentKitProvider } from "../../react/provider.js";
 import { CardGrid, ContentGrid, ContentRail, SearchResults } from "./grid.js";
 import { ContentFavorites } from "./favorites.js";
+import { ContentFilterDialog } from "./filter-dialog.js";
 
 const at = "2026-10-16T00:00:00Z";
 const entity = (id: string): GroupCard => ({ id, kind: "tag", internal: false, slug: id, name: id.toUpperCase(), count: 0, attributes: {}, created_at: at });
@@ -330,4 +331,29 @@ it("keeps filter controls inside a native reader dialog instead of its inert bac
   await userEvent.setup().click(within(filters).getByRole("button", { name: "Close", exact: true }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Content filters" })).toBeNull());
   expect(reader).toHaveAttribute("open");
+});
+
+it("retains the native portal while preferences remove its opening tile", async () => {
+  const s = server([]), close = vi.fn();
+  const reader = document.createElement("dialog");
+  reader.open = true;
+  const button = document.createElement("button");
+  reader.append(button);
+  document.body.append(reader);
+  let target: HTMLElement | null = button;
+  const content = () => <ContentKitProvider client={s.client} viewer={null}><ContentFilterDialog open onOpenChange={close} returnFocus={() => target} /></ContentKitProvider>;
+  const view = render(content());
+  try {
+    const filters = await screen.findByRole("dialog", { name: "Content filters" });
+    expect(reader).toContainElement(filters);
+    target = null;
+    button.remove();
+    view.rerender(content());
+    expect(reader).toContainElement(filters);
+    await userEvent.setup().click(within(filters).getByRole("button", { name: "Close", exact: true }));
+    expect(close).toHaveBeenCalledWith(false);
+  } finally {
+    view.unmount();
+    reader.remove();
+  }
 });
