@@ -331,8 +331,8 @@ func TestEngineIntegration(t *testing.T) {
 // alone: its content model says signals are off, ordinary lists,
 // details and search serve, and signals, exposures and history answer
 // not_configured, or unavailable while a configured plane is down, which
-// fails its probe and is retried in the background. Popularity has no
-// zero-activity fallback and reports an outage when its plane is configured.
+// fails its probe and is retried in the background. Popular lists fall back
+// to the labeled standing order rather than reporting an outage.
 func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
@@ -374,16 +374,14 @@ func TestEngineWithoutSignalPlaneIntegration(t *testing.T) {
 			}
 			for _, sort := range []string{"newest", "popular"} {
 				var page struct {
-					Contents []struct{ ID string } `json:"contents"`
+					Contents []struct{ ID string }          `json:"contents"`
+					Ranking  *struct{ Policy, Mode string } `json:"ranking"`
 				}
 				path := "/ck/v1/contents?kind=gallery&sort=" + sort
-				if sort == "popular" && ch.Addr != "" {
-					s.call(http.StatusServiceUnavailable, anon, "GET", path, nil, nil)
-					continue
-				}
 				s.call(http.StatusOK, anon, "GET", path, nil, &page)
 				if sort == "popular" {
-					if len(page.Contents) != 0 {
+					// A down or absent plane serves the labeled standing order; nobody reacted, so it is empty.
+					if len(page.Contents) != 0 || page.Ranking == nil || page.Ranking.Policy != "standing_wilson" || page.Ranking.Mode != "standing" {
 						t.Fatalf("zero-activity popularity list %+v", page)
 					}
 				} else if len(page.Contents) != 1 || page.Contents[0].ID != c.ID {
