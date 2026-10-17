@@ -102,4 +102,9 @@ export const discovery: typeof en = {
     filters: "筛选",
     clear: "清除筛选",
   },
+  postList: {
+    newest: "最新",
+    trending: "热门",
+    unread: "未读",
+  },
 };

@@ -102,4 +102,9 @@ export const discovery: typeof en = {
     filters: "필터",
     clear: "필터 지우기",
   },
+  postList: {
+    newest: "최신",
+    trending: "인기",
+    unread: "읽지 않음",
+  },
 };

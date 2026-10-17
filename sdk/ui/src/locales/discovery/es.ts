@@ -102,4 +102,9 @@ export const discovery: typeof en = {
     filters: "Filtros",
     clear: "Quitar filtros",
   },
+  postList: {
+    newest: "Más recientes",
+    trending: "Tendencias",
+    unread: "Sin leer",
+  },
 };

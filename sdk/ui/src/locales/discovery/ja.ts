@@ -102,4 +102,9 @@ export const discovery: typeof en = {
     filters: "絞り込み",
     clear: "絞り込みを解除",
   },
+  postList: {
+    newest: "最新",
+    trending: "トレンド",
+    unread: "未読",
+  },
 };

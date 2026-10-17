@@ -187,3 +187,4 @@ export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, 
 export { useNotifications, useNotificationUnread, type UseNotifications, type UseNotificationsOptions } from "./notifications.js";
 
 export { useReadingEngagement, type ReadingEngagement, type ReadingEngagementOptions } from "./use-engagement.js";
+export { useMarkPostRead, usePostReads, type PostReads } from "./post-reads.js";

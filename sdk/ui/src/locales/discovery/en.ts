@@ -101,4 +101,9 @@ export const discovery = {
     filters: "Filters",
     clear: "Clear filters",
   },
+  postList: {
+    newest: "Newest",
+    trending: "Trending",
+    unread: "Unread",
+  },
 };
