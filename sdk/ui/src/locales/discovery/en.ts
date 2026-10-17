@@ -34,6 +34,8 @@ export const discovery = {
     pages_other: "{count} pages",
     minutes_one: "{count} min",
     minutes_other: "{count} min",
+    moreChips_one: "{count} more",
+    moreChips_other: "{count} more",
     completed: "Finished",
     freeFrom: "Free from {date}",
     favorites: "Favorites",

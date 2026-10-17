@@ -35,6 +35,8 @@ export const discovery: typeof en = {
     pages_other: "{count}쪽",
     minutes_one: "{count}분",
     minutes_other: "{count}분",
+    moreChips_one: "{count}개 더",
+    moreChips_other: "{count}개 더",
     completed: "완료",
     freeFrom: "{date}부터 무료",
     favorites: "즐겨찾기",
