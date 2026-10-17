@@ -44,9 +44,11 @@ export interface ActivityContextsInput {
 
 export interface ActivityDay {
   date: string;
-  views: number;
-  viewers: number;
-  users: number;
+  readers: number;
+  anon: number;
+  free: number;
+  premium: number;
+  active_ms: number;
 }
 
 export interface ActivityTarget {
@@ -201,6 +203,7 @@ export interface Batch {
   polls?: PollRecord[];
   votes?: VoteRecord[];
   answers?: AnswerRecord[];
+  legacy_reading?: LegacyReadingRecord[];
   signals?: SignalRecord[];
   deletes?: DeleteRecord[];
 }
@@ -394,7 +397,6 @@ export interface Content {
   creators: Creator[];
   entities: GroupSummary[];
   versions: Version[];
-  views?: number;
   viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
@@ -416,20 +418,20 @@ export interface ContentFilterState {
 }
 
 export interface ContentFilters {
-  kinds: Record<string, ContentFilterState[]>;
+  applies_to: string[];
+  filters: ContentFilterState[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersInitialization {
   account_id: string;
-  kinds: Record<string, GuestFilterSetting[]>;
-  legacy_filters?: FilterSetting[];
+  filters: GuestFilterSetting[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
-  kinds: Record<string, FilterSetting[]>;
-  include_deleted: boolean;
+  filters?: GuestFilterSetting[];
+  include_deleted?: boolean;
 }
 
 export interface ContentGroups {
@@ -467,6 +469,7 @@ export interface ContentModel {
 
 export interface ContentPage {
   contents: Card[];
+  summary?: ListingSummary;
   next_cursor?: string;
   ranking?: RankingInfo;
 }
@@ -497,7 +500,6 @@ export interface ContentRecord {
   deleted_at?: string;
   listing?: string;
   comments?: string;
-  view_baseline?: number;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
@@ -549,7 +551,11 @@ export interface Counts {
   likes?: number;
   dislikes?: number;
   favorites?: number;
-  views?: number;
+}
+
+export interface CoverageRange {
+  from: number;
+  to: number;
 }
 
 export interface Creator {
@@ -635,6 +641,24 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
+}
+
+export interface EngagementBatch {
+  session?: string;
+  snapshots: EngagementSnapshot[];
+}
+
+export interface EngagementSnapshot {
+  content_id: string;
+  version_id?: string;
+  visit_id: string;
+  segment_id: string;
+  revision: number;
+  activity_token: string;
+  active_ms: number;
+  resume?: string;
+  pages?: PageEngagement[];
+  watched?: WatchedRange[];
 }
 
 export interface EntityReference {
@@ -797,11 +821,6 @@ export interface FileInfo {
   failed?: Failure;
   editor_url?: string;
   progress?: EncodeProgress;
-}
-
-export interface FilterSetting {
-  entity_id: string;
-  visible: boolean;
 }
 
 export interface ForegroundCue {
@@ -1080,6 +1099,7 @@ export interface Interaction {
 export interface InteractionPage {
   items: Interaction[];
   next_cursor?: string;
+  summary?: ListingSummary;
 }
 
 export interface Item {
@@ -1103,6 +1123,7 @@ export interface Item {
 
 export interface Kind {
   route: string;
+  path_entity?: string;
   presentation: string;
   versions: VersionRules;
   segments?: boolean;
@@ -1119,6 +1140,19 @@ export interface LanguageTotal {
   tiers: Record<string, number>;
 }
 
+export interface LegacyReadingRecord {
+  target: TargetRef;
+  user_id?: string;
+  anon_key?: string;
+  first_read_at?: string;
+  last_read_at: string;
+  progress: number;
+  progress_max: number;
+  completed: boolean;
+  resume?: string;
+  revision?: number;
+}
+
 export interface LibraryItem {
   content_id: string;
   kind: string;
@@ -1133,6 +1167,13 @@ export interface LibraryPage {
   items: LibraryItem[];
   next_cursor?: string;
   complete: boolean;
+}
+
+export interface ListingSummary {
+  filtered_count: number;
+  filtered_entities: ReleaseFilteredEntity[];
+  locked_count: number;
+  truncated?: boolean;
 }
 
 export interface Locked {
@@ -1362,6 +1403,12 @@ export interface PageDecision {
   reason: string;
   confidence: string;
   related?: string[];
+}
+
+export interface PageEngagement {
+  index: number;
+  ranges: CoverageRange[];
+  active_ms: number;
 }
 
 export interface PageReview {
@@ -1654,13 +1701,6 @@ export interface Published {
   items: Item[];
 }
 
-export interface RankedContent {
-  id: string;
-  title: string;
-  path?: string;
-  value: number;
-}
-
 export interface RankingInfo {
   policy: string;
   mode: string;
@@ -1772,7 +1812,6 @@ export interface ReleaseDay {
 }
 
 export interface ReleaseFilteredEntity {
-  content_kind: string;
   entity: GroupCard;
   count: number;
 }
@@ -1868,9 +1907,6 @@ export interface SignalInput {
   event_id: string;
   revision?: number;
   occurred_at: string;
-  duration_s?: number;
-  progress?: number;
-  resume?: string;
   render_id?: string;
   surface?: string;
   position?: number;
@@ -1885,9 +1921,6 @@ export interface SignalRecord {
   event_id: string;
   revision?: number;
   occurred_at: string;
-  duration_s?: number;
-  progress?: number;
-  resume?: string;
 }
 
 export interface Signals {
@@ -1948,10 +1981,6 @@ export interface Terms {
 
 export interface TicketBody {
   ticket: string;
-}
-
-export interface TopContents {
-  contents: RankedContent[];
 }
 
 export interface Total {
@@ -2088,7 +2117,7 @@ export interface ViewerState {
   progress: number;
   progress_max: number;
   resume?: string;
-  last_view_at?: string;
+  last_read_at?: string;
 }
 
 export interface VoteRecord {
@@ -2097,6 +2126,11 @@ export interface VoteRecord {
   user_id?: string;
   ip?: string;
   created_at?: string;
+}
+
+export interface WatchedRange {
+  from_ms: number;
+  to_ms: number;
 }
 
 export interface Written {

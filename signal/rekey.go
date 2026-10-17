@@ -38,9 +38,9 @@ func (st *Store) RekeyAnonymousSubject(ctx context.Context, tenant string, old, 
 
 	copySignals := fmt.Sprintf(`INSERT INTO %s.signals
 (tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
- duration_s, progress, progress_max, value, score, completed, resume, payload, version, ingested_at)
+ value, payload, version, ingested_at)
 SELECT tenant, content_kind, content_id, content_version_id, subject_kind, ?, signal_type, event_id, revision, occurred_at,
-       duration_s, progress, progress_max, value, score, completed, resume, payload, version, now64(6)
+       value, payload, version, now64(6)
 FROM %s.signals
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
 	if err := st.conn.Exec(ctx, copySignals, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
@@ -57,13 +57,29 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.
 	if err := st.conn.Exec(ctx, copyExposures, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
 		return fmt.Errorf("signal: rekey exposures: %w", err)
 	}
-	copyPopulation := fmt.Sprintf(`INSERT INTO %s.population_observations
+	copyPopulation := fmt.Sprintf(`INSERT INTO %s.measured_population_observations
 (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known,version)
 SELECT tenant,content_kind,subject_kind,?,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known,version
-FROM %s.population_observations
+FROM %s.measured_population_observations
 WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
 	if err := st.conn.Exec(ctx, copyPopulation, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
 		return fmt.Errorf("signal: rekey population: %w", err)
+	}
+
+	copySegments := fmt.Sprintf(`INSERT INTO %s.engagement_segments
+ (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,version,ingested_at)
+ SELECT tenant,content_kind,content_id,content_version_id,subject_kind,?,receipt_id,revision,visit_id,segment_id,
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,version,now64(6)
+ FROM %s.engagement_segments WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
+	if err := st.conn.Exec(ctx, copySegments, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
+		return fmt.Errorf("signal: rekey measured segments: %w", err)
+	}
+	copyLegacy := fmt.Sprintf(`INSERT INTO %s.legacy_reading_state
+ SELECT tenant,subject_kind,?,content_kind,content_id,content_version_id,first_seen_at,last_seen_at,progress,progress_max,completed,resume,version
+ FROM %s.legacy_reading_state FINAL WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
+	if err := st.conn.Exec(ctx, copyLegacy, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
+		return fmt.Errorf("signal: rekey legacy resume: %w", err)
 	}
 
 	if err := st.reprojectSubject(ctx, tenant, next); err != nil {
@@ -79,7 +95,7 @@ func (st *Store) reprojectSubject(ctx context.Context, tenant string, subject Su
 	var after [3]string
 	for {
 		query := fmt.Sprintf(`SELECT DISTINCT content_kind, content_id, content_version_id
-FROM %s.signals
+FROM %s.engagement_segments
 WHERE tenant = ? AND subject_kind = ? AND subject = ?
   AND (content_kind, content_id, content_version_id) > (?, ?, ?)
 ORDER BY content_kind, content_id, content_version_id LIMIT 256`, st.db)
@@ -105,7 +121,7 @@ ORDER BY content_kind, content_id, content_version_id LIMIT 256`, st.db)
 		if len(keys) == 0 {
 			return nil
 		}
-		if err := st.project(ctx, tenant, keys); err != nil {
+		if err := st.projectMeasured(ctx, tenant, keys); err != nil {
 			return fmt.Errorf("signal: project rekeyed content: %w", err)
 		}
 	}

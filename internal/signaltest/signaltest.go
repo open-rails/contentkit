@@ -70,10 +70,10 @@ func (e Env) Drop(t testing.TB, conn driver.Conn, database string) {
 	}
 }
 
-// Migrations returns the lineage's statements in apply order, rendered the way
-// migratekit chmigrate renders them ({{ON_CLUSTER}} expansion, one statement at
-// a time).
-func (e Env) Migrations(t testing.TB) [][]string {
+// Migrations returns the statements of migration files named in [from, until)
+// in apply order ("" leaves a bound open), rendered the way migratekit
+// chmigrate renders them ({{ON_CLUSTER}} expansion, one statement at a time).
+func (e Env) Migrations(t testing.TB, from, until string) [][]string {
 	t.Helper()
 	names, err := fs.Glob(migrations.ClickHouse, "*.up.sql")
 	if err != nil {
@@ -82,6 +82,9 @@ func (e Env) Migrations(t testing.TB) [][]string {
 	sort.Strings(names)
 	out := make([][]string, 0, len(names))
 	for _, name := range names {
+		if name < from || until != "" && name >= until {
+			continue
+		}
 		b, err := fs.ReadFile(migrations.ClickHouse, name)
 		if err != nil {
 			t.Fatal(err)
@@ -95,7 +98,13 @@ func (e Env) Migrations(t testing.TB) [][]string {
 // Apply runs every migration statement against conn (default database set).
 func (e Env) Apply(t testing.TB, conn driver.Conn) {
 	t.Helper()
-	for _, stmts := range e.Migrations(t) {
+	e.ApplyRange(t, conn, "", "")
+}
+
+// ApplyRange runs the migration files named in [from, until) against conn.
+func (e Env) ApplyRange(t testing.TB, conn driver.Conn, from, until string) {
+	t.Helper()
+	for _, stmts := range e.Migrations(t, from, until) {
 		for _, stmt := range stmts {
 			if err := conn.Exec(context.Background(), stmt); err != nil {
 				t.Fatalf("apply migration statement: %v\n%s", err, stmt)

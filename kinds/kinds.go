@@ -25,31 +25,65 @@ var (
 
 // Config is the application's content model.
 type Config struct {
-	Languages    []string             `json:"languages" yaml:"languages"`
-	Tiers        []string             `json:"tiers,omitempty" yaml:"tiers"`
-	TokenClaims  []string             `json:"token_claims,omitempty" yaml:"token_claims"`
-	Restrictions []string             `json:"restrictions,omitempty" yaml:"restrictions"`
-	Domains      []Domain             `json:"domains,omitempty" yaml:"domains"`
-	Kinds        map[string]Kind      `json:"kinds" yaml:"kinds"`
-	GroupKinds   map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
+	Languages      []string             `json:"languages" yaml:"languages"`
+	Tiers          []string             `json:"tiers,omitempty" yaml:"tiers"`
+	TokenClaims    []string             `json:"token_claims,omitempty" yaml:"token_claims"`
+	Restrictions   []string             `json:"restrictions,omitempty" yaml:"restrictions"`
+	ContentFilters ContentFilters       `json:"content_filters,omitempty" yaml:"content_filters"`
+	Kinds          map[string]Kind      `json:"kinds" yaml:"kinds"`
+	GroupKinds     map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
 }
 
-// Domain is one entrypoint's catalog policy, matched by request host.
-// The first domain is the default for unmatched hosts. An omitted content
-// kind has no domain filtering. YAML puts kind policies beside name and hosts;
-// JSON retains an explicit kinds object.
+// ContentFilters is one app's shared entity-filter policy. Filters apply to
+// every selected content kind; required entities are independently scoped.
+type ContentFilters struct {
+	AppliesTo []string `json:"applies_to" yaml:"applies_to"`
+	Domains   []Domain `json:"domains" yaml:"domains"`
+}
+
+// Clone gives an embedded engine its own immutable policy snapshot, including
+// the optional bool pointers and the per-kind required-entity slices.
+func (c ContentFilters) Clone() ContentFilters {
+	out := ContentFilters{AppliesTo: slices.Clone(c.AppliesTo), Domains: slices.Clone(c.Domains)}
+	for i, domain := range out.Domains {
+		domain.Hosts = slices.Clone(domain.Hosts)
+		if domain.RequireEntities != nil {
+			domain.RequireEntities = make(map[string][]GroupRef, len(domain.RequireEntities))
+			for kind, refs := range c.Domains[i].RequireEntities {
+				domain.RequireEntities[kind] = slices.Clone(refs)
+			}
+		}
+		domain.Filters = slices.Clone(domain.Filters)
+		for j, filter := range domain.Filters {
+			if filter.UserToggle != nil {
+				value := *filter.UserToggle
+				domain.Filters[j].UserToggle = &value
+			}
+		}
+		out.Domains[i] = domain
+	}
+	return out
+}
+
+// Domain is an entrypoint matched by request host. The domain named main is
+// the fallback for unmatched hosts. Name is its stable branding/activity identity;
+// entity display names belong to entity records, never policy config.
 type Domain struct {
-	Name  string                `json:"name" yaml:"name"`
-	Hosts []string              `json:"hosts" yaml:"hosts"`
-	Kinds map[string]KindPolicy `json:"kinds,omitempty" yaml:"-"`
+	Name            string                `json:"name" yaml:"name"`
+	Hosts           []string              `json:"hosts,omitempty" yaml:"hosts,omitempty"`
+	RequireEntities map[string][]GroupRef `json:"require_entities,omitempty" yaml:"require_entities,omitempty"`
+	Filters         []ContentFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
 }
 
-// KindPolicy is the visibility policy for one content kind on one domain.
-// Required entities form a hard AND boundary; reader filters are optional
-// unless user_toggle is false or the entity is internal.
-type KindPolicy struct {
-	RequireGroups []GroupRef      `json:"require_entities,omitempty" yaml:"require_entities"`
-	Filters       []ContentFilter `json:"filters,omitempty" yaml:"filters"`
+// Requires reports whether any content kind requires this entity. Required
+// entities never appear as optional controls that could empty that selection.
+func (d Domain) Requires(ref GroupRef) bool {
+	for _, refs := range d.RequireEntities {
+		if slices.Contains(refs, ref) {
+			return true
+		}
+	}
+	return false
 }
 
 // GroupRef names an entity by kind and canonical slug.
@@ -62,7 +96,7 @@ type GroupRef struct {
 // UserToggle allows reader overrides. Internal and required entities are
 // never reader-toggleable, irrespective of UserToggle.
 type ContentFilter struct {
-	Group      GroupRef `json:"entity" yaml:"entity"`
+	Group      GroupRef `json:"-" yaml:",inline"`
 	Visible    bool     `json:"visible" yaml:"visible"`
 	UserToggle *bool    `json:"user_toggle,omitempty" yaml:"user_toggle,omitempty"`
 }
@@ -71,13 +105,13 @@ type ContentFilter struct {
 // must additionally exclude internal and domain-required entities.
 func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.UserToggle }
 
-// Requires reports whether ref is a hard inclusion rule for this content kind.
-func (p KindPolicy) Requires(ref GroupRef) bool { return slices.Contains(p.RequireGroups, ref) }
-
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
 type Kind struct {
 	// Route is the URL segment: /{lang}/{route}/{CODE}/{slug}.
 	Route string `json:"route" yaml:"route"`
+	// PathEntity names one of Groups whose slug prefixes the title in the
+	// decorative path, /{lang}/{route}/{CODE}/{entity}/{title}, for SEO.
+	PathEntity string `json:"path_entity,omitempty" yaml:"path_entity"`
 	// Presentation tells contentkit-ui how to show it: reader, player or post.
 	Presentation string       `json:"presentation" yaml:"presentation"`
 	Versions     VersionRules `json:"versions" yaml:"versions"`
@@ -165,12 +199,11 @@ const (
 	ShowLength      = "length"     // versions' page counts, durations and segments
 	ShowReactions   = "reactions"  // like and dislike counts; locked viewers may react
 	ShowFavorites   = "favorites"  // favorite counts
-	ShowViews       = "views"      // view counts
 	ShowComments    = "comments"   // comments and their counts; locked viewers may comment
 )
 
 // Shown are the properties a Locked view may show.
-var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowViews, ShowComments}
+var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowComments}
 
 // DefaultLocked shows a kind's metadata and cover: no preview, counts or
 // comments.
@@ -359,9 +392,6 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, k := range c.Kinds {
-		if name == "name" || name == "hosts" {
-			return fmt.Errorf("%w: content kind %q is reserved for domain metadata", ErrInvalid, name)
-		}
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: kind %q", ErrInvalid, name)
 		}
@@ -387,6 +417,9 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
+		if e := k.PathEntity; e != "" && (!slices.Contains(k.Groups, e) || c.GroupKinds[e].VersionLevel) {
+			return fmt.Errorf("%w: kind %s path_entity %q must be one of its content-level groups", ErrInvalid, name, e)
+		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
 			return err
 		}
@@ -409,43 +442,46 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%w: group %s/%s names an unknown group kind or no slug", ErrInvalid, r.Kind, r.Slug)
 		}
 	}
-	domains := map[string]bool{}
-	hosts := map[string]bool{}
-	for i, d := range c.Domains {
-		if d.Name == "" || (len(d.Hosts) == 0 && i > 0) {
-			return fmt.Errorf("%w: domain %d needs a name and hosts", ErrInvalid, i)
+	if err := c.ContentFilters.validateDomains(); err != nil {
+		return err
+	}
+	applies := map[string]bool{}
+	for _, kind := range c.ContentFilters.AppliesTo {
+		if _, ok := c.Kinds[kind]; !ok || applies[kind] {
+			return fmt.Errorf("%w: applies_to names an unknown or repeated content kind %q", ErrInvalid, kind)
 		}
-		if domains[d.Name] {
-			return fmt.Errorf("%w: domain name %q is repeated", ErrInvalid, d.Name)
+		applies[kind] = true
+	}
+	for _, d := range c.ContentFilters.Domains {
+		if len(d.Filters) > 0 && len(applies) == 0 {
+			return fmt.Errorf("%w: domain %s filters require explicit applies_to content kinds", ErrInvalid, d.Name)
 		}
-		domains[d.Name] = true
-		for _, h := range d.Hosts {
-			host := domainHost(h)
-			if host == "" || hosts[host] {
-				return fmt.Errorf("%w: domain host %q is empty or repeated", ErrInvalid, h)
+		filters := map[GroupRef]bool{}
+		for _, f := range d.Filters {
+			if filters[f.Group] {
+				return fmt.Errorf("%w: domain %s repeats filter %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
 			}
-			hosts[host] = true
-		}
-		for kind, policy := range d.Kinds {
-			if _, ok := c.Kinds[kind]; !ok {
-				return fmt.Errorf("%w: domain %s names unknown content kind %q", ErrInvalid, d.Name, kind)
+			filters[f.Group] = true
+			if d.Requires(f.Group) && !f.Visible {
+				return fmt.Errorf("%w: domain %s both requires and hides entity %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
 			}
-			filters := map[GroupRef]bool{}
-			for _, f := range policy.Filters {
-				if filters[f.Group] {
-					return fmt.Errorf("%w: domain %s kind %s repeats filter %s/%s", ErrInvalid, d.Name, kind, f.Group.Kind, f.Group.Slug)
-				}
-				filters[f.Group] = true
-				if policy.Requires(f.Group) && !f.Visible {
-					return fmt.Errorf("%w: domain %s kind %s both requires and hides entity %s/%s", ErrInvalid, d.Name, kind, f.Group.Kind, f.Group.Slug)
+			for kind := range applies {
+				if !slices.Contains(c.Kinds[kind].Groups, f.Group.Kind) {
+					return fmt.Errorf("%w: domain %s filter entity kind %s cannot be associated with %s", ErrInvalid, d.Name, f.Group.Kind, kind)
 				}
 			}
-			required := map[GroupRef]bool{}
-			for _, r := range policy.RequireGroups {
-				if required[r] {
-					return fmt.Errorf("%w: domain %s kind %s repeats required entity %s/%s", ErrInvalid, d.Name, kind, r.Kind, r.Slug)
+		}
+		for kind, refs := range d.RequireEntities {
+			model, ok := c.Kinds[kind]
+			if !ok {
+				return fmt.Errorf("%w: domain %s names unknown required content kind %q", ErrInvalid, d.Name, kind)
+			}
+			seen := map[GroupRef]bool{}
+			for _, r := range refs {
+				if seen[r] || !slices.Contains(model.Groups, r.Kind) {
+					return fmt.Errorf("%w: domain %s has repeated or unsupported required entity %s/%s for %s", ErrInvalid, d.Name, r.Kind, r.Slug, kind)
 				}
-				required[r] = true
+				seen[r] = true
 			}
 		}
 	}
@@ -454,12 +490,12 @@ func (c Config) Validate() error {
 
 func (c Config) groupRefs() []GroupRef {
 	var out []GroupRef
-	for _, d := range c.Domains {
-		for _, p := range d.Kinds {
-			out = append(out, p.RequireGroups...)
-			for _, f := range p.Filters {
-				out = append(out, f.Group)
-			}
+	for _, d := range c.ContentFilters.Domains {
+		for _, refs := range d.RequireEntities {
+			out = append(out, refs...)
+		}
+		for _, f := range d.Filters {
+			out = append(out, f.Group)
 		}
 	}
 	return out
@@ -555,26 +591,62 @@ func (c Config) Routes() map[string]string {
 	return out
 }
 
-// DomainFor returns the domain serving host, ignoring case and port; the first
-// domain when none matches. Host is the request host, not an authority selector.
+func (c ContentFilters) validateDomains() error {
+	if len(c.Domains) == 0 {
+		return nil
+	}
+	mainDomains := 0
+	for _, domain := range c.Domains {
+		if domain.Name == "main" {
+			mainDomains++
+		}
+	}
+	if mainDomains != 1 {
+		return fmt.Errorf("%w: configured domains need exactly one domain named main", ErrInvalid)
+	}
+	names, hosts := map[string]bool{}, map[string]bool{}
+	for _, domain := range c.Domains {
+		if domain.Name == "" || names[domain.Name] || (domain.Name != "main" && len(domain.Hosts) == 0) {
+			return fmt.Errorf("%w: domain %q needs a unique name and non-main domains need hosts", ErrInvalid, domain.Name)
+		}
+		names[domain.Name] = true
+		for _, alias := range domain.Hosts {
+			host := domainHost(alias)
+			if host == "" || hosts[host] {
+				return fmt.Errorf("%w: domain host %q is empty or repeated", ErrInvalid, alias)
+			}
+			hosts[host] = true
+		}
+	}
+	return nil
+}
+
+// DomainFor returns an exact hostname match, ignoring case, port and the DNS
+// trailing dot, or the domain named main. Domain order has no meaning. Host is
+// the request host, not an authority selector; no configured policy returns false.
 func (c Config) DomainFor(host string) (Domain, bool) {
 	host = domainHost(host)
-	for _, s := range c.Domains {
-		for _, h := range s.Hosts {
-			if domainHost(h) == host {
-				return s, true
+	if host != "" {
+		for _, domain := range c.ContentFilters.Domains {
+			for _, alias := range domain.Hosts {
+				if domainHost(alias) == host {
+					return domain, true
+				}
 			}
 		}
 	}
-	if len(c.Domains) > 0 {
-		return c.Domains[0], true
+	for _, domain := range c.ContentFilters.Domains {
+		if domain.Name == "main" {
+			return domain, true
+		}
 	}
 	return Domain{}, false
 }
 
 func domainHost(host string) string {
+	host = strings.TrimSpace(host)
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return strings.ToLower(host)
+	return strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
 }

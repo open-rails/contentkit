@@ -1,9 +1,10 @@
 // Package search is ContentKit's keyword retrieval over content_search_documents:
-// exact names and aliases, native-script prefixes and bounded typos for every
-// language, with the visibility join (Eligibility) applied inside every route.
+// exact names and aliases, literal substrings, prefixes and bounded typos for
+// every language, with eligibility applied inside every indexed route.
 package search
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 )
+
+// ErrInvalidQuery is a request query beyond retrieval's size/token bounds.
+var ErrInvalidQuery = errors.New("search: invalid query")
 
 // MaxCandidateLimit bounds one route's document window.
 const MaxCandidateLimit = 10_000
@@ -38,7 +42,7 @@ type Options struct {
 	Limit        int
 
 	// Eligibility binds pgx '@name' placeholders other than the reserved
-	// tenant, language, q, prefix, limit, kinds and candidates.
+	// tenant, language, q, prefix, contains, limit, kinds and candidates.
 	Eligibility *Eligibility
 }
 
@@ -101,6 +105,10 @@ func mergeNamedArgs(dst pgx.NamedArgs, extra map[string]any) error {
 // hostClauses renders the tenant/language/kind filters and the eligibility
 // join shared by every route.
 func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string, err error) {
+	return hostClausesFrom(opts, args, "content_search_documents", false)
+}
+
+func hostClausesFrom(opts Options, args pgx.NamedArgs, relation string, allLanguages bool) (from, where, priority string, err error) {
 	qs, err := quoteIdent(opts.Schema)
 	if err != nil {
 		return "", "", "", err
@@ -109,7 +117,10 @@ func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string
 		return "", "", "", fmt.Errorf("tenant and language are required")
 	}
 	args["tenant"], args["language"] = opts.Tenant, opts.Language
-	where = `sd.tenant_id=@tenant AND sd.language=@language`
+	where = `sd.tenant_id=@tenant`
+	if !allLanguages {
+		where += ` AND sd.language=@language`
+	}
 	if len(opts.ContentKinds) > 0 {
 		where += ` AND sd.content_kind=ANY(@kinds::text[])`
 		args["kinds"] = opts.ContentKinds
@@ -118,7 +129,7 @@ func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string
 	if err != nil {
 		return "", "", "", err
 	}
-	return qs + `.content_search_documents sd` + join, where, priority, nil
+	return qs + `.` + pgx.Identifier{relation}.Sanitize() + ` sd` + join, where, priority, nil
 }
 
 // EligibilityJoin renders the eligibility query as the lateral join every

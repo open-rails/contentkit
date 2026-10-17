@@ -123,7 +123,7 @@ export function languagePrefix(languages: readonly string[], language = ""): str
   return language || languages[0] || "";
 }
 
-/** Joins /{language}/{route}/{code}[/{slug}][?query]; ContentURLs.path() picks the language. */
+/** Joins /{language}/{route}/{code}[/{slug}][?query]; slug is the "/"-joined decorative path. ContentURLs.path() picks the language. */
 export function contentPath(route: string, code: string, slug = "", options: PathOptions = {}): string {
   const prefix = options.language ? `/${options.language}` : "";
   return `${prefix}/${route}/${code}${slug ? `/${slug}` : ""}${queryString(options.query, options.version)}`;
@@ -253,10 +253,11 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       language = segs[0]!;
       segs = segs.slice(1);
     }
-    if (segs.length < 2 || segs.length > 3 || !routeSet.has(segs[0]!)) return null;
+    if (segs.length < 2 || !routeSet.has(segs[0]!)) return null;
     const code = parseCode(segs[1]!);
     if (code === null) return null;
-    return { language, route: segs[0]!, code, rawCode: segs[1]!, slug: segs[2] ?? "" };
+    // Decorative segments (an entity and a title); stale or extra ones redirect.
+    return { language, route: segs[0]!, code, rawCode: segs[1]!, slug: segs.slice(2).join("/") };
   };
 
   const path = (link: ContentLink, options: PathOptions = {}): string => {

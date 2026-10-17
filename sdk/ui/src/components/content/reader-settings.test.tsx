@@ -12,7 +12,7 @@ const languages = [{ value: "en", label: "English" }, { value: "es", label: "Esp
 afterEach(() => { localStorage.clear(); });
 
 it("combines language and settings in one accessible trigger, including for guests", async () => {
-  const fetcher = vi.fn(async () => Response.json({ kinds: { gallery: [] }, include_deleted: false }));
+  const fetcher = vi.fn(async () => Response.json({ applies_to: ["gallery", "blog"], filters: [], include_deleted: false }));
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: fetcher });
   const changed = vi.fn();
   function Host() {
@@ -48,7 +48,7 @@ it("works without a content provider when only language is available", async () 
 });
 
 it("does not turn a localized URL into a saved language preference", () => {
-  const client = createContentKitClient({ baseUrl: "https://content.test/deeplink", fetch: async () => Response.json({ kinds: { gallery: [] }, include_deleted: false }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/deeplink", fetch: async () => Response.json({ applies_to: ["gallery", "blog"], filters: [], include_deleted: false }) });
   const view = render(<ContentKitProvider client={client} viewer={null}><ReaderSettings languages={languages} language="es" onLanguageChange={() => {}} /></ContentKitProvider>);
   expect(client.preferences.browser.snapshot().language).toBeUndefined();
   view.rerender(<ContentKitProvider client={client} viewer={null}><ReaderSettings languages={languages} language="en" onLanguageChange={() => {}} /></ContentKitProvider>);
@@ -56,7 +56,7 @@ it("does not turn a localized URL into a saved language preference", () => {
 });
 
 it("shows the current page language while allowing an explicit return to the saved language", async () => {
-  const client = createContentKitClient({ baseUrl: "https://content.test/saved-language", fetch: async () => Response.json({ kinds: { gallery: [] }, include_deleted: false }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/saved-language", fetch: async () => Response.json({ applies_to: ["gallery", "blog"], filters: [], include_deleted: false }) });
   client.preferences.browser.setLanguage("en");
   const changed = vi.fn();
   render(<ContentKitProvider client={client} viewer={null}><ReaderSettings languages={languages} language="es" onLanguageChange={changed} /></ContentKitProvider>);
@@ -75,9 +75,9 @@ it("keeps failed registration inheritance visible and lets the reader retry it",
   let fail = true;
   const client = createContentKitClient({ baseUrl: "https://content.test/registration-ui", fetch: async (input) => {
     if (String(input).endsWith("/initialize") && fail) return Response.json({ error: "unavailable", code: "unavailable" }, { status: 503 });
-    return Response.json({ kinds: { gallery: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, default_visible: false, visible: false, overridden: false }] }, include_deleted: false });
+    return Response.json({ applies_to: ["gallery", "blog"], filters: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, default_visible: false, visible: false, overridden: false }], include_deleted: false });
   } });
-  client.preferences.browser.setFilters({ gallery: [{ entity_id: "filter", visible: true }] });
+  client.preferences.browser.setFilters([{ entity_id: "filter", visible: true }]);
   await client.preferences.inheritAfterRegistration("new-reader");
   const languagePreference = { load: async () => null, save: async () => {} };
   render(<ContentKitProvider client={client} viewer="new-reader" languagePreference={languagePreference}><ReaderSettings languages={languages} language="en" onLanguageChange={() => {}} /></ContentKitProvider>);
@@ -94,8 +94,8 @@ it("keeps failed registration inheritance visible and lets the reader retry it",
 it("saves signed-in filters immediately and retains them when reopened", async () => {
   let visible = false;
   const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === "PUT") visible = JSON.parse(String(init.body)).kinds.gallery[0].visible;
-    return Response.json({ kinds: { gallery: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, label: "Furry", visible, overridden: visible }] }, include_deleted: false });
+    if (init?.method === "PATCH") visible = JSON.parse(String(init.body)).filters[0].visible;
+    return Response.json({ applies_to: ["gallery", "blog"], filters: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, default_visible: false, visible, overridden: visible }], include_deleted: false });
   });
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: fetcher });
   render(<ContentKitProvider client={client} viewer="reader"><ReaderSettings languages={languages} language="en" onLanguageChange={() => {}} appearance={{ theme: "dark" }} /></ContentKitProvider>);
@@ -108,7 +108,7 @@ it("saves signed-in filters immediately and retains them when reopened", async (
   const toggle = await screen.findByRole("switch", { name: "Furry" });
   await user.click(toggle);
   await waitFor(() => expect(toggle).toBeChecked());
-  expect(JSON.parse(String(fetcher.mock.calls.find(([, init]) => init?.method === "PUT")?.[1]?.body))).toEqual({ kinds: { gallery: [{ entity_id: "filter", visible: true }] }, include_deleted: false });
+  expect(JSON.parse(String(fetcher.mock.calls.find(([, init]) => init?.method === "PATCH")?.[1]?.body))).toEqual({ filters: [{ entity_id: "filter", visible: true }] });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await user.click(trigger);
@@ -116,10 +116,21 @@ it("saves signed-in filters immediately and retains them when reopened", async (
 });
 
 it("omits the filter heading when the signed-in site has no configured filters", async () => {
-  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async () => Response.json({ kinds: { gallery: [] }, include_deleted: false }) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async () => Response.json({ applies_to: ["gallery", "blog"], filters: [], include_deleted: false }) });
   render(<ContentKitProvider client={client} viewer="reader"><ReaderSettings languages={languages} language="en" onLanguageChange={() => {}} /></ContentKitProvider>);
   await userEvent.setup().click(screen.getByRole("button", { name: "Reader settings" }));
   await waitFor(() => expect(screen.queryByText("Show Content:")).toBeNull());
   expect(screen.getByRole("combobox", { name: "Language" })).toBeVisible();
   expect(screen.queryByRole("switch")).toBeNull();
+});
+
+it("offers only the language, without loading filters, when filters are off", async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL) => Response.json({ applies_to: ["gallery", "blog"], filters: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, default_visible: false, visible: false, overridden: false }], include_deleted: false }));
+  const client = createContentKitClient({ baseUrl: "https://content.test/admin", fetch: fetcher });
+  render(<ContentKitProvider client={client} viewer="admin"><ReaderSettings filters={false} languages={languages} language="en" onLanguageChange={() => {}} /></ContentKitProvider>);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Reader settings" }));
+  expect(await screen.findByRole("combobox", { name: "Language" })).toBeVisible();
+  expect(screen.queryByText("Show Content:")).toBeNull();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes("content-filters"))).toBe(false);
 });

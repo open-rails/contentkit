@@ -250,8 +250,8 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 				// Explicit negative feedback outranks every other adjustment.
 				score *= p.DislikePenalty
 			} else {
-				if p.AffinityWeight > 0 && st.LastScore > 0 {
-					score *= 1 + p.AffinityWeight*float32(st.LastScore)/100
+				if p.AffinityWeight > 0 && st.Quality > 0 {
+					score *= 1 + p.AffinityWeight*float32(st.Quality)
 				}
 				if p.DemoteSeen {
 					switch {
@@ -500,7 +500,7 @@ func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.Popul
 	return store.Popular(ctx, h.tenant, contentKind, opts)
 }
 
-// Metrics returns named window metrics (viewers, views, completions,
+// Metrics returns named window metrics (readers, views, completions,
 // feedback, ...) for the references (works or versions).
 func (h *Hub) Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error) {
 	store, err := h.requireStore()
@@ -529,4 +529,20 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func (h *Hub) CompletedCount(ctx context.Context, subject signal.Subject, kind string) (int64, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return 0, err
+	}
+	return store.CompletedCount(ctx, h.tenant, subject, kind)
+}
+
+func (h *Hub) ImportLegacyReading(ctx context.Context, in []signal.LegacyReading) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.ImportLegacyReading(ctx, h.tenant, in)
 }

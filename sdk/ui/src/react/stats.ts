@@ -1,7 +1,7 @@
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { Activity, MyStats, TopContents } from "../client/generated/wire.js";
-import type { ActivityQuery, TopQuery } from "../client/stats.js";
+import type { Activity, MyStats } from "../client/generated/wire.js";
+import type { ActivityQuery } from "../client/stats.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 export interface UseStats<T> {
@@ -20,16 +20,10 @@ function useStats<T>(key: string | null, fetch: (c: ContentKitClient, signal: Ab
   return { data: r.data ?? null, loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
 
-/** Staff: a kind's views per UTC day, newest first; null reads nothing. */
+/** Staff: distinct people per UTC day (anonymous, free, premium) who read or played; distinct within each day, not across the period. Null reads nothing. */
 export function useActivity(q: ActivityQuery | null, o: { client?: ContentKitClient } = {}): UseStats<Activity> {
   const { scope } = useContentScope(o.client);
   return useStats(q ? keyOf("stats", scope, "activity", q.kind, q.days) : null, (c, s) => c.stats.activity(q!, s), o);
-}
-
-/** Staff: a kind's content ranked by views or comments over a period; null reads nothing. */
-export function useTopContents(q: TopQuery | null, o: { client?: ContentKitClient } = {}): UseStats<TopContents> {
-  const { scope } = useContentScope(o.client);
-  return useStats(q ? keyOf("stats", scope, "top", q) : null, (c, s) => c.stats.top(q!, s), o);
 }
 
 /** The signed-in reader's statistics; nothing signed out. */

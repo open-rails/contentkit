@@ -104,6 +104,9 @@ export const groups = {
     versionId: "Version id (optional)",
     newMember: "New member",
     addMember: "Add member",
+    chipsPlaceholder: "Type or paste names, separated by commas",
+    notFound: "Not found, so not saved: {names}",
+    chipDetails: "Edit {name}",
   },
   membership: {
     unknown: "We can't check your membership right now.",

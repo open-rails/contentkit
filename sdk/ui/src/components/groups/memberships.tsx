@@ -2,7 +2,6 @@ import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import { fromLocalInput, toLocalInput } from "../../client/group-fields.js";
 import type { ContentMemberships, GroupCard, GroupDetail, GroupKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
@@ -16,15 +15,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Skeleton } from "#ckui/ui/skeleton";
 import { SortableList } from "../sortable-list.js";
 import { contentError, ErrorLine, formatDate, useAction } from "../social/parts.js";
-import { GroupPicker, labelOf, type Labels } from "./parts.js";
+import { EntityChips, WindowFields, type VersionChoice } from "./entity-chips.js";
+import { labelOf, type Labels } from "./parts.js";
 
 const NONE = "__none__";
 
-/** A version a membership may target. */
-export interface VersionChoice {
-  id: string;
-  label: string;
-}
+export type { VersionChoice } from "./entity-chips.js";
 
 export interface MembershipEditorProps {
   /** The content whose memberships are edited, its versions' included. */
@@ -121,42 +117,31 @@ export function MembershipEditor(p: MembershipEditorProps) {
         const rows = draft.filter((x) => cards.get(x.group_id ?? "")?.kind === kind);
         const label = labelOf(p.labels, kind);
         return (
-          <fieldset key={kind} className="grid gap-2" data-ckui="membership-kind" data-group-kind={kind}>
-            <legend className="mb-1 font-medium">{label}</legend>
-            {rows.length > 0 && (
-              <ul className="grid gap-2">
-                {rows.map((x) => (
-                  <MembershipRow
-                    key={x.key}
-                    m={x}
-                    card={cards.get(x.group_id ?? "")}
-                    spec={spec}
-                    labels={p.labels}
-                    versions={p.versions}
-                    versionLabel={versionLabel}
-                    onChange={(patch) => change(x.key, patch)}
-                    onRemove={() => {
-                      setSaved(false);
-                      setDraft((d) => d.filter((y) => y.key !== x.key));
-                    }}
-                  />
-                ))}
-              </ul>
-            )}
-            <GroupPicker
-              management={p.management}
+          <div key={kind} data-ckui="membership-kind" data-group-kind={kind}>
+            <EntityChips
               kind={kind}
+              label={label}
+              memberships={rows}
+              cards={cards}
+              spec={spec}
+              labels={p.labels}
+              versions={p.versions}
+              versionLabel={versionLabel}
               language={p.language}
-              label={t("memberships.add", { kind: label })}
-              exclude={rows.filter((x) => !x.version_id && !x.role).map((x) => x.group_id!)}
+              management={p.management}
               client={p.client}
-              onPick={(g) => {
+              onChange={(i, patch) => change(rows[i]!.key, patch)}
+              onRemove={(i) => {
+                setSaved(false);
+                setDraft((d) => d.filter((y) => y.key !== rows[i]!.key));
+              }}
+              onAdd={(g) => {
                 setSaved(false);
                 setPicked((all) => new Map(all).set(g.id, g));
                 setDraft((d) => [...d, { group_id: g.id, key: ++seq.current }]);
               }}
             />
-          </fieldset>
+          </div>
         );
       })}
       {!groupKinds.length && <p className="text-muted-foreground">{t("memberships.noKinds")}</p>}
@@ -180,125 +165,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
   );
 }
 
-function MembershipRow({
-  m: x,
-  card,
-  spec,
-  labels,
-  versions,
-  versionLabel,
-  onChange,
-  onRemove,
-}: {
-  m: Membership;
-  card?: GroupCard;
-  spec: GroupKind;
-  labels?: Labels;
-  versions?: readonly VersionChoice[];
-  versionLabel: (id: string) => string;
-  onChange: (patch: Partial<Membership>) => void;
-  onRemove: () => void;
-}) {
-  const { t } = useMessages();
-  const id = useId();
-  const name = card ? card.name || card.slug : (x.group_id ?? "");
-  const versionIds = [...new Set([...(versions ?? []).map((v) => v.id), ...(x.version_id ? [x.version_id] : [])])];
-  return (
-    <li className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2" data-ckui="membership" data-group={card?.slug} data-state={x.state ?? "active"}>
-      <span className="min-w-0 flex-1 font-medium break-words">{name}</span>
-      {x.state === "proposed" && (
-        <>
-          <Badge variant="secondary">{t("memberships.proposed")}</Badge>
-          <Button type="button" size="xs" variant="outline" onClick={() => onChange({ state: "active" })}>
-            {t("memberships.accept")}
-          </Button>
-        </>
-      )}
-      {spec.version_level && versionIds.length > 0 && (
-        <Select value={x.version_id ?? NONE} onValueChange={(v) => onChange({ version_id: v === NONE ? undefined : String(v) })}>
-          <SelectTrigger size="sm" aria-label={t("memberships.versionOf", { name })}>
-            <SelectValue>{(v: string) => (v === NONE ? t("memberships.wholeContent") : versionLabel(v))}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NONE}>{t("memberships.wholeContent")}</SelectItem>
-            {versionIds.map((v) => (
-              <SelectItem key={v} value={v}>
-                {versionLabel(v)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {!!spec.roles?.length && (
-        <Select value={x.role || NONE} onValueChange={(v) => onChange({ role: v === NONE ? undefined : String(v) })}>
-          <SelectTrigger size="sm" aria-label={t("memberships.roleOf", { name })}>
-            <SelectValue>{(v: string) => (v === NONE ? t("memberships.noRole") : labelOf(labels, v))}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NONE}>{t("memberships.noRole")}</SelectItem>
-            {spec.roles.map((r) => (
-              <SelectItem key={r} value={r}>
-                {labelOf(labels, r)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {spec.ordered && (
-        <div className="flex items-center gap-1">
-          <Label htmlFor={`${id}-pos`} className="text-xs text-muted-foreground">
-            {t("memberships.position")}
-          </Label>
-          <Input
-            id={`${id}-pos`}
-            className="h-8 w-20"
-            type="number"
-            min={0}
-            step={1}
-            value={x.position ?? ""}
-            placeholder={t("memberships.last")}
-            onChange={(e) => onChange({ position: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value))) })}
-          />
-        </div>
-      )}
-      {spec.windows && <WindowFields from={x.active_from} until={x.active_until} name={name} onChange={onChange} />}
-      <Button type="button" size="xs" variant="ghost" aria-label={t("memberships.remove", { name })} onClick={onRemove}>
-        {t("common.remove")}
-      </Button>
-    </li>
-  );
-}
 
-function WindowFields({ from, until, name, onChange }: { from?: string; until?: string; name: string; onChange: (patch: Partial<Membership>) => void }) {
-  const { t } = useMessages();
-  const id = useId();
-  return (
-    <div className="flex flex-wrap items-center gap-1" data-ckui="membership-window">
-      <Label htmlFor={`${id}-from`} className="text-xs text-muted-foreground">
-        {t("memberships.from")}
-      </Label>
-      <Input
-        id={`${id}-from`}
-        className="h-8 w-48"
-        type="datetime-local"
-        aria-label={t("memberships.fromOf", { name })}
-        value={toLocalInput(from)}
-        onChange={(e) => onChange({ active_from: fromLocalInput(e.target.value) })}
-      />
-      <Label htmlFor={`${id}-until`} className="text-xs text-muted-foreground">
-        {t("memberships.until")}
-      </Label>
-      <Input
-        id={`${id}-until`}
-        className="h-8 w-48"
-        type="datetime-local"
-        aria-label={t("memberships.untilOf", { name })}
-        value={toLocalInput(until)}
-        onChange={(e) => onChange({ active_until: fromLocalInput(e.target.value) })}
-      />
-    </div>
-  );
-}
 
 export interface GroupMembersProps {
   group: Pick<GroupDetail, "id" | "kind" | "name" | "slug" | "cover">;

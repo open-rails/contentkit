@@ -77,16 +77,17 @@ type Config struct {
 
 // Ranker applies one policy to one tenant's signal plane.
 type Ranker struct {
-	source          Source
-	policy          Policy
-	catalog         Catalog
-	cache           Cache
-	cacheTTL        time.Duration
-	groupCandidates int
-	maxDepth        int
-	availability    AvailabilityProvider
-	scope           signal.ActivityScope
-	normalization   *signal.NormalizationOptions
+	source              Source
+	policy              Policy
+	catalog             Catalog
+	cache               Cache
+	cacheTTL            time.Duration
+	groupCandidates     int
+	maxDepth            int
+	availability        AvailabilityProvider
+	scope               signal.ActivityScope
+	normalization       *signal.NormalizationOptions
+	standingUnavailable bool
 }
 
 // New validates the policy and returns the Ranker.
@@ -128,12 +129,12 @@ type Hit struct {
 	signal.ContentMetrics
 }
 
-// MeanEngagement is the mean session score in [0, 1]: ScoreSum / (100·Views).
+// MeanEngagement is mean bounded measured quality per distinct qualified reader.
 func (h Hit) MeanEngagement() float64 {
-	if h.Views == 0 {
+	if h.Readers == 0 {
 		return 0
 	}
-	return float64(h.ScoreSum) / (100 * float64(h.Views))
+	return h.ReaderQualitySum / float64(h.Readers)
 }
 
 // GroupHit is one ranked group, derived from its member works.
@@ -142,13 +143,13 @@ type GroupHit struct {
 	GroupKind    string
 	Score        float64 // summed member scores
 	ContentCount uint64  // ranked members inside the candidate bound
-	Viewers      uint64  // summed member viewers (a subject viewing two members counts twice)
+	Readers      uint64  // summed member readers (a person engaging with two members counts twice)
 	MeanScore    float64 // Score / ContentCount
 }
 
 // Popular returns the top limit works of one kind in a window, ranked by the
-// policy inside ClickHouse (RankExpr). Only works with a view in the window
-// rank; ties break on content id. limit is clamped to MaxDepth. The ranking is
+// policy inside ClickHouse (RankExpr). Only works with qualified readers rank;
+// ties break on content id. limit is clamped to MaxDepth. The ranking is
 // global and read in power-of-two prefixes, so a few cache entries per window
 // serve every reader; hosts page by asking for offset+limit and slicing.
 func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
@@ -157,6 +158,9 @@ func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.
 }
 
 func (r *Ranker) popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
+	if r.standingUnavailable {
+		return []Hit{}, nil
+	}
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
 	}
@@ -199,8 +203,8 @@ func (r *Ranker) readDepth(limit int) int {
 
 // Candidates scores a host-selected set of works (an artist's galleries, a
 // search page, a tag) in Go over one Metrics read: score descending, content
-// id ascending. Candidates without a view in the window are absent, exactly
-// as in Popular.
+// id ascending. Candidates without qualified readers in the window are absent,
+// exactly as in Popular.
 func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []string, window signal.Window) ([]Hit, error) {
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
@@ -212,6 +216,9 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 		q, window, _, err := r.query(ctx, contentKind, window)
 		if err != nil {
 			return nil, err
+		}
+		if q.standingUnavailable {
+			return []Hit{}, nil
 		}
 		if !q.policy.Normalized() {
 			return q.Candidates(ctx, contentKind, ids, window)
@@ -249,7 +256,7 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 	}
 	out := make([]Hit, 0, len(metrics))
 	for key, m := range metrics {
-		if key.ContentVersionID != "" || m.Views == 0 {
+		if key.ContentVersionID != "" || m.Readers == 0 {
 			continue
 		}
 		out = append(out, Hit{ContentID: key.ContentID, Score: r.policy.Score(m), ContentMetrics: m})
@@ -316,7 +323,7 @@ func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, wind
 					byID[tid] = e
 				}
 				e.ContentCount++
-				e.Viewers += w.Viewers
+				e.Readers += w.Readers
 				e.Score += w.Score
 			}
 		}
@@ -356,7 +363,7 @@ func (r *Ranker) cacheKey(parts ...string) string {
 		Scope         signal.ActivityScope
 		Normalization *signal.NormalizationOptions
 	}{r.source.Tenant(), r.policy, parts, r.scope, r.normalization})
-	return fmt.Sprintf("contentkit:popularity:%x", sha256.Sum256(body))
+	return fmt.Sprintf("contentkit:measured-popularity:v1:%x", sha256.Sum256(body))
 }
 
 func (r *Ranker) cached(ctx context.Context, key string, into any) bool {

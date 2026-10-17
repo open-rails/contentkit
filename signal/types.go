@@ -14,7 +14,6 @@
 package signal
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -70,15 +69,6 @@ func (s Subject) Validate() error {
 	return nil
 }
 
-// TypeView is the consumption signal type. Viewer counts, popularity and
-// progress/completion/resume state read only view events; clicks and feedback
-// stay separate signals.
-const TypeView = "view"
-
-// TypePreview retains restricted preview telemetry without counting it as a
-// full gallery read, completion or popularity vote.
-const TypePreview = "preview"
-
 // Signal is one logical source event: a consumption session, reaction, click,
 // rating. Identity is (tenant, content ref, subject, Type, EventID):
 // re-delivering the same identity never adds another event, whatever its
@@ -89,7 +79,7 @@ type Signal struct {
 	ContentRef
 	Subject Subject
 
-	// Type is host-defined except TypeView.
+	// Type is host-defined; route-open/view/preview signals are rejected.
 	Type string
 
 	// EventID is the required stable source identity. Retries must reuse it;
@@ -107,22 +97,8 @@ type Signal struct {
 	// selects the UTC day the event counts in.
 	OccurredAt time.Time
 
-	// Consumption measurements, cumulative for the revision.
-	DurationS   uint32 // active time
-	Progress    uint32 // numerator (pages / scroll % / watched s)
-	ProgressMax uint32 // denominator (page count / 100 / duration)
-
-	// Value is explicit feedback (+1 like, -1 dislike, rating). State and
-	// windows sum the canonical values.
+	// Value is explicit feedback (+1 like, -1 dislike, rating).
 	Value float64
-
-	// Score is the engagement score; a registered Scorer fills it together with
-	// Progress/ProgressMax/Completed.
-	Score int16
-
-	// Completed per the content kind's completion rule.
-	Completed bool
-
 	// Resume is an opaque host pointer for "pick up where you left off".
 	Resume string
 
@@ -132,6 +108,10 @@ type Signal struct {
 	// Access is a trusted access snapshot at the event's observation time. Nil
 	// marks legacy events whose audience cannot be inferred retroactively.
 	Access *AccessContext
+
+	// Measurement is trusted measured consumption. It is stored separately
+	// from generic feedback and never increments a route-open counter.
+	Measurement *Measurement
 }
 
 func (s Signal) validate(tenant string) error {
@@ -170,29 +150,6 @@ func checkRef(tenant string, ref ContentRef) error {
 	}
 	return checkIdentifiers("ContentKind", ref.ContentKind, "ContentID", ref.ContentID, "ContentVersionID", ref.Version())
 }
-
-// Scored is the result of a content kind's Scorer.
-type Scored struct {
-	Score       int16
-	Progress    uint32
-	ProgressMax uint32
-	Completed   bool
-}
-
-// Scorer maps a raw signal (the "session") to a normalized engagement score,
-// generic progress, and whether it counts as "completed". Host-provided per
-// content kind; this is where kinds differ while the hub stays generic.
-//
-// Examples: gallery — progress = max page reached / page count, completed at
-// ≥90%; blog post — read-time + scroll depth; video — watch %.
-type Scorer interface {
-	Score(ctx context.Context, s Signal) (Scored, error)
-}
-
-// ScorerFunc adapts a function to the Scorer interface.
-type ScorerFunc func(ctx context.Context, s Signal) (Scored, error)
-
-func (f ScorerFunc) Score(ctx context.Context, s Signal) (Scored, error) { return f(ctx, s) }
 
 // Render surfaces. Hosts may use other values; these are the common ones
 // evaluation distinguishes.
@@ -370,23 +327,17 @@ func payloadUint32(v any) uint32 {
 // State is one subject's compact, indefinitely retained standing with one
 // content reference, derived from its canonical events.
 type State struct {
-	Seen         bool // MaxProgress > 0
+	Seen         bool
 	FirstSeenAt  time.Time
 	LastSignalAt time.Time
-	LastViewAt   time.Time
-	TotalEvents  uint32 // canonical events of every type
-	Views        uint32 // canonical view events (sessions)
-	Completions  uint32 // completed views
-	ActiveS      uint64 // summed view DurationS
-	MaxProgress  uint32 // progress bar = MaxProgress / ProgressMax
+	LastReadAt   time.Time
+	ActiveMS     uint64
+	MaxProgress  uint32
 	ProgressMax  uint32
 	Completed    bool
-	Resume       string // latest non-empty resume pointer
-	LastScore    int16  // score of the latest view
-	// NetValue sums canonical feedback Values. Negative = current sentiment is
-	// negative; recommendations exclude such content.
-	NetValue float64
-	Feedback uint32 // canonical events with a non-zero Value
+	Resume       string
+	Quality      float64 // bounded per-person measured coverage/attention quality; legacy resume carries zero
+	NetValue     float64
 }
 
 // StateRow is a State with its content reference, as returned by History.
@@ -425,28 +376,19 @@ type HistoryOptions struct {
 
 // ContentMetrics are named, separately defined statistics for one content
 // reference over a window, computed from canonical events. Each subject counts
-// once per metric that says "subjects"; sessions and feedback are never
-// relabeled as views.
+// once per metric that says "subjects". Measured consumption and explicit
+// feedback remain separate; neither exposes a route-open counter.
 type ContentMetrics struct {
-	Viewers     uint64 // subjects with at least one view
-	UserViewers uint64
-	AnonViewers uint64
-	Views       uint64 // view events (sessions)
-	Completions uint64 // completed views
-	Completers  uint64 // subjects with a completed view
-	ActiveS     uint64 // summed view DurationS
-	ScoreSum    int64  // summed view scores; ScoreSum/Views is the mean
-	// ViewerEngagementSum sums each viewer's mean session score, normalized
-	// and clamped to [0,1]. Every viewer contributes at most one unit.
-	ViewerEngagementSum float64
-	ReturningViewers    uint64 // subjects with more than one canonical view in the window
-	Events              uint64 // canonical events of every type
-	ValueSum            float64
-	// PositiveSubjects / NegativeSubjects: subjects whose summed feedback
-	// Value in the window is > 0 / < 0.
+	Readers          uint64
+	UserReaders      uint64
+	GuestReaders     uint64
+	Completers       uint64
+	ActiveMS         uint64
+	ReaderQualitySum float64
+	ReturningReaders uint64
+	ValueSum         float64
 	PositiveSubjects uint64
 	NegativeSubjects uint64
-	SignalCounts     map[string]uint64     // canonical events per type
 	Normalization    *NormalizationMetrics `json:"normalization,omitempty"`
 }
 
@@ -540,20 +482,19 @@ func utcDay(t time.Time) time.Time {
 
 // RankWeights tunes the default popularity ranking:
 //
-//	volume  = log10(1 + viewers)
-//	quality = (score_sum + PriorScore·PriorWeight) / (views + PriorWeight)
+//	volume  = log10(1 + readers)
+//	quality = (100·reader_quality_sum + PriorScore·PriorWeight) / (readers + PriorWeight)
 //	rank    = volume × max(QualityFloor, quality)
 //
-// Qualifying views have equal time weight inside the selected window. A score
-// of zero is a valid observation and participates in the mean.
+// Qualified people have equal time weight inside the selected window. This
+// low-level default is separate from the named popularity.Policy formulas.
 type RankWeights struct {
-	// PriorWeight is the strength of the Bayesian prior in pseudo-views.
+	// PriorWeight is the strength of the prior in pseudo-readers.
 	// Defaults to 10.
 	PriorWeight float64
-	// PriorScore is the prior mean engagement score. Defaults to 0.
+	// PriorScore is the prior mean quality on a 0–100 scale. Defaults to 0.
 	PriorScore float64
-	// QualityFloor keeps pure-volume ranking meaningful when hosts record no
-	// scores. Defaults to 1.
+	// QualityFloor bounds the low-level quality multiplier below. Defaults to 1.
 	QualityFloor float64
 }
 
@@ -577,9 +518,8 @@ type PopularOptions struct {
 
 	// RankExpr, when set, REPLACES the default ranking with a host-supplied
 	// ClickHouse expression (trusted SQL). It may reference the window metric
-	// columns: viewers, user_viewers, anon_viewers, views, completions,
-	// completers, active_s, score_sum, viewer_engagement_sum, returning_viewers,
-	// events, value_sum, positive_subjects,
+	// columns: readers, user_readers, guest_readers, completers, active_ms,
+	// reader_quality_sum, returning_readers, value_sum, positive_subjects,
 	// negative_subjects.
 	RankExpr string
 	// Normalization adds trusted event-time eligible-population observations
@@ -588,7 +528,7 @@ type PopularOptions struct {
 }
 
 // PopularHit is one ranked work from Popular. Only works with at least one
-// view in the window rank; version rows never rank.
+// qualified reader in the window rank; version rows never rank.
 type PopularHit struct {
 	ContentRef
 	ContentMetrics

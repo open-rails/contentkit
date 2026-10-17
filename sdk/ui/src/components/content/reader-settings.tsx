@@ -22,7 +22,8 @@ const noSubscription = () => () => {};
 export interface ReaderSettingsProps {
   /** Content kinds offered in this dialog; omitted shows all configured kinds. */
   kinds?: ContentFilterSettingsProps["kinds"];
-  labels?: ContentFilterSettingsProps["labels"];
+  /** Offers reader content filters (default); false shows only the language, e.g. on admin screens. */
+  filters?: boolean;
   languages: readonly { value: string; label: string }[];
   /** The current language, controlled by the host. */
   language: string;
@@ -75,7 +76,7 @@ export function ReaderSettings(p: ReaderSettingsProps) {
                 </SelectContent>
               </Select>
             </div>
-            {client && <ReaderFilters language={p.language} kinds={p.kinds} labels={p.labels} client={client} onError={p.onError} />}
+            {client && p.filters !== false && <ReaderFilters language={p.language} kinds={p.kinds} client={client} onError={p.onError} />}
             {(state.pending || save.pending) && !state.error && <p className="text-sm text-muted-foreground" role="status">{t("readerSettings.savingPreferences")}</p>}
             <ErrorLine>{state.error || save.error ? t("readerSettings.preferencesNotSaved") : null}</ErrorLine>
             {state.error && preferences && <Button type="button" variant="outline" onClick={() => { void save.run(() => preferences.retry()); }}>{t("common.retry")}</Button>}
@@ -86,11 +87,11 @@ export function ReaderSettings(p: ReaderSettingsProps) {
   );
 }
 
-function ReaderFilters(p: Pick<ReaderSettingsProps, "language" | "client" | "onError" | "kinds" | "labels">) {
+function ReaderFilters(p: Pick<ReaderSettingsProps, "language" | "client" | "onError" | "kinds">) {
   const { t } = useMessages();
   const id = useId();
   const { filters } = useContentFilters({ language: p.language, client: p.client });
-  if (filters && !Object.entries(filters.kinds).some(([kind, rows]) => rows.length && (!p.kinds || p.kinds.includes(kind)))) return null;
+  if (filters && (!filters.filters.length || p.kinds && !p.kinds.some(kind=>filters.applies_to.includes(kind)))) return null;
   return (
     <section aria-labelledby={id} className="grid gap-3">
       <h3 id={id} className="font-medium">{t("readerSettings.filters")}</h3>

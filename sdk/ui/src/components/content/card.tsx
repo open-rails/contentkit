@@ -1,4 +1,4 @@
-import { FavouriteIcon, LockIcon, PlayIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
+import { FavouriteIcon, LockIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { Fragment, useCallback, useContext, useLayoutEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
@@ -71,12 +71,8 @@ export interface CardMetadata {
   traits?: boolean | readonly string[];
   pages?: boolean;
   duration?: boolean;
-  /** The view count behind a play icon, first in the meta line. Default false. */
-  views?: boolean;
   /** Group kinds named last in the meta line: the first entity of the first kind the card has, linked. */
   groups?: readonly string[];
-  /** When the card has none of `groups`, its chips join the meta line instead of their own row. */
-  groupsFallback?: "chips";
 }
 
 /** The host's badges over a cover. */
@@ -176,13 +172,8 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
-  const views = metadata?.views ? card.counts.views ?? 0 : 0;
   const metaGroup = metadata?.groups?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
   const meta: ReactNode[] = [
-    views > 0 ? <span key="views" className="tabular-nums" data-ckui="card-views">
-      <span aria-hidden><HugeiconsIcon icon={PlayIcon} strokeWidth={2} className="mr-1 inline size-3 align-[-2px]" />{compact(views, m.language)}</span>
-      <span className="sr-only">{m.plural("contents.views", views, { n: compact(views, m.language) })}</span>
-    </span> : null,
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
@@ -235,8 +226,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
-  const chipsInMeta = metadata?.groupsFallback === "chips" && !metaGroup && entityStyle === "chips" && entityList !== null;
-  const metaLine = (className: string) => meta.length > 0 && <p className={cn("text-xs break-words text-muted-foreground", className)} data-ckui="card-meta">
+  const metaLine = meta.length > 0 && <p className="line-clamp-2 text-xs break-words text-muted-foreground" data-ckui="card-meta">
     {meta.map((item, i) => <Fragment key={i}>
       {i > 0 && <><span className="sr-only"> · </span><span className="mx-1.5 mb-px inline-block size-[3px] rounded-full bg-current align-middle" aria-hidden data-ckui="card-meta-dot" /></>}
       {item}
@@ -285,12 +275,9 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
         {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
-        {chipsInMeta ? <div className="flex min-w-0 items-center gap-2" data-ckui="card-meta-row">
-          {metaLine("max-w-1/2 shrink-0 truncate")}
-          <div className="min-w-0 flex-1">{entityList}</div>
-        </div> : metaLine("line-clamp-2")}
+        {metaLine}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
-        {entityStyle === "chips" && !chipsInMeta && entityList}
+        {entityStyle === "chips" && entityList}
         {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
           <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
             {card.counts.favorites !== undefined && (

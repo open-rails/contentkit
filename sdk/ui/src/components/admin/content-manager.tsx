@@ -19,6 +19,7 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
+import { ReaderContentEditor } from "./reader-content-editor.js";
 import { ContentSections } from "../content/editors.js";
 import type { Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
@@ -77,7 +78,7 @@ const states = ["draft", "scheduled", "published"] as const;
 /**
  * Content items of one kind for their creators and staff: every one the
  * caller manages, by state and text, deleted ones on their own to restore;
- * create and edit title, slug, description, schedule, cover and body with
+ * create and edit title, description, schedule, cover and body with
  * inline images per language, publish or keep a draft, and delete; then its
  * listing and attributes, access rule and price, versions (order, languages,
  * traits, schedule, access override, price, segments, media) and groups. The
@@ -99,9 +100,20 @@ function Contents({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
   const access = useContentManagerAccess({ client: p.client });
+  // Editor URLs name items by content code; the editor itself works on ids.
+  const known = useRef(new Map<string, string>()).current;
+  const open = (c: Content, replace = false) => {
+    known.set(c.code, c.id);
+    loc.go(c.code, undefined, replace ? { replace: true } : undefined);
+  };
+  const target = useCodeTarget(p.client, p.kind, loc.view && loc.view !== "new" ? loc.view : null, known);
   if (access.loading) return <Rows />;
   if (!access.allowed.contents) return <NoAccess>{t("contentManager.noAccess")}</NoAccess>;
-  if (!loc.view) return <List {...p} loc={loc} />;
+  if (!loc.view) return <List {...p} loc={loc} open={open} />;
+  if (loc.view !== "new" && !target.id) {
+    if (target.error) return <LoadFailed error={target.error} message={t("contentManager.loadFailed")} retry={target.retry} />;
+    return target.missing ? <NoAccess>{t("contentManager.notFound")}</NoAccess> : <Rows />;
+  }
   return (
     <>
       <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go("")}>
@@ -109,17 +121,43 @@ function Contents({ basePath, navigation, ...p }: Inner) {
       </Button>
       <ContentEditor
         management
-        key={loc.view}
         {...p}
-        id={loc.view === "new" ? null : loc.view}
-        onCreated={(c) => loc.go(c.id, undefined, { replace: true })}
+        id={loc.view === "new" ? null : target.id}
+        onCreated={(c) => open(c, true)}
         onDeleted={() => loc.go("", undefined, { replace: true })}
       />
     </>
   );
 }
 
-function List({ loc, client, kind, languages: offered, contentHref, pageSize = 20, onError }: Inner & { loc: AdminLocation }) {
+/** Resolves an editor URL's content code to its id within the caller's manage rights; known codes resolve at once. */
+function useCodeTarget(client: ContentKitClient, kind: string, code: string | null, known: Map<string, string>) {
+  const [found, setFound] = useState<{ code: string; id: string | null; error?: ContentKitError } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const cached = code ? known.get(code) : undefined;
+  useEffect(() => {
+    if (!code || cached) return;
+    const ctl = new AbortController();
+    client.contents.manage({ kind, code, limit: 1 }, ctl.signal).then(
+      (items) => {
+        const id = items[0]?.id ?? null;
+        if (id) known.set(code, id);
+        setFound({ code, id });
+      },
+      (e) => {
+        if (!ctl.signal.aborted) setFound({ code, id: null, error: toContentKitError(e) });
+      },
+    );
+    return () => ctl.abort();
+  }, [client, kind, code, cached, known, attempt]);
+  const retry = () => setAttempt((n) => n + 1);
+  if (!code) return { id: null, retry };
+  if (cached) return { id: cached, retry };
+  if (found?.code !== code) return { id: null, retry };
+  return { id: found.id, error: found.error, missing: !found.id && !found.error, retry };
+}
+
+function List({ loc, open, client, kind, languages: offered, contentHref, pageSize = 20, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -211,7 +249,7 @@ function List({ loc, client, kind, languages: offered, contentHref, pageSize = 2
                   {deleted ? (
                     <span className="font-medium break-words">{c.title}</span>
                   ) : (
-                    <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => loc.go(c.id)}>
+                    <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => open(c)}>
                       {c.title}
                     </button>
                   )}
@@ -234,7 +272,7 @@ function List({ loc, client, kind, languages: offered, contentHref, pageSize = 2
                           {t("contentManager.view")}
                         </a>
                       )}
-                      <Button size="sm" variant="outline" onClick={() => loc.go(c.id)}>
+                      <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
                       <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(c)}>
@@ -256,13 +294,12 @@ function List({ loc, client, kind, languages: offered, contentHref, pageSize = 2
 
 interface Form {
   title: string;
-  slug: string;
   description: string;
   publishAt: string;
   body: string;
 }
 
-const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
+const empty: Form = { title: "", description: "", publishAt: "", body: "" };
 
 export interface ContentEditorProps {
   /** Staff entity lookup, including internal classifications. */
@@ -287,11 +324,29 @@ export interface ContentEditorProps {
 }
 
 /**
- * One content item for its creators and staff: title, slug, description,
+ * One content item for its creators and staff: title, description,
  * schedule, cover and body per language, publish, unpublish and delete;
  * then listing and attributes, access rule and price, versions and groups.
  */
-export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
+export function ContentEditor(p:ContentEditorProps){
+  const {client,scope}=useContentScope(p.client);
+  const allocated=useRef<{id:string;session:number}|null>(null);
+  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,key:0});
+  let boundary=session;
+  if(session.id!==p.id||session.kind!==p.kind||session.client!==client||session.scope!==scope){
+    const continues=session.id==null&&p.id===allocated.current?.id&&allocated.current?.session===session.key&&session.kind===p.kind&&session.client===client&&session.scope===scope;
+    boundary={id:p.id,kind:p.kind,client,scope,key:continues?session.key:session.key+1};
+    setSession(boundary);
+  }
+  const {kinds,error,reload}=useKinds({client});
+  const {t}=useMessages();
+  if(!kinds)return error?<LoadFailed error={error} message={t("contentManager.loadFailed")} retry={reload}/>:<Rows/>;
+  const props={...p,client,onCreated:(content:Content)=>{allocated.current={id:content.id,session:boundary.key};p.onCreated?.(content);}};
+  if(kinds.kinds[p.kind]?.presentation==="reader")return <ReaderContentEditor key={boundary.key} {...props} model={kinds}/>;
+  return <StandardContentEditor key={boundary.key} {...props}/>;
+}
+
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -311,7 +366,7 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
   useEffect(() => {
     if (!item) return;
     const stored = item.text?.[language];
-    setForm((f) => f ?? { title: stored?.title ?? "", slug: stored?.slug ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
+    setForm((f) => f ?? { title: stored?.title ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
       publishAt: item.publish_at && !item.live ? localInput(new Date(item.publish_at)) : "" });
   }, [item, language]);
   const { imageSrc } = ed;
@@ -338,7 +393,7 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
     setError(err);
     report(err, "content.save");
   };
-  const text = () => ({ title: f.title.trim(), slug: f.slug.trim() || undefined, description: f.description.trim(), body: f.body });
+  const text = () => ({ title: f.title.trim(), description: f.description.trim(), body: f.body });
   const save = async () => {
     setError(null);
     setNotice(null);
@@ -349,9 +404,8 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
         onCreated?.(created);
         return;
       }
-      const saved = await ed.putText(text());
+      await ed.putText(text());
       setNotice(t("pollEditor.saved"));
-      setForm((cur) => ({ ...cur!, slug: saved.text?.[language]?.slug ?? cur!.slug }));
     } catch (e) {
       fail(e);
     }
@@ -442,10 +496,6 @@ export function ContentEditor({ id, client: own, kind, languages: offered, rende
         <Input id={`${ids}-title`} value={f.title} required maxLength={300} onChange={(e) => set({ title: e.target.value })} />
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${ids}-slug`}>{t("contentManager.slug")}</Label>
-          <Input id={`${ids}-slug`} value={f.slug} placeholder={t("contentManager.slugAuto")} onChange={(e) => set({ slug: e.target.value })} />
-        </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`${ids}-publish`}>{t("contentManager.publishAt")}</Label>
           <Input id={`${ids}-publish`} type="datetime-local" value={f.publishAt} onChange={(e) => set({ publishAt: e.target.value })} />

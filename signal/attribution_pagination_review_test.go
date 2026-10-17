@@ -20,9 +20,9 @@ func TestReviewAttributionPaginationRetainsUnattributedClicks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	click := Signal{ContentRef: ref, Subject: subject, Type: "click", EventID: "unattributed", OccurredAt: at,
+	click := readingFixture{ContentRef: ref, Subject: subject, Type: "click", EventID: "unattributed", OccurredAt: at,
 		Payload: map[string]any{PayloadKeyRenderID: "never-rendered", PayloadKeyPosition: 1}}
-	if err := st.RecordSignals(ctx, "review", []Signal{click}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "review", []readingFixture{click}); err != nil {
 		t.Fatal(err)
 	}
 	full, err := st.Attribution(ctx, "review", AttributionOptions{Stage: StageRendered, Limit: 10})

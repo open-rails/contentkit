@@ -34,28 +34,20 @@ func siteConfig() kinds.Config {
 		Languages:    []string{"en", "ja"},
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
-		Restrictions: []string{"restricted"},
-		Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+		Restrictions: []string{"restricted"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"gallery", "video"}, Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
 			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
 			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}}, "video": {Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "video": {Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "clean", Hosts: []string{"clean.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: append([]kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}, "video": {Filters: append([]kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}},
 		},
-		Kinds: map[string]kinds.Kind{
+		}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		},
+		}, {Name: "clean", Hosts: []string{"clean.test"}, Filters: append([]kinds.ContentFilter{
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()}),
+		},
+		}}, Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Groups: []string{"tag", "artist", "series", "rail"}, Sort: "newest",
 				Locked:     &kinds.Locked{Show: kinds.Shown, Preview: &kinds.Preview{Pages: 2}},
@@ -141,12 +133,10 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 		t.Fatal(err)
 	}
 	hasRestricted := false
-	for _, d := range cfg.Domains {
-		for _, p := range d.Kinds {
-			for _, rule := range p.Filters {
-				if rule.Group.Kind == "tag" && rule.Group.Slug == "restricted" {
-					hasRestricted = true
-				}
+	for _, d := range cfg.ContentFilters.Domains {
+		for _, rule := range d.Filters {
+			if rule.Group.Kind == "tag" && rule.Group.Slug == "restricted" {
+				hasRestricted = true
 			}
 		}
 	}
@@ -220,15 +210,13 @@ type item struct {
 	restrictions []string
 	attrs        map[string]any
 	deleted      bool
-	favorites    int    // the counts job's
-	popularity   string // discovery's popularity job's
-	viewBaseline int64  // an import's legacy views
+	favorites    int // the counts job's
 	versions     []ver
 	groups       []string // slugs, content-level memberships
 }
 
 // seed creates items through the catalog as staff, publishing each age ago.
-// Pages, favorites and popularity are written as the jobs that own them do.
+// Pages and favorite counts are written as the jobs that own them do.
 func (f *fixture) seed(items ...item) {
 	f.t.Helper()
 	staff := testauth.Actor(access.Actor{ID: "staff"}, staffOnly{})
@@ -309,12 +297,27 @@ func (f *fixture) seed(items ...item) {
 				f.t.Fatal(err)
 			}
 		}
-		if it.popularity == "" {
-			it.popularity = "{}"
-		}
-		f.exec(`UPDATE {s}.content_items SET view_baseline = $2 WHERE id = $1`, id, it.viewBaseline)
-		f.exec(`UPDATE {s}.content_facets SET favorites = $2, popularity = $3, view_baseline = $4 WHERE content_id = $1`, id, it.favorites, it.popularity, it.viewBaseline)
+		f.exec(`UPDATE {s}.content_facets SET favorites = $2 WHERE content_id = $1`, id, it.favorites)
 	}
+}
+
+// react stores actor's current reaction to item n as the content runtime does,
+// last changed at; a "guest:" actor reacts by address.
+func (f *fixture) react(n int, actor string, value int, at time.Time) {
+	f.t.Helper()
+	user, ip := any(actor), any(nil)
+	if guest, ok := strings.CutPrefix(actor, "guest:"); ok {
+		user, ip = nil, guest
+	}
+	f.exec(`INSERT INTO {s}.content_reactions (tenant_id,content_kind,content_id,user_id,ip,value,created_at,updated_at,revision)
+ SELECT tenant_id,kind,id,$3,$4,$5,$6,$6,1 FROM {s}.content_items WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(n), user, ip, value, at)
+}
+
+// favorite stores user's current favorite of item n, last changed at.
+func (f *fixture) favorite(n int, user string, at time.Time) {
+	f.t.Helper()
+	f.exec(`INSERT INTO {s}.content_favorites (tenant_id,content_kind,content_id,user_id,value,created_at,updated_at,revision)
+ SELECT tenant_id,kind,id,$3,1,$4,$4,1 FROM {s}.content_items WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(n), user, at)
 }
 
 func (f *fixture) exec(sql string, args ...any) {
@@ -394,13 +397,17 @@ func q(path string, kv ...string) string {
 	return path + "?" + v.Encode()
 }
 
-func guestKinds(in map[string][]FilterSetting) map[string][]GuestFilterSetting {
-	out := map[string][]GuestFilterSetting{}
-	for kind, fs := range in {
-		for _, f := range fs {
-			v := f.Visible
-			out[kind] = append(out[kind], GuestFilterSetting{EntityID: f.EntityID, Visible: &v})
-		}
+// FilterSetting keeps bool literals convenient in native test fixtures.
+type FilterSetting struct {
+	EntityID string
+	Visible  bool
+}
+
+func filterChoices(in ...FilterSetting) []GuestFilterSetting {
+	out := []GuestFilterSetting{}
+	for _, f := range in {
+		v := f.Visible
+		out = append(out, GuestFilterSetting{EntityID: f.EntityID, Visible: &v})
 	}
 	return out
 }

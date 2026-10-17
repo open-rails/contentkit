@@ -79,7 +79,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, listing, languages,
  access_level, access_tiers, access_group_id, access_free_after, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
- view_baseline, updated_at)
+ updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
@@ -87,7 +87,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
   c.state = 'deleted' OR v.state = 'deleted', c.listing, v.languages,
   a.level, a.tiers, a.group_id, a.free_after, c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
-  c.attributes || v.attributes, c.view_baseline, clock_timestamp()
+  c.attributes || v.attributes, clock_timestamp()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, free_after timestamptz, groups text[])
  JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = a.version_id
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
@@ -96,7 +96,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
   deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
-  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes, view_baseline = EXCLUDED.view_baseline,
+  position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,
   updated_at = EXCLUDED.updated_at,
   free_applied = f.free_applied AND f.access_free_after IS NOT DISTINCT FROM EXCLUDED.access_free_after`,
 		s.tenant, ids, string(data)); err != nil {
@@ -155,12 +155,16 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 }
 
 // ContentChanged is groups.Options.ContentChanged: after the groups module
-// re-derived the items' group_ids in q's transaction, it queues their search
+// re-derived the items' group_ids in q's transaction, it re-derives their
+// decorative paths (a path entity may have changed), queues their search
 // documents (group names are keywords) and records the change.
 func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs []string) error {
 	ids := slices.Compact(slices.Sorted(slices.Values(contentIDs)))
 	if len(ids) == 0 {
 		return nil
+	}
+	if err := s.putCodes(ctx, q, ids); err != nil {
+		return err
 	}
 	if err := s.markDocuments(ctx, q, ids); err != nil {
 		return err

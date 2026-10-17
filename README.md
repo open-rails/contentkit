@@ -61,11 +61,11 @@ another tenant is an error, never remapped.
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the `content_events` outbox, search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF |
+| `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
 | `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
-| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; the popularity job; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
+| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
@@ -175,10 +175,48 @@ route or a wire type, run `go generate ./internal/contract`;
 Documents are one per content item or group and language. The engine's
 search job keeps them current from the dirty queue and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
-typeahead and discovery are internal (`internal/hub`) until their routes
-land (#122). A hit's score is the keyword match tier (exact title 1, alias
-0.9, token/prefix 0.75–0.77, typo 0.5–0.52); queries are capped at 256
-characters, 16 tokens and two seconds.
+autocomplete and discovery apply eligibility before every bounded retrieval.
+Autocomplete matches literal substrings of an item's own title/name/aliases,
+with exact names and prefixes first. It does not suggest a gallery merely
+because an associated artist matches. Full search also uses contextual keywords
+and conservative one-edit typos. Search-only normalization ignores complete
+English filler words `the`, `a` and `an`; filler-only queries return no matches.
+Entity identity, aliases and slug normalization are unchanged.
+
+A full-search score is a match tier: exact title 1, alias 0.9, name prefix
+0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
+and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
+seconds. Migration `0011_search_substrings` adds search-only expression indexes
+while retaining previous functions and indexes for mixed 0.103 writers.
+
+`GET /v1/manage/search-suggestions` is private quick navigation to editors.
+Explicitly request `include_contents` and/or `include_entities`, optionally
+limiting `content_kinds` / `entity_kinds`; `limit` defaults to 8 per section
+and is capped at 20. Current draft/held names and internal entities are matched
+only within the caller's management authority. `display_language` chooses
+labels while matching current names in every language. This API does not use
+body/associated-entity keywords, public reader filters or a results-page fallback.
+Migration `0012_management_names` adds separate current-name views and indexes;
+approved/published search documents and old writers remain unchanged.
+
+After **every** old app, search reader, importer and worker has stopped, reclaim
+the compatibility indexes explicitly with an operator pool that has DDL
+authority. Do this separately for each catalog schema; it is never run by
+startup or migrations:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+defer cancel()
+err := search.RetireLegacyIndexes(ctx, operatorPool, "doujins_contentkit", true)
+```
+
+The final flag confirms the old cohort has stopped. The operation verifies all
+replacement indexes are ready and checks tracked SQL helper dependencies before
+dropping the four old indexes concurrently, then the two old keyword wrappers
+with `RESTRICT`. Interrupted passes are safe to retry. Include external/dynamic
+SQL callers in the cohort review; PostgreSQL cannot track those call sites.
+`contentkit_keyword_normalize`, generated entity identity and canonical alias
+uniqueness remain intact, along with all current search/management indexes.
 
 ## Errors
 
@@ -399,6 +437,26 @@ declared type binds the decoder, and every other libvips loader is blocked
 spec (a width past the edited image at its width) and carry `from` and `fp`
 as object metadata.
 
+A private image preset can instead use `Format: media.ImageFormatSource`
+and `To: "download-pages/{name}{ext}"` to retain the upload's format.
+With no edit or blur and an inside fit, files already inside the configured
+box keep their exact bytes; zero dimensions leave that side unbounded.
+`Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
+pixels without cropping or enlarging. Only an oversized or edited image is
+re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and
+WebP; other accepted codecs can pass through unchanged but cannot currently
+be resized in source format. `Quality` controls JPEG/WebP re-encoding;
+unchanged files keep their bytes and PNG stays lossless. `KeepOriginals: true`
+retains the uploaded source even when a bounded download is generated, and
+the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs
+those files in the selected reading order, excluding pages omitted by ingestion review. Public
+images, thumbnails and editor previews continue to use WebP.
+
+Deploy media workers and gateways that understand the source-format registry
+before an app starts declaring it. When replacing an existing download
+preset, queue `Regenerate` for existing items so their new download files and
+ZIPs are generated; changing configuration alone does not enqueue every item.
+
 **Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's
 codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio
@@ -461,10 +519,13 @@ shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 language; a sibling deployment reads it with
 `catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
 
-[Content filters](docs/content-filters.md) have app defaults and optional
-site-entrypoint defaults. Saved reader choices override both; resetting restores
-the current site defaults. These affect discovery listings, while direct links
-retain their existing access and site restrictions.
+[Content filters](docs/content-filters.md) form one app-scoped entity layer across
+explicit `applies_to` content kinds. Domains define their offered toggles and
+defaults; `require_entities` independently scopes hard requirements by kind.
+One saved entity choice affects galleries and posts together. Public browsing,
+including staff browsing, honors optional choices; authorized management keeps
+its visibility. Fixed and required domain rules also constrain direct access.
+`kinds.DecodeContentFilters` strictly reads an embedded app's policy block.
 
 ## Signal plane and discovery
 

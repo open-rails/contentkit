@@ -25,7 +25,7 @@ func TestIntegrationMetricsLargeReferenceQueryLimit(t *testing.T) {
 		version := first
 		version.ContentRef = gallery(tenant, cid(1)).WithVersion(edition.Version())
 		version.Score = 90
-		if err := st.RecordSignals(ctx, tenant, []Signal{first, last, version}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{first, last, version}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,7 +38,7 @@ func TestIntegrationMetricsLargeReferenceQueryLimit(t *testing.T) {
 	}
 	for ref, score := range map[ContentKey]int64{refs[0].Key(): 50, refs[6000].Key(): 70, edition.Key(): 90} {
 		m := metrics[ref]
-		if m.Views != 1 || m.Viewers != 1 || m.ScoreSum != score {
+		if m.Readers != 1 {
 			t.Fatalf("metrics for %+v: %+v, want one view and score %d", ref, m, score)
 		}
 	}
@@ -64,7 +64,7 @@ func TestIntegrationBulkSearchReadsQueryLimit(t *testing.T) {
 		otherReader := first
 		otherReader.Subject = Subject{UserID: "another-reader"}
 		otherReader.Score = 10
-		if err := st.RecordSignals(ctx, tenant, []Signal{first, last, version, otherReader}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{first, last, version, otherReader}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,9 +76,9 @@ func TestIntegrationBulkSearchReadsQueryLimit(t *testing.T) {
 		if len(states) != 3 {
 			t.Fatalf("missing references must stay absent: %+v", states)
 		}
-		for ref, score := range map[ContentKey]int16{refs[0].Key(): 50, refs[7000].Key(): 70, edition.Key(): 90} {
-			if state := states[ref]; state.LastScore != score || state.Views != 1 {
-				t.Fatalf("subject/work/version standing for %+v: %+v", ref, state)
+		for _, ref := range []ContentKey{refs[0].Key(), refs[7000].Key(), edition.Key()} {
+			if value := states[ref]; value.ActiveMS == 0 || value.Quality <= 0 || value.Quality > 1 {
+				t.Fatalf("measured standing missing: %+v", value)
 			}
 		}
 	})

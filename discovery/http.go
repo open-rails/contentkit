@@ -37,6 +37,7 @@ func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 	httpapi.Mount(mux, g.Guard, handler{s}, searchRoutes)
 	httpapi.Mount(mux, g.Guard, handler{s}, sitemapRoutes)
 	httpapi.Mount(mux, g.Guard, handler{s}, statsRoutes)
+	httpapi.Mount(mux, g.Guard, handler{s}, managementRoutes)
 	return mux, nil
 }
 
@@ -46,6 +47,7 @@ func init() {
 	httpapi.Register(httpapi.Discovery, searchRoutes)
 	httpapi.Register(httpapi.Discovery, sitemapRoutes)
 	httpapi.Register(httpapi.Discovery, statsRoutes)
+	httpapi.Register(httpapi.Discovery, managementRoutes)
 }
 
 type handler struct{ s *Service }
@@ -58,6 +60,7 @@ var (
 	}
 	filterParams = []httpapi.Param{
 		httpapi.Text("kind", "only this content kind"),
+		httpapi.List("ids", "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
 		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
@@ -73,7 +76,7 @@ var (
 	}
 	cardGroups     = httpapi.List("card_entities", "the group kinds cards name; every kind with a page by default")
 	pageParams     = []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}
-	sortParam      = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
+	sortParam      = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
 	activityParams = []httpapi.Param{
 		httpapi.Text("activity_from", "custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter"),
 		httpapi.Text("activity_until", "custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular"),
@@ -100,36 +103,39 @@ func dailyFilterParams() []httpapi.Param {
 }
 
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/engagement", Resource: "discovery", Auth: httpapi.Public,
+		Doc:     "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
+		Request: EngagementBatch{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.engagement)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity-contexts", Resource: "discovery", Auth: httpapi.Public,
 		Doc:     "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
 		Request: ActivityContextsInput{}, Responses: []httpapi.Reply{httpapi.OK(ActivityContexts{})}, Errors: signals}, Serve: httpapi.H(handler.activityContexts)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/releases", Resource: "discovery", Auth: httpapi.Public,
-		Doc:       "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
-		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardGroups, httpapi.Int("days", "calendar days including today: 10 by default, from 1 through 31"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
+		Doc:       "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardGroups, httpapi.Int("days", "calendar days including end_date: 10 by default, from 1 through 31"), httpapi.Text("end_date", "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
 		Responses: []httpapi.Reply{httpapi.OK(DailyReleases{})}}, Serve: httpapi.H(handler.releases)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents", Resource: "discovery", Auth: httpapi.Public,
 		Doc:   "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
-		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups}, activityParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
+		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only")}, activityParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
 		Errors: signals}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
-			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups,
+			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only"),
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Suggests contents and groups while the reader types, tolerating typos and partial words.",
+		Doc: "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the partial query"), httpapi.Text("kind", "only contents of this kind"),
 			httpapi.List("entity_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
 			[]httpapi.Param{httpapi.Int("limit", "per section: 8 by default, at most 20")}),
 		Responses: []httpapi.Reply{httpapi.OK(Typeahead{})}}, Serve: httpapi.H(handler.typeahead)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/similar", Resource: "discovery", Auth: httpapi.Public,
 		Doc:       "Contents like this one (co-engagement, or the configured source), of its kind unless kind names another.",
-		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50")}),
+		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50"), httpapi.Bool("summary", "lower-bound counts within considered candidates")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.similar)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/recommendations", Resource: "discovery", Auth: httpapi.User,
 		Doc:       "Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out.",
-		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50")}),
+		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50"), httpapi.Bool("summary", "lower-bound counts within considered candidates")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.recommendations)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/release-dates", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free.",
@@ -137,11 +143,11 @@ var routes = []httpapi.Route[handler]{
 			[]httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "60 by default, at most 1000")}),
 		Responses: []httpapi.Reply{httpapi.OK(ReleaseDates{})}, Errors: signals}, Serve: httpapi.H(handler.releaseDates)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/content-filters", Resource: "discovery", Auth: httpapi.Public,
-		Doc:   "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.",
+		Doc:   "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{entity_id,visible}]; one choice applies across applies_to kinds. Account settings take precedence when signed in.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}},
 		Serve: httpapi.H(handler.contentFilters)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/me/content-filters", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "Replaces the reader's content filter settings and whether lists include deleted content they hold.",
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/me/content-filters", Resource: "discovery", Auth: httpapi.User,
+		Doc:   "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: ContentFiltersUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}}, Serve: httpapi.H(handler.setContentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/initialize", Resource: "discovery", Auth: httpapi.User,
@@ -150,7 +156,7 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.initializeContentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
-		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"),
+		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"), httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page"),
 			cardGroups}, readerParams, []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.history)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
@@ -158,7 +164,7 @@ var routes = []httpapi.Route[handler]{
 		Query:     []httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("content_id", "only this content item")},
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.forget)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/signals", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version.",
+		Doc:     "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
 		Request: Signals{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
 		Serve: httpapi.H(handler.signals)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/exposures", Resource: "discovery", Auth: httpapi.Public,
@@ -186,6 +192,21 @@ func intParam(r *http.Request, name string) (int, error) {
 	return n, nil
 }
 
+func optionalFlag(r *http.Request, name string) (bool, error) {
+	values, ok := r.URL.Query()[name]
+	if !ok {
+		return false, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return false, fmt.Errorf("%w: %s must be one boolean", ErrInvalid, name)
+	}
+	v, err := strconv.ParseBool(values[0])
+	if err != nil {
+		return false, fmt.Errorf("%w: %s must be one boolean", ErrInvalid, name)
+	}
+	return v, nil
+}
+
 func readerOf(r *http.Request) Reader {
 	q := r.URL.Query()
 	return Reader{Actor: gate.Actor(r.Context()), Host: r.Host, Language: q.Get("language"), DisplayLanguage: q.Get("display_language"),
@@ -194,7 +215,11 @@ func readerOf(r *http.Request) Reader {
 
 func filterOf(r *http.Request) Filter {
 	q := r.URL.Query()
-	return Filter{Kind: q.Get("kind"), Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
+	ids := list(q.Get("ids"))
+	if values, ok := q["ids"]; ok && (len(values) != 1 || q.Get("ids") == "") {
+		ids = []string{}
+	}
+	return Filter{Kind: q.Get("kind"), IDs: ids, Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
 		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
 		OwnerGroups: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
@@ -206,11 +231,16 @@ func (h handler) releases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	out, err := h.s.Releases(r.Context(), DailyReleasesOptions{Reader: readerOf(r), Filter: filterOf(r), Days: days, TimeZone: q.Get("time_zone"), CardGroups: list(q.Get("card_entities"))})
+	out, err := h.s.Releases(r.Context(), DailyReleasesOptions{Reader: readerOf(r), Filter: filterOf(r), Days: days, EndDate: q.Get("end_date"), TimeZone: q.Get("time_zone"), CardGroups: list(q.Get("card_entities"))})
 	h.reply(w, r, out, err)
 }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -225,11 +255,16 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
 		ActivityFrom: q.Get("activity_from"), ActivityUntil: q.Get("activity_until"),
-		Cursor: q.Get("cursor"), Limit: limit})
+		Cursor: q.Get("cursor"), Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
 func (h handler) search(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -237,7 +272,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
-		Cursor: q.Get("cursor"), Limit: limit}
+		Cursor: q.Get("cursor"), Limit: limit, Summary: summary}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
 		if err != nil {
@@ -267,7 +302,11 @@ func (h handler) typeahead(w http.ResponseWriter, r *http.Request) {
 
 func (h handler) recOptions(r *http.Request) (RecommendationOptions, error) {
 	limit, err := intParam(r, "limit")
-	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_entities")), Limit: limit}, err
+	summary, flagErr := optionalFlag(r, "summary")
+	if err == nil {
+		err = flagErr
+	}
+	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_entities")), Limit: limit, Summary: summary}, err
 }
 
 func (h handler) similar(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +373,11 @@ func (h handler) initializeContentFilters(w http.ResponseWriter, r *http.Request
 }
 
 func (h handler) history(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -341,7 +385,7 @@ func (h handler) history(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	page, err := h.s.History(r.Context(), HistoryOptions{Reader: readerOf(r), Kind: q.Get("kind"), Status: q.Get("status"),
-		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit})
+		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
@@ -357,6 +401,15 @@ func (h handler) signals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.done(w, r, h.s.RecordSignals(r.Context(), gate.Actor(r.Context()), in))
+}
+
+func (h handler) engagement(w http.ResponseWriter, r *http.Request) {
+	var in EngagementBatch
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.done(w, r, h.s.RecordEngagement(r.Context(), gate.Actor(r.Context()), in))
 }
 
 func (h handler) activityContexts(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +466,8 @@ func (h handler) done(w http.ResponseWriter, r *http.Request, err error) {
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	code, msg, failed := httpapi.CodeInternal, "", true
 	switch {
+	case errors.Is(err, auth.ErrUnauthenticated):
+		code, failed = httpapi.CodeUnauthorized, false
 	case errors.Is(err, auth.ErrForbidden):
 		code, failed = httpapi.CodeForbidden, false
 	case errors.Is(err, ErrInvalid):

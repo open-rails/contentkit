@@ -12,7 +12,7 @@ import { ContentSections } from "./editors.js";
 const at = "2026-10-16T00:00:00Z";
 const content = (id = "p1"): Content => ({
   id, kind: "post", code: id, path: `/p/${id}`, language: "en", title: id,
-  views: 0, decision: { allowed: true }, state: "draft", listing: "listed", comments: "open",
+  decision: { allowed: true }, state: "draft", listing: "listed", comments: "open",
   live: false, access: { level: "public" }, restrictions: [], attributes: { caption: `Stored ${id}` },
   creators: [], entities: [], versions: [], editor: true, revision: 3, created_at: at, updated_at: at,
 });

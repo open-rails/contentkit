@@ -36,18 +36,17 @@ func config() kinds.Config {
 		Languages:    []string{"en", "ja"},
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
-		Restrictions: []string{"restricted"},
-		Domains:      []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "moe", Hosts: []string{"moe.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}, "blog": {Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}}},
-		Kinds: map[string]kinds.Kind{
-			"gallery": {Route: "g", Presentation: "reader", Segments: true, Groups: []string{"tag", "channel"},
+		Restrictions: []string{"restricted"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "blog": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, {Name: "moe", Hosts: []string{"moe.test"}, Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}}, Kinds: map[string]kinds.Kind{
+			"gallery": {Route: "g", Presentation: "reader", Segments: true, Groups: []string{"tag", "channel", "series"}, PathEntity: "series",
 				Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}},
 					"volume": {Type: "int"}, "complete": {Type: "bool"}, "released": {Type: "time"}, "note": {Type: "string"}}},
-			"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+			"blog": {Route: "blog", Presentation: "post", Groups: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		},
 		GroupKinds: map[string]kinds.GroupKind{
 			"tag":     {Route: "tags", VersionLevel: true},
 			"channel": {Owner: "user", Sellable: true, AuthScope: true},
+			"series":  {Route: "series"},
 		},
 	}
 }
@@ -117,12 +116,10 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	}
 	t.Cleanup(f.s.Close)
 	hasMarker := false
-	for _, d := range opts.Kinds.Domains {
-		for _, p := range d.Kinds {
-			for _, r := range p.Filters {
-				if r.Group.Kind == "tag" && r.Group.Slug == "restricted" {
-					hasMarker = true
-				}
+	for _, d := range opts.Kinds.ContentFilters.Domains {
+		for _, r := range d.Filters {
+			if r.Group.Kind == "tag" && r.Group.Slug == "restricted" {
+				hasMarker = true
 			}
 		}
 	}

@@ -10,6 +10,8 @@ export const discovery = {
     filters: "Show Content:",
   },
   releases: {
+    goToDay: "Go to day",
+    invalidDate: "Choose a valid date on or before today.",
     premiumMore_one: "{count} more item",
     premiumMore_other: "{count} more items",
     premiumHint: "Members-only previews · Click to view",
@@ -29,8 +31,6 @@ export const discovery = {
     pages_other: "{count} pages",
     minutes_one: "{count} min",
     minutes_other: "{count} min",
-    views_one: "{n} view",
-    views_other: "{n} views",
     moreChips_one: "{count} more",
     moreChips_other: "{count} more",
     completed: "Finished",
@@ -72,6 +72,7 @@ export const discovery = {
   },
   listing: {
     popularPeriod: "Popularity period",
+    activityRange: "Activity from {from} to before {until} (UTC)",
     pastDays_one: "Past {count} day",
     pastDays_other: "Past {count} days",
     sort: "Sort",
@@ -81,7 +82,6 @@ export const discovery = {
     sort_popular: "Popular",
     sort_top_rated: "Top rated",
     sort_most_favorited: "Most favorited",
-    sort_most_viewed: "Most viewed",
     sort_random: "Random",
     sort_position: "In order",
     period_7d: "this week",

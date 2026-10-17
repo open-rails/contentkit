@@ -13,29 +13,29 @@ import (
 // deliveries is a multiset of source deliveries: superseded revisions, exact
 // retries, a conflicting same-revision replay with a re-stamped time (also
 // across a month partition), and replaceable feedback delivered out of order.
-func deliveries(tenant string) []Signal {
+func deliveries(tenant string) []readingFixture {
 	day := func(d, h int) time.Time { return time.Date(2026, 5, d, h, 0, 0, 0, time.UTC) }
 	u1, u2, u3, a1 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}, Subject{AnonKey: "a1"}
 	g := func(id string) ContentRef { return gallery(tenant, lid(id)) }
-	var out []Signal
+	var out []readingFixture
 	for r := uint64(1); r <= 4; r++ {
-		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
+		out = append(out, readingFixture{ContentRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
 			OccurredAt: day(5, 10), DurationS: uint32(60 * r), Progress: uint32(2 * r), ProgressMax: 10,
 			Score: int16(10 * r), Completed: r == 4, Resume: fmt.Sprintf("p:%d", 2*r)})
 	}
 	for r, v := range []float64{1, -1, 1, -1} {
-		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: "reaction", EventID: "pref", Revision: uint64(r + 1),
+		out = append(out, readingFixture{ContentRef: g("g1"), Subject: u1, Type: "reaction", EventID: "pref", Revision: uint64(r + 1),
 			OccurredAt: day(5, 11), Value: v})
 	}
 	out = append(out,
-		Signal{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(6, 10), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
-		Signal{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(7, 9), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
-		Signal{ContentRef: g("g1"), Subject: u2, Type: "click", EventID: "c2", OccurredAt: day(6, 10)},
-		Signal{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
-		Signal{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
-		Signal{ContentRef: g("g2"), Subject: u3, Type: "like", EventID: "l3", OccurredAt: day(8, 8), Value: 1},
-		Signal{ContentRef: g("g2"), Subject: u3, Type: TypeView, EventID: "v3", OccurredAt: day(8, 7), Progress: 5, ProgressMax: 5, Score: 90, Completed: true},
-		Signal{ContentRef: g("g3"), Subject: u1, Type: TypeView, EventID: "v4", OccurredAt: day(9, 7), Progress: 2, ProgressMax: 4, Score: 30},
+		readingFixture{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(6, 10), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
+		readingFixture{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(7, 9), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
+		readingFixture{ContentRef: g("g1"), Subject: u2, Type: "click", EventID: "c2", OccurredAt: day(6, 10)},
+		readingFixture{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
+		readingFixture{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
+		readingFixture{ContentRef: g("g2"), Subject: u3, Type: "like", EventID: "l3", OccurredAt: day(8, 8), Value: 1},
+		readingFixture{ContentRef: g("g2"), Subject: u3, Type: TypeView, EventID: "v3", OccurredAt: day(8, 7), Progress: 5, ProgressMax: 5, Score: 90, Completed: true},
+		readingFixture{ContentRef: g("g3"), Subject: u1, Type: TypeView, EventID: "v4", OccurredAt: day(9, 7), Progress: 2, ProgressMax: 4, Score: 30},
 	)
 	return out
 }
@@ -99,21 +99,21 @@ func snapshot(t *testing.T, st *Store, tenant string) storeSnapshot {
 func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
-	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+	for _, table := range []string{"signals", "engagement_segments", "engagement_state", "engagement_daily"} {
 		if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}
 	}
 	rng := rand.New(rand.NewSource(874))
-	orders := map[string][]Signal{"ordered": deliveries("ordered")}
+	orders := map[string][]readingFixture{"ordered": deliveries("ordered")}
 	base := deliveries("reversed")
-	reversed := make([]Signal, len(base))
+	reversed := make([]readingFixture, len(base))
 	for i := range base {
 		reversed[len(base)-1-i] = base[i]
 	}
 	orders["reversed"] = reversed
 	base = deliveries("chaos")
-	chaos := append(append([]Signal{}, base...), base...)
+	chaos := append(append([]readingFixture{}, base...), base...)
 	chaos = append(chaos, base[:5]...)
 	rng.Shuffle(len(chaos), func(i, j int) { chaos[i], chaos[j] = chaos[j], chaos[i] })
 	orders["chaos"] = chaos
@@ -128,7 +128,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 				n = 1 + rng.Intn(4)
 			}
 			end := min(i+n, len(sigs))
-			if err := st.RecordSignals(ctx, tenant, sigs[i:end]); err != nil {
+			if err := recordFixtureSignals(st, ctx, tenant, sigs[i:end]); err != nil {
 				t.Fatal(err)
 			}
 			i = end
@@ -144,20 +144,20 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 
 	// Intended semantics on the converged result.
 	u1g1 := want.States["u1"]["g1"]
-	if u1g1.TotalEvents != 2 || u1g1.Views != 1 || u1g1.ActiveS != 240 || u1g1.MaxProgress != 8 ||
-		!u1g1.Completed || u1g1.Completions != 1 || u1g1.Resume != "p:8" || u1g1.LastScore != 40 ||
-		u1g1.NetValue != -1 || u1g1.Feedback != 1 {
+	if u1g1.ActiveMS != 240000 || u1g1.MaxProgress != 800 ||
+		u1g1.Completed || u1g1.Resume != "p:8" ||
+		u1g1.NetValue != -1 {
 		t.Fatalf("u1/g1 must be revision 4 of s1 plus current preference -1: %+v", u1g1)
 	}
 	all := want.Metrics[AllTime().String()]
-	if g1 := all["g1"]; g1.Viewers != 2 || g1.Views != 2 || g1.Events != 4 || g1.NegativeSubjects != 1 || g1.SignalCounts["click"] != 1 {
+	if g1 := all["g1"]; g1.Readers != 2 || g1.NegativeSubjects != 1 {
 		t.Fatalf("g1 metrics: %+v", g1)
 	}
-	if g2 := all["g2"]; g2.Views != 2 || g2.Viewers != 2 || g2.Completers != 1 || g2.PositiveSubjects != 1 {
+	if g2 := all["g2"]; g2.Readers != 2 || g2.Completers != 1 || g2.PositiveSubjects != 1 {
 		t.Fatalf("a re-stamped replay across a month boundary must stay one view: %+v", g2)
 	}
 
-	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+	for _, table := range []string{"signals", "engagement_segments", "engagement_state", "engagement_daily"} {
 		if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +169,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 		if got := snapshot(t, st, tenant); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed after merges:\n got %+v\nwant %+v", tenant, got, want)
 		}
-		for _, table := range []string{"subject_content_state", "subject_content_daily"} {
+		for _, table := range []string{"engagement_state", "engagement_daily"} {
 			if err := conn.Exec(ctx, "DELETE FROM "+testDB+"."+table+" WHERE tenant = ?", tenant); err != nil {
 				t.Fatal(err)
 			}
@@ -197,13 +197,16 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	day := func(d int) time.Time { return time.Date(2026, 5, d, 9, 0, 0, 0, time.UTC) }
 	w := gallery("t", lid("w"))
 	edition := func(v string) ContentRef { return w.WithVersion(v) }
-	var sigs []Signal
+	var sigs []readingFixture
 	session := func(sub Subject, id, version string, d int, completed bool) {
-		base := Signal{Subject: sub, Type: TypeView, OccurredAt: day(d), DurationS: 100, Progress: 10, ProgressMax: 10, Score: 50, Completed: completed}
-		work, ver := base, base
-		work.ContentRef, work.EventID = w, id
+		covered := uint32(10)
+		if !completed {
+			covered = 5
+		}
+		base := readingFixture{Subject: sub, Type: TypeView, OccurredAt: day(d), DurationS: 100, Progress: covered, ProgressMax: 10, Score: 50, Completed: completed}
+		ver := base
 		ver.ContentRef, ver.EventID = edition(version), id
-		sigs = append(sigs, work, ver)
+		sigs = append(sigs, ver)
 	}
 	repeat := Subject{UserID: "repeat"}
 	session(repeat, "r1", "ed-en", 1, true)
@@ -211,12 +214,12 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	session(repeat, "r3", "ed-ja", 2, true)
 	session(Subject{AnonKey: "guest"}, "g1", "ed-ja", 2, false)
 	sigs = append(sigs,
-		Signal{ContentRef: w, Subject: Subject{UserID: "clicker"}, Type: "click", EventID: "c", OccurredAt: day(1)},
-		Signal{ContentRef: w, Subject: Subject{UserID: "fan"}, Type: "reaction", EventID: "pref", OccurredAt: day(1), Value: 1},
-		Signal{ContentRef: w, Subject: Subject{UserID: "critic"}, Type: "reaction", EventID: "pref", OccurredAt: day(2), Value: -1},
+		readingFixture{ContentRef: w, Subject: Subject{UserID: "clicker"}, Type: "click", EventID: "c", OccurredAt: day(1)},
+		readingFixture{ContentRef: w, Subject: Subject{UserID: "fan"}, Type: "reaction", EventID: "pref", OccurredAt: day(1), Value: 1},
+		readingFixture{ContentRef: w, Subject: Subject{UserID: "critic"}, Type: "reaction", EventID: "pref", OccurredAt: day(2), Value: -1},
 	)
 	// Every delivery arrives twice.
-	if err := st.RecordSignals(ctx, "t", append(append([]Signal{}, sigs...), sigs...)); err != nil {
+	if err := recordFixtureSignals(st, ctx, "t", append(append([]readingFixture{}, sigs...), sigs...)); err != nil {
 		t.Fatal(err)
 	}
 	m, err := st.Metrics(ctx, "t", []ContentRef{w, edition("ed-en"), edition("ed-ja")}, AllTime())
@@ -224,22 +227,21 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ContentMetrics{
-		Viewers: 2, UserViewers: 1, AnonViewers: 1, Views: 4, Completions: 2, Completers: 1, ActiveS: 400,
-		ScoreSum: 200, ViewerEngagementSum: 1, ReturningViewers: 1, Events: 7, ValueSum: 0, PositiveSubjects: 1, NegativeSubjects: 1,
-		SignalCounts: map[string]uint64{TypeView: 4, "click": 1, "reaction": 2},
+		Readers: 2, UserReaders: 1, GuestReaders: 1, Completers: 1, ActiveMS: 400000,
+		ReaderQualitySum: 1.5, ReturningReaders: 1, ValueSum: 0, PositiveSubjects: 1, NegativeSubjects: 1,
 	}
 	if got := m[w.Key()]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("work metrics:\n got %+v\nwant %+v", got, want)
 	}
 	en, ja := m[edition("ed-en").Key()], m[edition("ed-ja").Key()]
-	if en.Views != 2 || en.Viewers != 1 || en.ViewerEngagementSum != .5 || en.ReturningViewers != 1 || ja.Views != 2 || ja.Viewers != 2 || ja.ViewerEngagementSum != 1 || ja.ReturningViewers != 0 {
+	if en.Readers != 1 || en.ReaderQualitySum != 1 || en.ReturningReaders != 0 || ja.Readers != 2 || ja.ReaderQualitySum != 1.5 || ja.ReturningReaders != 0 {
 		t.Fatalf("version projections count separately from the work: %+v %+v", en, ja)
 	}
 	day2, err := st.Metrics(ctx, "t", []ContentRef{w}, Between(time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := day2[w.Key()]; got.Viewers != 2 || got.Views != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 || got.ViewerEngagementSum != 1 || got.ReturningViewers != 0 {
+	if got := day2[w.Key()]; got.Readers != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 || got.ReaderQualitySum != 1.5 || got.ReturningReaders != 0 {
 		t.Fatalf("day-2 window: %+v", got)
 	}
 	hits, err := st.Popular(ctx, "t", "gallery", PopularOptions{})
@@ -249,7 +251,7 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	if len(hits) != 1 || !hits[0].Equal(w) || !reflect.DeepEqual(hits[0].ContentMetrics, want) {
 		t.Fatalf("popular ranks works only, with the same metrics: %+v", hits)
 	}
-	clickOnly, err := st.Popular(ctx, "t", "gallery", PopularOptions{RankExpr: "toFloat64(events)"})
+	clickOnly, err := st.Popular(ctx, "t", "gallery", PopularOptions{RankExpr: "toFloat64(readers)"})
 	if err != nil || len(clickOnly) != 1 {
 		t.Fatalf("works without views never rank: %+v %v", clickOnly, err)
 	}
@@ -263,36 +265,52 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	sub := Subject{UserID: "u"}
 	ref := gallery("t", lid("g"))
 	d := func(day int) time.Time { return time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC) }
-	rev := func(r uint64, occurred time.Time) Signal {
-		return Signal{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
+	rev := func(r uint64, occurred time.Time) readingFixture {
+		return readingFixture{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
 	}
 	viewsOn := func(day int) uint64 {
 		t.Helper()
-		return metricsByID(t, st, "t", []string{lid("g")}, Between(d(day), d(day+1)))[lid("g")].Views
+		return metricsByID(t, st, "t", []string{lid("g")}, Between(d(day), d(day+1)))[lid("g")].Readers
 	}
-	if err := st.RecordSignals(ctx, "t", []Signal{rev(1, d(5).Add(time.Hour))}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{rev(1, d(5).Add(time.Hour))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, "t", []Signal{rev(2, d(6).Add(time.Hour))}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{rev(2, d(6).Add(time.Hour))}); err != nil {
 		t.Fatal(err)
 	}
 	if viewsOn(5) != 0 || viewsOn(6) != 1 {
 		t.Fatalf("moved session: day5=%d day6=%d", viewsOn(5), viewsOn(6))
 	}
 
-	// A stale nonzero day row left by an interrupted projection.
-	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), 1)`); err != nil {
+	// Projection residue is never trusted as ranking evidence; repair must still
+	// replace its stale positive day with a generation-matched tombstone.
+	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.engagement_daily
+ (tenant,content_kind,content_id,content_version_id,subject_kind,subject,day,present,active_ms,covered_units,unit_attention,unit_total,unit_scale,version)
+ VALUES ('t','gallery',?,'fixture-edition','user','u','2026-05-03',true,1000,[0],map(toUInt32(0),toUInt64(1000)),6400,100,1)`, lid("g")); err != nil {
 		t.Fatal(err)
 	}
-	if viewsOn(3) != 1 {
-		t.Fatal("precondition: orphan row visible")
+	if viewsOn(3) != 0 {
+		t.Fatal("projection residue must not become measured source evidence")
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 1 {
 		t.Fatalf("orphan day repair: %+v %v", res, err)
 	}
+	rows, err := conn.Query(ctx, "SELECT present FROM "+testDB+".engagement_daily FINAL WHERE tenant='t' AND day='2026-05-03'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var present bool
+	if !rows.Next() {
+		rows.Close()
+		t.Fatal("repair lost the orphan-day tombstone")
+	}
+	err = rows.Scan(&present)
+	rows.Close()
+	if err != nil || present {
+		t.Fatalf("repair must zero the physical orphan day: %t %v", present, err)
+	}
 	if viewsOn(3) != 0 || viewsOn(6) != 1 {
-		t.Fatalf("repair must zero the orphan day: day3=%d day6=%d", viewsOn(3), viewsOn(6))
+		t.Fatalf("repair changed canonical reading: day3=%d day6=%d", viewsOn(3), viewsOn(6))
 	}
 
 	// Concurrent writers of revisions 3..34: the highest revision always wins.
@@ -302,7 +320,7 @@ VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0
 		wg.Add(1)
 		go func(r uint64) {
 			defer wg.Done()
-			errs <- st.RecordSignals(ctx, "t", []Signal{rev(r, d(6).Add(time.Hour))})
+			errs <- recordFixtureSignals(st, ctx, "t", []readingFixture{rev(r, d(6).Add(time.Hour))})
 		}(r)
 	}
 	wg.Wait()
@@ -316,7 +334,7 @@ VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := states[ref.Key()]; s.MaxProgress != 34 || s.ActiveS != 34 || s.Views != 1 || s.TotalEvents != 1 {
+	if s := states[ref.Key()]; s.MaxProgress != 3400 || s.ActiveMS != 34000 {
 		t.Fatalf("concurrent projections must converge on revision 34: %+v", s)
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 0 {

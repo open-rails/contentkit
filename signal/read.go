@@ -14,8 +14,8 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-const stateColumns = refColumns + `, first_seen_at, last_signal_at, last_view_at, total_events, views, completions,
- active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback`
+const stateColumns = refColumns + `, first_seen_at,last_signal_at,last_read_at,active_ms,
+ max_progress,progress_max,completed,resume,quality,net_value`
 
 // workLevel selects the rows of the work itself, never of a version.
 const workLevel = " AND content_version_id = ''"
@@ -26,8 +26,8 @@ func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
 		version string
 	)
 	if err := rows.Scan(
-		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.LastViewAt, &r.TotalEvents, &r.Views, &r.Completions,
-		&r.ActiveS, &r.MaxProgress, &r.ProgressMax, &r.Completed, &r.Resume, &r.LastScore, &r.NetValue, &r.Feedback,
+		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.LastReadAt,
+		&r.ActiveMS, &r.MaxProgress, &r.ProgressMax, &r.Completed, &r.Resume, &r.Quality, &r.NetValue,
 	); err != nil {
 		return StateRow{}, err
 	}
@@ -79,9 +79,9 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 	}
 	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	q := fmt.Sprintf(`SELECT %s
-FROM %s.subject_content_state FINAL
+FROM (%s)
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
-		stateColumns, st.db, st.subjectNotErased(), referenceFilter)
+		stateColumns, st.readingState(), st.subjectNotErased(), referenceFilter)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -102,10 +102,10 @@ func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any,
 		sb.WriteString(" AND content_kind = ?")
 		args = append(args, k)
 	}
-	timeColumn := "last_view_at"
+	timeColumn := "last_read_at"
+	sb.WriteString(" AND (active_ms>0 OR max_progress>0 OR completed OR resume!='')")
 	switch opts.Status {
 	case HistoryAny:
-		timeColumn = "last_signal_at"
 	case HistorySeen:
 		sb.WriteString(" AND max_progress > 0")
 	case HistoryInProgress:
@@ -134,8 +134,8 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.subject_content_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
+FROM (%s)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(), st.subjectNotErased(), workLevel)
 	args, timeColumn, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return nil, err
@@ -165,8 +165,8 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
-FROM %s.subject_content_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.db, st.subjectNotErased(), workLevel)
+FROM (%s)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.readingState(), st.subjectNotErased(), workLevel)
 	args, _, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return 0, err
@@ -195,8 +195,8 @@ func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, co
 		return nil, fmt.Errorf("signal: contentKind is required")
 	}
 	q := fmt.Sprintf(`SELECT content_id
-FROM %s.subject_content_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = ?%s AND max_progress > 0`, st.db, st.subjectNotErased(), workLevel)
+FROM (%s)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = ?%s AND max_progress > 0`, st.readingState(), st.subjectNotErased(), workLevel)
 	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), contentKind)
 	if err != nil {
 		return nil, fmt.Errorf("signal: seen ids: %w", err)
@@ -222,8 +222,8 @@ func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject
 	var sb strings.Builder
 	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT content_kind, content_id
-FROM %s.subject_content_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0`, st.db, st.subjectNotErased(), workLevel)
+FROM (%s)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0`, st.feedbackState(), st.subjectNotErased(), workLevel)
 	if kinds := trimAll(contentKinds); len(kinds) > 0 {
 		sb.WriteString(" AND content_kind IN ?")
 		args = append(args, kinds)
@@ -245,7 +245,7 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0
 }
 
 // TopStates returns the subject's highest-signal works (recommendation
-// seeds): ordered by last_score DESC, then recency.
+// seeds): ordered by quality DESC, then recency.
 func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, opts TopStatesOptions) ([]StateRow, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
@@ -257,16 +257,17 @@ func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, 
 	var sb strings.Builder
 	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.subject_content_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
+FROM (%s)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.readingState(), st.subjectNotErased(), workLevel)
 	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
 		sb.WriteString(" AND content_kind IN ?")
 		args = append(args, kinds)
 	}
 	if opts.ExcludeNegative {
-		sb.WriteString(" AND net_value >= 0")
+		sb.WriteString(" AND (content_kind,content_id) NOT IN (SELECT content_kind,content_id FROM (" + st.feedbackState() + ") WHERE tenant=? AND subject_kind=? AND subject=? AND net_value<0)")
+		args = append(args, tenant, subject.Kind(), subject.Key())
 	}
-	sb.WriteString(" ORDER BY last_score DESC, last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ?")
+	sb.WriteString(" AND quality > 0 ORDER BY quality DESC, last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ?")
 	args = append(args, limit)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -285,47 +286,55 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 }
 
 // metricColumns are the window metric aliases (also usable in RankExpr).
-const metricColumns = `viewers, user_viewers, anon_viewers, views, completions, completers, active_s,
- score_sum, viewer_engagement_sum, returning_viewers, events, value_sum, positive_subjects, negative_subjects, signal_counts`
+const metricColumns = `readers,user_readers,guest_readers,completers,active_ms,reader_quality_sum,
+ returning_readers,value_sum,positive_subjects,negative_subjects`
 
-// windowMetrics aggregates subject_content_daily rows matching filter over a
-// window: first per subject (so each subject counts once), then per content
-// reference.
+// windowMetrics aggregates canonical measurements and feedback in a window:
+// first per subject (so each person counts once), then per content reference.
 func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Window) (string, []any) {
+	// Work filters also admit their version source rows. Filtering again after
+	// aggregation preserves exact work/version requests without scanning other IDs.
+	sourceFilter := strings.ReplaceAll(filter, workLevel, "")
+	sourceFilter = strings.ReplaceAll(sourceFilter, referenceFilter, "("+referenceFilter+" OR (content_kind,content_id,'') IN (SELECT "+refColumns+" FROM contentkit_read_refs))")
+	pred, predArgs := win.predicate("c.1")
+	canonical := "SELECT * FROM (" + st.measuredCanonical(sourceFilter) + ") WHERE 1" + pred
+	measured := measuredVersions(canonical)
+	feedback := "SELECT * FROM (" + st.canonicalEvents(sourceFilter+" AND signal_type NOT IN ('view','preview')") + ") WHERE 1" + pred
+	q := fmt.Sprintf(`WITH measured_rows AS (%s
+ SELECT %s,subject_kind,subject,qualified,completed,active_ms,attention_quality AS quality,days FROM scored
+ UNION ALL
+ SELECT content_kind,content_id,'',subject_kind,subject,max(qualified),max(completed),sum(active_ms),max(attention_quality),groupUniqArrayArray(days)
+ FROM scored GROUP BY content_kind,content_id,subject_kind,subject),
+ feedback_rows AS (SELECT %s,subject_kind,subject,sum(c.3) AS value FROM (%s)
+ GROUP BY %s,subject_kind,subject),
+ combined AS (SELECT %s,subject_kind,subject,max(qualified) AS qualified,max(completed) AS completed,
+ sum(active_ms) AS active_ms,max(quality) AS quality,groupUniqArrayArray(days) AS days,sum(value) AS value FROM (
+ SELECT %s,subject_kind,subject,qualified,completed,active_ms,quality,days,toFloat64(0) AS value FROM measured_rows
+ UNION ALL
+ SELECT %s,subject_kind,subject,false,false,toUInt64(0),toFloat64(0),CAST([],'Array(Date)'),value FROM feedback_rows)
+ GROUP BY %s,subject_kind,subject)
+ SELECT %s,toUInt64(countIf(qualified)) AS readers,
+ toUInt64(countIf(qualified AND subject_kind='user')) AS user_readers,
+ toUInt64(countIf(qualified AND subject_kind='anon')) AS guest_readers,
+ toUInt64(countIf(completed)) AS completers,
+ sum(active_ms) AS active_ms,
+ sumIf(quality,qualified) AS reader_quality_sum,toUInt64(countIf(qualified AND length(days)>1)) AS returning_readers,
+ sum(value) AS value_sum,toUInt64(countIf(value>0)) AS positive_subjects,
+ toUInt64(countIf(value<0)) AS negative_subjects
+ FROM combined WHERE %s GROUP BY %s`, measured, refColumns, refColumns, feedback, refColumns,
+		refColumns, refColumns, refColumns, refColumns, refColumns, filter, refColumns)
 	args := append([]any{tenant}, filterArgs...)
-	pred, predArgs := win.dayPredicate("day")
 	args = append(args, predArgs...)
-	return fmt.Sprintf(`SELECT %[6]s,
-    toUInt64(countIf(s_views > 0)) AS viewers,
-    toUInt64(countIf(s_views > 0 AND subject_kind = '%[3]s')) AS user_viewers,
-    toUInt64(countIf(s_views > 0 AND subject_kind = '%[4]s')) AS anon_viewers,
-    toUInt64(sum(s_views)) AS views,
-    toUInt64(sum(s_completions)) AS completions,
-    toUInt64(countIf(s_completions > 0)) AS completers,
-    toUInt64(sum(s_active)) AS active_s,
-    toInt64(sum(s_score)) AS score_sum,
-    sum(if(s_views > 0, greatest(0., least(1., toFloat64(s_score) / (100. * greatest(toFloat64(s_views), 1.)))), 0.)) AS viewer_engagement_sum,
-    toUInt64(countIf(s_views > 1)) AS returning_viewers,
-    toUInt64(sum(s_events)) AS events,
-    toFloat64(sum(s_value)) AS value_sum,
-    toUInt64(countIf(s_value > 0)) AS positive_subjects,
-    toUInt64(countIf(s_value < 0)) AS negative_subjects,
-    CAST(sumMap(s_types), 'Map(String, UInt64)') AS signal_counts
-FROM (
-    SELECT %[6]s, subject_kind, subject,
-        sum(views) AS s_views, sum(completions) AS s_completions, sum(active_s) AS s_active,
-        sum(score_sum) AS s_score, sum(events) AS s_events, sum(value_sum) AS s_value,
-        sumMap(type_counts) AS s_types
-    FROM %[1]s.subject_content_daily FINAL
-    WHERE tenant = ? AND %[2]s AND events > 0%[7]s AND %[5]s
-    GROUP BY %[6]s, subject_kind, subject
-)
-GROUP BY %[6]s`, st.db, filter, SubjectKindUser, SubjectKindAnon, st.notErased(), refColumns, pred), args
+	args = append(args, tenant)
+	args = append(args, filterArgs...)
+	args = append(args, predArgs...)
+	args = append(args, filterArgs...)
+	return q, args
 }
 
 func scanMetrics(rows driver.Rows, kind, id, version *string, m *ContentMetrics, extra ...any) error {
-	dest := []any{kind, id, version, &m.Viewers, &m.UserViewers, &m.AnonViewers, &m.Views, &m.Completions, &m.Completers,
-		&m.ActiveS, &m.ScoreSum, &m.ViewerEngagementSum, &m.ReturningViewers, &m.Events, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects, &m.SignalCounts}
+	dest := []any{kind, id, version, &m.Readers, &m.UserReaders, &m.GuestReaders, &m.Completers, &m.ActiveMS,
+		&m.ReaderQualitySum, &m.ReturningReaders, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects}
 	return rows.Scan(append(dest, extra...)...)
 }
 
@@ -372,15 +381,15 @@ func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, 
 	return out, rows.Err()
 }
 
-// Popular ranks works of one kind with at least one view in a literal window.
-// Every view in the window has equal time weight.
+// Popular ranks works of one kind with qualified readers in a literal window.
+// Measured observations have equal time weight inside that window.
 func (st *Store) Popular(ctx context.Context, tenant string, contentKind string, opts PopularOptions) ([]PopularHit, error) {
 	return st.popular(ctx, tenant, contentKind, nil, opts)
 }
 
 // PopularityFor scores a fixed candidate set of works by the popularity
-// ranking and returns content_id -> score. Candidates without views in the
-// window are absent.
+// ranking and returns content_id -> score. Candidates without qualified
+// readers in the window are absent.
 func (st *Store) PopularityFor(ctx context.Context, tenant string, contentKind string, ids []string, window Window) (map[string]float64, error) {
 	ids = trimAll(ids)
 	if len(ids) == 0 {
@@ -400,7 +409,7 @@ func (st *Store) PopularityFor(ctx context.Context, tenant string, contentKind s
 // defaultRankExpr builds the default ranking over the window metric columns.
 func defaultRankExpr(w RankWeights) string {
 	return fmt.Sprintf(
-		"log10(1 + toFloat64(viewers)) * greatest(%g, (toFloat64(score_sum) + %g) / (toFloat64(views) + %g))",
+		"log10(1 + toFloat64(readers)) * greatest(%g, (toFloat64(reader_quality_sum)*100 + %g) / (toFloat64(readers) + %g))",
 		w.QualityFloor, w.PriorScore*w.PriorWeight, w.PriorWeight,
 	)
 }
@@ -443,7 +452,7 @@ func (st *Store) popular(ctx context.Context, tenant string, contentKind string,
 	metrics, args := st.windowMetrics(tenant, filter, filterArgs, opts.Window)
 	q := fmt.Sprintf(`SELECT %s, %s, (%s) AS rank_score
 FROM (%s)
-WHERE views > 0
+WHERE readers > 0
 ORDER BY rank_score DESC, content_id ASC
 LIMIT ?%s`, refColumns, metricColumns, rankExpr, metrics, finalSettings)
 	rows, err := st.conn.Query(ctx, q, append(args, limit)...)
@@ -490,43 +499,19 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, o
 	if maxSubjects <= 0 {
 		maxSubjects = 10000
 	}
-	if !opts.SkipRollup {
-		hits, err := st.coEngagedFromRollup(ctx, tenant, ref, opts, limit)
-		if err != nil {
-			return nil, err
-		}
-		if len(hits) > 0 {
-			return hits, nil
-		}
-	}
-	pred, predArgs := opts.Window.dayPredicate("day")
-	args := []any{tenant}
+	measured, args := st.measuredSubjectWorks(tenant, opts.Window)
 	var candidates strings.Builder
 	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
 		candidates.WriteString(" AND content_kind IN ?")
 		args = append(args, kinds)
 	}
-	args = append(args, predArgs...)
-	args = append(args, ref.ContentKind, ref.ContentID, tenant, ref.ContentKind, ref.ContentID)
-	args = append(args, predArgs...)
-	args = append(args, maxSubjects, limit)
-	q := fmt.Sprintf(`SELECT content_kind, content_id,
-    toInt64(countIf(net >= 0)) - toInt64(countIf(net < 0)) AS strength
-FROM (
-    SELECT content_kind, content_id, subject_kind, subject, sum(value_sum) AS net
-    FROM %[1]s.subject_content_daily FINAL
-    WHERE tenant = ? AND events > 0%[6]s%[2]s%[3]s AND %[5]s
-      AND NOT (content_kind = ? AND content_id = ?)
-      AND (subject_kind, subject) IN (
-          SELECT DISTINCT subject_kind, subject FROM %[1]s.subject_content_daily FINAL
-          WHERE tenant = ? AND content_kind = ? AND content_id = ?%[6]s AND events > 0%[3]s AND %[5]s
-          LIMIT ?)
-    GROUP BY content_kind, content_id, subject_kind, subject
-)
-GROUP BY content_kind, content_id
-HAVING strength > 0
-ORDER BY strength DESC, content_kind ASC, content_id ASC
-LIMIT ?%[4]s`, st.db, candidates.String(), pred, finalSettings, st.notErased(), workLevel)
+	args = append(args, ref.ContentKind, ref.ContentID, ref.ContentKind, ref.ContentID, maxSubjects, limit)
+	q := fmt.Sprintf(`WITH readers AS (%s)
+ SELECT content_kind,content_id,toInt64(countIf(net_value>=0))-toInt64(countIf(net_value<0)) AS strength
+ FROM readers WHERE 1%s AND NOT(content_kind=? AND content_id=?)
+ AND (subject_kind,subject) IN (SELECT subject_kind,subject FROM readers WHERE content_kind=? AND content_id=? LIMIT ?)
+ GROUP BY content_kind,content_id HAVING strength>0 ORDER BY strength DESC,content_kind,content_id LIMIT ?%s`, measured, candidates.String(), finalSettings)
+
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: co-engaged: %w", err)
@@ -556,7 +541,7 @@ func (st *Store) coEngagedFromRollup(ctx context.Context, tenant string, ref Con
 	var sb strings.Builder
 	args := []any{tenant, ref.ContentKind, ref.ContentID}
 	fmt.Fprintf(&sb, `SELECT content_kind_b, content_id_b, max(strength) AS s
-FROM %s.content_pairs
+FROM %s.engagement_pairs
 WHERE tenant = ? AND content_kind_a = ? AND content_id_a = ?`, st.db)
 	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
 		sb.WriteString(" AND content_kind_b IN ?")
@@ -616,63 +601,35 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	if maxPer <= 0 {
 		maxPer = 100
 	}
-	// Deletion makes this a new insert even if a prior build had identical rows.
-	insertToken := contentref.NewID()
-	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
-		return fmt.Errorf("signal: clear content_pairs: %w", err)
+	source, args := st.measuredSubjectWorks(tenant, opts.Window)
+	if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.engagement_pairs WHERE tenant=?", st.db), tenant); err != nil {
+		return err
 	}
-	winPred, winArgs := opts.Window.dayPredicate("day")
-	q := fmt.Sprintf(`INSERT INTO %[1]s.content_pairs
-(tenant, content_kind_a, content_id_a, content_kind_b, content_id_b, strength, refreshed_at)
-SELECT
-    '%[2]s' AS tenant,
-    a.1 AS content_kind_a, a.2 AS content_id_a,
-    (bs.1).1 AS content_kind_b, (bs.1).2 AS content_id_b,
-    toInt64(sum(bs.2)) AS strength,
-    now()
-FROM (
-    SELECT arrayJoin(pos) AS a, arrayJoin(bsigned) AS bs
-    FROM (
-        SELECT
-            pos,
-            arrayConcat(arrayMap(x -> (x, 1), pos), arrayMap(x -> (x, -1), neg)) AS bsigned
-        FROM (
-            SELECT
-                subject_kind, subject,
-                groupUniqArrayIf(%[3]d)((content_kind, content_id), net_v >= 0) AS pos,
-                groupUniqArrayIf(%[3]d)((content_kind, content_id), net_v < 0) AS neg
-            FROM (
-                SELECT subject_kind, subject, content_kind, content_id, sum(value_sum) AS net_v
-                FROM %[1]s.subject_content_daily FINAL
-                WHERE tenant = ? AND events > 0%[7]s%[4]s AND %[6]s
-                GROUP BY subject_kind, subject, content_kind, content_id
-            )
-            GROUP BY subject_kind, subject
-        )
-    )
-)
-WHERE a != bs.1
-GROUP BY content_kind_a, content_id_a, content_kind_b, content_id_b
-HAVING strength > 0%[5]s, insert_deduplication_token = ?`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
-	args := append([]any{tenant}, winArgs...)
-	args = append(args, insertToken)
-	if err := st.conn.Exec(ctx, q, args...); err != nil {
-		return fmt.Errorf("signal: refresh co-engagement: %w", err)
-	}
-	return nil
+	// A fresh token per build: replicated insert deduplication would otherwise
+	// drop a rebuild identical to the block just deleted, leaving no pairs.
+	q := fmt.Sprintf(`INSERT INTO %s.engagement_pairs
+ (tenant,content_kind_a,content_id_a,content_kind_b,content_id_b,strength,refreshed_at)
+ SELECT ?,a.1,a.2,b.1.1,b.1.2,toInt64(sum(b.2)),now() FROM (
+ SELECT arrayJoin(positive) AS a,arrayJoin(arrayConcat(arrayMap(x->tuple(x,1),positive),arrayMap(x->tuple(x,-1),negative))) AS b FROM (
+ SELECT subject_kind,subject,groupUniqArrayIf(%d)(tuple(content_kind,content_id),net_value>=0) AS positive,
+ groupUniqArrayIf(%d)(tuple(content_kind,content_id),net_value<0) AS negative
+ FROM (%s) GROUP BY subject_kind,subject)) WHERE a!=b.1 GROUP BY a,b.1 HAVING sum(b.2)>0
+ SETTINGS insert_deduplication_token = ?`, st.db, maxPer, maxPer, source)
+	args = append(append([]any{tenant}, args...), contentref.NewID())
+	return st.conn.Exec(ctx, q, args...)
 }
 
-// DayActivity is one UTC day of a kind's views: view sessions and the
-// distinct subjects, and signed-in subjects, who viewed.
+// DayActivity reports distinct people with measured attention, not page opens,
+// by audience: guests, signed-in people without a tier, and premium people.
 type DayActivity struct {
-	Day     time.Time
-	Views   uint64
-	Viewers uint64
-	Users   uint64
+	Day      time.Time
+	Readers  uint64
+	Anon     uint64
+	Free     uint64
+	Premium  uint64
+	ActiveMS uint64
 }
 
-// Activity returns a content kind's work-level view activity per UTC day of
-// the window, newest first; days without views are absent.
 func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window Window) ([]DayActivity, error) {
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("signal: tenant and contentKind are required")
@@ -680,30 +637,34 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 	if err := window.Validate(); err != nil {
 		return nil, err
 	}
-	pred, predArgs := window.dayPredicate("day")
-	q := fmt.Sprintf(`SELECT day, toUInt64(sum(s_views)), toUInt64(countIf(s_views > 0)), toUInt64(countIf(s_views > 0 AND subject_kind = '%[1]s'))
-FROM (
-    SELECT day, subject_kind, subject, sum(views) AS s_views
-    FROM %[2]s.subject_content_daily FINAL
-    WHERE tenant = ? AND content_kind = ?%[3]s AND events > 0%[4]s AND %[5]s
-    GROUP BY day, subject_kind, subject
-)
-GROUP BY day
-HAVING sum(s_views) > 0
-ORDER BY day DESC%[6]s`, SubjectKindUser, st.db, workLevel, pred, st.notErased(), finalSettings)
-	rows, err := st.conn.Query(ctx, q, append([]any{tenant, contentKind}, predArgs...)...)
+	pred, args := window.dayPredicate("day")
+	observed, observedArgs := window.dayPredicate("toDate(observed_at)")
+	// Premium needs a known tier observed that day; other signed-in people are free.
+	q := fmt.Sprintf(`SELECT d.day,toUInt64(count()),toUInt64(countIf(d.subject_kind<>'user')),
+ toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=0)),
+ toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=1)),sum(d.active) FROM (
+ SELECT day,subject_kind,subject,sum(active_ms) AS active,sum(length(covered_units)) AS units
+ FROM %[1]s.engagement_daily FINAL WHERE tenant=? AND content_kind=? AND present%[2]s AND %[3]s
+ GROUP BY day,subject_kind,subject HAVING active>=1000 AND units>0) d
+ LEFT JOIN (SELECT toDate(observed_at) AS day,subject_kind,subject,toUInt8(max(eligibility_known AND notEmpty(eligible_tiers))) AS premium
+ FROM %[1]s.measured_population_observations FINAL WHERE tenant=? AND content_kind=?%[4]s
+ GROUP BY day,subject_kind,subject) p ON p.day=d.day AND p.subject_kind=d.subject_kind AND p.subject=d.subject
+ GROUP BY d.day ORDER BY d.day DESC%[5]s`, st.db, pred, st.notErased(), observed, finalSettings)
+	params := append([]any{tenant, contentKind}, args...)
+	params = append(append(params, tenant, contentKind), observedArgs...)
+	rows, err := st.conn.Query(ctx, q, params...)
 	if err != nil {
-		return nil, fmt.Errorf("signal: activity: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 	var out []DayActivity
 	for rows.Next() {
-		var d DayActivity
-		if err := rows.Scan(&d.Day, &d.Views, &d.Viewers, &d.Users); err != nil {
-			return nil, fmt.Errorf("signal: activity scan: %w", err)
+		var row DayActivity
+		if err := rows.Scan(&row.Day, &row.Readers, &row.Anon, &row.Free, &row.Premium, &row.ActiveMS); err != nil {
+			return nil, err
 		}
-		d.Day = utcDay(d.Day)
-		out = append(out, d)
+		row.Day = utcDay(row.Day)
+		out = append(out, row)
 	}
 	return out, rows.Err()
 }

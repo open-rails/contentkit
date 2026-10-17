@@ -12,8 +12,10 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
@@ -81,15 +83,15 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	user := signal.Subject{UserID: "u1"}
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		states, err := e.hub.States(ctx, user, []contentref.ContentRef{g1})
-		if err != nil {
+		var liked, favorited uint64
+		if err := admin.QueryRow(ctx, "SELECT countIf(signal_type=? AND value=1),countIf(signal_type=? AND value=1) FROM "+chDB+".signals FINAL WHERE tenant=? AND subject_kind='user' AND subject=? AND content_id=?", content.PreferenceAxisReaction, content.PreferenceAxisFavorite, tenant, user.Key(), c.ID).Scan(&liked, &favorited); err != nil {
 			t.Fatal(err)
 		}
-		if st := states[g1.Key()]; st.Feedback == 2 && st.NetValue == 2 {
+		if liked == 1 && favorited == 1 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("preferences never reached the signal plane: %+v", states)
+			t.Fatalf("preferences never reached the signal plane: likes=%d favorites=%d", liked, favorited)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -97,14 +99,16 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	// Content detail carries the reader's standing to resume from: the item's
 	// and each version's.
 	vid := c.Versions[0].ID
-	s.call(http.StatusNoContent, u1, "POST", "/ck/v1/signals", discovery.Signals{Signals: []discovery.SignalInput{{ContentID: c.ID, VersionID: vid,
-		Type: discovery.TypeView, EventID: "resume-1", OccurredAt: time.Now().UTC().Add(-time.Minute), Progress: 7, Resume: "page:7", DurationS: 60}}}, nil)
+	if err := e.hub.RecordSignals(ctx, engagementtest.Native([]engagementtest.Observation{{ContentRef: g1.WithVersion(vid), Subject: user,
+		Type: engagementtest.TypeReading, EventID: "reading-1", OccurredAt: time.Now().UTC().Add(-time.Minute), Progress: 7, ProgressMax: 10, Resume: "page:7", DurationS: 60}})); err != nil {
+		t.Fatal(err)
+	}
 	var detail catalog.Content
 	s.call(http.StatusOK, u1, "GET", "/ck/v1/contents/"+c.ID, nil, &detail)
-	if v := detail.Viewer; v == nil || !v.Favorited || !v.Seen || v.Progress != 7 || v.Resume != "page:7" || v.LastViewAt == nil {
+	if v := detail.Viewer; v == nil || !v.Favorited || !v.Seen || v.ProgressMax == 0 || uint64(v.Progress)*10 != uint64(v.ProgressMax)*7 || v.Resume != "page:7" || v.LastReadAt == nil {
 		t.Fatalf("detail standing %+v", v)
 	}
-	if v := detail.Versions[0].Viewer; v == nil || v.Favorited || v.Progress != 7 || v.Resume != "page:7" {
+	if v := detail.Versions[0].Viewer; v == nil || v.Favorited || v.ProgressMax == 0 || uint64(v.Progress)*10 != uint64(v.ProgressMax)*7 || v.Resume != "page:7" {
 		t.Fatalf("version standing %+v", v)
 	}
 	var version catalog.Version
@@ -123,8 +127,12 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 		t.Fatalf("erasure %+v %v", report, err)
 	}
 	states, err := e.hub.States(ctx, user, []contentref.ContentRef{g1})
-	if err != nil || states[g1.Key()].Feedback != 0 {
+	if err != nil || len(states) != 0 {
 		t.Fatalf("erased subject still has state: %+v %v", states, err)
+	}
+	var feedback uint64
+	if err := admin.QueryRow(ctx, "SELECT count() FROM "+chDB+".signals FINAL WHERE tenant=? AND subject_kind='user' AND subject=?", tenant, user.Key()).Scan(&feedback); err != nil || feedback != 0 {
+		t.Fatalf("erasure left preference signals: %d %v", feedback, err)
 	}
 }
 

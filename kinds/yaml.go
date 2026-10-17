@@ -2,60 +2,11 @@ package kinds
 
 import (
 	"fmt"
-	"slices"
-
 	"github.com/goccy/go-yaml"
 )
 
-// Domain YAML places content kinds directly alongside its metadata. Decode
-// each policy strictly rather than allowing a typo to silently weaken a rule.
-func (d *Domain) UnmarshalYAML(data []byte) error {
-	var fields map[string]yaml.RawMessage
-	if err := yaml.UnmarshalWithOptions(data, &fields, yaml.Strict()); err != nil {
-		return fmt.Errorf("%w: domain YAML: %w", ErrInvalid, err)
-	}
-	next := Domain{Kinds: make(map[string]KindPolicy)}
-	for key, raw := range fields {
-		var target any
-		var policy KindPolicy
-		switch key {
-		case "name":
-			target = &next.Name
-		case "hosts":
-			target = &next.Hosts
-		default:
-			target = &policy
-		}
-		if err := yaml.UnmarshalWithOptions(raw, target, yaml.Strict()); err != nil {
-			return fmt.Errorf("%w: domain field %q: %w", ErrInvalid, key, err)
-		}
-		if key != "name" && key != "hosts" {
-			next.Kinds[key] = policy
-		}
-	}
-	*d = next
-	return nil
-}
-
-// MarshalYAML mirrors the native flat domain syntax and keeps metadata first.
-func (d Domain) MarshalYAML() (any, error) {
-	fields := yaml.MapSlice{{Key: "name", Value: d.Name}, {Key: "hosts", Value: d.Hosts}}
-	names := make([]string, 0, len(d.Kinds))
-	for kind := range d.Kinds {
-		if kind == "name" || kind == "hosts" {
-			return nil, fmt.Errorf("%w: content kind %q is reserved for domain metadata", ErrInvalid, kind)
-		}
-		names = append(names, kind)
-	}
-	slices.Sort(names)
-	for _, kind := range names {
-		fields = append(fields, yaml.MapItem{Key: kind, Value: d.Kinds[kind]})
-	}
-	return fields, nil
-}
-
-// UnmarshalYAML rejects unknown fields even when the embedding application
-// uses a permissive decoder. A retired policy key must not silently disappear.
+// UnmarshalYAML keeps the shared policy strict even inside permissively decoded
+// app configuration. Retired per-content-kind domain blocks are rejected.
 func (c *Config) UnmarshalYAML(data []byte) error {
 	type plain Config
 	var next plain
@@ -63,5 +14,42 @@ func (c *Config) UnmarshalYAML(data []byte) error {
 		return fmt.Errorf("%w: YAML: %w", ErrInvalid, err)
 	}
 	*c = Config(next)
+	return nil
+}
+
+// DecodeContentFilters reads an isolated YAML or JSON policy block. Hosts can
+// pass their root config's content_filters section directly without copying
+// the policy model or weakening its strict unknown-field validation.
+func DecodeContentFilters(data []byte) (ContentFilters, error) {
+	var policy ContentFilters
+	if err := yaml.Unmarshal(data, &policy); err != nil {
+		return ContentFilters{}, err
+	}
+	return policy, nil
+}
+
+// UnmarshalYAML remains strict when an app uses a permissive outer decoder.
+func (c *ContentFilters) UnmarshalYAML(data []byte) error {
+	type plain ContentFilters
+	var next plain
+	if err := yaml.UnmarshalWithOptions(data, &next, yaml.Strict()); err != nil {
+		return fmt.Errorf("%w: content_filters YAML: %w", ErrInvalid, err)
+	}
+	policy := ContentFilters(next)
+	if err := policy.validateDomains(); err != nil {
+		return err
+	}
+	*c = policy
+	return nil
+}
+
+// UnmarshalYAML keeps flat entity references strict even when decoded alone.
+func (f *ContentFilter) UnmarshalYAML(data []byte) error {
+	type plain ContentFilter
+	var next plain
+	if err := yaml.UnmarshalWithOptions(data, &next, yaml.Strict()); err != nil {
+		return fmt.Errorf("%w: content filter YAML: %w", ErrInvalid, err)
+	}
+	*f = ContentFilter(next)
 	return nil
 }

@@ -1,0 +1,38 @@
+name: generate-contract
+'on':
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact source commit, tag or branch to generate
+        type: string
+        required: true
+        default: master
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Generate the API contract on the runner
+      run: |
+        go generate ./internal/contract
+        git rev-parse HEAD > contract-head.txt
+        git diff --stat
+    - uses: actions/upload-artifact@v4
+      with:
+        name: contentkit-contract-${{ github.run_id }}
+        path: |
+          contract-head.txt
+          api/openapi.json
+          client_gen.go
+          docs/api/routes.md
+          sdk/ui/src/client/generated/
+        if-no-files-found: error

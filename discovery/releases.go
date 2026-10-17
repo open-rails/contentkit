@@ -15,8 +15,11 @@ import (
 type DailyReleasesOptions struct {
 	Reader
 	Filter
-	// Days includes today; 10 by default, from 1 through 31.
+	// Days includes EndDate, or today; 10 by default, from 1 through 31.
 	Days int
+	// EndDate is an inclusive YYYY-MM-DD in TimeZone; today by default.
+	// Future dates are rejected. Visibility is evaluated at the current time.
+	EndDate string
 	// TimeZone is an IANA zone, UTC by default.
 	TimeZone   string
 	CardGroups []string
@@ -34,9 +37,8 @@ type ReleaseDay struct {
 }
 
 type ReleaseFilteredEntity struct {
-	ContentKind string           `json:"content_kind"`
-	Entity      groups.GroupCard `json:"entity"`
-	Count       int              `json:"count"`
+	Entity groups.GroupCard `json:"entity"`
+	Count  int              `json:"count"`
 }
 
 // DailyReleases contains every visible card in the requested window, without
@@ -48,7 +50,7 @@ type DailyReleases struct {
 	Days        []ReleaseDay `json:"days"`
 }
 
-func releaseWindow(now time.Time, days int, zone string) (time.Time, time.Time, *time.Location, error) {
+func releaseWindow(now time.Time, days int, zone, endDate string) (time.Time, time.Time, *time.Location, error) {
 	if days == 0 {
 		days = 10
 	}
@@ -67,7 +69,18 @@ func releaseWindow(now time.Time, days int, zone string) (time.Time, time.Time, 
 	}
 	local := now.In(loc)
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
-	return today.AddDate(0, 0, 1-days), today, loc, nil
+	through := today
+	if endDate != "" {
+		through, err = time.ParseInLocation(time.DateOnly, endDate, loc)
+		if err != nil || through.Year() < 1 || through.After(today) {
+			return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: end_date must be a valid YYYY-MM-DD on or before today in time_zone", ErrInvalid)
+		}
+	}
+	from := through.AddDate(0, 0, 1-days)
+	if from.Year() < 1 {
+		from = time.Date(1, 1, 1, 0, 0, 0, 0, loc)
+	}
+	return from, through, loc, nil
 }
 
 // Releases reads one complete window so clients can reveal more cards without
@@ -76,12 +89,12 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 	ctx = access.WithMemo(ctx)
 	out := DailyReleases{Days: []ReleaseDay{}}
 	now := s.now()
-	from, today, loc, err := releaseWindow(now, o.Days, o.TimeZone)
+	from, through, loc, err := releaseWindow(now, o.Days, o.TimeZone, o.EndDate)
 	if err != nil {
 		return out, err
 	}
-	out.TimeZone, out.FromDate, out.ThroughDate = loc.String(), from.Format(time.DateOnly), today.Format(time.DateOnly)
-	for day := today; !day.Before(from); day = day.AddDate(0, 0, -1) {
+	out.TimeZone, out.FromDate, out.ThroughDate = loc.String(), from.Format(time.DateOnly), through.Format(time.DateOnly)
+	for day := through; !day.Before(from); day = day.AddDate(0, 0, -1) {
 		out.Days = append(out.Days, ReleaseDay{Date: day.Format(time.DateOnly), Contents: []Card{}, FilteredEntities: []ReleaseFilteredEntity{}})
 	}
 	filter := o.Filter
@@ -94,7 +107,8 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 	if err != nil {
 		return out, err
 	}
-	got, err := s.releasePicks(ctx, q, from, now)
+	until := through.AddDate(0, 0, 1)
+	got, err := s.releasePicks(ctx, q, from, until, now)
 	if err != nil {
 		return out, err
 	}
@@ -125,7 +139,7 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 			}
 		}
 	}
-	if err := s.filteredReleases(ctx, &out, filter, q, visible, from, now); err != nil {
+	if err := s.filteredReleases(ctx, &out, filter, q, visible, from, until, now); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -137,10 +151,10 @@ type releasePick struct {
 }
 
 // releasePicks applies feed-only publication and language constraints even to
-// privileged viewers, then selects the same preferred edition as card lists.
-func (s *Service) releasePicks(ctx context.Context, q *sel, from, now time.Time) ([]releasePick, error) {
-	q = q.with("f.published_at >= @r_from AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted' AND (@r_language = '' OR @r_language = ANY(f.languages))",
-		pgx.NamedArgs{"r_from": from, "r_now": now, "r_language": q.reader.Language})
+// privileged readers, then selects the same preferred edition as card lists.
+func (s *Service) releasePicks(ctx context.Context, q *sel, from, until, now time.Time) ([]releasePick, error) {
+	q = q.with("f.published_at >= @r_from AND f.published_at < @r_until AND f.published_at <= @r_now AND f.live_from <= @r_now AND NOT f.deleted AND f.listing <> 'unlisted' AND (@r_language = '' OR @r_language = ANY(f.languages))",
+		pgx.NamedArgs{"r_from": from, "r_until": until, "r_now": now, "r_language": q.reader.Language})
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT p.content_id, p.version_id, p.published_at FROM (
  SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, f.published_at
  FROM %s f WHERE %s ORDER BY f.content_id, %s) p

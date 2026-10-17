@@ -29,10 +29,11 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   `POST /v1/codes/aliases` (`Client.PostCodesAliases`), which answers each
   `(source, kind, key)` with `found` (link, canonical path, locator),
   `not_found` (unknown or hidden) or `gone` (removed), following merges.
-- `view_baseline` is a content item's legacy all-time view count (the old
-  site's per-item total; raw view rows are never imported). Cards' `views`
-  and the `most_viewed` sort add it to the viewers the signal plane counts;
-  `popular` and `top_rated` never see it.
+- Raw opens and legacy aggregate counters are not importable. Preserve existing
+  bookmarks in `legacy_reading`: target a content item or version, identify one
+  user or anonymous key, and send the source's last-read time, progress and resume
+  selector. Version bookmarks also restore the work's history. These rows restore
+  navigation only; they never create measured readers, quality, completions or rank.
 - Imported content is trusted: not screened, approved. Reactions and
   favorites take fresh preference revisions; `preference_floor` first raises
   the sequence past a retained signal plane (also the restore step).
@@ -102,7 +103,7 @@ named as the body references them.
 | Section | Record | Keys |
 |---|---|---|
 | `groups` | `GroupRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
-| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `view_baseline`, `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
 | | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text`, `segments` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
 | `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
@@ -113,5 +114,6 @@ named as the body references them.
 | `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
 | `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
 | `answers` | `AnswerRecord` | `poll`, `user_id`, `text` |
-| `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (view, click), `event_id`, `occurred_at`, `progress`, `duration_s` |
+| `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (click), `event_id`, `revision`, `occurred_at` |
+| `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision` |
 | `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |

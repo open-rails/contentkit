@@ -1,4 +1,4 @@
-import { useContext, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import { useMessages } from "../../i18n/context.js";
 import { AppearanceContext } from "../../scope.js";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
@@ -16,9 +16,21 @@ export interface ContentFilterDialogProps extends ContentFilterSettingsProps {
 export function ContentFilterDialog({ open, onOpenChange, description, returnFocus, ...settings }: ContentFilterDialogProps) {
   const { t } = useMessages();
   const inheritedAppearance = useContext(AppearanceContext);
+  // Native modal dialogs live above body portals. Keep the opening surface
+  // through preference reloads, even when they remove the triggering tile.
+  const [portal, setPortal] = useState<{ open: boolean; container?: HTMLDialogElement }>({ open: false });
+  let placement = portal;
+  if (portal.open !== open) {
+    placement = { open, container: open ? returnFocus?.()?.closest<HTMLDialogElement>("dialog[open]") ?? undefined : portal.container };
+    setPortal(placement);
+  }
   return <AppearanceContext.Provider value={settings.appearance ?? inheritedAppearance}>
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent finalFocus={returnFocus} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <Dialog open={open} onOpenChange={(next) => onOpenChange(next)}>
+      <DialogContent
+        finalFocus={returnFocus}
+        portalContainer={placement.container}
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>{t("readerSettings.filterTitle")}</DialogTitle>
           <DialogDescription>{description ?? t("readerSettings.filterDescription")}</DialogDescription>

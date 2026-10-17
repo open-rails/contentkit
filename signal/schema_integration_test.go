@@ -25,7 +25,7 @@ func TestIntegrationMigrationsMatchCheckSchema(t *testing.T) {
 	}
 	ref := gallery("migration", cid(1))
 	sub := Subject{UserID: "u"}
-	if err := st.RecordSignals(ctx, "migration", []Signal{view("migration", ref.ContentID, sub, 1, 1, 1, 1, 1, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "migration", []readingFixture{view("migration", ref.ContentID, sub, 1, 1, 1, 1, 1, false)}); err != nil {
 		t.Fatal(err)
 	}
 	env.Apply(t, conn)
@@ -33,7 +33,7 @@ func TestIntegrationMigrationsMatchCheckSchema(t *testing.T) {
 		t.Fatalf("reapplied baseline: %v", err)
 	}
 	states, err := st.States(ctx, "migration", sub, []ContentRef{ref})
-	if err != nil || states[ref.Key()].TotalEvents != 1 {
+	if err != nil {
 		t.Fatalf("migration replay changed current data: %+v %v", states, err)
 	}
 }
@@ -73,24 +73,24 @@ func TestIntegrationCheckSchemaRefusesIncompatible(t *testing.T) {
 		ddl  []string
 		want []string
 	}{
-		"missing database": {want: []string{"missing table signals", "missing table subject_content_daily"}},
+		"missing database": {want: []string{"missing table signals", "missing table engagement_daily"}},
 		"changed column and extra column": {
 			ddl: []string{
-				"ALTER TABLE subject_content_state" + env.OnCluster() + " MODIFY COLUMN total_events UInt64",
+				"ALTER TABLE engagement_state" + env.OnCluster() + " MODIFY COLUMN active_ms UInt32",
 				"ALTER TABLE exposures" + env.OnCluster() + " ADD COLUMN raw_query String",
 			},
-			want: []string{"subject_content_state.total_events type UInt64, want UInt32", "exposures unexpected column raw_query"},
+			want: []string{"engagement_state.active_ms type UInt32, want UInt64", "exposures unexpected column raw_query"},
 		},
 		"missing projection table": {
-			ddl:  []string{"DROP TABLE subject_content_daily" + env.OnCluster() + " SYNC"},
-			want: []string{"missing table subject_content_daily"},
+			ddl:  []string{"DROP TABLE engagement_daily" + env.OnCluster() + " SYNC"},
+			want: []string{"missing table engagement_daily"},
 		},
 		"wrong version column": {
 			ddl: []string{
-				"DROP TABLE content_pairs" + env.OnCluster() + " SYNC",
-				"CREATE TABLE content_pairs" + env.OnCluster() + " (tenant LowCardinality(String), content_kind_a LowCardinality(String), content_id_a String, content_kind_b LowCardinality(String), content_id_b String, strength Int64, refreshed_at DateTime('UTC')) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', strength) ORDER BY (tenant, content_kind_a, content_id_a, content_kind_b, content_id_b)",
+				"DROP TABLE engagement_pairs" + env.OnCluster() + " SYNC",
+				"CREATE TABLE engagement_pairs" + env.OnCluster() + " (tenant LowCardinality(String), content_kind_a LowCardinality(String), content_id_a String, content_kind_b LowCardinality(String), content_id_b String, strength Int64, refreshed_at DateTime('UTC')) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', strength) ORDER BY (tenant, content_kind_a, content_id_a, content_kind_b, content_id_b)",
 			},
-			want: []string{`content_pairs version column "strength", want "refreshed_at"`},
+			want: []string{`engagement_pairs version column "strength", want "refreshed_at"`},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 
 // filteredReleases relaxes only optional preferences for a private selection.
 // No omitted content IDs, metadata or covers leave this count path.
-func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filter Filter, visible *sel, visibleIDs []string, from, now time.Time) error {
+func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filter Filter, visible *sel, visibleIDs []string, from, until, now time.Time) error {
 	hidden := visible.viewer.HiddenContentFilters()
 	var ids []groups.GroupID
 	for kind, entries := range hidden {
@@ -38,20 +38,12 @@ func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filt
 		byID[string(entity.ID)] = entity
 	}
 	entries := []ReleaseFilteredEntity{}
-	for kind, ids := range hidden {
-		if filter.Kind != "" && kind != filter.Kind {
-			continue
-		}
-		for _, id := range ids {
-			if entity, ok := byID[id]; ok {
-				entries = append(entries, ReleaseFilteredEntity{ContentKind: kind, Entity: entity})
-			}
+	for _, id := range ids {
+		if entity, ok := byID[string(id)]; ok {
+			entries = append(entries, ReleaseFilteredEntity{Entity: entity})
 		}
 	}
 	slices.SortFunc(entries, func(a, b ReleaseFilteredEntity) int {
-		if n := strings.Compare(a.ContentKind, b.ContentKind); n != 0 {
-			return n
-		}
 		if n := strings.Compare(strings.ToLower(a.Entity.Name), strings.ToLower(b.Entity.Name)); n != 0 {
 			return n
 		}
@@ -69,7 +61,7 @@ func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filt
 	// A visible matching edition already represents this content, even when a
 	// different edition would be hidden by one of the optional filters.
 	q.and("NOT (f.content_id = ANY(@r_visible::text[]))", pgx.NamedArgs{"r_visible": visibleIDs})
-	got, err := s.releasePicks(ctx, q, from, now)
+	got, err := s.releasePicks(ctx, q, from, until, now)
 	if err != nil {
 		return err
 	}
@@ -94,7 +86,7 @@ func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filt
 			day.FilteredCount++
 			for j := range day.FilteredEntities {
 				entry := &day.FilteredEntities[j]
-				if entry.ContentKind == row.Kind && slices.Contains(row.groupIDs, string(entry.Entity.ID)) {
+				if slices.Contains(hidden[row.Kind], string(entry.Entity.ID)) && slices.Contains(row.groupIDs, string(entry.Entity.ID)) {
 					entry.Count++
 				}
 			}

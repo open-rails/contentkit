@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -45,25 +46,25 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	g1, g2 := hub.Content("gallery", cid(1)), hub.Content("gallery", cid(2))
 	day := func(d, h int) time.Time { return time.Date(2026, 6, d, h, 0, 0, 0, time.UTC) }
 
-	// Record signals, scored as the engine scores them: u1 completes g1; many
-	// anons view g2 (popular); a0 views both so g2 is co-engaged with g1.
-	g1View := signal.Signal{ContentRef: g1, Subject: user, Type: signal.TypeView, EventID: "u1-g1", OccurredAt: day(1, 10), Progress: 20, ProgressMax: 20, Score: 100, Completed: true, Resume: "p:20"}
-	batch := []signal.Signal{g1View}
+	// Explicit measured pages: u1 completes g1; eight guests read g2; a0
+	// reads both so g2 is co-engaged with g1. Opens alone are not evidence.
+	g1Reading := engagementtest.Observation{ContentRef: g1, Subject: user, Type: engagementtest.TypeReading, EventID: "u1-g1", OccurredAt: day(1, 10), Progress: 20, ProgressMax: 20, DurationS: 160, Resume: "p:20"}
+	batch := []engagementtest.Observation{g1Reading}
 	for i := 0; i < 8; i++ {
-		batch = append(batch, signal.Signal{ContentRef: g2, Subject: signal.Subject{AnonKey: fmt.Sprintf("a%d", i)}, Type: signal.TypeView,
-			EventID: fmt.Sprintf("a%d-g2", i), OccurredAt: day(2, 9+i%6), Progress: 18, ProgressMax: 20, Score: 90, Completed: true})
+		batch = append(batch, engagementtest.Observation{ContentRef: g2, Subject: signal.Subject{AnonKey: fmt.Sprintf("a%d", i)}, Type: engagementtest.TypeReading,
+			EventID: fmt.Sprintf("a%d-g2", i), OccurredAt: day(2, 9+i%6), Progress: 18, ProgressMax: 20, DurationS: 144})
 	}
-	batch = append(batch, signal.Signal{ContentRef: g1, Subject: signal.Subject{AnonKey: "a0"}, Type: signal.TypeView, EventID: "a0-g1", OccurredAt: day(2, 9), Progress: 18, ProgressMax: 20, Score: 90, Completed: true})
-	if err := hub.RecordSignals(ctx, batch); err != nil {
+	batch = append(batch, engagementtest.Observation{ContentRef: g1, Subject: signal.Subject{AnonKey: "a0"}, Type: engagementtest.TypeReading, EventID: "a0-g1", OccurredAt: day(2, 9), Progress: 18, ProgressMax: 20, DurationS: 144})
+	if err := hub.RecordSignals(ctx, engagementtest.Native(batch)); err != nil {
 		t.Fatalf("RecordSignals: %v", err)
 	}
 
-	// g1's state is completed with score 100.
+	// g1's state is completed with full measured coverage and attention.
 	states, err := hub.States(ctx, user, []ContentRef{g1})
 	if err != nil {
 		t.Fatalf("States: %v", err)
 	}
-	if s := states[g1.Key()]; !s.Completed || s.LastScore != 100 || s.Resume != "p:20" {
+	if s := states[g1.Key()]; !s.Completed || s.Quality != 1 || s.ActiveMS != 160_000 || s.Resume != "p:20" {
 		t.Fatalf("state: %+v", s)
 	}
 
@@ -81,7 +82,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Metrics: %v", err)
 	}
-	if m := metrics[g2.Key()]; m.AnonViewers != 8 || m.Views != 8 {
+	if m := metrics[g2.Key()]; m.GuestReaders != 8 || m.Readers != 8 || m.ActiveMS != 8*144_000 {
 		t.Fatalf("metrics: %+v", m)
 	}
 
@@ -121,14 +122,14 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	}
 
 	// Replay idempotency through the hub: re-record u1's g1 session.
-	if err := hub.RecordSignals(ctx, []signal.Signal{g1View}); err != nil {
+	if err := hub.RecordSignals(ctx, g1Reading.Signals()); err != nil {
 		t.Fatalf("replay RecordSignals: %v", err)
 	}
 	states, err = hub.States(ctx, user, []ContentRef{g1})
 	if err != nil {
 		t.Fatalf("States after replay: %v", err)
 	}
-	if got := states[g1.Key()]; got.TotalEvents != 1 {
+	if got := states[g1.Key()]; got.ActiveMS != 160_000 || got.MaxProgress != 2_000 || got.Quality != 1 {
 		t.Fatalf("replay double-counted: %+v", got)
 	}
 }

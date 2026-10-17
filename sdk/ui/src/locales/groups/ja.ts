@@ -105,6 +105,9 @@ export const groups: typeof en = {
     versionId: "バージョン ID（任意）",
     newMember: "新しいメンバー",
     addMember: "メンバーを追加",
+    chipsPlaceholder: "名前を入力または貼り付け（カンマ区切り）",
+    notFound: "見つからないため保存されません: {names}",
+    chipDetails: "{name} を編集",
   },
   membership: {
     unknown: "現在メンバーシップを確認できません。",

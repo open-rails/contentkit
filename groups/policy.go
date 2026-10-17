@@ -1,16 +1,19 @@
 package groups
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/open-rails/contentkit/kinds"
+)
 
 // policyBindingError keeps a mutation from silently changing the meaning of a
 // configured hard domain rule. The existing conflict code is the public API.
 type policyBindingError struct {
-	domain, contentKind string
-	entity              GroupID
+	domain string
+	entity GroupID
 }
 
 func (e *policyBindingError) Error() string {
-	return fmt.Sprintf("entity %s is used by the %s domain policy for %s; update the policy first", e.entity, e.domain, e.contentKind)
+	return fmt.Sprintf("entity %s is used by the %s domain policy; update the policy first", e.entity, e.domain)
 }
 
 func (*policyBindingError) Unwrap() error { return ErrConflict }
@@ -28,26 +31,18 @@ func (s *Store) checkPolicyBinding(before, after Group) error {
 	if !identityChanged && !deactivated && !unmarked {
 		return nil
 	}
-	for _, domain := range s.cfg.Domains {
-		for kind, policy := range domain.Kinds {
-			required := false
-			for _, ref := range policy.RequireGroups {
-				if ref.Kind == before.Kind && ref.Slug == before.Slug {
-					required = true
-					break
-				}
+	for _, domain := range s.cfg.ContentFilters.Domains {
+		required := domain.Requires(kinds.GroupRef{Kind: before.Kind, Slug: before.Slug})
+		if required && (identityChanged || deactivated) {
+			return &policyBindingError{domain: domain.Name, entity: before.ID}
+		}
+		for _, filter := range domain.Filters {
+			if filter.Group.Kind != before.Kind || filter.Group.Slug != before.Slug || filter.Visible {
+				continue
 			}
-			for _, filter := range policy.Filters {
-				if filter.Group.Kind != before.Kind || filter.Group.Slug != before.Slug || filter.Visible {
-					continue
-				}
-				fixed := !filter.Toggleable()
-				if (fixed || before.Internal) && (identityChanged || deactivated) || before.Internal && !fixed && !required && unmarked {
-					return &policyBindingError{domain: domain.Name, contentKind: kind, entity: before.ID}
-				}
-			}
-			if required && (identityChanged || deactivated) {
-				return &policyBindingError{domain: domain.Name, contentKind: kind, entity: before.ID}
+			fixed := !filter.Toggleable()
+			if (fixed || before.Internal) && (identityChanged || deactivated) || before.Internal && !fixed && !required && unmarked {
+				return &policyBindingError{domain: domain.Name, entity: before.ID}
 			}
 		}
 	}

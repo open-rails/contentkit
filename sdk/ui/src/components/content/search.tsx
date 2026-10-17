@@ -5,7 +5,8 @@ import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useStat
 import { createPortal } from "react-dom";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Card, GroupCard } from "../../client/generated/wire.js";
+import type { TypeaheadQuery } from "../../client/discovery.js";
+import type { Card, GroupCard, Typeahead } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useRecentSearches, useTypeahead } from "../../react/discovery.js";
@@ -26,8 +27,13 @@ export interface SearchBoxProps {
   /** A suggestion's link; default its canonical path. */
   href?: (item: Card | GroupCard) => string | undefined;
   labels?: Labels;
-  /** The reader's recent searches while the box is empty. Default true. */
+  /** Matching recent searches first, with prefixes before interior matches. Default true. */
   recent?: boolean;
+  /** An authenticated or host-specific suggestion source; public typeahead by default. */
+  requestSuggestions?: (query: TypeaheadQuery, signal: AbortSignal) => Promise<Typeahead>;
+  /** Enter opens an explicitly selected suggestion; free text never submits a results search. */
+  selectionOnly?: boolean;
+  disabled?: boolean;
   /** A portal dropdown anchored to the header field; default stays inline. */
   presentation?: "inline" | "header";
   client?: ContentKitClient;
@@ -36,6 +42,12 @@ export interface SearchBoxProps {
 }
 
 type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
+const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`;
+
+// Mirror search-only normalization. Identity/slug normalization stays separate;
+// complete English filler words never change Japanese/CJK or interior letters.
+const searchText = (text: string) => text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase()
+  .replace(/(^|[^\p{L}\p{N}\p{M}_])(?:the|a|an)(?=$|[^\p{L}\p{N}\p{M}_])/gu, "$1").trim().replace(/\s+/g, " ");
 
 const TYPE_ICONS: Record<string, { icon: IconSvgElement; color: string }> = {
   artist: { icon: UserIcon, color: "text-blue-500 dark:text-blue-400" },
@@ -83,8 +95,9 @@ function SearchTypeIcon({ kind }: { kind: string }) {
 }
 
 /**
- * A search field suggesting contents and groups as the reader types, and
- * recent searches while it is empty; Enter searches, or opens the suggestion chosen.
+ * Matching recent queries first, followed by entity/title substrings. Prefixes
+ * are preferred. Enter searches or opens the chosen suggestion; full search can
+ * match contextual fields more deeply.
  */
 export function SearchBox(p: SearchBoxProps) {
   const { t, error } = useMessages();
@@ -92,7 +105,8 @@ export function SearchBox(p: SearchBoxProps) {
   const navigate = useContext(ContentKitContext)?.navigate;
   const [text, setText] = useState(p.defaultValue ?? "");
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
+  // null requests the first result when opening an as-yet-unloaded panel.
+  const [active, setActive] = useState<string | null>();
   const root = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -100,19 +114,33 @@ export function SearchBox(p: SearchBoxProps) {
   const anchor = useHeaderAnchor(open, header, root, input);
   const { top } = anchor;
   const empty = !text.trim();
-  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client });
-  const recent = useRecentSearches({ enabled: p.recent !== false && open && empty, client: p.client });
-  const items = useMemo<Suggestion[]>(
-    () =>
-      empty
-        ? recent.searches.map((r) => ({ type: "recent" as const, query: r.query }))
-        : [...found.contents.map((card) => ({ type: "content" as const, card })), ...found.entities.map((group) => ({ type: "group" as const, group }))],
-    [empty, recent.searches, found.contents, found.entities],
+  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client, request: p.requestSuggestions, minLength: p.disabled ? Infinity : 1 });
+  const recent = useRecentSearches({ enabled: p.recent !== false && open && !p.disabled, client: p.client });
+  const normalized = searchText(text);
+  const current = found.query === text.trim();
+  const visible = useMemo<Suggestion[]>(
+    () => [
+      ...(p.recent === false ? [] : recent.searches
+        .map((r) => ({ ...r, normalized: searchText(r.query) }))
+        .filter((r) => empty || (normalized && r.normalized.includes(normalized)))
+        .sort((a, b) => Number(b.normalized.startsWith(normalized)) - Number(a.normalized.startsWith(normalized)))
+        .map((r) => ({ type: "recent" as const, query: r.query }))),
+      ...(!empty && current ? [
+        ...found.entities.map((group) => ({ type: "group" as const, group })),
+        ...found.contents.map((card) => ({ type: "content" as const, card })),
+      ] : []),
+    ],
+    [p.recent, normalized, empty, current, recent.searches, found.contents, found.entities],
   );
-  const current = empty || found.query === text.trim();
-  const visible = current ? items : [];
-  const selected = visible[active];
-  const loading = empty ? recent.loading : !current || found.loading;
+  // History and live suggestions can arrive independently. Track identity so
+  // prepending history never changes what Enter will open.
+  const activeIndex = active === null ? Math.min(0, visible.length - 1) : visible.findIndex((s) => suggestionKey(s) === active);
+  const selected = visible[activeIndex];
+  const activate = (index: number) => {
+    const suggestion = visible[index];
+    setActive(suggestion ? suggestionKey(suggestion) : index >= 0 ? null : undefined);
+  };
+  const loading = recent.loading || (!empty && (!current || found.loading));
   const showRecent = empty && p.recent !== false;
   const emptyMessage = empty ? !header && showRecent && !recent.error ? "contents.noRecentSearches" : "contents.searchHint" : "contents.noResults";
   useEffect(() => {
@@ -124,7 +152,7 @@ export function SearchBox(p: SearchBoxProps) {
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
   const reveal = () => {
-    setOpen(true);
+    if (!p.disabled) setOpen(true);
   };
   const search = (q: string) => {
     setOpen(false);
@@ -146,7 +174,7 @@ export function SearchBox(p: SearchBoxProps) {
     event.preventDefault();
     input.current?.focus();
     setOpen(false);
-    setActive(-1);
+    setActive(undefined);
   };
   const results = (<>
     {showRecent && (
@@ -167,14 +195,15 @@ export function SearchBox(p: SearchBoxProps) {
     <ul id={`${id}-list`} role="listbox" aria-label={empty ? t("contents.recentSearches") : t("contents.suggestions")} className={cn("grid", header && "gap-2")}>
       {visible.map((s, i) => (
         <li
-          key={s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`}
+          key={suggestionKey(s)}
           id={`${id}-${i}`}
           role="option"
-          aria-selected={i === active}
+          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)} ${s.type === "content" ? s.card.title || s.card.code : s.group.name || s.group.slug}` : undefined}
+          aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : "gap-2 px-2 py-1.5", i === active && "bg-accent text-accent-foreground")}
-          onMouseEnter={() => setActive(i)}
+          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
             go(s);
@@ -230,11 +259,13 @@ export function SearchBox(p: SearchBoxProps) {
         className="relative"
         onSubmit={(e) => {
           e.preventDefault();
+          if (p.disabled) return;
           if (open && selected) return go(selected);
+          if (p.selectionOnly) return;
           search(text.trim());
         }}
       >
-        {header ? <button type="submit" className="absolute top-1/2 left-2.5 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={t("contents.search")}><HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-4" aria-hidden /></button>
+        {header ? <button type="submit" disabled={p.disabled} className="absolute top-1/2 left-2.5 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={t("contents.search")}><HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-4" aria-hidden /></button>
           : <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />}
         <Input
           ref={input}
@@ -243,16 +274,17 @@ export function SearchBox(p: SearchBoxProps) {
           aria-label={t("contents.search")}
           aria-expanded={open}
           aria-controls={`${id}-list`}
-          aria-activedescendant={open && selected ? `${id}-${active}` : undefined}
+          aria-activedescendant={open && selected ? `${id}-${activeIndex}` : undefined}
           aria-autocomplete="list"
           autoComplete="off"
+          disabled={p.disabled}
           className={cn("h-9 ps-8", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none md:text-base")}
           value={text}
           placeholder={p.placeholder ?? t("contents.searchPlaceholder")}
           onChange={(e) => {
             setText(e.target.value);
             setOpen(true);
-            setActive(-1);
+            setActive(undefined);
           }}
           onFocus={reveal}
           onClick={reveal}
@@ -260,28 +292,29 @@ export function SearchBox(p: SearchBoxProps) {
             if (e.key === "Escape") {
               e.preventDefault();
               setOpen(false);
-              setActive(-1);
+              setActive(undefined);
               return;
             }
             if (e.key === "ArrowDown") {
               e.preventDefault();
               reveal();
-              setActive((a) => open ? Math.min(visible.length - 1, a + 1) : 0);
+              activate(open ? Math.min(visible.length - 1, activeIndex + 1) : 0);
             } else if (e.key === "ArrowUp" && open) {
               e.preventDefault();
-              setActive((a) => Math.max(-1, a - 1));
+              activate(Math.max(-1, activeIndex - 1));
             }
           }}
         />
         {header && (text || open) && (
           <button
             type="button"
+            disabled={p.disabled}
             className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
             aria-label={text ? t("contents.clearSearch") : t("common.close")}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               input.current?.focus();
-              setActive(-1);
+              setActive(undefined);
               if (text) { setText(""); setOpen(true); }
               else setOpen(false);
             }}
@@ -290,7 +323,7 @@ export function SearchBox(p: SearchBoxProps) {
       </form>
       {open && (header ? createPortal(
         <ContentKitUiRoot appearance={p.appearance} className="fixed inset-x-0 bottom-0 z-[70] text-sm" style={{ top }} data-ckui="search-layer">
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" data-ckui="search-backdrop" aria-hidden />
+          <div className="absolute inset-0 bg-black/30" data-ckui="search-backdrop" aria-hidden />
           <div ref={panel} style={{ width: anchor.width, marginLeft: anchor.left }} className="relative origin-top animate-[search-expand_300ms_ease-out] rounded-lg border border-border bg-background text-foreground shadow-lg transition-none motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
             <div className="w-full px-3 pt-3">
               <div className="[--search-max-height:70vh] overflow-y-auto pb-7 md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>

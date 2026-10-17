@@ -1,6 +1,7 @@
 export { ContentCard, OwnerChip, PostCard, lockLabel, type CardMetadata, type ContentCardProps, type PostCardProps } from "./card.js";
 export { cardGridLayout, CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardGridLayout, type CardListProps, type ContentRailProps, type LockedCards } from "./grid.js";
 export { DailyReleases, type DailyReleasesProps } from "./daily-releases.js";
+export { ReleaseDatePicker, isReleaseDate, localReleaseDate, type ReleaseDatePickerProps } from "./release-date-picker.js";
 export { PopularContentGrid, type PopularContentGridProps } from "./popular.js";
 export { SearchBox, type SearchBoxProps } from "./search.js";
 export { ReaderSettings, type ReaderSettingsProps } from "./reader-settings.js";
@@ -12,3 +13,4 @@ export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, Ve
 export { OfferFields } from "./offer-fields.js";
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
 export { VersionDownloadButton, type VersionDownloadButtonProps } from "./download-button.js";
+export { ContentFavorites } from "./favorites.js";

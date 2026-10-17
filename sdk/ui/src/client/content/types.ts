@@ -69,6 +69,7 @@ export type ContentChange =
   /** The reader's content filters changed: every list reads again. */
   | { type: "contentFilters.changed" }
   | { type: "history.changed" }
+  | { type: "engagement.changed"; ids: string[] }
   /** A search ran or recent searches were cleared. */
   | { type: "searches.changed" }
   /** The reader's keys changed (a join, a purchase the host reports): reads of access re-run. */

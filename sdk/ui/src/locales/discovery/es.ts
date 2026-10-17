@@ -11,6 +11,8 @@ export const discovery: typeof en = {
     filters: "Mostrar contenido:",
   },
   releases: {
+    goToDay: "Ir a un día",
+    invalidDate: "Elige una fecha válida que no sea posterior a hoy.",
     premiumMore_one: "{count} elemento más",
     premiumMore_other: "{count} elementos más",
     premiumHint: "Vistas previas para miembros · Haz clic para ver",
@@ -30,8 +32,6 @@ export const discovery: typeof en = {
     pages_other: "{count} páginas",
     minutes_one: "{count} min",
     minutes_other: "{count} min",
-    views_one: "{n} vista",
-    views_other: "{n} vistas",
     moreChips_one: "{count} más",
     moreChips_other: "{count} más",
     completed: "Terminado",
@@ -72,6 +72,7 @@ export const discovery: typeof en = {
     removeRecent: "Quitar «{q}»",
   },
   listing: {
+    activityRange: "Actividad desde {from} hasta antes de {until} (UTC)",
     popularPeriod: "Período de popularidad",
     pastDays_one: "Último {count} día",
     pastDays_other: "Últimos {count} días",
@@ -82,7 +83,6 @@ export const discovery: typeof en = {
     sort_popular: "Populares",
     sort_top_rated: "Mejor valorados",
     sort_most_favorited: "Más favoritos",
-    sort_most_viewed: "Más vistos",
     sort_random: "Aleatorio",
     sort_position: "En orden",
     period_7d: "esta semana",

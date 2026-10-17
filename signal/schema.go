@@ -229,6 +229,14 @@ func CheckSchema(ctx context.Context, conn Conn, database string) error {
 		}
 		for _, col := range sortedKeys(got.columns) {
 			if _, ok := expected[col]; !ok {
+				if name == "signals" {
+					if typ, legacy := retiredSourceColumns[col]; legacy {
+						if got.columns[col] != typ {
+							problems = append(problems, fmt.Sprintf("signals.%s type %s, want %s", col, got.columns[col], typ))
+						}
+						continue
+					}
+				}
 				problems = append(problems, fmt.Sprintf("%s unexpected column %s", name, col))
 			}
 		}

@@ -21,22 +21,22 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 				GroupInput{Kind: "tag", Slug: "unrelated", Names: []Name{canonical("en", "Unrelated")}},
 			)
 			bound, survivor, unrelated := made[0], made[1], made[2]
-			policy := kinds.KindPolicy{}
+			domain := kinds.Domain{Name: "main", Hosts: []string{"restricted.test"}}
 			ref := kinds.GroupRef{Kind: bound.Kind, Slug: bound.Slug}
 			if mode == "required" {
-				policy.RequireGroups = []kinds.GroupRef{ref}
+				domain.RequireEntities = map[string][]kinds.GroupRef{"gallery": {ref}}
 			} else {
 				filter := kinds.ContentFilter{Group: ref, Visible: false}
 				if mode == "fixed-hidden" {
 					filter.UserToggle = ptr(false)
 				}
-				policy.Filters = []kinds.ContentFilter{filter}
+				domain.Filters = []kinds.ContentFilter{filter}
 			}
-			f.s.cfg.Domains = []kinds.Domain{{Name: "restricted", Hosts: []string{"restricted.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": policy}}}
+			f.s.cfg.ContentFilters = kinds.ContentFilters{Domains: []kinds.Domain{domain}, AppliesTo: []string{"gallery"}}
 			check := func(err error) {
 				t.Helper()
 				var binding *policyBindingError
-				if !errors.Is(err, ErrConflict) || !errors.As(err, &binding) || binding.entity != bound.ID || binding.domain != "restricted" || binding.contentKind != "gallery" {
+				if !errors.Is(err, ErrConflict) || !errors.As(err, &binding) || binding.entity != bound.ID || binding.domain != domain.Name {
 					t.Fatalf("expected typed policy conflict, got %v", err)
 				}
 			}
@@ -92,7 +92,7 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 				t.Fatalf("rejected batch changed unrelated names: %+v, %v", got, err)
 			}
 			// The configuration owner can remove or repoint the rule first.
-			f.s.cfg.Domains = nil
+			f.s.cfg.ContentFilters.Domains = nil
 			if _, err := f.s.DeleteGroups(f.ctx, []GroupID{bound.ID}); err != nil {
 				t.Fatalf("removed policy still blocked mutation: %v", err)
 			}
@@ -103,7 +103,7 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 func TestHardPolicyBindingConflictsAreActionableOverHTTP(t *testing.T) {
 	f := newFixture(t)
 	bound := f.create(GroupInput{Kind: "tag", Slug: "restricted", Internal: true})[0]
-	f.s.cfg.Domains = []kinds.Domain{{Name: "restricted", Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}}}
+	f.s.cfg.ContentFilters.Domains, f.s.cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, []string{"gallery"}
 	h, err := f.s.Handler(testauth.Auth{Authz: testauth.All{}})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestHardPolicyBindingConflictsAreActionableOverHTTP(t *testing.T) {
 func TestInactiveInternalPolicyEvidenceCannotBeRenamedAway(t *testing.T) {
 	f := newFixture(t)
 	bound := f.create(GroupInput{Kind: "tag", Slug: "restricted", Internal: true})[0]
-	f.s.cfg.Domains = []kinds.Domain{{Name: "restricted", Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}}}
+	f.s.cfg.ContentFilters = kinds.ContentFilters{Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, AppliesTo: []string{"gallery"}}
 	// Simulate an entity deleted by an older binary before mutation guards.
 	f.exec("UPDATE {s}.content_groups SET state='deleted' WHERE id=$1", bound.ID)
 	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: bound.ID, Slug: ptr("renamed")}}); !errors.Is(err, ErrConflict) {

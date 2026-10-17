@@ -7,6 +7,85 @@ import { createContentKitClient } from "../../client/client.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { SearchBox } from "./search.js";
 
+it("shows matching history before entities and titles, ignoring fillers and favoring prefixes over interior matches", async () => {
+  const onSearch = vi.fn(), navigate = vi.fn();
+  let complete: ((response: Response) => void) | undefined;
+  const fetcher = vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).includes("/typeahead")) return new Promise<Response>((resolve) => { complete = resolve; });
+    return Response.json({ searches: [{ query: "Discover Inazuma" }, { query: "Inazuma art" }, { query: "The Inazuma" }, { query: "INAZUMA manga" }, { query: "unrelated" }] });
+  });
+  const client = createContentKitClient({ baseUrl: "https://content.test/prefix-history", fetch: fetcher });
+  render(<ContentKitProvider client={client} viewer="alice" navigate={navigate}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
+  const user = userEvent.setup();
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "inazuma");
+  await waitFor(() => expect(complete).toBeTypeOf("function"));
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Inazuma art", "The Inazuma", "INAZUMA manga", "Discover Inazuma"]);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/me/searches"))).toHaveLength(1);
+  complete!(Response.json({ contents: [{ id: "gallery", kind: "gallery", title: "Inazuma Adventures", path: "/gallery" }], entities: [{ id: "artist", kind: "artist", name: "Inazuma", slug: "inazuma", path: "/artist" }] }));
+  await screen.findByRole("option", { name: "Inazuma Adventures" });
+  expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-type"))).toEqual(["recent", "recent", "recent", "recent", "group", "content"]);
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(onSearch).toHaveBeenCalledExactlyOnceWith("Inazuma art");
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+it("does not turn filler-only input into a wildcard over recent searches", async () => {
+  const client = createContentKitClient({ baseUrl: "https://content.test/filler-history", fetch: async () => Response.json({ contents: [], entities: [] }) });
+  client.discovery.browserSearches.record("The Azure Journey", 1);
+  const user = userEvent.setup();
+  render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={vi.fn()} /></ContentKitProvider>);
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "the a an");
+  expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  await user.clear(input);
+  await user.type(input, "THE journey");
+  expect(screen.getByRole("option", { name: /The Azure Journey/ })).toBeVisible();
+});
+
+it("keeps matching guest recents usable without waiting for autocomplete and hides stale server suggestions", async () => {
+  const client = createContentKitClient({ baseUrl: "https://content.test/prefix-guest", fetch: async (url) => {
+    const query = new URL(String(url)).searchParams.get("q");
+    if (query === "light") return Response.json({ contents: [], entities: [{ id: "artist", kind: "artist", name: "Lightning", slug: "lightning", path: "/artist" }] });
+    return new Promise<Response>(() => {});
+  } });
+  client.discovery.browserSearches.record("Café questions", 1);
+  client.discovery.browserSearches.record("Lightning art", 1);
+  const onSearch = vi.fn();
+  render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
+  const user = userEvent.setup();
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "light");
+  await screen.findByRole("option", { name: /Lightning.*Artist/ });
+  await user.clear(input);
+  await user.type(input, " CAFE  ");
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Café questions"]);
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(onSearch).toHaveBeenCalledExactlyOnceWith("Café questions");
+});
+
+it("keeps the chosen entity selected when slower history arrives above it", async () => {
+  let history: ((response: Response) => void) | undefined;
+  const navigate = vi.fn(), onSearch = vi.fn();
+  const client = createContentKitClient({ baseUrl: "https://content.test/late-prefix-history", fetch: async (url) => {
+    if (String(url).includes("/typeahead")) return Response.json({ contents: [], entities: [{ id: "artist", kind: "artist", name: "Inazuma", slug: "inazuma", path: "/artist" }] });
+    return new Promise<Response>((resolve) => { history = resolve; });
+  } });
+  render(<ContentKitProvider client={client} viewer="alice" navigate={navigate}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
+  const user = userEvent.setup();
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "inaz");
+  const artist = await screen.findByRole("option", { name: /Inazuma.*Artist/ });
+  await user.keyboard("{ArrowDown}");
+  expect(artist).toHaveAttribute("aria-selected", "true");
+  history!(Response.json({ searches: [{ query: "Inazuma art" }] }));
+  await screen.findByRole("option", { name: /Inazuma art/ });
+  expect(artist).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Enter}");
+  expect(navigate).toHaveBeenCalledExactlyOnceWith("/artist");
+  expect(onSearch).not.toHaveBeenCalled();
+});
+
 it("opens an empty recent-search panel on focus, reopens on click, and closes outside or on Escape", async () => {
   const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async () => Response.json({ searches: [] }) });
   render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={() => {}} /><button>Elsewhere</button></ContentKitProvider>);
@@ -148,7 +227,7 @@ it("anchors the header dropdown to the field width and follows resize and scroll
   expect(panel).toHaveStyle({ marginLeft: "120px", width: "400px" });
   expect(layer).toHaveAttribute("data-ckui-theme", "dark");
   expect(layer).toHaveClass("fixed", "inset-x-0");
-  expect(document.querySelector('[data-ckui="search-backdrop"]')).toHaveClass("bg-black/30", "backdrop-blur-sm");
+  expect(document.querySelector('[data-ckui="search-backdrop"]')).toHaveClass("bg-black/30");
   expect(screen.queryByRole("dialog")).toBeNull();
   bottom = 116;
   left = 160;
@@ -183,7 +262,7 @@ it("uses the input as a header fallback and offers the archived clear/close cont
   expect(input).toHaveAttribute("aria-expanded", "false");
 });
 
-it("renders one flat header list with colored type icons, provider order, and clickable portal results", async () => {
+it("renders one flat header list with entities before titles, colored type icons, and clickable portal results", async () => {
   const navigate = vi.fn();
   const contents = [
     { id: "g", kind: "gallery", title: "Gallery result", path: "/gallery" },
@@ -197,7 +276,7 @@ it("renders one flat header list with colored type icons, provider order, and cl
   await screen.findByRole("option", { name: /Gallery result/ });
   const panel = document.querySelector<HTMLDivElement>('[data-ckui="search-panel"]')!;
   expect(panel.querySelectorAll("img")).toHaveLength(0);
-  expect([...panel.querySelectorAll("[data-search-kind]")].map((icon) => icon.getAttribute("data-search-kind"))).toEqual(["gallery", "post", "artist", "series", "tag", "character"]);
+  expect([...panel.querySelectorAll("[data-search-kind]")].map((icon) => icon.getAttribute("data-search-kind"))).toEqual(["artist", "series", "tag", "character", "gallery", "post"]);
   expect(panel.querySelector('[data-search-kind="artist"]')).toHaveClass("text-blue-500");
   expect(panel.querySelector('[data-search-kind="series"]')).toHaveClass("text-yellow-600");
   expect(panel.querySelector('[data-search-kind="gallery"]')).toHaveClass("text-green-600");

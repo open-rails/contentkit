@@ -24,6 +24,27 @@ const data = (): DailyReleaseData => ({ time_zone: "America/Denver", from_date: 
 
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
+it("requests a historical window directly and changes dates without fetching intervening releases", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/calendar", fetch: async (input) => {
+    const url = new URL(String(input));
+    if (!url.pathname.endsWith("/releases")) return Response.json([]);
+    requests.push(url);
+    const date = url.searchParams.get("end_date") ?? "2026-10-15";
+    return Response.json({ time_zone: "America/Denver", from_date: date, through_date: date, days: [{ date, contents: [], filtered_count: 0, filtered_entities: [] }] });
+  } });
+  const feed = (date?: string) => <ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery", days: 10, end_date: date, time_zone: "America/Denver" }} /></ContentKitProvider>;
+  const view = render(feed("2007-04-18"));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(Object.fromEntries(requests[0]!.searchParams)).toMatchObject({ kind: "gallery", days: "10", end_date: "2007-04-18", time_zone: "America/Denver" });
+  view.rerender(feed("1998-12-31"));
+  await waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[1]!.searchParams.get("end_date")).toBe("1998-12-31");
+  view.rerender(feed());
+  await waitFor(() => expect(requests).toHaveLength(3));
+  expect(requests[2]!.searchParams.has("end_date")).toBe(false);
+});
+
 function observeMedia() {
   const observers: { callback: IntersectionObserverCallback; margin?: string; targets: Set<Element> }[] = [];
   vi.stubGlobal("IntersectionObserver", class {
@@ -141,15 +162,15 @@ it("refreshes the window when the account changes its content filters", async ()
     const path = new URL(String(input)).pathname;
     if (path.endsWith("/presets")) return Response.json([]);
     requests.push(path);
-    if (init?.method === "PUT") {
+    if (init?.method === "PATCH") {
       filtered = true;
-      return Response.json({ kinds: { gallery: [] }, include_deleted: false });
+      return Response.json({ applies_to:["gallery"],filters:[],include_deleted:false });
     }
     return Response.json({ ...data(), days: filtered ? [] : data().days });
   } });
   render(<ContentKitProvider client={client} viewer="reader"><DailyReleases /></ContentKitProvider>);
   await screen.findByText("Gallery today-1");
-  await act(async () => { await client.discovery.setContentFilters({ kinds: { gallery: [] }, include_deleted: false }); });
+  await act(async () => { await client.discovery.setContentFilters({ filters:[],include_deleted:false }); });
   expect(await screen.findByText("Nothing here yet.")).toBeVisible();
   expect(requests.filter((path) => path.endsWith("/releases"))).toHaveLength(2);
 });
@@ -205,11 +226,11 @@ it("keeps an all-filtered day and shows its distinct total with overlapping per-
   const futa = entity("futanari", "Futa");
   const gore = entity("gore", "Gore");
   const response = windowWith([], 5, [
-    { content_kind: "gallery", entity: futa, count: 5 },
-    { content_kind: "gallery", entity: gore, count: 3 },
-    { content_kind: "gallery", entity: entity("internal-secret"), count: 99 },
+    { entity: futa, count: 5 },
+    { entity: gore, count: 3 },
+    { entity: entity("internal-secret"), count: 99 },
   ]);
-  const client = createContentKitClient({ baseUrl: "https://content.test/filtered-only", fetch: async (input) => Response.json(String(input).includes("content-filters") ? { kinds: { gallery: [futa, gore].map((item) => ({ entity: item, default_visible: false, visible: false, overridden: false })) }, include_deleted: false } : String(input).endsWith("/presets") ? [] : response) });
+  const client = createContentKitClient({ baseUrl: "https://content.test/filtered-only", fetch: async (input) => Response.json(String(input).includes("content-filters") ? { applies_to:["gallery"],filters:[futa,gore].map(item=>({entity:item,default_visible:false,visible:false,overridden:false})),include_deleted:false } : String(input).endsWith("/presets") ? [] : response) });
   render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: "gallery" }} /></ContentKitProvider>);
   await userEvent.setup().click(await screen.findByRole("button", { name: "5 items filtered out" }));
   const dialog = await screen.findByRole("dialog", { name: "Content filters" });
@@ -228,13 +249,13 @@ it.each([null, "reader"])("updates day counts after a %s preference change witho
   let releaseReads = 0;
   const client = createContentKitClient({ baseUrl: `https://content.test/filter-update-${viewer ?? "guest"}`, fetch: async (input, init) => {
     const path = new URL(String(input)).pathname;
-    if (init?.method === "PUT") { writes++; allowed = true; }
-    if (path.includes("content-filters")) return Response.json({ kinds: { gallery: [{ entity: futa, default_visible: false, visible: allowed, overridden: allowed }] }, include_deleted: false });
+    if (init?.method === "PATCH") { writes++; allowed = true; }
+    if (path.includes("content-filters")) return Response.json({ applies_to:["gallery"],filters:[{entity:futa,default_visible:false,visible:allowed,overridden:allowed}],include_deleted:false });
     if (path.endsWith("/presets")) return Response.json([]);
     releaseReads++;
     const guestAllowed = new Headers(init?.headers).get("ContentKit-Reader-Preferences")?.includes('"visible":true');
     const shown = allowed || guestAllowed;
-    return Response.json(shown ? windowWith([card("now-visible")]) : windowWith([], 5, [{ content_kind: "gallery", entity: futa, count: 5 }]));
+    return Response.json(shown ? windowWith([card("now-visible")]) : windowWith([], 5, [{ entity: futa, count: 5 }]));
   } });
   const user = userEvent.setup();
   render(<ContentKitProvider client={client} viewer={viewer}><DailyReleases query={{ kind: "gallery" }} /></ContentKitProvider>);
@@ -245,7 +266,7 @@ it.each([null, "reader"])("updates day counts after a %s preference change witho
   expect(screen.queryByRole("button", { name: "5 items filtered out" })).toBeNull();
   expect(releaseReads).toBe(2);
   expect(writes).toBe(viewer ? 1 : 0);
-  if (!viewer) expect(client.preferences.browser.snapshot().kinds.gallery).toEqual([{ entity_id: "futanari", visible: true }]);
+  if (!viewer) expect(client.preferences.browser.snapshot().filters).toEqual([{ entity_id: "futanari", visible: true }]);
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.getByRole("heading", { level: 2 }).querySelector("button")).toHaveFocus();
@@ -281,10 +302,10 @@ it("does not carry an open day dialog or prior cards across an account change", 
   let hold = false;
   const client = createContentKitClient({ baseUrl: "https://content.test/account-isolation", fetch: async (input, init) => {
     const path = new URL(String(input)).pathname;
-    if (path.includes("content-filters")) return Response.json({ kinds: { gallery: [{ entity: futa, default_visible: false, visible: false, overridden: false }] }, include_deleted: false });
+    if (path.includes("content-filters")) return Response.json({ applies_to:["gallery"],filters:[{entity:futa,default_visible:false,visible:false,overridden:false}],include_deleted:false });
     if (path.endsWith("/presets")) return Response.json([]);
     if (hold) return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
-    return Response.json(windowWith([card("alice-private-standing")], 5, [{ content_kind: "gallery", entity: futa, count: 5 }]));
+    return Response.json(windowWith([card("alice-private-standing")], 5, [{ entity: futa, count: 5 }]));
   } });
   const view = render(<ContentKitProvider client={client} viewer="alice"><DailyReleases /></ContentKitProvider>);
   await userEvent.setup().click(await screen.findByRole("button", { name: "5 items filtered out" }));
@@ -303,7 +324,7 @@ const summaryAspect = (element: HTMLElement): number => {
 it("matches the requested kind's cover aspect for a filtered-only day", async () => {
   observeMedia();
   const requests: string[] = [];
-  const response = windowWith([], 2, [{ content_kind: "gallery", entity: entity("futanari", "Futa"), count: 2 }]);
+  const response = windowWith([], 2, [{ entity: entity("futanari", "Futa"), count: 2 }]);
   const client = createContentKitClient({ baseUrl: "https://content.test/filtered-cover-aspect", fetch: async (input) => {
     const path = new URL(String(input)).pathname;
     requests.push(path);
@@ -317,15 +338,15 @@ it("matches the requested kind's cover aspect for a filtered-only day", async ()
 });
 
 it.each([
-  { name: "inferred filtered kind", contents: [], filterKind: "gallery", queryKind: undefined, explicit: undefined, expected: 0.7071 },
-  { name: "inferred visible kind", contents: [card("visible")], filterKind: undefined, queryKind: undefined, explicit: undefined, expected: 0.7071 },
+  { name: "shared filtered selection without requested kind", contents: [], filterKind: "gallery", queryKind: undefined, explicit: undefined, expected: 0.75 },
+  { name: "visible cards cannot imply omitted content kind", contents: [card("visible")], filterKind: undefined, queryKind: undefined, explicit: undefined, expected: 0.75 },
   { name: "explicit requested kind", contents: [], filterKind: "blog", queryKind: "gallery", explicit: undefined, expected: 0.7071 },
   { name: "mixed content kinds", contents: [card("visible")], filterKind: "blog", queryKind: undefined, explicit: undefined, expected: 0.75 },
   { name: "absent kind metadata", contents: [], filterKind: undefined, queryKind: undefined, explicit: undefined, expected: 0.75 },
   { name: "explicit card aspect", contents: [], filterKind: "gallery", queryKind: "gallery", explicit: "1 / 1", expected: 1 },
 ])("uses safe summary aspect selection for $name", async ({ name, contents, filterKind, queryKind, explicit, expected }) => {
   observeMedia();
-  const response = windowWith(contents, 2, filterKind ? [{ content_kind: filterKind, entity: entity("filter"), count: 2 }] : []);
+  const response = windowWith(contents, 2, filterKind ? [{ entity: entity("filter"), count: 2 }] : []);
   const client = createContentKitClient({ baseUrl: `https://content.test/summary-aspect-${name.replaceAll(" ", "-")}`, fetch: async (input) => Response.json(String(input).endsWith("/presets") ? [{ kind: "gallery", name: "cover", aspect: "7071:10000" }, { kind: "blog", name: "cover", aspect: "16:9" }] : response) });
   render(<ContentKitProvider client={client} viewer={null}><DailyReleases query={{ kind: queryKind }} aspectRatio={explicit} /></ContentKitProvider>);
   const tile = await screen.findByRole("button", { name: "2 items filtered out" });

@@ -96,7 +96,7 @@ describe("useMediaRead against the real ContentKit", () => {
     expect(reads(r)).toBe(4);
   });
 
-  it("reads windows of a long item, keeps them, and merges their URLs", async () => {
+  it("keeps full metadata but signs only active windows and refetches them on revisit", async () => {
     const ref = await item(h, "gallery", alice);
     await pages(ref, 120);
     const r = recording();
@@ -110,10 +110,25 @@ describe("useMediaRead against the real ContentKit", () => {
 
     window = { start: 95, end: 130, chunk: 50 };
     rerender();
-    await waitFor(() => expect(result.current.read!.files.filter((f) => f.url)).toHaveLength(120), wait);
-    // [95, 130) is two windows; the first stays loaded; the end is clipped to the 120 files.
+    await waitFor(() => expect(result.current.read!.files.filter((f) => f.url)).toHaveLength(70), wait);
+    // [95, 130) signs windows 50 and 100; metadata still covers all 120 files.
+    expect(result.current.read?.files).toHaveLength(120);
+    expect(result.current.read!.files.slice(0, 50).every((f) => !f.url)).toBe(true);
+    expect(result.current.read!.files[95]?.url).toBeTruthy();
     expect(r.queries.map((q) => q.get("offset")).sort()).toEqual(["100", "50", null]);
-    expect(result.current.read).toMatchObject({ total: 120, offset: 0, limit: 150 });
+    expect(result.current.read).toMatchObject({ total: 120, offset: 50, limit: 100 });
+
+    window = { start: 0, end: 10, chunk: 50 };
+    rerender();
+    await waitFor(() => {
+      expect(result.current.read!.files[0]?.url).toBeTruthy();
+      expect(result.current.read!.files.filter((f) => f.url)).toHaveLength(50);
+    }, wait);
+    expect(result.current.read?.files).toHaveLength(120);
+    expect(result.current.read!.files[95]?.url).toBeUndefined();
+    // The retired window gets a fresh grant instead of retaining the old read.
+    expect(r.queries.map((q) => q.get("offset")).sort()).toEqual(["100", "50", null, null]);
+    expect(result.current.read).toMatchObject({ total: 120, offset: 0, limit: 50 });
   }, 180_000);
 
   it("waits out a read rate limit before showing an error", async () => {

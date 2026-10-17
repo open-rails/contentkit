@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/popularity"
 )
 
@@ -15,7 +16,7 @@ type ListOptions struct {
 	Reader
 	Filter
 	// Sort is newest, oldest, title, popular[:period], top_rated[:period],
-	// most_favorited, most_viewed, position or random; the kind's configured
+	// most_favorited, position or random; the kind's configured
 	// sort, else newest, by default. Periods are popularity.Periods.
 	Sort string
 	// ActivityFrom and ActivityUntil choose a custom popularity window of whole
@@ -29,6 +30,8 @@ type ListOptions struct {
 	Cursor     string
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
+	// Summary adds selection-wide filtered and locked counts on the first page.
+	Summary bool
 }
 
 func pageLimit(n, def int) int {
@@ -41,6 +44,7 @@ func pageLimit(n, def int) int {
 // List pages cards: one per content item the reader's listing shows that
 // matches the filter, in the sort's order.
 func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) {
+	ctx = access.WithMemo(ctx)
 	window, custom, err := activityWindow(o)
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
@@ -90,7 +94,11 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 			cards[i].Ranking = &ranking
 		}
 	}
-	return ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}, err
+	out := ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}
+	if err == nil && o.Summary && o.Cursor == "" {
+		out.Summary, err = s.listingSummary(ctx, o.Filter, q, srt, nil)
+	}
+	return out, err
 }
 
 // ReleaseDatesOptions select the release date index.

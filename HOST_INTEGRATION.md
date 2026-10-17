@@ -683,7 +683,6 @@ that fits the reader (`display_language` first, then position).
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
   `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
-  `most_viewed` (all-time viewers plus an imported `view_baseline`),
   `position` in the first of `groups`, which must be of an ordered group
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   a group's content from a list requiring that group: a hidden tag's page
@@ -693,7 +692,9 @@ that fits the reader (`display_language` first, then position).
   its `version.has_audio` says the version's media has audio.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
   signed-in reader, or any list sort of the best 1000 matches), `GET
-  /typeahead` (contents and groups).
+  /typeahead` (direct title/entity-name/alias prefixes only; no contextual
+  keywords or typo expansion). `SearchBox` puts matching recent queries first,
+  followed by entities and content titles; full search remains broader.
 - `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
   (co-engagement by default), admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,
@@ -714,19 +715,21 @@ that fits the reader (`display_language` first, then position).
   ordering uses the shared ContentKit quality score, not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
-  `PUT /me/content-filters` saves account settings and `include_deleted`.
+  `PATCH /me/content-filters` atomically merges submitted shared entity choices
+  and optional `include_deleted`, preserving omitted values. One entity choice
+  applies across the configured `content_filters.applies_to` content kinds.
   `POST /me/content-filters/initialize` adopts a new account's guest choices
   only when no saved settings exist; its `account_id` must match the signed-in
   account. Trigger initialization on registration, never ordinary sign-in.
   Guest browsers persist choices locally and send
-  `ContentKit-Reader-Preferences: {"filters":[{"group_id":"configured-entity-id","visible":false}]}`.
+  `ContentKit-Reader-Preferences: {"filters":[{"entity_id":"configured-entity-id","visible":false}]}`.
   The header is ignored for authenticated accounts, grants no access, and
-  accepts at most 8 KiB and 128 configured filters. Unknown or duplicate IDs
-  and malformed values return `400 invalid_request`. Allow the header in the
+  accepts at most 8 KiB and 128 configured filters. Duplicate IDs and malformed values return `400 invalid_request`; unknown or
+  fixed guest IDs are ignored and cannot override policy. Allow the header in the
   host's CORS policy, and prune stale browser choices against a public
   `GET /content-filters` without the header before attaching them to reads.
   Account language remains the host's existing profile preference.
-- `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
+- `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
   liked and disliked, contents as cards or groups, most recent first.
@@ -880,6 +883,18 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
   and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
   tracks). Nothing is upscaled.
+  Image presets default to WebP. A private preset with
+  `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
+  (the upload's original extension), such as `download-pages/{name}{ext}`.
+  With an inside fit and no edit/blur, a source within its width/height box
+  passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
+  edge proportionally; zero leaves an edge unbounded. Oversized or edited
+  JPEG, PNG, WebP and GIF files retain their codec, including animation;
+  other accepted codecs support unchanged passthrough only. Keep archival
+  uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/`
+  packs the resulting original-format pages in reading order. Upgrade the
+  worker/gateway cohort before declaring this registry, then regenerate
+  existing items to replace an old download rendition.
 - **Public presets** render an upload through its edit at fixed names,
   `{w}` for each width (a width past the edited image renders at its width,
   so every name exists). The object carries its `from` and `fp` as metadata.
@@ -1455,21 +1470,22 @@ thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-The engine's `contentkit_popularity` job (hourly, with ClickHouse) copies
-`popularity.PolicyV1` scores per period (`7d`, `30d`, `90d`, `365d`, `all`),
-each window's rating (Wilson lower bound of the subjects whose feedback is
-positive) and all-time viewers into `content_facets.popularity`, so a filtered
-`popular` or `top_rated` sort is one Postgres query. A view is scored by
-`popularity.SessionScore` against its version: pages (reader kinds, 8 s of
-dwell a page), seconds (player kinds) or scroll percent (post kinds). See
+A filtered `popular` list ranks measured people and bounded quality in the
+selected activity window live, normalizing trusted free/premium populations.
+Without a signal plane, or without population lineage for the window, it is the
+explicit standing order (`ranking.policy=standing_wilson`, `mode=standing`):
+one vote per person from current reactions and favorites last changed in the
+window, Wilson-scored and erasure-fenced. Windowed `top_rated` uses the same
+standing over reactions; all-time `top_rated` is the catalog's current rating.
+Nothing reads cached facet scores. See
 [docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
 
 ## Migration checklist
 
 - Import legacy data through `POST /v1/import` ([docs/import.md](docs/import.md)), never into ContentKit's tables.
 - Create and reuse one `contentkit.Engine` per tenant.
-- Read lists, search and recommendations through the discovery routes; send views as `POST /signals`.
-- `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.
+- Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
+- Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.

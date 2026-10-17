@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta, ReaderPlan } from "../../client/generated/wire.js";
@@ -14,6 +14,7 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { ErrorLine, useAction } from "../social/parts.js";
+import { useEditorSaveTask } from "../content/editor-save.js";
 import { LoadFailed, Rows } from "./shell.js";
 
 export interface ReaderManifestEditorProps {
@@ -78,6 +79,15 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
     setDirty(true);
     setSaved(false);
   };
+  const latest=useRef(meta);latest.current=meta;
+  const submit=async()=>{
+    if(!meta||problems.length)return false;
+    setSaved(false);const snapshot=meta;
+    const ok=await save.run(async()=>{await client.versions.setReader(content,version,clean(snapshot));return true;});
+    if(!ok||latest.current!==snapshot)return false;
+    setDirty(false);setSaved(true);return true;
+  };
+  useEditorSaveTask(`reader-meta:${version}`,{label:t("readerManifest.title"),dirty,pending:save.pending,valid:!problems.length,save:submit,order:30});
   const body = (() => {
     if (plan.loading && !plan.plan && !plan.pending) return <Rows count={2} />;
     if (plan.pending) return <p className="text-muted-foreground">{t("readerManifest.pending")}</p>;
@@ -86,24 +96,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
     const anchors = meta.anchors ?? [];
     const anchorIds = anchors.map((a) => a.id).filter(Boolean);
     return (
-      <form
-        className="grid gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (problems.length) return;
-          setSaved(false);
-          void save
-            .run(async () => {
-              await client.versions.setReader(content, version, clean(meta));
-              return true;
-            })
-            .then((ok) => {
-              if (!ok) return;
-              setDirty(false);
-              setSaved(true);
-            });
-        }}
-      >
+      <form className="grid gap-4" onSubmit={(event)=>{event.preventDefault();void submit();}}>
         <p className="text-muted-foreground">{t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })}</p>
         <Defaults meta={meta} edit={edit} />
         <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}

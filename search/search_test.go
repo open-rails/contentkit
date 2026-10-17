@@ -27,8 +27,8 @@ func TestMergeNamedArgs(t *testing.T) {
 	if err := mergeNamedArgs(pgx.NamedArgs{}, map[string]any{"": 1}); err == nil {
 		t.Fatal("expected empty key error")
 	}
-	for _, name := range []string{"tenant", "language", "q", "prefix", "limit", "kinds", "candidates"} {
-		args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0, "candidates": nil}
+	for _, name := range []string{"tenant", "language", "q", "prefix", "contains", "limit", "kinds", "candidates"} {
+		args := pgx.NamedArgs{"q": "", "prefix": "", "contains": "", "limit": 0, "candidates": nil}
 		_, _, _, err := hostClauses(Options{Schema: "s", Tenant: "t", Language: "en", ContentKinds: []string{"k"},
 			Eligibility: &Eligibility{SQL: "SELECT 0 AS priority", Args: map[string]any{name: 2}}}, args)
 		if err == nil {
@@ -45,8 +45,42 @@ func TestKeywordSearchValidation(t *testing.T) {
 	if _, err := KeywordSearch(context.Background(), nil, "x", Options{Schema: "s", Tenant: "t", Language: "en", Limit: 1}); err == nil {
 		t.Fatal("nil pool must error")
 	}
+	if _, err := NameSearch(context.Background(), nil, "x", Options{Schema: "s", Tenant: "t", Language: "en", Limit: 1}); err == nil {
+		t.Fatal("nil name-search pool must error")
+	}
 	if _, err := Eligible(context.Background(), nil, Options{}, []Candidate{{}}); err == nil {
 		t.Fatal("nil pool must error")
+	}
+}
+
+func TestLiteralSubstring(t *testing.T) {
+	t.Parallel()
+	for query, want := range map[string]string{
+		"berry":     "%berry%",
+		"100%_done": `%100\%\_done%`,
+		`a\b`:       `%a\\b%`,
+		"鬼滅":        "%鬼滅%",
+	} {
+		if got := literalSubstring(query); got != want {
+			t.Errorf("%q: got %q want %q", query, got, want)
+		}
+	}
+}
+
+func TestKeywordNameTiers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var previous float32 = 2
+	for _, fields := range [][]string{
+		{"berry"}, {"Other", "berry"}, {"berry fields"},
+		{"Other", "berry fields"}, {"strawberry"}, {"Other", "strawberry"},
+		{"Other", "", "berry"},
+	} {
+		got := keywordScore(ctx, "berry", []string{"berry"}, fields, 1)
+		if got <= 0 || got >= previous {
+			t.Fatalf("name tiers lost ordering: %v score=%v previous=%v", fields, got, previous)
+		}
+		previous = got
 	}
 }
 

@@ -96,6 +96,77 @@ func (s *Store) syncCodes(ctx context.Context, q Querier, ids []string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = codes.Put(ctx, codes.Pgx(q), s.qs, s.tenant, entries)
-	return err
+	watched := s.pathEntityIDs(entries)
+	before, err := s.codeSlugs(ctx, q, watched)
+	if err != nil {
+		return err
+	}
+	if _, err := codes.Put(ctx, codes.Pgx(q), s.qs, s.tenant, entries); err != nil {
+		return err
+	}
+	after, err := s.codeSlugs(ctx, q, watched)
+	if err != nil {
+		return err
+	}
+	var renamed []string
+	for _, id := range watched {
+		if before[id] != after[id] {
+			renamed = append(renamed, id)
+		}
+	}
+	return s.refreshMembers(ctx, q, renamed)
+}
+
+// pathEntityIDs are the entries whose kind some content kind's decorative
+// path names (kinds.Kind.PathEntity).
+func (s *Store) pathEntityIDs(entries []codes.Entry) []string {
+	var out []string
+	for _, e := range entries {
+		for _, k := range s.cfg.Kinds {
+			if k.PathEntity == e.Kind {
+				out = append(out, e.ID)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// codeSlugs snapshots the groups' code slugs, default and localized.
+func (s *Store) codeSlugs(ctx context.Context, q Querier, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := q.Query(ctx, `SELECT content_id, slug || ' ' || slugs::text FROM `+s.qs+`.content_codes WHERE tenant_id = $1 AND content_id = ANY($2::text[])`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, v string
+		if err := rows.Scan(&id, &v); err != nil {
+			return nil, err
+		}
+		out[id] = v
+	}
+	return out, rows.Err()
+}
+
+// refreshMembers re-derives the facets of the groups' direct content members,
+// so the engine follows a renamed path entity into their paths.
+func (s *Store) refreshMembers(ctx context.Context, q Querier, groupIDs []string) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT DISTINCT content_id FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[]) AND version_id IS NULL`,
+		s.table("content_memberships")), s.tenant, groupIDs)
+	if err != nil {
+		return err
+	}
+	contentIDs, err := collectStrings(rows)
+	if err != nil {
+		return err
+	}
+	return s.refreshFacets(ctx, q, contentIDs)
 }

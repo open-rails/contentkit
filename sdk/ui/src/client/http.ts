@@ -2,7 +2,7 @@ import { ContentKitError, readContentKitError, requestFailure } from "./errors.j
 import type { ContentChange } from "./content/types.js";
 import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, Item, RefBody } from "./generated/wire.js";
-import { browserReaderPreferences, type BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilterKinds } from "./browser-reader-preferences.js";
+import { browserReaderPreferences, type BrowserReaderPreferences, type GuestReaderPreferences } from "./browser-reader-preferences.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
 export type Mount = string | ((ref: RefBody) => string);
@@ -102,7 +102,7 @@ export class Http {
   readonly browserPreferences: BrowserReaderPreferences;
   private viewer?: string | null;
   private viewerRevision = 0;
-  private filterIDs?: Record<string, Set<string>>;
+  private filterIDs?: Set<string>;
   private filterInventory?: Promise<void>;
 
   constructor(private readonly o: HttpOptions) {
@@ -116,46 +116,42 @@ export class Http {
     this.viewer = viewer;
   }
 
-  acceptGuestFilters(kinds: Record<string, readonly { entity: { id: string } }[]>): void {
-    this.filterIDs = Object.fromEntries(Object.entries(kinds).map(([kind, filters]) => [kind, new Set(filters.map((f) => f.entity.id))]));
-    // Keep choices for other domains locally; send only current-domain controls.
+  acceptGuestFilters(filters: readonly { entity: { id: string } }[]): void {
+    this.filterIDs = new Set(filters.map((row) => row.entity.id));
   }
-
   private guestFilters(saved = this.browserPreferences.snapshot()): string | null {
-    const kinds: ReaderFilterKinds = {};
-    for (const [kind, filters] of Object.entries(saved.kinds)) {
-      const known = filters.filter((f) => this.filterIDs?.[kind]?.has(f.entity_id));
-      if (known.length) kinds[kind] = known;
-    }
-    const offered = new Set(Object.values(this.filterIDs ?? {}).flatMap((ids) => [...ids]));
-    const legacy_filters = saved.legacy_filters.filter((f) => offered.has(f.entity_id) &&
-      Object.entries(this.filterIDs ?? {}).some(([kind, ids]) => ids.has(f.entity_id) && !saved.kinds[kind]?.some((row) => row.entity_id === f.entity_id)));
-    if (!Object.keys(kinds).length && !legacy_filters.length) return null;
-    const encoded = JSON.stringify({ kinds, ...(legacy_filters.length ? { legacy_filters } : {}) });
-    const count = Object.values(kinds).reduce((n, rows) => n + rows.length, legacy_filters.length);
-    if (count > 128 || new TextEncoder().encode(encoded).length > 8192) {
-      throw new ContentKitError("invalid_request", "Too many content filter preferences. Your previous choices have been kept.");
-    }
+    const filters = saved.filters.filter((row) => this.filterIDs?.has(row.entity_id));
+    if (!filters.length) return null;
+    const encoded = JSON.stringify({ filters });
+    if (filters.length > 128 || new TextEncoder().encode(encoded).length > 8192)
+      throw new ContentKitError(
+        "invalid_request",
+        "Too many content filter preferences. Your previous choices have been kept.",
+      );
     return encoded;
   }
-
-  /** Check a proposed guest edit before changing durable browser preferences. */
   validateGuestPreferences(value: GuestReaderPreferences): void {
     if (!this.filterIDs) throw new ContentKitError("invalid_request", "Content filters have not loaded.");
     this.guestFilters(value);
   }
-
   private async validateGuestFilters(): Promise<void> {
     const saved = this.browserPreferences.snapshot();
-    if (this.filterIDs || (!saved.legacy_filters.length && !Object.values(saved.kinds).some((rows) => rows.length))) return;
-    this.filterInventory ??= this.request<{ kinds: Record<string, { entity: { id: string } }[]> }>(`${this.mount("discovery")}/content-filters`, { guestPreferences: false })
-      .then((result) => this.acceptGuestFilters(result.kinds))
-      .finally(() => { this.filterInventory = undefined; });
+    if (this.filterIDs || !saved.filters.length) return;
+    this.filterInventory ??= this.request<{ filters: { entity: { id: string } }[] }>(
+      `${this.mount("discovery")}/content-filters`,
+      { guestPreferences: false },
+    )
+      .then((result) => this.acceptGuestFilters(result.filters))
+      .finally(() => {
+        this.filterInventory = undefined;
+      });
     await this.filterInventory;
   }
 
   /** Current request language for APIs that also bind it into their body. */
-  language(): string | undefined { return this.o.language?.() ?? undefined; }
+  language(): string | undefined {
+    return this.o.language?.() ?? undefined;
+  }
 
   /** The module's base URL, without a trailing slash. */
   mount(module: ContentKitModule, ref?: RefBody): string {
@@ -168,7 +164,18 @@ export class Http {
     return this.base + CONTENTKIT_MODULES[module];
   }
 
-  async request<T>(url: string, { method, body, signal, blob, keepalive, guestPreferences = true, retryGuestPreferences = true }: RequestOptions = {}): Promise<T> {
+  async request<T>(
+    url: string,
+    {
+      method,
+      body,
+      signal,
+      blob,
+      keepalive,
+      guestPreferences = true,
+      retryGuestPreferences = true,
+    }: RequestOptions = {},
+  ): Promise<T> {
     const viewerRevision = this.viewerRevision;
     if (this.viewer === null && guestPreferences) await this.validateGuestFilters();
     if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
@@ -201,12 +208,27 @@ export class Http {
     if (!res.ok) {
       const error = await readContentKitError(res);
       const old = headers.get("ContentKit-Reader-Preferences");
-      if ((method ?? (body === undefined ? "GET" : "POST")) === "GET" && error.code === "invalid_request" && old && this.viewer === null && retryGuestPreferences) {
+      if (
+        (method ?? (body === undefined ? "GET" : "POST")) === "GET" &&
+        error.code === "invalid_request" &&
+        old &&
+        this.viewer === null &&
+        retryGuestPreferences
+      ) {
         this.filterIDs = undefined;
         await this.validateGuestFilters();
         if (viewerRevision !== this.viewerRevision) throw new ContentKitError("aborted", "The account changed.");
         const current = this.guestFilters();
-        if (current !== old) return this.request(url, { method, body, signal, blob, keepalive, guestPreferences, retryGuestPreferences: false });
+        if (current !== old)
+          return this.request(url, {
+            method,
+            body,
+            signal,
+            blob,
+            keepalive,
+            guestPreferences,
+            retryGuestPreferences: false,
+          });
       }
       throw error;
     }

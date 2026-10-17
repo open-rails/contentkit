@@ -51,6 +51,10 @@ export interface MediaFolderEditorViewProps {
   ref?: Ref<MediaFolderEditorHandle>;
   /** Heading; default "Media". */
   label?: ReactNode;
+  /** Uploaded page images may be arranged as thumbnail tiles. Other groups remain lists. */
+  layout?: "list" | "grid";
+  /** Accessible label of the file inputs. */
+  inputLabel?: string;
   /** Beside "Add files" in the header, e.g. a ZIP import. */
   toolbar?: ReactNode;
   /** Extra actions on each upload, beside crop, rename, replace and remove. */
@@ -137,15 +141,15 @@ export function MediaFolderEditor(p: MediaFolderEditorProps) {
 }
 
 function OwnFolder(p: MediaFolderEditorViewProps & MediaFolderOptions & { item: RefBody }) {
-  const { item, ref, label, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, ...options } = p;
+  const { item, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, ...options } = p;
   const folder = useMediaFolder(item, options);
-  return <FolderView {...{ folder, ref, label, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance }} />;
+  return <FolderView {...{ folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance }} />;
 }
 
 const NO_ITEM: RefBody = { kind: "", id: "" };
 
 function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) {
-  const { folder, ref, label, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance } = p;
+  const { folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance } = p;
   const { t, error: errorText } = useMessages();
   const { groups, queue, read, options } = folder;
   useImperativeHandle(ref, () => ({ discard: folder.discard, commit: folder.commit, folder }), [folder]);
@@ -215,6 +219,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
         className="sr-only"
         disabled={off}
         data-ckui="file"
+        aria-label={inputLabel}
         onChange={(e) => {
           folder.add([...(e.target.files ?? [])]);
           e.target.value = "";
@@ -226,7 +231,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-3", className)} data-ckui="media-folder" data-over={over ? "" : undefined} {...drop}>
       <div className="flex flex-wrap items-center justify-between gap-2" data-ckui="folder-header">
-        <h3 className="text-sm font-semibold">{label ?? t("folder.label")}</h3>
+        {label !== false && <h3 className="text-sm font-semibold">{label ?? t("folder.label")}</h3>}
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}
           {!empty && picker(false)}
@@ -293,6 +298,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
           <Group
             key={g.path}
             group={g}
+            layout={layout === "grid" && g.rule?.page ? "grid" : "list"}
             titled={groups.length > 1}
             folder={folder}
             disabled={off}
@@ -389,6 +395,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
 
 function Group({
   group,
+  layout,
   titled,
   folder,
   disabled,
@@ -401,6 +408,7 @@ function Group({
   rowActions,
 }: {
   group: FolderGroup;
+  layout: "list" | "grid";
   titled: boolean;
   folder: UseMediaFolder;
   disabled: boolean;
@@ -424,17 +432,20 @@ function Group({
         </h4>
       )}
       <SortableList
+        layout={layout}
+        className={layout === "grid" ? "grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]" : undefined}
         items={group.files}
         id={(f) => f.path}
         name={(f) => nameIn(group, f.path)}
         disabled={disabled || folder.updating}
         label={title}
         onMove={(from, to) => void folder.move(group.files[from]!.path, to).catch(() => {})}
-        row={(f) => ({ className: "flex min-h-12 items-center gap-2 px-1", "data-ckui": "upload-row", "data-path": f.path })}
+        row={(f) => ({ className: layout === "grid" ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-lg border border-border bg-background p-2" : "flex min-h-12 items-center gap-2 px-1", "data-ckui": "upload-row", "data-path": f.path })}
       >
         {(f, handle) => (
           <UploadRow
             file={f}
+            grid={layout === "grid"}
             group={group}
             handle={handle}
             folder={folder}
@@ -453,9 +464,9 @@ function Group({
   );
 }
 
-function Thumb({ kind, url, busy }: { kind: Kind; url?: string; busy?: boolean }) {
+function Thumb({ kind, url, busy, grid, aspect }: { kind: Kind; url?: string; busy?: boolean; grid?: boolean; aspect?: number }) {
   return (
-    <span className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground" data-ckui="thumb">
+    <span className={cn("relative flex shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground",grid?"col-span-2 w-full":"size-10")} style={grid?{aspectRatio:aspect??0.75}:undefined} data-ckui="thumb">
       {url ? <img src={url} alt="" loading="lazy" decoding="async" className="size-full object-cover" /> : <HugeiconsIcon icon={ICONS[kind]} strokeWidth={1.75} className="size-4.5" />}
       {busy && !url && <span aria-hidden className="absolute inset-1.5 rounded-full border-2 border-current/25 border-t-current motion-safe:animate-spin" />}
     </span>
@@ -464,6 +475,7 @@ function Thumb({ kind, url, busy }: { kind: Kind; url?: string; busy?: boolean }
 
 function UploadRow({
   file: f,
+  grid,
   group,
   handle,
   folder,
@@ -477,6 +489,7 @@ function UploadRow({
   actions,
 }: {
   file: FileInfo;
+  grid?: boolean;
   group: FolderGroup;
   handle: ReactNode;
   folder: UseMediaFolder;
@@ -507,8 +520,8 @@ function UploadRow({
         aria-label={t("folder.select", { name })}
         onChange={(e) => onSelect(e.target.checked)}
       />
-      <Thumb kind={kind} url={thumb?.url} busy={busy} />
-      <div className="grid min-w-0 flex-1 gap-1">
+      <Thumb kind={kind} url={thumb?.url} busy={busy} grid={grid} aspect={thumb?.w&&thumb.h?thumb.w/thumb.h:undefined} />
+      <div className={cn("grid min-w-0 flex-1 gap-1",grid&&"col-span-2")}>
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           {renaming ? (
             <RenameInput name={stem(name)} label={t("folder.renameLabel", { name })} onDone={(to) => (to === null ? onRename(null) : folder.rename(f.path, to).then(() => onRename(null)))} />
@@ -532,7 +545,7 @@ function UploadRow({
         {busy && kind === "video" && <EncodeProgress progress={f.progress} className="max-w-sm text-xs" />}
         {busy && kind !== "video" && <span className="text-xs text-muted-foreground">{t("folder.processing")}</span>}
       </div>
-      <span className="flex shrink-0 items-center gap-0.5" data-ckui="upload-actions">
+      <span className={cn("flex shrink-0 flex-wrap items-center gap-0.5",grid&&"col-span-2 justify-end")} data-ckui="upload-actions">
         {actions}
         {kind === "image" && (
           <Button variant="ghost" size="icon-sm" aria-label={t("folder.crop")} title={t("folder.crop")} disabled={locked || !!f.staged || !f.size} onClick={() => onCrop(f.path)}>

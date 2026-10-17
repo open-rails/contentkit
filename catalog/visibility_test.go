@@ -76,7 +76,7 @@ func TestVisibilityIntegration(t *testing.T) {
 		{"a viewer's overrides: show gore, hide red", "carol", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, gory, reddish, premium, channel, ppv}},
 		{"a language lists only items with a live version serving it", anon, "main.test", ViewerOptions{Language: "ja"}, []string{plain, reddish}},
-		{"staff stay inside domain", "staff", "moe.test", ViewerOptions{}, []string{plain, gay, gory, reddish, members, unlisted, premium, channel, ppv, draft}},
+		{"public staff obey domain and optional filters", "staff", "moe.test", ViewerOptions{}, []string{plain, gay, reddish, members, unlisted, premium, channel, ppv, draft}},
 		{"view-restricted stays inside domain", "viewer", "gay.test", ViewerOptions{}, []string{gay}},
 		{"a creator also lists their draft", "alice", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, reddish, premium, channel, ppv, draft}},

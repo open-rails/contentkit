@@ -82,6 +82,27 @@ func Slugify(s string) string {
 // ValidSlug reports whether s is a slug Slugify can produce ("" included).
 func ValidSlug(s string) bool { return len(s) <= MaxSlug && slugRE.MatchString(s) }
 
+// MaxPathSegments bounds a code's decorative path: an entity and a title.
+const MaxPathSegments = 2
+
+// ValidPath reports whether s is a code's decorative path: "" or up to
+// MaxPathSegments non-empty slugs joined by "/".
+func ValidPath(s string) bool {
+	if s == "" {
+		return true
+	}
+	segs := strings.Split(s, "/")
+	if len(segs) > MaxPathSegments {
+		return false
+	}
+	for _, seg := range segs {
+		if seg == "" || !ValidSlug(seg) {
+			return false
+		}
+	}
+	return true
+}
+
 // Language normalizes a slug language key.
 func Language(l string) (string, error) {
 	l = strings.ToLower(strings.TrimSpace(l))
@@ -176,7 +197,7 @@ func Put(ctx context.Context, q Querier, qs, tenant string, entries []Entry) (ma
 		if e.Kind == "" || e.ID == "" || e.ID != strings.ToLower(e.ID) {
 			return nil, fmt.Errorf("%w: content %q/%q", ErrInvalid, e.Kind, e.ID)
 		}
-		if !ValidSlug(e.Slug) {
+		if !ValidPath(e.Slug) {
 			return nil, fmt.Errorf("%w: slug %q", ErrInvalid, e.Slug)
 		}
 		var slugs map[string]string
@@ -187,7 +208,7 @@ func Put(ctx context.Context, q Querier, qs, tenant string, entries []Entry) (ma
 				if err != nil {
 					return nil, err
 				}
-				if !ValidSlug(s) {
+				if !ValidPath(s) {
 					return nil, fmt.Errorf("%w: slug %q", ErrInvalid, s)
 				}
 				if s != "" {

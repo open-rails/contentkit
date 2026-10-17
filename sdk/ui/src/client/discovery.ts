@@ -6,6 +6,8 @@ import type {
   ContentFiltersUpdate,
   ContentPage,
   DailyReleases,
+  EngagementBatch,
+  EngagementSnapshot,
   ExposureInput,
   Exposures,
   RecentSearches,
@@ -21,13 +23,15 @@ import { browserSearchHistory, type BrowserSearchHistory } from "./browser-searc
 /** A popularity period. */
 export type Period = "7d" | "30d" | "90d" | "365d" | "all";
 /** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${Period}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "most_viewed" | "position" | "random";
+export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${Period}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
 /** Which contents a list holds. */
 export interface ContentFilterQuery {
   kind?: string;
+  /** Public card hydration under current domain/access/preferences; at most 100. */
+  ids?: readonly string[];
   /** Group ids every listed version is in. */
   groups?: readonly string[];
   /** Group ids no listed version is in. */
@@ -74,6 +78,8 @@ export interface PageQuery {
 }
 
 export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & {
+  /** Selection-wide metadata; requested only on the first page. */
+  summary?: boolean;
   sort?: ListSort;
   /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
   activity_from?: string;
@@ -81,16 +87,23 @@ export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQu
   activity_until?: string;
 };
 export type PopularPeriod = "7d" | "90d" | "365d" | "all";
+/** Whole UTC dates: from inclusive, until exclusive. */
+export interface PopularDateRange {
+  from: string;
+  until: string;
+}
 export type PopularQuery = Omit<ContentQuery, "sort" | "activity_from" | "activity_until">;
 
 /** Rank activity in the selected window; publication age is an optional separate filter. */
-export function popularQuery(period: PopularPeriod = "7d", filters: PopularQuery = {}): ContentQuery {
-  return { ...filters, sort: `popular:${period}` };
+export function popularQuery(period: PopularPeriod | PopularDateRange = "7d", filters: PopularQuery = {}): ContentQuery {
+  return typeof period === "string"
+    ? { ...filters, sort: `popular:${period}` }
+    : { ...filters, sort: "popular", activity_from: period.from, activity_until: period.until };
 }
 
 /** Rank activity between two UTC dates: from inclusive, until exclusive. */
 export function popularBetween(from: string, until: string, filters: PopularQuery & { kind: string }): ContentQuery {
-  return { ...filters, sort: "popular", activity_from: from, activity_until: until };
+  return popularQuery({ from, until }, filters);
 }
 
 export type SearchQuery = ContentFilterQuery &
@@ -100,6 +113,7 @@ export type SearchQuery = ContentFilterQuery &
     q: string;
     sort?: "relevance" | ListSort;
     personalize?: boolean;
+    summary?: boolean;
     /** Explicit legacy server-side anonymous history. Omit for public search without server history. */
     session?: string;
   };
@@ -109,11 +123,16 @@ export interface RecentSearchesQuery {
   /** 10 by default, at most 100. */
   limit?: number;
 }
-export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
+export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number; summary?: boolean };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
 /** Complete daily metadata for one calendar window, without pagination. */
-export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & { days?: number; time_zone?: string };
-export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
+export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & {
+  days?: number;
+  /** Inclusive YYYY-MM-DD in time_zone; today by default. Future dates are rejected. */
+  end_date?: string;
+  time_zone?: string;
+};
+export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed"; summary?: boolean };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
   /** Only contents of this kind. */
@@ -124,8 +143,20 @@ export interface TypeaheadQuery extends ReaderQuery {
   limit?: number;
 }
 
+/** Private editor navigation. Each requested section must be chosen explicitly. */
+export interface AdminSuggestionsQuery {
+  q: string;
+  display_language?: string;
+  content_kinds?: readonly string[];
+  entity_kinds?: readonly string[];
+  include_contents: boolean;
+  include_entities: boolean;
+  /** Per section: 8 by default, at most 20. */
+  limit?: number;
+}
+
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
+const LISTS = new Set(["ids", "groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds", "content_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {
@@ -171,6 +202,10 @@ export class DiscoveryClient {
   typeahead(q: TypeaheadQuery, signal?: AbortSignal): Promise<Typeahead> {
     return call(this.http, "GET", "/typeahead", { query: query(q) as never, signal });
   }
+  /** Current names of authorized draft/hidden content and entities; no public search fallback. */
+  adminSuggestions(q: AdminSuggestionsQuery, signal?: AbortSignal): Promise<Typeahead> {
+    return call(this.http, "GET", "/manage/search-suggestions", { query: query(q) as never, signal });
+  }
   /** Contents like one, of its kind unless q.kind names another. */
   similar(id: string, q: RailQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
     return call(this.http, "GET", "/contents/{id}/similar", { params: { id }, query: query(q) as never, signal });
@@ -190,13 +225,13 @@ export class DiscoveryClient {
   /** Only the current domain's reader-toggleable entities, named in the requested language. */
   async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
     const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
-    this.http.acceptGuestFilters(result.kinds);
+    this.http.acceptGuestFilters(result.filters);
     return result;
   }
-  /** Replaces this domain's reader settings; other domains' choices remain intact. */
+  /** Atomically changes submitted shared choices; omitted settings remain intact. */
   async setContentFilters(update: ContentFiltersUpdate, language?: string): Promise<ContentFilters> {
     const emit = this.http.captureChanges();
-    const out: ContentFilters = await call(this.http, "PUT", "/me/content-filters", { query: { language }, body: update });
+    const out: ContentFilters = await call(this.http, "PATCH", "/me/content-filters", { query: { language }, body: update });
     emit({ type: "contentFilters.changed" });
     return out;
   }
@@ -215,7 +250,14 @@ export class DiscoveryClient {
     const body: ActivityContextsInput = { targets: [...targets], session, language };
     return call(this.http, "POST", "/activity-contexts", { body });
   }
-  /** Views and clicks; signed out, of the session named. */
+  /** Cumulative measured attention. Successful checkpoints refresh history/progress caches. */
+  async engagement(snapshots: EngagementSnapshot[], o: { session?: string; keepalive?: boolean } = {}): Promise<void> {
+    const emit = this.http.captureChanges();
+    const body: EngagementBatch = { session: o.session, snapshots };
+    await call(this.http, "POST", "/engagement", { body, keepalive: o.keepalive });
+    emit({ type: "engagement.changed", ids: [...new Set(snapshots.map(s => s.content_id))] });
+  }
+  /** Clicks and explicit feedback; signed out, of the visitor named. */
   signals(signals: SignalInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {
     const body: Signals = { session, signals };
     return call(this.http, "POST", "/signals", { body, keepalive: o.keepalive });

@@ -37,6 +37,7 @@ import (
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
+	"github.com/open-rails/contentkit/signal"
 )
 
 const tenant = "site"
@@ -139,8 +140,8 @@ func catalogBatch() importer.Batch {
 		},
 		Contents: []importer.ContentRecord{
 			{ExternalID: "gallery:1", ID: id("gallery", 1), Kind: "gallery", State: "published", PublishedAt: ptr(t0.Add(24 * time.Hour)), Code: "GAZ000001",
-				Comments: "closed", ViewBaseline: 200_412,
-				Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
+				Comments: "closed",
+				Access:   &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
 				Creators: []catalog.Creator{{UserID: "u-1"}},
 				Text:     map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
 				Versions: []importer.VersionRecord{
@@ -197,9 +198,13 @@ func catalogBatch() importer.Batch {
 			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:1"}, UserID: "u-2", CreatedAt: &t0},
 		},
 		Answers: []importer.AnswerRecord{{Poll: importer.Ref{ExternalID: "poll:2"}, UserID: "u-1", Text: "Because", CreatedAt: &t0}},
+		LegacyReading: []importer.LegacyReadingRecord{
+			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", FirstReadAt: &t0, LastReadAt: t0.Add(time.Hour), Progress: 5, ProgressMax: 20, Resume: "005", Revision: 1},
+			{Target: importer.TargetRef{Content: &gallery1}, AnonKey: "a-1", LastReadAt: t0, Progress: 20, ProgressMax: 20, Completed: true, Resume: "020"},
+		},
 		Signals: []importer.SignalRecord{
-			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", Type: "view", EventID: "view:1", OccurredAt: t0, Progress: 5},
-			{Target: importer.TargetRef{Content: &gallery1}, AnonKey: "a-1", Type: "view", EventID: "view:2", OccurredAt: t0},
+			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", Type: "click", EventID: "click:1", OccurredAt: t0},
+			{Target: importer.TargetRef{Content: &gallery1}, AnonKey: "a-1", Type: "click", EventID: "click:2", OccurredAt: t0},
 		},
 	}
 }
@@ -251,8 +256,8 @@ func TestImportConverges(t *testing.T) {
 			t.Errorf("written %s = %d, want %d (%v)", s, res.Written[s], n, res.Written)
 		}
 	}
-	if res.Skipped["offers"] != 1 || res.Skipped["signals"] != 2 {
-		t.Errorf("skipped %v: offers need billing, signals a signal plane", res.Skipped)
+	if res.Skipped["offers"] != 1 || res.Skipped["signals"] != 2 || res.Skipped["legacy_reading"] != 2 {
+		t.Errorf("skipped %v: offers need billing, clicks and legacy bookmarks a signal plane", res.Skipped)
 	}
 	if res.IDs["content"]["gallery:1"] != id("gallery", 1) || res.IDs["version"]["version:2"] != id("version", 2) || res.IDs["group"]["tag:1"] != id("tag", 1) ||
 		res.IDs["version"]["version:3"] == "" || res.IDs["group"]["tag:2"] == "" || res.IDs["poll_option"]["answer:2"] == "" {
@@ -263,8 +268,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT state || ' ' || extract(epoch FROM published_at)::bigint || ' ' || extract(epoch FROM created_at)::bigint || ' ' || extract(epoch FROM updated_at)::bigint
  FROM $s.content_items WHERE id = $1`, "published 1577923200 1577836800 1578009600"},
 		{`SELECT access::text || ' ' || attributes::text FROM $s.content_items WHERE id = $1`, `{"level": "tier", "tiers": ["premium"]} {"format": "doujin"}`},
-		{`SELECT comments || ' ' || view_baseline FROM $s.content_items WHERE id = $1`, "closed 200412"},
-		{`SELECT string_agg(DISTINCT view_baseline::text, ',') FROM $s.content_facets WHERE content_id = $1`, "200412"},
+		{`SELECT comments FROM $s.content_items WHERE id = $1`, "closed"},
 		{`SELECT string_agg(language || '=' || title, ',' ORDER BY language) FROM $s.content_text WHERE content_id = $1`, "en=First,ja=最初"},
 		{`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`, id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0"},
 		{`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "2"},
@@ -284,7 +288,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT string_agg(vote_count::text, ',' ORDER BY position) FROM $s.content_poll_options WHERE question_id = (SELECT id FROM $s.content_poll_questions WHERE question = 'Best?') AND $1 <> ''`, "2,1"},
 		{`SELECT code FROM $s.content_codes WHERE content_id = '` + id("tag", 1) + `' AND $1 <> ''`, "TAG000001"},
 		{`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "published true"},
-		{`SELECT comments || ' ' || view_baseline FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "open 0"},
+		{`SELECT comments FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "open"},
 		{`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`, "en"},
 		{`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`, id("series", 2) + " hero"},
 		{`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`, "2"},
@@ -355,59 +359,54 @@ func TestImportConverges(t *testing.T) {
 	}
 }
 
-// A content item's comments setting and legacy view count import like its
-// other fields: re-sending converges, a change is written, an omitted
-// setting is open. Reads show the baseline in views and most_viewed.
-func TestImportCommentsAndViewBaseline(t *testing.T) {
+// Comments remain an independently imported policy: re-sending converges,
+// an edit is visible and an omitted setting is open. Bare counters are retired.
+func TestImportCommentsSetting(t *testing.T) {
 	f := newEngine(t)
-	gallery := func(n int64, comments string, views int64) importer.ContentRecord {
+	gallery := func(n int64, comments string) importer.ContentRecord {
 		ext := fmt.Sprintf("gallery:%d", n)
 		return importer.ContentRecord{ExternalID: ext, ID: id("gallery", n), Kind: "gallery", State: "published", PublishedAt: &t0, Comments: comments,
-			ViewBaseline: views, Text: map[string]catalog.Text{"en": {Title: ext}},
+			Text:     map[string]catalog.Text{"en": {Title: ext}},
 			Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, ID: id("version", n), Languages: []string{"en"}, PublishedAt: &t0}}}
 	}
-	read := func() (map[string]string, []string) {
+	read := func() map[string]string {
 		t.Helper()
-		page, err := f.e.Client().GetContents(t.Context(), contentkit.GetContentsQuery{Kind: "gallery", Sort: "most_viewed"})
+		page, err := f.e.Client().GetContents(t.Context(), contentkit.GetContentsQuery{Kind: "gallery"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		state, order := map[string]string{}, []string{}
+		state := map[string]string{}
 		for _, c := range page.Contents {
 			item, err := f.e.Client().GetContent(t.Context(), c.ID, contentkit.GetContentQuery{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if *item.Views != *c.Counts.Views {
-				t.Fatalf("detail views %d, card views %d", *item.Views, *c.Counts.Views)
-			}
-			state[c.ID] = fmt.Sprintf("%s %d", item.Comments, *item.Views)
-			order = append(order, c.ID)
+			state[c.ID] = item.Comments
 		}
-		return state, order
+		return state
 	}
 	g1, g2 := id("gallery", 1), id("gallery", 2)
-	b := importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "hidden", 1_000), gallery(2, "", 10)}}
+	b := importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "hidden"), gallery(2, "")}}
 	if res := f.importBatch(t, b); len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res.Failed)
 	}
-	state, order := read()
-	if state[g1] != "hidden 1000" || state[g2] != "open 10" || !slices.Equal(order, []string{g1, g2}) {
-		t.Fatalf("after import %v %v", state, order)
+	state := read()
+	if state[g1] != "hidden" || state[g2] != "open" {
+		t.Fatalf("after import %v", state)
 	}
 	revisions := f.scalar(t, `SELECT string_agg(revision::text, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
 	if res := f.importBatch(t, b); len(res.Failed) > 0 || f.scalar(t, `SELECT string_agg(revision::text, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x") != revisions {
 		t.Fatalf("re-import changed the items: %+v", res)
 	}
-	b.Contents[0] = gallery(1, "", 5)
+	b.Contents[0] = gallery(1, "")
 	if res := f.importBatch(t, b); len(res.Failed) > 0 {
 		t.Fatalf("edit %+v", res.Failed)
 	}
-	if state, order := read(); state[g1] != "open 5" || !slices.Equal(order, []string{g2, g1}) {
-		t.Fatalf("after edit %v %v", state, order)
+	if state := read(); state[g1] != "open" || state[g2] != "open" {
+		t.Fatalf("after edit %v", state)
 	}
-	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "maybe", 0), gallery(2, "", -1)}})
-	if len(res.Failed) != 2 || res.Failed[0].Code != importer.CodeInvalid || res.Failed[1].Code != importer.CodeInvalid {
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery(1, "maybe")}})
+	if len(res.Failed) != 1 || res.Failed[0].Code != importer.CodeInvalid {
 		t.Fatalf("invalid records %+v", res)
 	}
 }
@@ -553,6 +552,9 @@ func TestImportRoute(t *testing.T) {
 	}
 	if rec := post("importer", map[string]any{"source": "x", "galleries": []int{1}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown section: %d", rec.Code)
+	}
+	if rec := post("importer", map[string]any{"source": "x", "contents": []any{map[string]any{"external_id": "g", "kind": "gallery", "view_baseline": 100}}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("retired counter accepted: %d", rec.Code)
 	}
 	rec := post("importer", b)
 	var res importer.Result
@@ -814,9 +816,9 @@ func png(t *testing.T, w int) []byte {
 	return b.Bytes()
 }
 
-// With a signal plane, imported views land in it, a version's for its
-// content too, and re-sending them adds none.
-func TestImportSignals(t *testing.T) {
+// Importing old bookmarks preserves resume/history without inventing measured
+// readers or completions. Explicit clicks remain independently replayable.
+func TestImportReadingBookmarksAndExplicitClicks(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	chDB := "ck_import_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	env.Empty(t, chDB)
@@ -832,14 +834,79 @@ func TestImportSignals(t *testing.T) {
 	b.Offers = nil
 	for range 2 {
 		res := f.importBatch(t, b)
-		if len(res.Failed) > 0 || res.Written["signals"] != 2 || res.Skipped["signals"] != 0 {
+		if len(res.Failed) > 0 || res.Written["signals"] != 2 || res.Written["legacy_reading"] != 2 || res.Skipped["signals"] != 0 || res.Skipped["legacy_reading"] != 0 {
 			t.Fatalf("result %+v", res)
 		}
 	}
 	conn := env.Open(t, chDB)
 	var n uint64
-	if err := conn.QueryRow(t.Context(), `SELECT count() FROM signals FINAL WHERE tenant = ? AND event_id IN ('view:1', 'view:2')`, tenant).Scan(&n); err != nil || n != 3 {
-		t.Fatalf("signals %d %v: a version view counts for its content too", n, err)
+	if err := conn.QueryRow(t.Context(), `SELECT count() FROM signals FINAL WHERE tenant = ? AND event_id IN ('click:1', 'click:2')`, tenant).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("explicit clicks duplicated on replay: %d %v", n, err)
+	}
+	if err := conn.QueryRow(t.Context(), `SELECT count() FROM engagement_segments WHERE tenant = ?`, tenant).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("bookmarks fabricated measured observations: %d %v", n, err)
+	}
+	store, err := signal.NewStore(conn, chDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := contentref.New(tenant, "gallery", id("gallery", 1))
+	refs := []contentref.ContentRef{work, work.WithVersion(id("version", 1))}
+	user := signal.Subject{UserID: "u-1"}
+	standing := func(want uint32, resume string) {
+		t.Helper()
+		states, err := store.States(t.Context(), tenant, user, refs)
+		if err != nil || len(states) != 2 {
+			t.Fatalf("work/version legacy standing: %+v %v", states, err)
+		}
+		for _, ref := range refs {
+			s := states[ref.Key()]
+			if !s.Seen || s.MaxProgress != want || s.ProgressMax != 20 || s.Resume != resume || s.ActiveMS != 0 || s.Quality != 0 || s.Completed {
+				t.Fatalf("legacy bookmark was changed into measured reading: %+v", s)
+			}
+		}
+		history, err := store.History(t.Context(), tenant, user, signal.HistoryOptions{Status: signal.HistorySeen})
+		if err != nil || len(history) != 1 || history[0].ContentID != work.ContentID || history[0].Resume != resume {
+			t.Fatalf("version bookmark absent from work history: %+v %v", history, err)
+		}
+	}
+	standing(5, "005")
+	anon := signal.Subject{AnonKey: "a-1"}
+	if states, err := store.States(t.Context(), tenant, anon, []contentref.ContentRef{work}); err != nil || len(states) != 1 || !states[work.Key()].Completed || states[work.Key()].Resume != "020" || states[work.Key()].ActiveMS != 0 || states[work.Key()].Quality != 0 {
+		t.Fatalf("legacy completion/resume was lost or promoted to measured quality: %+v %v", states, err)
+	}
+	for _, subject := range []signal.Subject{user, anon} {
+		if n, err := store.CompletedCount(t.Context(), tenant, subject, "gallery"); err != nil || n != 0 {
+			t.Fatalf("legacy completion counted as a measured account stat: %d %v", n, err)
+		}
+	}
+	if days, err := store.Activity(t.Context(), tenant, "gallery", signal.Window{}); err != nil || len(days) != 0 {
+		t.Fatalf("bookmarks/clicks fabricated daily readers: %+v %v", days, err)
+	}
+	// A later bookmark replaces the resume copy; retrying its older revision
+	// must not move either the version or work history backward.
+	newer := b.LegacyReading[0]
+	newer.LastReadAt, newer.Progress, newer.Resume, newer.Revision = t0.Add(2*time.Hour), 8, "008", 2
+	for _, row := range []importer.LegacyReadingRecord{newer, b.LegacyReading[0]} {
+		res := f.importBatch(t, importer.Batch{Source: b.Source, LegacyReading: []importer.LegacyReadingRecord{row}})
+		if len(res.Failed) > 0 || res.Written["legacy_reading"] != 1 {
+			t.Fatalf("bookmark checkpoint: %+v", res)
+		}
+	}
+	standing(8, "008")
+	if report, err := store.EraseSubjects(t.Context(), []string{tenant}, []signal.Subject{user}); err != nil || !report.Complete() {
+		t.Fatalf("erase bookmark: %+v %v", report, err)
+	}
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, LegacyReading: []importer.LegacyReadingRecord{newer}}); len(res.Failed) > 0 {
+		t.Fatalf("erased replay: %+v", res)
+	}
+	if states, err := store.States(t.Context(), tenant, user, refs); err != nil || len(states) != 0 {
+		t.Fatalf("import replay resurrected an erased bookmark: %+v %v", states, err)
+	}
+	retired := b.Signals[0]
+	retired.Type = "view"
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Signals: []importer.SignalRecord{retired}}); len(res.Failed) != 1 || res.Failed[0].Code != importer.CodeInvalid {
+		t.Fatalf("retired bare opens still import: %+v", res)
 	}
 }
 

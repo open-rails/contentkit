@@ -107,7 +107,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 			ver := c.Versions[0]
 			if c.Title != kind+" title" || c.Cover == nil || c.Cover.Image != cover || ver.Cover == nil || ver.Cover.Image != cover || len(c.Groups) != 1 ||
 				c.Decision.Allowed != v.opens ||
-				(c.Body != "") != v.opens || (c.Description != "") != shows || (len(c.Attributes) > 0) != shows || (c.Views != nil) != shows {
+				(c.Body != "") != v.opens || (c.Description != "") != shows || (len(c.Attributes) > 0) != shows {
 				t.Fatalf("%s: detail %+v", name, c)
 			}
 			if kind == "book" && (len(ver.Segments) > 0) != shows {
@@ -122,7 +122,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 			card := page.Contents[0]
 			n := card.Counts
 			if len(page.Contents) != 1 || card.Title != kind+" title" || len(card.Groups["tag"]) != 1 || (len(card.Attributes) > 0) != shows ||
-				(n.Likes != nil && n.Dislikes != nil) != shows || (n.Favorites != nil) != shows || (n.Views != nil) != shows {
+				(n.Likes != nil && n.Dislikes != nil) != shows || (n.Favorites != nil) != shows {
 				t.Fatalf("%s: card %+v", name, card)
 			}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -546,10 +547,11 @@ func orEmpty[T any](s []T) []T {
 	return s
 }
 
-// putCodes gives each item its content code with a slug per language (the
-// site's first language with text is the default).
-func (s *Store) putCodes(ctx context.Context, tx pgx.Tx, ids []string) error {
-	rows, err := tx.Query(ctx, `SELECT c.id, c.kind, t.language, t.slug FROM `+s.t.items+` c
+// putCodes gives each item its content code and decorative path per language:
+// its kind's path entity slug, if any, then its title slug (the site's first
+// language with text is the default).
+func (s *Store) putCodes(ctx context.Context, q groups.Querier, ids []string) error {
+	rows, err := q.Query(ctx, `SELECT c.id, c.kind, t.language, t.slug FROM `+s.t.items+` c
  LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return err
@@ -577,18 +579,28 @@ func (s *Store) putCodes(ctx context.Context, tx pgx.Tx, ids []string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	paths, err := s.pathEntities(ctx, q, order)
+	if err != nil {
+		return err
+	}
 	out := make([]codes.Entry, 0, len(order))
 	for _, id := range order {
 		e := entries[id]
+		entity := paths[id]
+		def := ""
 		for _, l := range s.cfg.Languages {
-			if sl, ok := e.Slugs[l]; ok {
-				e.Slug = sl
+			if _, ok := e.Slugs[l]; ok {
+				def = l
 				break
 			}
 		}
+		e.Slug = decorativePath(entity.slugFor(def), e.Slugs[def])
+		for l, title := range e.Slugs {
+			e.Slugs[l] = decorativePath(entity.slugFor(l), title)
+		}
 		out = append(out, *e)
 	}
-	_, err = codes.Put(ctx, codes.Pgx(tx), s.qs, s.tenant, out)
+	_, err = codes.Put(ctx, codes.Pgx(q), s.qs, s.tenant, out)
 	return err
 }
 

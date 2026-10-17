@@ -11,6 +11,8 @@ export const discovery: typeof en = {
     filters: "표시할 콘텐츠:",
   },
   releases: {
+    goToDay: "날짜 선택",
+    invalidDate: "오늘 또는 그 이전의 올바른 날짜를 선택하세요.",
     premiumMore_one: "{count}개 더 보기",
     premiumMore_other: "{count}개 더 보기",
     premiumHint: "회원 전용 미리보기 · 클릭하여 보기",
@@ -30,8 +32,6 @@ export const discovery: typeof en = {
     pages_other: "{count}쪽",
     minutes_one: "{count}분",
     minutes_other: "{count}분",
-    views_one: "조회수 {n}회",
-    views_other: "조회수 {n}회",
     moreChips_one: "{count}개 더",
     moreChips_other: "{count}개 더",
     completed: "완료",
@@ -72,6 +72,7 @@ export const discovery: typeof en = {
     removeRecent: "“{q}” 삭제",
   },
   listing: {
+    activityRange: "{from}부터 {until} 전까지의 활동 (UTC)",
     popularPeriod: "인기 집계 기간",
     pastDays_one: "최근 {count}일",
     pastDays_other: "최근 {count}일",
@@ -82,7 +83,6 @@ export const discovery: typeof en = {
     sort_popular: "인기",
     sort_top_rated: "높은 평점",
     sort_most_favorited: "즐겨찾기순",
-    sort_most_viewed: "조회수순",
     sort_random: "무작위",
     sort_position: "순서",
     period_7d: "이번 주",

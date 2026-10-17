@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Mous
 import type { ContentKitUiAppearance } from "../appearance.js";
 import { formatDuration } from "../client/gallery.js";
 import type { PlaybackError } from "../client/playback.js";
+import type { ReadingEngagement } from "../react/use-engagement.js";
 import {
   JUMP_SEEK,
   PLAYBACK_SPEEDS,
@@ -130,6 +131,8 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   keyboard?: "focus" | "global" | false;
   /** Resume points and watch time: every `progressInterval` of playback, and on pause, seek, end, page hide and unload. */
   onProgress?: (progress: PlaybackProgress) => void;
+  /** Measure real playback only, excluding inline previews and the poster. */
+  engagement?: Pick<ReadingEngagement, "video">;
   /** Milliseconds. Default 10000. */
   progressInterval?: number;
   onEvent?: (event: PlayerEvent) => void;
@@ -203,6 +206,7 @@ export function VideoPlayer({
   previewStart,
   keyboard = "focus",
   onProgress,
+  engagement,
   progressInterval = 10_000,
   onEvent,
   theater,
@@ -249,6 +253,11 @@ export function VideoPlayer({
   const cues = useActiveCues(video);
   const sprite = useSprite(started && base ? `${base}sprite.vtt` : null, options.loader);
   const live = !previewing && started;
+  const bindEngagement = engagement?.video;
+  useEffect(() => {
+    bindEngagement?.(live ? video : null);
+    return () => bindEngagement?.(null);
+  }, [bindEngagement, live, video]);
   useProgressReports(video, { enabled: live, source: live ? src : null, interval: progressInterval, onProgress });
 
   // Events.

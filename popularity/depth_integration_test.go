@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -35,13 +36,13 @@ func TestIntegrationPopularDepthIsBounded(t *testing.T) {
 	ctx := context.Background()
 	env := signaltest.FromEnv(t)
 	const db, works, maxDepth = "contentkit_popularity_depth_test", 150, 100
-	hub := newHub(t, env.Fresh(t, db), db, fxTenant, popularity.SessionScorer{SecondsPerUnit: 8})
+	hub := newHub(t, env.Fresh(t, db), db, fxTenant, nil)
 	at := time.Now().UTC().Add(-time.Hour)
-	var views []signal.Signal
+	var views []engagementtest.Observation
 	for w := 0; w < works; w++ {
 		for v := 0; v <= w%7; v++ {
-			views = append(views, signal.Signal{ContentRef: ref(cid(900000 + w)), Subject: signal.Subject{UserID: fmt.Sprintf("depth-%d-%d", w, v)},
-				Type: signal.TypeView, EventID: fmt.Sprintf("depth-%d-%d", w, v), OccurredAt: at, DurationS: 60, Progress: 10, ProgressMax: 10})
+			views = append(views, engagementtest.Observation{ContentRef: ref(cid(900000 + w)), Subject: signal.Subject{UserID: fmt.Sprintf("depth-%d-%d", w, v)},
+				Type: engagementtest.TypeReading, EventID: fmt.Sprintf("depth-%d-%d", w, v), OccurredAt: at, DurationS: 60, Progress: 10, ProgressMax: 10})
 		}
 	}
 	recordBatched(t, hub, views)

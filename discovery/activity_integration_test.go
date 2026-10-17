@@ -12,6 +12,8 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media/token"
@@ -74,6 +76,7 @@ func TestActivityReceiptsPreserveEventTimeAndRejectOtherSubjects(t *testing.T) {
 	f.seed(item{n: 1, titles: map[string]string{"en": "Premium"}, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}, pages: 20}}},
 		item{n: 2, titles: map[string]string{"en": "Public"}, versions: []ver{{langs: []string{"en"}, pages: 20}}})
 	signer := withActivitySigner(t, f)
+	f.svc.o.MeasuredEngagement = true
 	target := ActivityTarget{ContentID: f.cid(1), VersionID: f.vid(1, 0)}
 	paid := requestActivity(t, f, "fan", target)
 	snapshot := receiptAccess(t, paid)
@@ -98,45 +101,55 @@ func TestActivityReceiptsPreserveEventTimeAndRejectOtherSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	signer.now = f.clock
-	post := func(user, session string, c ActivityContext, event string, revision uint64) (int, string) {
-		return f.call(http.MethodPost, "main.test", user, "/signals", Signals{Session: session, Signals: []SignalInput{{
-			ContentID: c.ContentID, VersionID: c.VersionID, Type: TypeView, EventID: event, Revision: revision,
-			OccurredAt: signer.now, DurationS: 200, Progress: 20, ActivityToken: c.Token}}}, nil)
+	measured := func(c ActivityContext, revision uint64) EngagementSnapshot {
+		pages := (engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", c.ContentID, c.VersionID),
+			Type: engagementtest.TypeReading, EventID: "reader-segment", Progress: 20, ProgressMax: 20, DurationS: 200}).Signals()[0].Measurement
+		return EngagementSnapshot{ContentID: c.ContentID, VersionID: c.VersionID, VisitID: "reader-visit", SegmentID: "reader-segment",
+			Revision: revision, ActivityToken: c.Token, ActiveMS: pages.ActiveMS, Pages: pages.Pages}
 	}
-	if status, code := post("fan", "", paid, "client-one", 1); status != http.StatusNoContent {
-		t.Fatalf("view: %d %s", status, code)
+	post := func(user, session string, c ActivityContext, revision uint64) (int, string) {
+		return f.call(http.MethodPost, "main.test", user, "/engagement", EngagementBatch{Session: session, Snapshots: []EngagementSnapshot{measured(c, revision)}}, nil)
 	}
-	if status, code := post("fan", "", paid, "client-two", 2); status != http.StatusNoContent {
+	if status, code := post("fan", "", paid, 1); status != http.StatusNoContent {
+		t.Fatalf("measured reading: %d %s", status, code)
+	}
+	if status, code := post("fan", "", paid, 2); status != http.StatusNoContent {
 		t.Fatalf("revision: %d %s", status, code)
 	}
-	if status, _ := post("other", "", paid, "stolen", 1); status != http.StatusBadRequest {
+	if status, _ := post("other", "", paid, 1); status != http.StatusBadRequest {
 		t.Fatalf("other subject: %d", status)
 	}
-	if status, code := post("", "browser", preview, "preview", 1); status != http.StatusNoContent {
+	if status, code := post("", "browser", preview, 1); status != http.StatusNoContent {
 		t.Fatalf("preview: %d %s", status, code)
 	}
 	var events uint64
-	if err := conn.QueryRow(context.Background(), `SELECT uniqExact(event_id) FROM `+database+`.signals
- WHERE tenant=? AND content_id=? AND subject=? AND signal_type='view'`, tenant, f.cid(1), "fan").Scan(&events); err != nil || events != 1 {
+	if err := conn.QueryRow(context.Background(), `SELECT uniqExact(receipt_id) FROM `+database+`.engagement_segments
+ WHERE tenant=? AND content_id=? AND subject=?`, tenant, f.cid(1), "fan").Scan(&events); err != nil || events != 1 {
 		t.Fatalf("receipt minted multiple sessions: %d %v", events, err)
 	}
 	var at time.Time
 	var classification string
-	if err := conn.QueryRow(f.ctx, `SELECT occurred_at, JSONExtractString(payload,'contentkit_access','content_access')
- FROM `+database+`.signals WHERE tenant=? AND subject=? AND signal_type='view' ORDER BY revision DESC LIMIT 1`, tenant, "fan").Scan(&at, &classification); err != nil ||
-		!at.Equal(paid.OccurredAt.Truncate(time.Second)) || classification != "restricted" {
+	if err := conn.QueryRow(f.ctx, `SELECT occurred_at, JSONExtractString(access_context,'content_access')
+ FROM `+database+`.engagement_segments WHERE tenant=? AND subject=? ORDER BY revision DESC LIMIT 1`, tenant, "fan").Scan(&at, &classification); err != nil ||
+		!at.Equal(paid.OccurredAt) || classification != "restricted" {
 		t.Fatalf("late checkpoint changed access/time: %v %q %v", at, classification, err)
+	}
+	if err := conn.QueryRow(f.ctx, `SELECT count() FROM `+database+`.engagement_segments WHERE tenant=? AND subject<>?`, tenant, "fan").Scan(&events); err != nil || events != 0 {
+		t.Fatalf("stolen/preview receipts became measured reading: %d %v", events, err)
 	}
 	// Expired queue entries are discarded individually, not replayed as
 	// untrusted events and not allowed to reject a new entry in the batch.
 	signer.now = paid.OccurredAt.Add(25 * time.Hour)
 	fresh := requestActivity(t, f, "fan", target)
-	status, code := f.call(http.MethodPost, "main.test", "fan", "/signals", Signals{Signals: []SignalInput{
-		{ContentID: paid.ContentID, VersionID: paid.VersionID, Type: TypeView, EventID: "old", OccurredAt: signer.now, ActivityToken: paid.Token},
-		{ContentID: fresh.ContentID, VersionID: fresh.VersionID, Type: TypeView, EventID: "new", OccurredAt: signer.now, ActivityToken: fresh.Token, Progress: 20},
+	signer.now = signer.now.Add(200 * time.Second)
+	status, code := f.call(http.MethodPost, "main.test", "fan", "/engagement", EngagementBatch{Snapshots: []EngagementSnapshot{
+		measured(paid, 3), measured(fresh, 1),
 	}}, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("mixed expired queue: %d %s", status, code)
+	}
+	if err := conn.QueryRow(f.ctx, `SELECT uniqExact(receipt_id) FROM `+database+`.engagement_segments WHERE tenant=? AND subject=?`, tenant, "fan").Scan(&events); err != nil || events != 2 {
+		t.Fatalf("expired replay was recorded or fresh measurement was lost: %d %v", events, err)
 	}
 }
 

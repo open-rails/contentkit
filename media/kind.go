@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -222,8 +223,8 @@ func (k *Kind) NameOf(path string) string {
 
 // OutputPath is p's output path (a file, or a directory ending in "/") for
 // the upload at path.
-func (k *Kind) OutputPath(p *Private, path string) string {
-	return fill(p.To, map[string]string{"name": k.NameOf(path)})
+func (k *Kind) OutputPath(p *Private, uploadPath string) string {
+	return fill(p.To, map[string]string{"name": k.NameOf(uploadPath), "ext": path.Ext(uploadPath)})
 }
 
 // PublicNames are p's public names in m for the upload at path, one per
@@ -595,15 +596,19 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 		return fmt.Errorf("From %q is no upload path", p.From)
 	}
 	dir := p.HLS != nil || p.Audio != nil
-	if !validTemplate(p.To, dir) || slices.ContainsFunc(placeholders(p.To), func(s string) bool { return s != "name" }) {
-		return fmt.Errorf("invalid To %q (a path with {name} only; a directory ending in / for HLS and Audio)", p.To)
+	sourceFormat := p.Image != nil && p.Image.Format == ImageFormatSource
+	if !validTemplate(p.To, dir) || slices.ContainsFunc(placeholders(p.To), func(s string) bool { return s != "name" && !(sourceFormat && s == "ext") }) {
+		return fmt.Errorf("invalid To %q (a path with {name}; source-format images may also use {ext})", p.To)
+	}
+	if sourceFormat && !strings.HasSuffix(p.To, "{ext}") {
+		return fmt.Errorf("source-format image To %q must retain the source extension with {ext}", p.To)
 	}
 	if slices.Contains(placeholders(p.Download), "") {
 		return fmt.Errorf("invalid Download %q", p.Download)
 	}
 	// Outputs never land on upload paths: "subs/{name}" uploads cannot
 	// derive "subs/{name}.vtt" (a .vtt sidecar would be its own output).
-	sample := fill(p.To, map[string]string{"name": "x"})
+	sample := fill(p.To, map[string]string{"name": "x", "ext": ".png"})
 	if dir {
 		sample += "x"
 	}
@@ -628,6 +633,9 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 }
 
 func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
+	if p.Image.Format != ImageFormatWebP {
+		return errors.New("public image presets use WebP; source format is private-only")
+	}
 	if !layout.ValidSegment(p.Name) || names[p.Name] {
 		return errors.New("invalid or duplicate name")
 	}
@@ -683,6 +691,9 @@ func validTemplate(t string, dir bool) bool {
 }
 
 func (im Image) validate() error {
+	if im.Format != ImageFormatWebP && im.Format != ImageFormatSource {
+		return fmt.Errorf("invalid image format %q", im.Format)
+	}
 	if im.Width < 0 || im.Height < 0 || im.Width > 16384 || im.Height > 16384 || im.Quality < 0 || im.Quality > 100 ||
 		im.Blur < 0 || im.MinWidth < 0 || !im.Aspect.Valid() ||
 		im.Fit != FitInside && im.Fit != FitCover || im.Animation != AnimationAllow && im.Animation != AnimationReject {

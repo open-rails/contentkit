@@ -29,6 +29,7 @@ export {
   popularQuery,
   popularBetween,
   type AccessMode,
+  type AdminSuggestionsQuery,
   type CardQuery,
   type ContentFilterQuery,
   type ContentQuery,
@@ -36,6 +37,7 @@ export {
   type ListSort,
   type Period,
   type PopularPeriod,
+  type PopularDateRange,
   type PopularQuery,
   type RailQuery,
   type ReaderQuery,
@@ -48,13 +50,13 @@ export {
 export { VersionsClient, isPending } from "./versions.js";
 export { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "./reader-meta.js";
 export { OffersClient } from "./offers.js";
-export { StatsClient, type ActivityQuery, type TopQuery } from "./stats.js";
-export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions, type ViewSession } from "./beacons.js";
+export { StatsClient, type ActivityQuery } from "./stats.js";
+export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions } from "./beacons.js";
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
 export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
-export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilterKinds, type ReaderFilterChoice } from "./browser-reader-preferences.js";
+export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilters, type ReaderFilterChoice } from "./browser-reader-preferences.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";
 export {
@@ -151,3 +153,6 @@ export {
   type VolumePrefs,
 } from "./player.js";
 export * from "./generated/wire.js";
+
+export { EngagementTracker, type EngagementTrackerOptions, type ReadingObservation, type VisiblePage } from "./engagement.js";
+export { GuestReadingHistory, guestStanding, type GuestReadingItem, type GuestReadingSnapshot } from "./guest-reading-history.js";

@@ -3,6 +3,7 @@ package versions
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -150,6 +151,15 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	k, err := s.published(v)
 	if err != nil {
 		return err
+	}
+	// The first presign creates the manifest before any upload; publishing it
+	// would answer readers an empty plan. That upload's commit queues the next pass.
+	m, err := s.manifest(ctx, k, t)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(m.Files, func(f media.File) bool { return f.IsUpload() && !f.Unattached }) {
+		return nil
 	}
 	if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
 		return err

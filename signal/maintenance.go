@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -31,12 +32,16 @@ func (st *Store) Inventory(ctx context.Context, tenant string) ([]InventoryRow, 
 FROM (
     SELECT %[3]s, subject_kind, subject, signal_type, event_id, argMax(occurred_at, version) AS at, count() AS raw
     FROM %[1]s.signals
-    WHERE tenant = ? AND %[2]s
+    WHERE tenant = ? AND signal_type NOT IN ('view','preview') AND %[2]s
     GROUP BY %[3]s, subject_kind, subject, signal_type, event_id
+ UNION ALL
+ SELECT %[3]s,subject_kind,subject,'engagement' AS signal_type,receipt_id AS event_id,argMax(occurred_at,version) AS at,count() AS raw
+ FROM %[1]s.engagement_segments WHERE tenant=? AND %[2]s
+ GROUP BY %[3]s,subject_kind,subject,receipt_id
 )
 GROUP BY content_kind, signal_type
 ORDER BY content_kind, signal_type`, st.db, st.notErased(), refColumns)
-	rows, err := st.conn.Query(ctx, q, tenant)
+	rows, err := st.conn.Query(ctx, q, tenant, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: inventory: %w", err)
 	}
@@ -63,12 +68,31 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 	if len(kinds) == 0 {
 		return fmt.Errorf("signal: contentKinds are required")
 	}
-	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+	tables, err := st.activeSubjectTables(ctx)
+	if err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if table == "exposures" {
+			continue
+		}
 		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
 			return err
 		}
 	}
-	return st.mutate(ctx, "content_pairs", "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds)
+	pairs, err := st.existing(ctx, []string{"content_pairs", "engagement_pairs"})
+	if err != nil {
+		return err
+	}
+	for _, table := range pairs {
+		if !slices.Contains([]string{"content_pairs", "engagement_pairs"}, table) {
+			continue
+		}
+		if err := st.mutate(ctx, table, "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mutate runs ALTER TABLE DELETE and waits for completion on all replicas.

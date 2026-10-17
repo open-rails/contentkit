@@ -54,9 +54,16 @@ func TestScopedGroupMetadataRetainsCredentialCeilings(t *testing.T) {
 	if !editors[string(channels[0].ID)] || editors[string(channels[1].ID)] {
 		t.Fatalf("content editor metadata escaped the request ceiling: %+v", editors)
 	}
+	managed, err := f.s.ContentEditorGroups(f.ctx, limited, actor)
+	if err != nil || len(managed) != 1 || managed[0] != channels[0].ID {
+		t.Fatalf("management search groups escaped credential ceilings: %v %v", managed, err)
+	}
 
 	// A permission outage must not publish directory-only grants as usable.
 	limited.err = auth.ErrUnavailable
+	if _, err := f.s.ContentEditorGroups(f.ctx, limited, actor); !errors.Is(err, auth.ErrUnavailable) {
+		t.Fatalf("management search permission outage did not fail closed: %v", err)
+	}
 	if _, err := store.Mine(f.ctx, ListOptions{Kind: "channel"}); !errors.Is(err, auth.ErrUnavailable) {
 		t.Fatalf("permission outage did not fail closed: %v", err)
 	}

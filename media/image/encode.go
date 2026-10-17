@@ -312,9 +312,23 @@ func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.Image
 	return out, nil
 }
 
-// encode derives one WebP from src through edit per spec (nil edit: the
-// whole source), shrinking an unedited still on load.
+// encode renders src through edit per spec (nil edit: the whole source),
+// shrinking an unedited still on load. Source-format no-ops retain its bytes.
 func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
+	if s.Format == media.ImageFormatSource && edit.Normalize() == nil && s.Fit == media.FitInside && s.Aspect.Native() && s.Blur == 0 {
+		img, err := decode(src, contentType)
+		if err != nil {
+			return nil, media.Dims{}, permanentError{err}
+		}
+		w, h := img.Width(), img.PageHeight()
+		if frames(img) == 1 && img.Orientation() >= 5 && img.Orientation() <= 8 {
+			w, h = h, w
+		}
+		img.Close()
+		if (s.Width == 0 || w <= s.Width) && (s.Height == 0 || h <= s.Height) {
+			return src, media.Dims{W: w, H: h}, nil
+		}
+	}
 	var img *vips.ImageRef
 	var err error
 	if edit == nil && (s.Width > 0 || s.Height > 0) && !animated[contentType] {
@@ -330,7 +344,49 @@ func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]
 	if img, err = transform(img, edit, s); err != nil {
 		return nil, media.Dims{}, err
 	}
+	if s.Format == media.ImageFormatSource {
+		return originalFormat(img, contentType, s.Quality)
+	}
 	return webp(img, s.Quality)
+}
+
+func outputType(s media.Image, source string) string {
+	if s.Format == media.ImageFormatSource {
+		return source
+	}
+	return "image/webp"
+}
+
+// originalFormat writes only an oversized or explicitly edited source. Normal
+// sources bypass encoding above. The archival upload is never replaced.
+func originalFormat(img *vips.ImageRef, contentType string, quality int) ([]byte, media.Dims, error) {
+	if contentType == "image/webp" {
+		return webp(img, quality)
+	}
+	defer img.Close()
+	if quality <= 0 {
+		quality = 80
+	}
+	var out []byte
+	var err error
+	switch contentType {
+	case "image/jpeg":
+		p := vips.NewJpegExportParams()
+		p.Quality, p.StripMetadata = quality, true
+		out, _, err = img.ExportJpeg(p)
+	case "image/png":
+		p := vips.NewPngExportParams()
+		p.StripMetadata = true
+		out, _, err = img.ExportPng(p)
+	case "image/gif":
+		out, _, err = img.ExportGIF(vips.NewGifExportParams())
+	default:
+		return nil, media.Dims{}, permanentError{fmt.Errorf("resizing source format %q is not supported", contentType)}
+	}
+	if err != nil {
+		return nil, media.Dims{}, permanentError{err}
+	}
+	return out, media.Dims{W: img.Width(), H: img.PageHeight()}, nil
 }
 
 // rendition is one encoded public name.

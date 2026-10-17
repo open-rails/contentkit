@@ -11,6 +11,8 @@ export const discovery: typeof en = {
     filters: "显示内容：",
   },
   releases: {
+    goToDay: "选择日期",
+    invalidDate: "请选择今天或之前的有效日期。",
     premiumMore_one: "还有 {count} 项",
     premiumMore_other: "还有 {count} 项",
     premiumHint: "会员专属预览 · 点击查看",
@@ -30,8 +32,6 @@ export const discovery: typeof en = {
     pages_other: "{count} 页",
     minutes_one: "{count} 分钟",
     minutes_other: "{count} 分钟",
-    views_one: "{n} 次观看",
-    views_other: "{n} 次观看",
     moreChips_one: "另外 {count} 个",
     moreChips_other: "另外 {count} 个",
     completed: "已完成",
@@ -72,6 +72,7 @@ export const discovery: typeof en = {
     removeRecent: "移除“{q}”",
   },
   listing: {
+    activityRange: "UTC 时间 {from} 起至 {until} 前的活动",
     popularPeriod: "热门时间范围",
     pastDays_one: "过去{count}天",
     pastDays_other: "过去{count}天",
@@ -82,7 +83,6 @@ export const discovery: typeof en = {
     sort_popular: "热门",
     sort_top_rated: "高分",
     sort_most_favorited: "最多收藏",
-    sort_most_viewed: "最多观看",
     sort_random: "随机",
     sort_position: "顺序",
     period_7d: "本周",

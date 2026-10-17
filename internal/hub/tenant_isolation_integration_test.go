@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"
@@ -100,11 +101,11 @@ func TestTenantIsolationIntegration(t *testing.T) {
 	for _, tenant := range []string{a, b} {
 		h := hubs[tenant]
 		g := h.Content("gallery", cid(1))
-		if err := h.RecordSignals(ctx, []signal.Signal{
-			{ContentRef: g, Subject: u, Type: signal.TypeView, EventID: "v", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
-			{ContentRef: h.Content("gallery", cid(2)), Subject: signal.Subject{AnonKey: "x"}, Type: signal.TypeView, EventID: "v2", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
-			{ContentRef: h.Content("gallery", cid(2)), Subject: u, Type: signal.TypeView, EventID: "v3", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
-		}); err != nil {
+		if err := h.RecordSignals(ctx, engagementtest.Native([]engagementtest.Observation{
+			{ContentRef: g, Subject: u, Type: engagementtest.TypeReading, EventID: "v", OccurredAt: at, Progress: 10, ProgressMax: 10, DurationS: 80},
+			{ContentRef: h.Content("gallery", cid(2)), Subject: signal.Subject{AnonKey: "x"}, Type: engagementtest.TypeReading, EventID: "v2", OccurredAt: at, Progress: 10, ProgressMax: 10, DurationS: 80},
+			{ContentRef: h.Content("gallery", cid(2)), Subject: u, Type: engagementtest.TypeReading, EventID: "v3", OccurredAt: at, Progress: 10, ProgressMax: 10, DurationS: 80},
+		})); err != nil {
 			t.Fatal(err)
 		}
 		if err := h.RecordExposures(ctx, []signal.Exposure{{RenderID: "r-" + tenant, Stage: signal.StageRendered, Subject: u, OccurredAt: at, Shown: []signal.Placement{{ContentRef: g, Position: 1}}}}); err != nil {
@@ -123,7 +124,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 			t.Fatalf("%s history: %+v %v", tenant, hist, err)
 		}
 		m, err := h.Metrics(ctx, []ContentRef{g1}, signal.AllTime())
-		if err != nil || m[g1.Key()].Viewers != 1 {
+		if err != nil || m[g1.Key()].Readers != 1 {
 			t.Fatalf("%s metrics: %+v %v", tenant, m, err)
 		}
 		pop, err := h.Popular(ctx, "gallery", signal.PopularOptions{})
@@ -149,7 +150,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 	}
 	// Cross-tenant references are refused everywhere, never silently remapped.
 	foreign := hubs[b].Content("gallery", cid(1))
-	if err := hubs[a].RecordSignals(ctx, []signal.Signal{{ContentRef: foreign, Subject: u, Type: signal.TypeView, EventID: "x", OccurredAt: at}}); err == nil {
+	if err := hubs[a].RecordSignals(ctx, []signal.Signal{{ContentRef: foreign, Subject: u, Type: "click", EventID: "x", OccurredAt: at}}); err == nil {
 		t.Fatal("A recorded a signal for B's content")
 	}
 	if _, err := hubs[a].States(ctx, u, []ContentRef{foreign}); err == nil {

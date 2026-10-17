@@ -1,0 +1,82 @@
+name: engagement-check
+run-name: Engagement ${{ inputs.package }} @ ${{ inputs.ref }} (${{ inputs.clickhouse_image }})
+'on':
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact source commit to validate
+        required: true
+        type: string
+      package:
+        description: Native engagement package
+        required: true
+        type: choice
+        options: [signal, popularity, discovery]
+        default: signal
+      test_filter:
+        description: Go test name expression (default runs every test)
+        type: string
+        default: .
+      clickhouse_image:
+        description: ClickHouse server image (production runs altinity/clickhouse-server:25.3.6.10034.altinitystable)
+        type: string
+        default: clickhouse/clickhouse-server:25.8
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.8-debian-18
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      CONTENTKIT_TEST_CH_CLUSTER: contentkit
+      CONTENTKIT_TEST_CH_ADDR: localhost:9000
+      CONTENTKIT_TEST_CH_USER: contentkit
+      CONTENTKIT_TEST_CH_PASSWORD: contentkit
+      TEST_PACKAGE: ${{ inputs.package }}
+      TEST_FILTER: ${{ inputs.test_filter }}
+      CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Start real ClickHouse and Keeper
+      run: |
+        docker run -d --name clickhouse -p 9000:9000 \
+          -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+          -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
+          "$CLICKHOUSE_IMAGE"
+        docker exec clickhouse clickhouse-client --version || true
+        for i in $(seq 1 60); do
+          if docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'"; then exit 0; fi
+          sleep 2
+        done
+        docker logs clickhouse
+        exit 1
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Run native source and concurrency tests
+      run: |
+        case "$TEST_PACKAGE" in signal|popularity|discovery) ;; *) exit 2 ;; esac
+        git rev-parse HEAD > engagement-check-head.txt
+        set -o pipefail
+        go test "./$TEST_PACKAGE" -count=1 -race -run "$TEST_FILTER" -timeout=20m 2>&1 | tee engagement-check.log
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: engagement-check-${{ inputs.package }}-${{ github.run_id }}
+        path: |
+          engagement-check-head.txt
+          engagement-check.log

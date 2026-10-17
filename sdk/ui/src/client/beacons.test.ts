@@ -68,28 +68,27 @@ it("follows the signal plane as it goes down and comes back, reading the content
   expect([posts(), models()]).toEqual([3, 3]);
 });
 
-it("keeps a view's first observation time across cumulative revisions", async () => {
+it("keeps a list's first observation time across cumulative exposure revisions", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  const records: { occurred_at: string; revision: number; progress: number }[] = [];
-  const client = createContentKitClient({ baseUrl: "https://content.test/view-time", fetch: async (url, init) => {
+  const records: { occurred_at: string; revision: number }[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/exposure-time", fetch: async (url, init) => {
     if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
     if (String(url).endsWith("/activity-contexts")) return Response.json({ enabled: false, contexts: [] });
-    records.push(...JSON.parse(String(init?.body)).signals);
+    records.push(...JSON.parse(String(init?.body)).exposures);
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client, { delay: 60_000 });
-  const view = b.view("gallery", "version");
   vi.setSystemTime(new Date("2026-10-15T23:59:00Z"));
-  view.update({ progress: 1 });
+  b.exposure({ render_id: "list", stage: "visible", revision: 1, shown: [{ content_id: "gallery", position: 1 }] });
   await b.flush();
   vi.setSystemTime(new Date("2026-10-16T00:05:00Z"));
-  view.update({ progress: 5 });
+  b.exposure({ render_id: "list", stage: "visible", revision: 2, shown: [{ content_id: "gallery", position: 1 }, { content_id: "other", position: 2 }] });
   await b.flush();
-  expect(records.map((r) => r.occurred_at)).toEqual(["2026-10-15T23:59:00.000Z", "2026-10-15T23:59:00.000Z"]);
-  expect(records.map((r) => [r.revision, r.progress])).toEqual([[1, 1], [2, 5]]);
+  expect(records.map((record) => record.occurred_at)).toEqual(["2026-10-15T23:59:00.000Z", "2026-10-15T23:59:00.000Z"]);
+  expect(records.map((record) => record.revision)).toEqual([1, 2]);
 });
 
-it.each([["alice", "bob"], ["alice", null], [null, "bob"]] as const)("drops buffered and old-session events across identity transition %s to %s", async (from, to) => {
+it.each([["alice", "bob"], ["alice", null], [null, "bob"]] as const)("drops buffered click and exposure events across identity transition %s to %s", async (from, to) => {
   const sent: unknown[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/identity", fetch: async (url, init) => {
     if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
@@ -99,17 +98,14 @@ it.each([["alice", "bob"], ["alice", null], [null, "bob"]] as const)("drops buff
   } });
   client.preferences.configure(from);
   const b = new Beacons(client, { delay: 60_000, session: () => "guest" });
-  const old = b.view("old-content");
-  old.update({ progress: 1 });
+  b.click("old-content");
   b.exposure({ render_id: "old-render", stage: "rendered", shown: [{ content_id: "old-content", position: 1 }] });
   client.preferences.configure(to);
-  old.update({ progress: 2 });
-  b.view("new-content").update({ progress: 3 });
+  b.click("new-content", { position: 3 });
   await b.flush();
   expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ signals: [{ content_id: "new-content", progress: 3 }] });
+  expect(sent[0]).toMatchObject({ signals: [{ content_id: "new-content", type: "click", position: 3 }] });
   client.preferences.configure(from);
-  old.update({ progress: 4 });
   await b.flush();
   expect(sent).toHaveLength(1);
 });
@@ -133,29 +129,29 @@ it("discards an old identity's flush when the model lookup completes late", asyn
   expect(posts).toEqual([]);
 });
 
-it("acquires a view receipt before flush and preserves its server time and token", async () => {
-  const contexts: unknown[] = [], signals: { occurred_at: string; activity_token: string; revision: number }[] = [];
+it("acquires exposure receipts before flush and preserves their server time across revisions", async () => {
+  const contexts: unknown[] = [], exposures: { occurred_at: string; revision: number; shown: { activity_token: string }[] }[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/receipt", fetch: async (url, init) => {
     if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
     const body = JSON.parse(String(init?.body));
     if (String(url).endsWith("/activity-contexts")) {
       contexts.push(body);
-      return Response.json({ enabled: true, contexts: body.targets.map((t: object) => ({ ...t, token: "signed-receipt", occurred_at: "2026-10-15T12:00:00Z" })) });
+      return Response.json({ enabled: true, contexts: body.targets.map((target: object) => ({ ...target, token: "signed-receipt", occurred_at: "2026-10-15T12:00:00Z" })) });
     }
-    signals.push(...body.signals);
+    exposures.push(...body.exposures);
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client, { delay: 60_000 });
-  const view = b.view("content", "version");
   expect(contexts).toEqual([]);
-  view.update({ progress: 2 });
+  const shown = [{ content_id: "content", version_id: "version", position: 1 }];
+  b.exposure({ render_id: "list", stage: "visible", revision: 1, shown });
   await vi.waitFor(() => expect(contexts).toHaveLength(1));
-  expect(signals).toEqual([]);
+  expect(exposures).toEqual([]);
   await b.flush();
-  view.update({ progress: 5 });
+  b.exposure({ render_id: "list", stage: "visible", revision: 2, shown });
   await b.flush();
   expect(contexts).toHaveLength(1);
-  expect(signals.map((s) => [s.activity_token, s.occurred_at, s.revision])).toEqual([
+  expect(exposures.map((exposure) => [exposure.shown[0]?.activity_token, exposure.occurred_at, exposure.revision])).toEqual([
     ["signed-receipt", "2026-10-15T12:00:00Z", 1], ["signed-receipt", "2026-10-15T12:00:00Z", 2],
   ]);
 });
@@ -169,7 +165,7 @@ it.each(["failed", "invalid"] as const)("does not downgrade a %s receipt to an u
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client);
-  b.view("content").update({ progress: 2 });
+  b.click("content");
   await b.flush();
   expect(posted).toBe(false);
 });
@@ -197,7 +193,7 @@ it("splits receipt batches at100 and keeps per-placement tokens in cumulative ex
   expect(sent[1]?.shown.every((x) => x.activity_token.startsWith("signed-content-"))).toBe(true);
 });
 
-it("acquires an idle view's receipt on its first update after midnight", async () => {
+it("acquires an idle batcher's receipt on its first click after midnight", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const at: string[] = [], sent: { occurred_at: string }[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/idle-view", fetch: async (url, init) => {
@@ -212,10 +208,9 @@ it("acquires an idle view's receipt on its first update after midnight", async (
   } });
   const b = new Beacons(client, { delay: 60_000 });
   vi.setSystemTime(new Date("2026-10-15T23:55:00Z"));
-  const view = b.view("content");
   expect(at).toEqual([]);
   vi.setSystemTime(new Date("2026-10-16T00:05:00Z"));
-  view.update({ progress: 1 });
+  b.click("content");
   await b.flush();
   expect(at).toEqual(["2026-10-16T00:05:00.000Z"]);
   expect(sent[0]?.occurred_at).toBe(at[0]);
@@ -232,7 +227,7 @@ it("discards an old account's late activity receipt", async () => {
   } });
   client.preferences.configure("alice");
   const b = new Beacons(client);
-  b.view("content").update({ progress: 1 });
+  b.click("content");
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   const pending = b.flush();
   client.preferences.configure("bob");
@@ -251,7 +246,7 @@ it("binds the request or explicitly displayed language without sending language 
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client);
-  b.view("first").update({ progress: 1 });
+  b.click("first");
   b.click("second", { language: "de" });
   b.exposure({ render_id: "r", stage: "visible", language: "es", shown: [{ content_id: "third", position: 1 }] });
   await b.flush();
@@ -268,15 +263,15 @@ it("accepts explicit no-signer mode without requiring a receipt array", async ()
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client);
-  b.view("content").update({ progress: 1 });
+  b.click("content");
   await b.flush();
   expect(sent).toBe(true);
 });
 
-it("retries a failed receipt on a later observation of the same view", async () => {
+it("retries a failed receipt on a later click without reusing the failed event", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   let attempts = 0;
-  const sent: { progress: number; activity_token: string }[] = [];
+  const sent: { position: number; activity_token: string }[] = [];
   const client = createContentKitClient({ baseUrl: "https://content.test/recover-receipt", fetch: async (url, init) => {
     if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
     const body = JSON.parse(String(init?.body));
@@ -288,15 +283,14 @@ it("retries a failed receipt on a later observation of the same view", async () 
     return new Response(null, { status: 204 });
   } });
   const b = new Beacons(client, { recheck: 30_000 });
-  const view = b.view("content");
-  view.update({ progress: 1 });
+  b.click("content");
   await b.flush();
   expect(sent).toEqual([]);
   vi.setSystemTime(Date.now() + 30_000);
-  view.update({ progress: 2 });
+  b.click("content", { position: 2 });
   await b.flush();
   expect(attempts).toBe(2);
-  expect(sent).toMatchObject([{ progress: 2, activity_token: "recovered" }]);
+  expect(sent).toMatchObject([{ position: 2, activity_token: "recovered" }]);
 });
 
 it("retries failed exposure receipts on a later cumulative observation", async () => {
@@ -323,6 +317,24 @@ it("retries failed exposure receipts on a later cumulative observation", async (
   await b.flush();
   expect(attempts).toBe(2);
   expect(sent[0]?.shown).toHaveLength(2);
+});
+
+it("requests activity contexts with only the target fields the server accepts", async () => {
+  const targets: object[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/strict-targets", fetch: async (url, init) => {
+    if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (String(url).endsWith("/activity-contexts")) {
+      targets.push(...body.targets);
+      return Response.json({ enabled: false, contexts: [] });
+    }
+    return new Response(null, { status: 204 });
+  } });
+  const b = new Beacons(client, { delay: 60_000 });
+  b.exposure({ render_id: "r", stage: "visible", shown: [{ content_id: "c1", version_id: "v1", position: 1 }, { content_id: "c2", position: 2 }] });
+  b.click("c3", { surface: "home", position: 3, version_id: "v3" });
+  await b.flush();
+  expect(targets).toEqual([{ content_id: "c1", version_id: "v1" }, { content_id: "c2" }, { content_id: "c3", version_id: "v3" }]);
 });
 
 it("serializes keepalive bodies across clients within the shared byte budget", async () => {

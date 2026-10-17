@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -89,14 +88,11 @@ type Chip struct {
 	Position *int   `json:"position,omitempty"`
 }
 
-// Counts are a content item's interaction counts; Views counts its distinct
-// viewers of all time plus its imported legacy view count. A count its
-// kind's locked view hides from the reader is absent.
+// Counts are explicit reactions and favorites; reading quality is not a public open counter.
 type Counts struct {
-	Likes     *int   `json:"likes,omitempty"`
-	Dislikes  *int   `json:"dislikes,omitempty"`
-	Favorites *int   `json:"favorites,omitempty"`
-	Views     *int64 `json:"views,omitempty"`
+	Likes     *int `json:"likes,omitempty"`
+	Dislikes  *int `json:"dislikes,omitempty"`
+	Favorites *int `json:"favorites,omitempty"`
 }
 
 // CardAccess is the reader's access decision on the card's version.
@@ -121,7 +117,8 @@ type CardAccess struct {
 
 // ContentPage is one page of cards.
 type ContentPage struct {
-	Contents []Card `json:"contents"`
+	Contents []Card          `json:"contents"`
+	Summary  *ListingSummary `json:"summary,omitempty"`
 	// NextCursor pages on; empty on the last page.
 	NextCursor string                  `json:"next_cursor,omitempty"`
 	Ranking    *popularity.RankingInfo `json:"ranking,omitempty"`
@@ -135,14 +132,6 @@ type cardOptions struct {
 	lean bool
 }
 
-// popularityFacet is content_facets.popularity: policy scores and window
-// ratings by period, and all-time viewers.
-type popularityFacet struct {
-	Score  map[string]float64 `json:"score,omitempty"`
-	Rating map[string]float64 `json:"rating,omitempty"`
-	Views  int64              `json:"views,omitempty"`
-}
-
 type cardRow struct {
 	Card
 	contentRule access.Rule
@@ -154,7 +143,6 @@ type cardRow struct {
 	slug        string
 	counts      struct {
 		likes, dislikes, favorites int
-		views                      int64
 	}
 }
 
@@ -175,9 +163,6 @@ func (s *Service) lock(rows []cardRow) {
 		}
 		if s.shows(c, kinds.ShowFavorites) {
 			c.Counts.Favorites = &n.favorites
-		}
-		if s.shows(c, kinds.ShowViews) {
-			c.Counts.Views = &n.views
 		}
 		if !s.shows(c, kinds.ShowAttributes) {
 			c.Attributes = map[string]any{}
@@ -211,7 +196,7 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 		args[k] = v
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.popularity, f.view_baseline, f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio, f.listing,
+ f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio, f.listing,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
@@ -231,23 +216,14 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	}
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
 		var c cardRow
-		var pop []byte
 		var code string
-		var baseline int64
 		var isDefault bool
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
-			&c.counts.dislikes, &c.counts.favorites, &pop, &baseline, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
+			&c.counts.dislikes, &c.counts.favorites, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&c.Version.HasAudio, &c.listing, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator, &isDefault)
 		if err != nil {
 			return c, err
 		}
-		var p popularityFacet
-		if len(pop) > 0 {
-			if err := json.Unmarshal(pop, &p); err != nil {
-				return c, err
-			}
-		}
-		c.counts.views = p.Views + baseline
 		c.Code = code
 		if route := s.o.Kinds.Kinds[c.Kind].Route; route != "" && code != "" {
 			c.Path = contenturl.Path(s.o.Kinds.Languages, q.display, route, contenturl.Code(code), c.slug)
@@ -587,9 +563,9 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 		}
 		v := &out[i]
 		v.Seen, v.Completed, v.Progress, v.ProgressMax, v.Resume = st.Seen, st.Completed, st.MaxProgress, st.ProgressMax, st.Resume
-		if !st.LastViewAt.IsZero() {
-			t := st.LastViewAt
-			v.LastViewAt = &t
+		if !st.LastReadAt.IsZero() {
+			t := st.LastReadAt
+			v.LastReadAt = &t
 		}
 	}
 	return out, nil

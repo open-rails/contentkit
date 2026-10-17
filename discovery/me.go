@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
@@ -34,6 +35,8 @@ type MineOptions struct {
 	Cursor     string
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
+	// Summary adds counts scoped to this reader's matching contents, before pagination.
+	Summary bool
 }
 
 // Interaction is one content item or group the reader favorited or reacted
@@ -52,7 +55,8 @@ type Interaction struct {
 type InteractionPage struct {
 	Items []Interaction `json:"items"`
 	// NextCursor pages on; empty on the last page.
-	NextCursor string `json:"next_cursor,omitempty"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+	Summary    *ListingSummary `json:"summary,omitempty"`
 }
 
 // Favorites pages what the signed-in reader favorited, most recent first: the
@@ -79,6 +83,7 @@ func (s *Service) Reactions(ctx context.Context, o MineOptions) (InteractionPage
 }
 
 func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at string) (InteractionPage, error) {
+	ctx = access.WithMemo(ctx)
 	out := InteractionPage{Items: []Interaction{}}
 	if !o.Actor.Member() {
 		return out, fmt.Errorf("%w: favorites and reactions belong to a signed-in reader", ErrInvalid)
@@ -122,6 +127,22 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 			args[k] = v
 		}
 		exists = fmt.Sprintf(`EXISTS (SELECT 1 FROM %s f WHERE f.content_id = x.content_id AND %s)`, s.t.facets, q.predicate())
+		if o.Summary && o.Cursor == "" {
+			sort, sortErr := s.parseSort(ctx, SortNewest, Filter{})
+			if sortErr != nil {
+				return out, sortErr
+			}
+			selection := func(selected *sel) *sel {
+				return selected.with(fmt.Sprintf(`EXISTS (SELECT 1 FROM %s x WHERE x.tenant_id = f.tenant_id
+ AND x.user_id = @summary_user AND x.content_id = f.content_id AND x.content_kind = f.kind
+ AND x.content_kind = ANY(@summary_kinds::text[]) AND %s)`, table, value),
+					pgx.NamedArgs{"summary_user": o.Actor.AccountID(), "summary_kinds": kinds})
+			}
+			out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{selection: selection})
+			if err != nil {
+				return out, err
+			}
+		}
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT id, value, at FROM (
  SELECT DISTINCT ON (x.content_id) x.content_id AS id, x.value, %[1]s AS at FROM %[2]s x
@@ -214,6 +235,7 @@ var mineParams = []httpapi.Param{
 	cardGroups,
 	httpapi.Text("cursor", "the previous page's next_cursor"),
 	httpapi.Int("limit", "page size: 24 by default, at most 100"),
+	httpapi.Bool("summary", "matching content counts for this caller, on the first page only"),
 }
 
 var mineRoutes = []httpapi.Route[handler]{
@@ -230,9 +252,13 @@ var mineRoutes = []httpapi.Route[handler]{
 
 func (h handler) mineOptions(r *http.Request) (MineOptions, error) {
 	limit, err := intParam(r, "limit")
+	summary, flagErr := optionalFlag(r, "summary")
+	if err == nil {
+		err = flagErr
+	}
 	q := r.URL.Query()
 	return MineOptions{Reader: readerOf(r), Target: q.Get("target"), Kind: q.Get("kind"), Value: q.Get("value"),
-		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit}, err
+		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary}, err
 }
 
 func (h handler) favorites(w http.ResponseWriter, r *http.Request) {

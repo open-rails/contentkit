@@ -29,12 +29,11 @@ func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	f.group("series", "saga")
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Alpha", "ja": "アルファ"}, age: 72 * time.Hour, favorites: 5, attrs: map[string]any{"format": "manga"},
-			popularity: `{"score":{"7d":1.5,"30d":3},"views":40}`,
-			versions:   []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, groups: []string{"romance", "alice", "saga"}},
+			versions: []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, groups: []string{"romance", "alice", "saga"}},
 		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 48 * time.Hour, rule: `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`,
-			favorites: 9, popularity: `{"score":{"7d":9}}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
+			favorites: 9, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 24 * time.Hour, restrictions: []string{"restricted"}, favorites: 1,
-			attrs: map[string]any{"format": "doujin"}, popularity: `{"score":{"7d":4}}`, viewBaseline: 100, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
+			attrs: map[string]any{"format": "doujin"}, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
 		item{n: 4, titles: map[string]string{"en": "Delta"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
 		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
@@ -55,18 +54,15 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/en/g/"+f.codes[1]+"/alpha" {
 		t.Fatalf("card: %+v", alpha)
 	}
-	if !alpha.Access.Allowed || *alpha.Counts.Favorites != 5 || *alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
+	if !alpha.Access.Allowed || *alpha.Counts.Favorites != 5 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
 		t.Fatalf("card access and counts: %+v", alpha)
-	}
-	if views := page.Contents[0].Counts.Views; *views != 100 {
-		t.Fatalf("an imported view baseline counts as views: %d", *views)
 	}
 	v, err := f.cat.Viewer(f.ctx, catalog.ViewerOptions{Actor: access.Actor{Anonymous: true}, Host: host})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if items, err := f.cat.Contents(f.ctx, v, []string{f.cid(1), f.cid(3)}); err != nil || *items[0].Views != 40 || *items[1].Views != 100 {
-		t.Fatalf("detail views %v: viewers %+v, baseline %+v", err, items[0], items[1])
+	if items, err := f.cat.Contents(f.ctx, v, []string{f.cid(1), f.cid(3)}); err != nil || len(items) != 2 || items[0].ID != f.cid(1) || items[1].ID != f.cid(3) {
+		t.Fatalf("detail visibility/order %v: %+v", err, items)
 	}
 	if alpha.Attributes["format"] != "manga" || alpha.PublishedAt == nil || alpha.Viewer != nil {
 		t.Fatalf("card attributes and anonymous state: %+v", alpha)
@@ -127,7 +123,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		for _, bad := range []string{
 			q("/contents", "kind", "comic"), q("/contents", "kind", "gallery", "traits", "dubbed"), q("/contents", "attribute", "format:manga"),
 			q("/contents", "kind", "gallery", "attribute", "format:novel"), q("/contents", "released_on", "yesterday"), q("/contents", "sort", "loudest"),
-			q("/contents", "sort", "newest:7d"), q("/contents", "sort", "most_viewed:7d"), q("/contents", "sort", "popular:2d"), q("/contents", "sort", "position"), q("/contents", "mode", "peek"),
+			q("/contents", "sort", "newest:7d"), q("/contents", "sort", "most_viewed"), q("/contents", "sort", "most_viewed:7d"), q("/contents", "sort", "popular:2d"), q("/contents", "sort", "position"), q("/contents", "mode", "peek"),
 			q("/contents", "sort", "position", "groups", f.ids["romance"]),
 			q("/contents", "language", "fr"), q("/contents", "view_status", "unseen"), q("/contents", "cursor", "nope"),
 		} {
@@ -148,13 +144,21 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 	})
 	t.Run("sorts", func(t *testing.T) {
+		// Current standing: Charlie's two votes are this week; Alpha has one
+		// this week and two earlier this month; the hidden Bravo has one.
+		recent, earlier := f.now.Add(-time.Hour), f.now.AddDate(0, 0, -20)
+		f.react(3, "r1", 1, recent)
+		f.react(3, "r2", 1, recent)
+		f.react(1, "r1", 1, recent)
+		f.favorite(1, "e1", earlier)
+		f.react(1, "e2", 1, earlier)
+		f.favorite(2, "r1", recent)
 		cases := map[string][]string{
 			"oldest":         {f.cid(1), f.cid(3)},
 			"title":          {f.cid(1), f.cid(3)},
 			"most_favorited": {f.cid(1), f.cid(3)},
 			"popular:7d":     {f.cid(3), f.cid(1)},
-			"popular":        {f.cid(1)}, // a view baseline is not activity in the default window
-			"most_viewed":    {f.cid(3), f.cid(1)},
+			"popular":        {f.cid(1), f.cid(3)}, // the default 30-day window
 			"top_rated":      {f.cid(3), f.cid(1)},
 		}
 		for sort, want := range cases {
@@ -167,7 +171,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 	})
 	t.Run("cursor pages every sort exactly once", func(t *testing.T) {
-		for _, sort := range []string{"newest", "oldest", "title", "popular:7d", "most_favorited", "most_viewed", "random", "top_rated:30d"} {
+		for _, sort := range []string{"newest", "oldest", "title", "popular:7d", "most_favorited", "random", "top_rated:30d"} {
 			var seen []string
 			path := q("/contents", "sort", sort, "limit", "1")
 			for range 5 {
@@ -181,7 +185,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			slices.Sort(seen)
 			want := []string{f.cid(1), f.cid(3), f.cid(7)}
 			if sort == "popular:7d" {
-				want = want[:2] // The video has no qualifying window activity.
+				want = want[:2] // The video has no standing in the window.
 			}
 			if !reflect.DeepEqual(seen, want) {
 				t.Errorf("sort %s paged %v, want %v", sort, seen, want)
@@ -203,8 +207,8 @@ func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
 		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
 			t.Fatalf("%s: status %d", tc.language, status)
 		}
-		if len(result.Kinds["gallery"]) != 2 || result.Kinds["gallery"][0].Group.Name != tc.want {
-			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Kinds["gallery"])
+		if len(result.Filters) != 2 || result.Filters[0].Group.Name != tc.want {
+			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Filters)
 		}
 	}
 }
@@ -216,8 +220,8 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
-	if len(filters.Kinds["gallery"]) != 2 || filters.Kinds["gallery"][0].Group.Name != "Big breasts" || filters.Kinds["gallery"][0].Visible || filters.Kinds["gallery"][0].Overridden ||
-		filters.Kinds["gallery"][1].Group.Name != "Yaoi" || !filters.Kinds["gallery"][1].Visible || filters.IncludeDeleted {
+	if len(filters.Filters) != 2 || filters.Filters[0].Group.Name != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
+		filters.Filters[1].Group.Name != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {
@@ -241,20 +245,21 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 		}
 	}
 	for _, bad := range []ContentFiltersUpdate{
-		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["romance"], Visible: false}}}},
-		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["yaoi"]}, {EntityID: f.ids["yaoi"], Visible: true}}}},
+		{Filters: filterChoices(FilterSetting{EntityID: f.ids["romance"], Visible: false})},
+		{Filters: filterChoices(FilterSetting{EntityID: f.ids["yaoi"], Visible: false}, FilterSetting{EntityID: f.ids["yaoi"], Visible: true})},
 	} {
-		if status, code := f.call(http.MethodPut, host, "plain", "/me/content-filters", bad, nil); status != http.StatusBadRequest {
-			t.Fatalf("PUT %+v: %d %s", bad, status, code)
+		if status, code := f.call(http.MethodPatch, host, "plain", "/me/content-filters", bad, nil); status != http.StatusBadRequest {
+			t.Fatalf("PATCH %+v: %d %s", bad, status, code)
 		}
 	}
-	show := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: false}}}}
+
+	show := ContentFiltersUpdate{Filters: filterChoices(FilterSetting{EntityID: f.ids["big-breasts"], Visible: true}, FilterSetting{EntityID: f.ids["yaoi"], Visible: false})}
 	for _, user := range []string{"plain", "fan"} {
-		if status, _ := f.call(http.MethodPut, host, user, "/me/content-filters", show, &filters); status != http.StatusOK {
+		if status, _ := f.call(http.MethodPatch, host, user, "/me/content-filters", show, &filters); status != http.StatusOK {
 			t.Fatalf("PUT: %d", status)
 		}
 	}
-	if !filters.Kinds["gallery"][0].Visible || !filters.Kinds["gallery"][0].Overridden || filters.Kinds["gallery"][1].Visible || !filters.Kinds["gallery"][1].Overridden {
+	if !filters.Filters[0].Visible || !filters.Filters[0].Overridden || filters.Filters[1].Visible || !filters.Filters[1].Overridden {
 		t.Fatalf("after PUT: %+v", filters)
 	}
 	got, page := f.list(host, "plain", q("/contents", "kind", "gallery"))
@@ -362,6 +367,11 @@ func TestSearchAndTypeahead(t *testing.T) {
 	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
+	// Own title substrings also complete directly, while ordinary language,
+	// domain, hidden/unlisted and access eligibility remain enforced.
+	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "alp", "kind", "gallery"), nil, &ta); status != http.StatusOK || len(ta.Contents) != 1 || ta.Contents[0].ID != f.cid(1) {
+		t.Fatalf("title prefix typeahead: %+v", ta)
+	}
 	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "entity_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
 		t.Fatalf("tag typeahead: %+v", ta)
 	}
@@ -379,7 +389,7 @@ func TestSignalPlaneReadsNeedOne(t *testing.T) {
 			t.Errorf("%s %s: %d %s", c.method, c.path, status, code)
 		}
 	}
-	body := Signals{Session: "s1", Signals: []SignalInput{{ContentID: f.cid(1), Type: TypeView, EventID: "e1", OccurredAt: time.Now()}}}
+	body := Signals{Session: "s1", Signals: []SignalInput{{ContentID: f.cid(1), Type: TypeClick, EventID: "e1", OccurredAt: time.Now()}}}
 	if status, code := f.call(http.MethodPost, "main.test", "", "/signals", body, nil); status != http.StatusNotImplemented || code != "not_configured" {
 		t.Errorf("signals: %d %s", status, code)
 	}
@@ -567,34 +577,11 @@ func TestStats(t *testing.T) {
 	}
 	comment(4, "ann", time.Hour, 0, "")
 	const host = "main.test"
-	top := func(path string) []RankedContent {
-		t.Helper()
-		var out TopContents
-		if status, code := f.call(http.MethodGet, host, "staff", path, nil, &out); status != http.StatusOK {
-			t.Fatalf("GET %s: %d %s", path, status, code)
-		}
-		return out.Contents
-	}
-	got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "all"))
-	if want := []RankedContent{{ID: f.cid(2), Title: "Premium", Path: "/en/g/" + f.codes[2] + "/premium", Value: 3}, {ID: f.cid(1), Title: "Free",
-		Path: "/en/g/" + f.codes[1] + "/free", Value: 2}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("most commented = %+v, want %+v (unlisted, deleted and held left out)", got, want)
-	}
-	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "30d", "access", "public")); len(got) != 1 || got[0].ID != f.cid(1) || got[0].Value != 1 {
-		t.Errorf("free, last 30 days = %+v", got)
-	}
-	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "tiers", "premium", "limit", "1", "language", "ja")); len(got) != 1 ||
-		got[0].ID != f.cid(2) || got[0].Path != "/ja/g/"+f.codes[2]+"/premium" {
-		t.Errorf("premium = %+v", got)
-	}
 	for path, want := range map[string]int{
-		q("/stats/top", "kind", "gallery", "metric", "comments"):                 http.StatusForbidden,
-		q("/stats/top", "kind", "comic", "metric", "comments"):                   http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery", "metric", "likes"):                    http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery", "metric", "comments", "period", "2d"): http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery"):                                       http.StatusNotImplemented,
-		q("/stats/activity", "kind", "gallery"):                                  http.StatusNotImplemented,
-		q("/stats/activity", "kind", "gallery", "days", "91"):                    http.StatusBadRequest,
+		q("/stats/activity", "kind", "gallery", "days", "7"):  http.StatusForbidden,
+		q("/stats/activity", "kind", "comic"):                 http.StatusBadRequest,
+		q("/stats/activity", "kind", "gallery"):               http.StatusNotImplemented,
+		q("/stats/activity", "kind", "gallery", "days", "91"): http.StatusBadRequest,
 	} {
 		user := "staff"
 		if want == http.StatusForbidden {

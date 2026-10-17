@@ -4282,6 +4282,14 @@
             }
           },
           {
+            "name": "code",
+            "in": "query",
+            "description": "only the item with this content code (any spelling), in every state unless state narrows it",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "language",
             "in": "query",
             "description": "the language to show text in; the site's first language, then any, when it has none",
@@ -4385,6 +4393,14 @@
             "name": "q",
             "in": "query",
             "description": "only items whose title, description or body contains this text, ignoring case",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "only the item with this content code (any spelling), in every state unless state narrows it",
             "schema": {
               "type": "string"
             }
@@ -4520,6 +4536,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -4685,7 +4714,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, most_viewed (all time), position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -4701,6 +4730,14 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page only",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -9181,6 +9218,49 @@
         ]
       }
     },
+    "/v1/engagement": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EngagementBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/activity-contexts": {
       "post": {
         "tags": [
@@ -9235,7 +9315,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Every visible release in the last calendar days, grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+        "summary": "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
         "parameters": [
           {
             "name": "kind",
@@ -9243,6 +9323,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -9405,9 +9498,17 @@
           {
             "name": "days",
             "in": "query",
-            "description": "calendar days including today: 10 by default, from 1 through 31",
+            "description": "calendar days including end_date: 10 by default, from 1 through 31",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "description": "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -9481,6 +9582,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -9665,6 +9779,14 @@
             }
           },
           {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page only",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "personalize",
             "in": "query",
             "description": "false ranks a signed-in reader's results as anyone's",
@@ -9745,7 +9867,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Suggests contents and groups while the reader types, tolerating typos and partial words.",
+        "summary": "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
         "parameters": [
           {
             "name": "q",
@@ -9874,6 +9996,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "groups",
             "in": "query",
             "description": "group ids every listed version is in; a position sort orders by the first",
@@ -10052,6 +10187,14 @@
             "description": "12 by default, at most 50",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "lower-bound counts within considered candidates",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -10115,6 +10258,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "groups",
             "in": "query",
             "description": "group ids every listed version is in; a position sort orders by the first",
@@ -10294,6 +10450,14 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "lower-bound counts within considered candidates",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10349,6 +10513,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -10576,7 +10753,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.",
+        "summary": "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{entity_id,visible}]; one choice applies across applies_to kinds. Account settings take precedence when signed in.",
         "parameters": [
           {
             "name": "language",
@@ -10629,11 +10806,11 @@
       }
     },
     "/v1/me/content-filters": {
-      "put": {
+      "patch": {
         "tags": [
           "discovery"
         ],
-        "summary": "Replaces the reader's content filter settings and whether lists include deleted content they hold.",
+        "summary": "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
         "parameters": [
           {
             "name": "language",
@@ -10763,6 +10940,14 @@
             "description": "seen, in_progress or completed; any by default",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -10904,7 +11089,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version.",
+        "summary": "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
         "requestBody": {
           "required": true,
           "content": {
@@ -11038,6 +11223,14 @@
             }
           },
           {
+            "name": "summary",
+            "in": "query",
+            "description": "matching content counts for this caller, on the first page only",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "language",
             "in": "query",
             "description": "only content with a live version in this language",
@@ -11150,6 +11343,14 @@
             "description": "page size: 24 by default, at most 100",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "matching content counts for this caller, on the first page only",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -11441,7 +11642,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.",
+        "summary": "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.",
         "parameters": [
           {
             "name": "kind",
@@ -11454,7 +11655,7 @@
           {
             "name": "days",
             "in": "query",
-            "description": "the last days, today included: 7 by default, at most 90",
+            "description": "the last days, today included: 10 by default, at most 90",
             "schema": {
               "type": "integer"
             }
@@ -11467,113 +11668,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Activity"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "discovery",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:content:view-restricted",
-        "x-contentkit-errors": [
-          "not_configured"
-        ],
-        "x-contentkit-error-sets": [
-          "module:discovery",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/stats/top": {
-      "get": {
-        "tags": [
-          "stats"
-        ],
-        "summary": "A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "the content kind; required",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "metric",
-            "in": "query",
-            "description": "views (the default) or comments",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "period",
-            "in": "query",
-            "description": "7d, 30d (the default), 90d, 365d or all",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "access",
-            "in": "query",
-            "description": "public, tier, group, ppv or group_ppv, as lists filter",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "tiers",
-            "in": "query",
-            "description": "configured tiers, as lists filter",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "description": "the language of titles and paths; the site's first by default",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "10 by default, at most 100",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TopContents"
                 }
               }
             }
@@ -11632,6 +11726,125 @@
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth"
+        ]
+      }
+    },
+    "/v1/manage/search-suggestions": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "the partial name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_kinds",
+            "in": "query",
+            "description": "configured content kinds; all only when include_contents is explicitly true",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "entity_kinds",
+            "in": "query",
+            "description": "configured entity kinds; all only when include_entities is explicitly true",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "include_contents",
+            "in": "query",
+            "description": "explicitly request authorized content targets",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include_entities",
+            "in": "query",
+            "description": "explicitly request entity targets; requires entity-management authority",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "configured name language; normal text fallback applies",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "per section: 8 by default, from 1 through 20",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Typeahead"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "unauthorized",
+          "forbidden",
+          "unavailable"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
         ]
       }
     },
@@ -11995,21 +12208,29 @@
           "date": {
             "type": "string"
           },
-          "views": {
+          "readers": {
             "type": "integer"
           },
-          "viewers": {
+          "anon": {
             "type": "integer"
           },
-          "users": {
+          "free": {
+            "type": "integer"
+          },
+          "premium": {
+            "type": "integer"
+          },
+          "active_ms": {
             "type": "integer"
           }
         },
         "required": [
           "date",
-          "views",
-          "viewers",
-          "users"
+          "readers",
+          "anon",
+          "free",
+          "premium",
+          "active_ms"
         ]
       },
       "ActivityTarget": {
@@ -12511,6 +12732,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AnswerRecord"
+            }
+          },
+          "legacy_reading": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegacyReadingRecord"
             }
           },
           "signals": {
@@ -13181,9 +13408,6 @@
               "$ref": "#/components/schemas/Version"
             }
           },
-          "views": {
-            "type": "integer"
-          },
           "viewer": {
             "$ref": "#/components/schemas/ViewerState"
           },
@@ -13274,13 +13498,16 @@
       "ContentFilters": {
         "type": "object",
         "properties": {
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/ContentFilterState"
-              }
+          "applies_to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentFilterState"
             }
           },
           "include_deleted": {
@@ -13288,7 +13515,8 @@
           }
         },
         "required": [
-          "kinds",
+          "applies_to",
+          "filters",
           "include_deleted"
         ]
       },
@@ -13298,19 +13526,10 @@
           "account_id": {
             "type": "string"
           },
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/GuestFilterSetting"
-              }
-            }
-          },
-          "legacy_filters": {
+          "filters": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/FilterSetting"
+              "$ref": "#/components/schemas/GuestFilterSetting"
             }
           },
           "include_deleted": {
@@ -13321,13 +13540,10 @@
       "ContentFiltersUpdate": {
         "type": "object",
         "properties": {
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/FilterSetting"
-              }
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestFilterSetting"
             }
           },
           "include_deleted": {
@@ -13476,6 +13692,9 @@
               "$ref": "#/components/schemas/Card"
             }
           },
+          "summary": {
+            "$ref": "#/components/schemas/ListingSummary"
+          },
           "next_cursor": {
             "type": "string"
           },
@@ -13571,9 +13790,6 @@
           },
           "comments": {
             "type": "string"
-          },
-          "view_baseline": {
-            "type": "integer"
           },
           "access": {
             "$ref": "#/components/schemas/Rule"
@@ -13733,8 +13949,16 @@
           },
           "favorites": {
             "type": "integer"
+          }
+        }
+      },
+      "CoverageRange": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer"
           },
-          "views": {
+          "to": {
             "type": "integer"
           }
         }
@@ -13988,6 +14212,61 @@
           "percent",
           "at"
         ]
+      },
+      "EngagementBatch": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngagementSnapshot"
+            }
+          }
+        }
+      },
+      "EngagementSnapshot": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "visit_id": {
+            "type": "string"
+          },
+          "segment_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "activity_token": {
+            "type": "string"
+          },
+          "active_ms": {
+            "type": "integer"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageEngagement"
+            }
+          },
+          "watched": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchedRange"
+            }
+          }
+        }
       },
       "EntityReference": {
         "type": "object",
@@ -14497,17 +14776,6 @@
           "path",
           "type"
         ]
-      },
-      "FilterSetting": {
-        "type": "object",
-        "properties": {
-          "entity_id": {
-            "type": "string"
-          },
-          "visible": {
-            "type": "boolean"
-          }
-        }
       },
       "ForegroundCue": {
         "type": "object",
@@ -15426,6 +15694,9 @@
           },
           "next_cursor": {
             "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ListingSummary"
           }
         },
         "required": [
@@ -15528,6 +15799,9 @@
           "route": {
             "type": "string"
           },
+          "path_entity": {
+            "type": "string"
+          },
           "presentation": {
             "type": "string"
           },
@@ -15586,6 +15860,43 @@
           "tiers"
         ]
       },
+      "LegacyReadingRecord": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetRef"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_key": {
+            "type": "string"
+          },
+          "first_read_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_read_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "progress": {
+            "type": "integer"
+          },
+          "progress_max": {
+            "type": "integer"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        }
+      },
       "LibraryItem": {
         "type": "object",
         "properties": {
@@ -15642,6 +15953,31 @@
         "required": [
           "items",
           "complete"
+        ]
+      },
+      "ListingSummary": {
+        "type": "object",
+        "properties": {
+          "filtered_count": {
+            "type": "integer"
+          },
+          "filtered_entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFilteredEntity"
+            }
+          },
+          "locked_count": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filtered_count",
+          "filtered_entities",
+          "locked_count"
         ]
       },
       "Locked": {
@@ -16412,6 +16748,23 @@
           "reason",
           "confidence"
         ]
+      },
+      "PageEngagement": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRange"
+            }
+          },
+          "active_ms": {
+            "type": "integer"
+          }
+        }
       },
       "PageReview": {
         "type": "object",
@@ -17362,28 +17715,6 @@
           "items"
         ]
       },
-      "RankedContent": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "value": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "value"
-        ]
-      },
       "RankingInfo": {
         "type": "object",
         "properties": {
@@ -17759,9 +18090,6 @@
       "ReleaseFilteredEntity": {
         "type": "object",
         "properties": {
-          "content_kind": {
-            "type": "string"
-          },
           "entity": {
             "$ref": "#/components/schemas/GroupCard"
           },
@@ -17770,7 +18098,6 @@
           }
         },
         "required": [
-          "content_kind",
           "entity",
           "count"
         ]
@@ -18100,15 +18427,6 @@
             "type": "string",
             "format": "date-time"
           },
-          "duration_s": {
-            "type": "integer"
-          },
-          "progress": {
-            "type": "integer"
-          },
-          "resume": {
-            "type": "string"
-          },
           "render_id": {
             "type": "string"
           },
@@ -18147,15 +18465,6 @@
           "occurred_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "duration_s": {
-            "type": "integer"
-          },
-          "progress": {
-            "type": "integer"
-          },
-          "resume": {
-            "type": "string"
           }
         }
       },
@@ -18340,20 +18649,6 @@
             "type": "string"
           }
         }
-      },
-      "TopContents": {
-        "type": "object",
-        "properties": {
-          "contents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RankedContent"
-            }
-          }
-        },
-        "required": [
-          "contents"
-        ]
       },
       "Total": {
         "type": "object",
@@ -18809,7 +19104,7 @@
           "resume": {
             "type": "string"
           },
-          "last_view_at": {
+          "last_read_at": {
             "type": "string",
             "format": "date-time"
           }
@@ -18840,6 +19135,17 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WatchedRange": {
+        "type": "object",
+        "properties": {
+          "from_ms": {
+            "type": "integer"
+          },
+          "to_ms": {
+            "type": "integer"
           }
         }
       },

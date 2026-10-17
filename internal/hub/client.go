@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -170,6 +171,8 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 // searchGroups retrieves and groups the complete bounded document windows,
 // before either ordinary pagination or personalized ranking.
 func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) ([]group, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	var truncated bool
 	q := normalize.Query(userText)
 	if trace != nil {
@@ -265,6 +268,9 @@ type TypeaheadOptions struct {
 	MinSimilarity float32
 	// Eligibility groups suggestions per content item; see SearchOptions.
 	Eligibility *Eligibility
+	// Source is current management names only for an authorized management
+	// caller. The public route always leaves it at PublishedNames.
+	Source search.NameSource
 }
 
 // TypeaheadHit is one suggested content item and its matched document.
@@ -274,9 +280,12 @@ type TypeaheadHit struct {
 	Score    float32
 }
 
-// Typeahead returns suggestions while a user is typing (typos/substring
-// matching), one per content item, grouped before Limit.
+// Typeahead returns literal title/alias substrings while a user is typing,
+// biased toward exact names and prefixes, one per content item before Limit.
+// Common English fillers are ignored; contextual matching belongs to Search.
 func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	q := strings.TrimSpace(userText)
 	if q == "" || !normalize.HasAnyLetterOrNumber(q) {
 		return []TypeaheadHit{}, nil
@@ -304,7 +313,7 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 
 	var docs []groupedDoc
 	for i, lang := range languages {
-		result, err := search.KeywordSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
+		result, err := search.NameSearchFrom(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility}, opts.Source)
 		if err != nil {
 			return nil, err
 		}

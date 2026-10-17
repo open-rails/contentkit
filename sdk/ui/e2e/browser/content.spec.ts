@@ -140,23 +140,25 @@ test("content page: version picker, paywall checkout with the tier, the player's
   await expect(page.locator("[data-demo=player-menu] li")).toHaveText(["Language: English | Japanese"]);
 });
 
-test("search page: suggestions while typing, results on Enter", async ({ page }) => {
+test("search page: own title substrings while typing, with prefixes first", async ({ page }) => {
   const ck = await staffClient();
   const r = run();
   const word = `qz${r}`;
-  const c = await seedContent(ck, { kind: "comic", titles: { en: `Kiwi ${word}` }, versions: [{ languages: ["en"] }] });
+  const title = `${word} Kiwi`;
+  const c = await seedContent(ck, { kind: "comic", titles: { en: title }, versions: [{ languages: ["en"] }] });
+  const interior = await seedContent(ck, { kind: "comic", titles: { en: `Pear ${word}` }, versions: [{ languages: ["en"] }] });
   // Keyword documents trail writes by the search sync job.
-  await expect.poll(async () => (await ck.discovery.search({ q: word })).contents.map((x) => x.id), { timeout: 90_000, intervals: [1000] }).toEqual([c.id]);
+  await expect.poll(async () => (await ck.discovery.search({ q: word })).contents.map((x) => x.id).sort(), { timeout: 90_000, intervals: [1000] }).toEqual([c.id, interior.id].sort());
 
   await page.goto(demo("content.html", null, { view: "search" }));
   const box = page.locator("[data-ckui=search-box]");
   await box.getByRole("combobox").fill(word);
-  await expect(box.locator("[data-ckui=suggestion]")).toHaveText([new RegExp(`Kiwi ${word}`)], { timeout: 30_000 });
+  await expect(box.locator("[data-ckui=suggestion]")).toHaveText([title, `Pear ${word}`], { timeout: 30_000 });
   await box.getByRole("combobox").press("Enter");
   await expect(page).toHaveURL(new RegExp(`q=${word}`));
-  await expect(page.locator("[data-ckui=content-grid] [data-ckui=card-title]")).toHaveText([`Kiwi ${word}`], { timeout: 30_000 });
+  await expect.poll(async () => (await page.locator("[data-ckui=content-grid] [data-ckui=card-title]").allTextContents()).sort()).toEqual([title, `Pear ${word}`].sort());
 
-  // The empty box offers this tab's recent searches, each removable.
+  // The empty box offers this browser's recent searches, each removable.
   await box.getByRole("combobox").fill("");
   const recent = box.locator("[data-ckui=suggestion][data-type=recent]");
   await expect(recent).toHaveText([word]);

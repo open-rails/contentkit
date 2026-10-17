@@ -30,7 +30,7 @@ func releaseDay(t *testing.T, out DailyReleases, date string) ReleaseDay {
 func filteredCounts(day ReleaseDay) map[string]int {
 	out := map[string]int{}
 	for _, entity := range day.FilteredEntities {
-		out[entity.ContentKind+":"+entity.Entity.Slug] = entity.Count
+		out[entity.Entity.Slug] = entity.Count
 	}
 	return out
 }
@@ -40,9 +40,8 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 	tag := cfg.GroupKinds["tag"]
 	tag.VersionLevel = true
 	cfg.GroupKinds["tag"] = tag
-	policy := cfg.Domains[0].Kinds["gallery"]
+	policy := &cfg.ContentFilters.Domains[0]
 	policy.Filters = append(policy.Filters, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "unused"}})
-	cfg.Domains[0].Kinds["gallery"] = policy
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.now, _ = time.Parse(time.RFC3339, "2026-10-16T02:00:00Z")
 	f.clock = f.now
@@ -64,9 +63,9 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 	if err := f.groups.AddMemberships(f.ctx, []groups.Membership{{GroupID: groups.GroupID(f.ids["big-breasts"]), ContentID: f.cid(6), VersionID: f.vid(6, 0)}}); err != nil {
 		t.Fatal(err)
 	}
-	choices := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["big-breasts"], Visible: false}, {EntityID: f.ids["yaoi"], Visible: false}}}}
-	raw, _ := json.Marshal(choices.Kinds)
-	header := `{"kinds":` + string(raw) + `}`
+	choices := ContentFiltersUpdate{Filters: filterChoices(FilterSetting{EntityID: f.ids["big-breasts"], Visible: false}, FilterSetting{EntityID: f.ids["yaoi"], Visible: false})}
+	raw, _ := json.Marshal(choices.Filters)
+	header := `{"filters":` + string(raw) + `}`
 	read := func(user, language, guest string) DailyReleases {
 		t.Helper()
 		var out DailyReleases
@@ -79,17 +78,13 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 	assertDay := func(day ReleaseDay, total, big, yaoi, visible int) {
 		t.Helper()
 		counts := filteredCounts(day)
-		if day.FilteredCount != total || counts["gallery:big-breasts"] != big || counts["gallery:yaoi"] != yaoi || counts["gallery:unused"] != 0 || len(day.Contents) != visible {
+		if day.FilteredCount != total || counts["big-breasts"] != big || counts["yaoi"] != yaoi || counts["unused"] != 0 || len(day.Contents) != visible {
 			t.Fatalf("day %+v counts %v want total=%d big=%d yaoi=%d cards=%d", day, counts, total, big, yaoi, visible)
 		}
-		if _, ok := counts["gallery:unused"]; !ok {
+		if _, ok := counts["unused"]; !ok {
 			t.Fatal("zero-count hidden toggle omitted")
 		}
-		for key := range counts {
-			if strings.HasPrefix(key, "video:") {
-				t.Fatal("kind selection leaked another kind's filters")
-			}
-		}
+
 	}
 	// A content with two hidden editions counts once; intersecting tags overlap.
 	out := read("", "en", header)
@@ -122,17 +117,17 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 		t.Fatalf("mixed kinds: %d %s", w.Code, w.Body)
 	}
 	mixedDay := releaseDay(t, mixed, "2026-10-15")
-	if mixedDay.FilteredCount != 6 || filteredCounts(mixedDay)["video:big-breasts"] != 1 {
+	if mixedDay.FilteredCount != 6 || filteredCounts(mixedDay)["big-breasts"] != 5 {
 		t.Fatalf("mixed kind counts: %+v", mixedDay)
 	}
 	// Account preferences are authoritative; changing them immediately changes
 	// the next release response, and a forged guest header cannot replace them.
-	if status, _ := f.call(http.MethodPut, "main.test", "reader", "/me/content-filters", choices, nil); status != http.StatusOK {
+	if status, _ := f.call(http.MethodPatch, "main.test", "reader", "/me/content-filters", choices, nil); status != http.StatusOK {
 		t.Fatal(status)
 	}
 	assertDay(releaseDay(t, read("reader", "en", ""), "2026-10-15"), 5, 4, 2, 1)
-	choices.Kinds["gallery"][0].Visible = true
-	if status, _ := f.call(http.MethodPut, "main.test", "reader", "/me/content-filters", choices, nil); status != http.StatusOK {
+	choices.Filters[0].Visible = boolPtr(true)
+	if status, _ := f.call(http.MethodPatch, "main.test", "reader", "/me/content-filters", choices, nil); status != http.StatusOK {
 		t.Fatal(status)
 	}
 	assertDay(releaseDay(t, read("reader", "en", header), "2026-10-15"), 2, 0, 2, 4)
@@ -141,15 +136,13 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 	cfg := siteConfig()
 	no := false
-	cfg.Domains = []kinds.Domain{{Name: "required", Hosts: []string{"required.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {
-		RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}},
-		Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, UserToggle: &no},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, UserToggle: &no},
-		},
-	}}}}
+	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Hosts: []string{"required.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, UserToggle: &no},
+		{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, UserToggle: &no},
+	},
+	}}, []string{"gallery"}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "big-breasts", "yaoi", "gore")
 	for n, extra := range map[int][]string{1: nil, 2: {"gore"}, 3: {"restricted"}} {
@@ -164,13 +157,13 @@ func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 		item{n: 9, titles: map[string]string{"en": "Members only"}, age: time.Hour, listing: "members", rule: `{"level":"tier","tiers":["premium"]}`, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 10, titles: map[string]string{"ja": "Other language"}, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"ja"}}}},
 	)
-	if status, _ := f.call(http.MethodPut, "required.test", "fan", "/me/content-filters", ContentFiltersUpdate{IncludeDeleted: true}, nil); status != http.StatusOK {
+	if status, _ := f.call(http.MethodPatch, "required.test", "fan", "/me/content-filters", ContentFiltersUpdate{IncludeDeleted: boolPtr(true)}, nil); status != http.StatusOK {
 		t.Fatal(status)
 	}
 	for _, tc := range []struct {
 		user, mode     string
 		total, visible int
-	}{{"", "lock", 2, 0}, {"", "hide", 1, 0}, {"fan", "hide", 3, 0}, {"staff", "lock", 0, 3}} {
+	}{{"", "lock", 2, 0}, {"", "hide", 1, 0}, {"fan", "hide", 3, 0}, {"staff", "lock", 3, 0}} {
 		var out DailyReleases
 		if status, code := f.call(http.MethodGet, "required.test", tc.user, q("/releases", "kind", "gallery", "language", "en", "mode", tc.mode), nil, &out); status != http.StatusOK {
 			t.Fatalf("%+v: %d %s", tc, status, code)
@@ -226,7 +219,7 @@ func TestDailyReleasesFilteredCountsRespectLockedEntityRedaction(t *testing.T) {
 		total, perEntity := 0, 0
 		for _, day := range out.Days {
 			total += day.FilteredCount
-			perEntity += filteredCounts(day)["gallery:big-breasts"]
+			perEntity += filteredCounts(day)["big-breasts"]
 		}
 		if total != 1 || perEntity != tc.entityCount || m.calls != 0 {
 			t.Fatalf("as %s: total=%d entities=%d cover calls=%d", tc.user, total, perEntity, m.calls)

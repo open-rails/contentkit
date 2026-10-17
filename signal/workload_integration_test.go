@@ -19,8 +19,8 @@ import (
 
 // workload describes a synthetic collection pattern. Every session is one
 // selected-version consumption with Checkpoints cumulative revisions; each
-// checkpoint is one host request writing the work row, the version row and,
-// in the legacy shape, one view row per parent taxonomy record.
+// checkpoint writes the selected version; work summaries are projections,
+// while the intentionally wasteful comparison also measures parent records.
 type workload struct {
 	Sessions, Checkpoints, Parents, Days, Subjects, Works int
 	ReactionEvery, ClickEvery                             int
@@ -32,6 +32,7 @@ type workloadReport struct {
 	RawEventRows, CanonicalEvents uint64
 	Identities                    uint64
 	StateRows, DailyRows          uint64
+	ExpectedReaders               uint64
 	WriteP50, WriteP95, WriteP99  time.Duration
 	Reads                         map[string]time.Duration
 }
@@ -41,9 +42,10 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 	ctx := context.Background()
 	rng := rand.New(rand.NewSource(879))
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	type request struct{ signals []Signal }
+	type request struct{ signals []readingFixture }
 	var requests []request
 	identities := map[string]struct{}{}
+	readingPeople := map[string]struct{}{}
 	for s := 0; s < w.Sessions; s++ {
 		subject := Subject{UserID: fmt.Sprintf("u%d", rng.Intn(w.Subjects))}
 		if s%3 == 0 {
@@ -54,14 +56,15 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 		version := workN + "-v" + strconv.Itoa(rng.Intn(2))
 		at := start.Add(time.Duration(rng.Intn(w.Days*24*60)) * time.Minute)
 		id := fmt.Sprintf("session-%d", s)
+		readingPeople[fmt.Sprint(subject.Kind(), subject.Key(), work)] = struct{}{}
 		for c := 1; c <= w.Checkpoints; c++ {
-			view := Signal{ContentRef: gallery(tenant, work), Subject: subject, Type: TypeView,
+			view := readingFixture{ContentRef: gallery(tenant, work), Subject: subject, Type: TypeView,
 				EventID: id, Revision: uint64(c), OccurredAt: at, DurationS: uint32(60 * c), Progress: uint32(3 * c),
 				ProgressMax: uint32(3 * w.Checkpoints), Score: int16(10 * c), Completed: c == w.Checkpoints,
 				Resume: "p:" + strconv.Itoa(3*c), Payload: map[string]any{"language": "en", "entry_source": "search"}}
 			edition := view
 			edition.ContentRef = view.WithVersion(version)
-			sigs := []Signal{view, edition}
+			sigs := []readingFixture{edition}
 			for p := 0; p < w.Parents; p++ {
 				parent := view
 				parent.ContentRef = contentref.New(tenant, "tag", cid((len(workN)*7+int(workN[0])+p)%50))
@@ -70,11 +73,11 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 				sigs = append(sigs, parent)
 			}
 			if c == w.Checkpoints && w.ReactionEvery > 0 && s%w.ReactionEvery == 0 {
-				sigs = append(sigs, Signal{ContentRef: view.ContentRef, Subject: subject, Type: "reaction", EventID: "pref",
+				sigs = append(sigs, readingFixture{ContentRef: view.ContentRef, Subject: subject, Type: "reaction", EventID: "pref",
 					Revision: uint64(s), OccurredAt: at.Add(time.Minute), Value: 1})
 			}
 			if c == 1 && w.ClickEvery > 0 && s%w.ClickEvery == 0 {
-				sigs = append(sigs, Signal{ContentRef: view.ContentRef, Subject: subject, Type: "click",
+				sigs = append(sigs, readingFixture{ContentRef: view.ContentRef, Subject: subject, Type: "click",
 					EventID: "click:" + id, OccurredAt: at}.WithAttribution(Attribution{RenderID: "r" + id, Surface: SurfaceSearch, Position: 3}))
 			}
 			for _, sig := range sigs {
@@ -96,7 +99,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 			defer wg.Done()
 			for i := range next {
 				began := time.Now()
-				if err := st.RecordSignals(ctx, tenant, requests[i].signals); err != nil {
+				if err := recordFixtureSignals(st, ctx, tenant, requests[i].signals); err != nil {
 					fail <- err
 					return
 				}
@@ -114,7 +117,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 		t.Fatal(err)
 	}
 
-	rep := workloadReport{Requests: len(requests), Identities: uint64(len(identities)), Reads: map[string]time.Duration{}}
+	rep := workloadReport{Requests: len(requests), Identities: uint64(len(identities)), ExpectedReaders: uint64(len(readingPeople)), Reads: map[string]time.Duration{}}
 	for _, r := range requests {
 		rep.Signals += len(r.signals)
 	}
@@ -137,10 +140,17 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 		}
 		return n
 	}
-	rep.RawEventRows = scalar("SELECT count() FROM "+testDB+".signals WHERE tenant = ?", tenant)
-	rep.CanonicalEvents = scalar("SELECT count() FROM (SELECT 1 FROM "+testDB+".signals WHERE tenant = ? GROUP BY content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id)", tenant)
-	rep.StateRows = scalar("SELECT count() FROM "+testDB+".subject_content_state FINAL WHERE tenant = ?", tenant)
-	rep.DailyRows = scalar("SELECT count() FROM "+testDB+".subject_content_daily FINAL WHERE tenant = ?", tenant)
+	rep.RawEventRows = scalar("SELECT (SELECT count() FROM "+testDB+".signals WHERE tenant=?) + (SELECT count() FROM "+testDB+".engagement_segments WHERE tenant=?)", tenant, tenant)
+	inventory, err := st.Inventory(ctx, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range inventory {
+		rep.CanonicalEvents += entry.Events
+	}
+
+	rep.StateRows = scalar("SELECT count() FROM "+testDB+".engagement_state FINAL WHERE tenant = ? AND content_version_id=''", tenant)
+	rep.DailyRows = scalar("SELECT count() FROM "+testDB+".engagement_daily FINAL WHERE tenant = ?", tenant)
 
 	now := start.AddDate(0, 0, w.Days)
 	ids := make([]string, 50)
@@ -214,14 +224,14 @@ func TestIntegrationSyntheticWorkload(t *testing.T) {
 	}
 	var views, completions uint64
 	for _, h := range all {
-		views += h.Views
-		completions += h.Completions
+		views += h.Readers
+		completions += h.Completers
 	}
-	if views != uint64(w.Sessions) || completions != uint64(w.Sessions) {
-		t.Fatalf("checkpoints must count as one completed work view per session, versions apart: views=%d completions=%d", views, completions)
+	if views != reports["minimal"].ExpectedReaders || completions != reports["minimal"].ExpectedReaders {
+		t.Fatalf("checkpoints must count each actually engaged person once per work: views=%d completions=%d", views, completions)
 	}
 
-	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+	for _, table := range []string{"signals", "engagement_segments", "engagement_state", "engagement_daily"} {
 		if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+"."+table+" FINAL"); err != nil {
 			t.Fatal(err)
 		}
@@ -264,11 +274,11 @@ FROM system.parts WHERE database = ? AND active GROUP BY table ORDER BY table`, 
 			t.Fatal(err)
 		}
 		qrows, err := conn.Query(ctx, `SELECT
-    multiIf(query LIKE 'INSERT INTO `+testDB+`.signals%', 'insert signals', query LIKE 'INSERT INTO `+testDB+`.subject_content_state%', 'project state', 'project daily') AS stmt,
+    multiIf(query LIKE 'INSERT INTO `+testDB+`.signals%', 'insert signals', query LIKE 'INSERT INTO `+testDB+`.engagement_state%', 'project state', 'project daily') AS stmt,
     count(), avg(read_rows), avg(written_rows), quantile(0.5)(query_duration_ms), quantile(0.95)(query_duration_ms)
 FROM system.query_log
 WHERE type = 'QueryFinish' AND event_date >= yesterday()
-  AND (query LIKE 'INSERT INTO `+testDB+`.signals%' OR query LIKE 'INSERT INTO `+testDB+`.subject_content_state%' OR query LIKE 'INSERT INTO `+testDB+`.subject_content_daily%')
+  AND (query LIKE 'INSERT INTO `+testDB+`.signals%' OR query LIKE 'INSERT INTO `+testDB+`.engagement_state%' OR query LIKE 'INSERT INTO `+testDB+`.engagement_daily%')
 GROUP BY stmt ORDER BY stmt`)
 		if err != nil {
 			t.Fatal(err)
@@ -304,8 +314,8 @@ func TestIntegrationUnavailableClickHouseFailsFast(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	began := time.Now()
-	err = st.RecordSignals(ctx, "t", []Signal{{ContentRef: gallery("t", cid(1)), Subject: Subject{UserID: "u"},
-		Type: TypeView, EventID: "e", OccurredAt: time.Now()}})
+	err = recordFixtureSignals(st, ctx, "t", []readingFixture{{ContentRef: gallery("t", cid(1)), Subject: Subject{UserID: "u"},
+		Type: TypeView, EventID: "e", OccurredAt: time.Now(), Progress: 1, ProgressMax: 1}})
 	if err == nil || time.Since(began) > 3*time.Second {
 		t.Fatalf("unavailable analytics must fail within the deadline: err=%v after %s", err, time.Since(began))
 	}
@@ -313,7 +323,7 @@ func TestIntegrationUnavailableClickHouseFailsFast(t *testing.T) {
 		t.Fatal("reads must fail too")
 	}
 	var limit *LimitError
-	if err := st.RecordSignals(ctx, "t", make([]Signal, MaxSignalsPerBatch+1)); !errors.As(err, &limit) {
+	if err := recordFixtureSignals(st, ctx, "t", make([]readingFixture, MaxSignalsPerBatch+1)); !errors.As(err, &limit) {
 		t.Fatalf("oversize batches are rejected before any network call: %v", err)
 	}
 }

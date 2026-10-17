@@ -7,22 +7,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
 
 const signalCHDB = "contentkit_discovery_signal_test"
 
-// TestSignalPlaneRoutes drives signals, history, view_status, popularity,
-// similar and recommendations through the routes over a real ClickHouse.
+// TestSignalPlaneRoutes drives explicit clicks and measured readership's
+// history, view_status, statistics and recommendations over real ClickHouse.
 func TestSignalPlaneRoutes(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	f := seededOn(t, env.Fresh(t, signalCHDB), signalCHDB)
 	const host = "main.test"
 	at := time.Now().UTC().Add(-time.Hour)
-	view := func(content, version, event string, progress uint32) SignalInput {
-		return SignalInput{ContentID: content, VersionID: version, Type: TypeView, EventID: event, OccurredAt: at, Progress: progress, DurationS: 400}
+	click := func(content, version, event string) SignalInput {
+		return SignalInput{ContentID: content, VersionID: version, Type: TypeClick, EventID: event, OccurredAt: at}
 	}
 	post := func(user string, in Signals) {
 		t.Helper()
@@ -30,20 +32,47 @@ func TestSignalPlaneRoutes(t *testing.T) {
 			t.Fatalf("POST signals as %q: %d %s", user, status, code)
 		}
 	}
-	post("u1", Signals{Signals: []SignalInput{view(f.cid(1), f.vid(1, 0), "u1-g1", 20)}})
+	post("u1", Signals{Signals: []SignalInput{click(f.cid(1), f.vid(1, 0), "u1-g1")}})
+	language := map[int]string{1: "en", 3: "ja"}
+	observed := []engagementtest.Observation{{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(1), f.vid(1, 0)),
+		Subject: signal.Subject{UserID: "u1"}, Type: engagementtest.TypeReading, EventID: "read-u1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400,
+		Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[1]})}}
+	observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(1), f.vid(1, 0)),
+		Subject: signal.Subject{UserID: "p1"}, Type: engagementtest.TypeReading, EventID: "read-p1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400,
+		Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[1]})})
+	population := []signal.Subject{{UserID: "u1"}, {UserID: "nonreader-1"}, {UserID: "nonreader-2"}}
 	for i := range 3 {
-		post("", Signals{Session: fmt.Sprintf("s%d", i), Signals: []SignalInput{view(f.cid(1), "", "a-g1", 5), view(f.cid(3), "", "a-g3", 5)}})
+		session := fmt.Sprintf("s%d", i)
+		post("", Signals{Session: session, Signals: []SignalInput{click(f.cid(1), "", "a-g1"), click(f.cid(3), "", "a-g3")}})
+		subject, err := f.svc.subject(access.Actor{Anonymous: true}, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		population = append(population, subject)
+		for _, n := range []int{1, 3} {
+			observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(n), f.vid(n, 0)), Subject: subject,
+				Type: engagementtest.TypeReading, EventID: fmt.Sprintf("read-%s-g%d", session, n), OccurredAt: at, Progress: 5, ProgressMax: 20, DurationS: 100,
+				Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[n]})})
+		}
+	}
+	for _, l := range []string{"en", "ja"} {
+		seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: l}, at.Add(-time.Hour), population, nil)
+	}
+	seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: "en"}, at.Add(-time.Hour), []signal.Subject{{UserID: "p1"}}, []string{"premium"})
+	if err := f.svc.o.Hub.RecordSignals(f.ctx, engagementtest.Native(observed)); err != nil {
+		t.Fatal(err)
 	}
 	for _, bad := range []struct {
 		user string
 		in   Signals
 		want int
 	}{
-		{"", Signals{Signals: []SignalInput{view(f.cid(1), "", "x", 1)}}, http.StatusBadRequest},
-		{"u1", Signals{Signals: []SignalInput{view(f.cid(9), "", "x", 1)}}, http.StatusNotFound},
-		{"u1", Signals{Signals: []SignalInput{view(f.cid(1), f.vid(3, 0), "x", 1)}}, http.StatusNotFound},
+		{"", Signals{Signals: []SignalInput{click(f.cid(1), "", "x")}}, http.StatusBadRequest},
+		{"u1", Signals{Signals: []SignalInput{click(f.cid(9), "", "x")}}, http.StatusNotFound},
+		{"u1", Signals{Signals: []SignalInput{click(f.cid(1), f.vid(3, 0), "x")}}, http.StatusNotFound},
 		{"u1", Signals{Signals: []SignalInput{{ContentID: f.cid(1), Type: "rating", EventID: "x", OccurredAt: at}}}, http.StatusBadRequest},
-		{"u1", Signals{Signals: []SignalInput{{ContentID: f.cid(1), Type: TypeView, OccurredAt: at}}}, http.StatusBadRequest},
+		{"u1", Signals{Signals: []SignalInput{{ContentID: f.cid(1), Type: "view", EventID: "retired", OccurredAt: at}}}, http.StatusBadRequest},
+		{"u1", Signals{Signals: []SignalInput{{ContentID: f.cid(1), Type: TypeClick, OccurredAt: at}}}, http.StatusBadRequest},
 	} {
 		if status, _ := f.call(http.MethodPost, host, bad.user, "/signals", bad.in, nil); status != bad.want {
 			t.Errorf("POST %+v: %d, want %d", bad.in, status, bad.want)
@@ -54,7 +83,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	if !reflect.DeepEqual(ids, []string{f.cid(1)}) {
 		t.Fatalf("history = %v", ids)
 	}
-	if v := page.Contents[0].Viewer; v == nil || !v.Completed || v.Progress != 20 || v.ProgressMax != 20 {
+	if v := page.Contents[0].Viewer; v == nil || !v.Completed || v.ProgressMax == 0 || v.Progress != v.ProgressMax {
 		t.Fatalf("history card state: %+v", v)
 	}
 	for status, want := range map[string][]string{Completed: {f.cid(1)}, InProgress: {}, Unseen: {f.cid(3)}} {
@@ -63,40 +92,27 @@ func TestSignalPlaneRoutes(t *testing.T) {
 		}
 	}
 
-	if err := f.svc.RefreshPopularity(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) ||
-		*page.Contents[0].Counts.Views != 4 {
-		t.Fatalf("popular:all = %v %+v", got, page.Contents)
+		page.Ranking == nil || page.Ranking.Mode != "population_normalized" {
+		t.Fatalf("popular:all = %v %+v", got, page.Ranking)
 	}
 
-	// Staff stats: views per day and the most viewed, in the site's scope.
+	// One person per UTC day regardless of how many contents they read;
+	// explicit clicks do not contribute active reading time or reader counts.
 	var activity Activity
-	if status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity); status != http.StatusOK ||
-		len(activity.Days) != 1 || activity.Days[0] != (ActivityDay{Date: at.Format(time.DateOnly), Views: 7, Viewers: 4, Users: 1}) {
-		t.Fatalf("activity: %d %s %+v", status, code, activity)
+	// Every day of the default 10 is listed; readers split by audience.
+	status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity)
+	want := ActivityDay{Date: at.Format(time.DateOnly), ActiveMS: 1_400_000, Readers: 5, Anon: 3, Free: 1, Premium: 1}
+	var day ActivityDay
+	for _, d := range activity.Days {
+		if d.Date == want.Date {
+			day = d
+		} else if d.Readers != 0 {
+			t.Errorf("activity on %s: %+v", d.Date, d)
+		}
 	}
-	for _, c := range []struct {
-		host, path string
-		want       []string
-	}{
-		{host, q("/stats/top", "kind", "gallery", "period", "7d"), []string{f.cid(1) + "=4", f.cid(3) + "=3"}},
-		{"clean.test", q("/stats/top", "kind", "gallery", "period", "all"), []string{f.cid(1) + "=4"}},
-		{host, q("/stats/top", "kind", "gallery", "tiers", "premium"), []string{}},
-	} {
-		var top TopContents
-		status, code := f.call(http.MethodGet, c.host, "staff", c.path, nil, &top)
-		got := []string{}
-		for _, r := range top.Contents {
-			got = append(got, fmt.Sprintf("%s=%d", r.ID, r.Value))
-		}
-		if status != http.StatusOK || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s on %s: %d %s %v, want %v", c.path, c.host, status, code, got, c.want)
-		}
-		if len(top.Contents) > 0 && (top.Contents[0].Title != "Alpha" || top.Contents[0].Path != "/en/g/"+f.codes[1]+"/alpha") {
-			t.Errorf("ranked names %+v", top.Contents[0])
-		}
+	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != time.Now().UTC().Format(time.DateOnly) || day != want {
+		t.Fatalf("activity: %d %s %+v", status, code, activity)
 	}
 	var mine MyStats
 	if status, code := f.call(http.MethodGet, host, "u1", "/me/stats", nil, &mine); status != http.StatusOK || mine.Completed["gallery"] != 1 {
@@ -142,16 +158,14 @@ func TestRecommendationsFillPastRecentPopularity(t *testing.T) {
 		item{n: 9, titles: map[string]string{"en": "India"}, age: 90 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}})
 	const host = "main.test"
 	at := time.Now().UTC().Add(-time.Hour)
-	in := Signals{}
+	var observed []engagementtest.Observation
 	for _, n := range []int{1, 3} {
-		in.Signals = append(in.Signals, SignalInput{ContentID: f.cid(n), Type: TypeView, EventID: fmt.Sprintf("u1-%d", n), OccurredAt: at, Progress: 5, DurationS: 60})
+		observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(n), f.vid(n, 0)), Subject: signal.Subject{UserID: "u1"},
+			Type: engagementtest.TypeReading, EventID: fmt.Sprintf("u1-%d", n), OccurredAt: at, Progress: 5, ProgressMax: 20, DurationS: 60})
 	}
-	if status, code := f.call(http.MethodPost, host, "u1", "/signals", in, nil); status != http.StatusNoContent {
-		t.Fatalf("POST signals: %d %s", status, code)
-	}
-	old := signal.Signal{ContentRef: contentref.New(tenant, "gallery", f.cid(9)), Subject: signal.Subject{UserID: "u2"}, Type: signal.TypeView,
-		EventID: "u2-9", OccurredAt: time.Now().UTC().AddDate(0, 0, -40), Progress: 10, ProgressMax: 10}
-	if err := f.svc.o.Hub.Signals().RecordSignals(f.ctx, tenant, []signal.Signal{old}); err != nil {
+	observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(9), f.vid(9, 0)), Subject: signal.Subject{UserID: "u2"}, Type: engagementtest.TypeReading,
+		EventID: "u2-9", OccurredAt: time.Now().UTC().AddDate(0, 0, -40), Progress: 10, ProgressMax: 10, DurationS: 80})
+	if err := f.svc.o.Hub.RecordSignals(f.ctx, engagementtest.Native(observed)); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.list(host, "u1", q("/recommendations", "kind", "gallery")); !reflect.DeepEqual(got, []string{f.cid(9), f.cid(8)}) {

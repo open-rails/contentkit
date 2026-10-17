@@ -345,9 +345,24 @@ Custom page-thumbnail or media grids can use the same primitive: call
 gaps and responsive behavior identical to content-card lists.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
-cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
-the open ones and puts the rest behind a counted toggle that loads them on
-opening (`useLockedCount` counts them).
+cards the reader doesn't open, `hide` leaves them out, and `collapse` replaces
+locked cards with a cover-sized summary tile. Opening it reveals the cached
+cards in their original ranking order, with a reduced-motion-aware animation.
+The locked and optional-filter tiles use the same component as daily releases.
+
+`ContentGrid` and `SearchResults` request `summary=true` on the first page.
+`useContents` and `useSearch` expose that selection's `summary` across pagination:
+the distinct `filtered_count`, overlapping `filtered_entities` counts, and
+`locked_count` before cursor pagination. All counts retain the query's hard
+domain, language, entity, access and popularity-window eligibility. A bounded
+keyword selection may report `truncated`; its tiles and contextual filter
+counts then show `≥` to identify lower bounds. Clicking a filtered tile opens
+the shared filter dialog with this selection's per-entity counts.
+
+Preview policy belongs to the host. Set `showFilteredSummary={false}` to omit
+that tile, `lockedSummaryMinColumns={6}` to offer a locked tile only when six
+grid columns fit, and `cardLimit={6}` / `mobileCardLimit={4}` to limit mounted
+preview cards. `summaryLabels` supplies the host's nouns for both tile labels.
 
 ### Daily releases
 
@@ -361,6 +376,27 @@ opening (`useLockedCount` counts them).
 disclosures, with reduced-motion support. The initial card budget is shared
 across days, newest first. Opening older days or choosing **Show more** reveals
 already-fetched cards; it does not make another listing request.
+
+To browse old releases, set `query.end_date` to an inclusive `YYYY-MM-DD` in
+the listing's time zone. The same bounded window ends on that date; it does
+not load intervening years. Omit it for the latest releases, or combine it
+with `days: 1` for one exact day. Future and invalid dates return HTTP 400.
+Current visibility and access rules still apply to historical windows.
+`ReleaseDatePicker` opens a themed calendar popover with month/year dropdowns,
+so older dates need no month-by-month paging. It selects one day, disables
+future dates, and closes after selection; there is no typed input or reset
+button. Keep its controlled value in your router for shared URLs and
+back/forward navigation. The app chooses placement and the listing window:
+
+```tsx
+<ReleaseDatePicker value={date} onValueChange={setDate} />
+<DailyReleases query={{ kind: "gallery", days: date ? 1 : 10, end_date: date || undefined }} />
+```
+
+`isReleaseDate(date)` validates URL input before rendering the feed; the picker
+shows an error for invalid or future dates. `localReleaseDate()` provides
+today's browser-local date; supply the picker's `max` when the listing uses a
+different time zone.
 
 Only revealed cards occupy the grid, and images/previews mount when those cards
 enter the viewport. Collapsing a day removes its media. The standard card
@@ -398,6 +434,13 @@ again. Supply `query.published_within` only when a release-age cutoff is wanted.
 `period` and `onPeriodChange`
 optionally keep its state in the host's URL. For a homepage preview, pass
 `popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
+
+For a historical activity window, pass `period={{ from: "2026-04-01", until:
+"2026-05-01" }}` and `query={{ kind: "gallery" }}`. Dates are UTC, with an
+inclusive start and exclusive end. No preset tab is selected for a custom
+range; selecting a tab calls `onPeriodChange` so the host can replace the range
+in its URL with that rolling preset. `popularQuery` accepts the same range
+object and sends `sort=popular&activity_from=...&activity_until=...`.
 
 ### MediaFolderEditor
 
@@ -690,9 +733,27 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   <ContentManager kind="blog" client={contentkit} basePath="/admin/blog" navigation={nav} renderEditor={richTextEditor} />
   ```
 
+  A `reader` kind uses one gallery workspace: localized metadata, configured
+  entities, access, cover, ZIP/pages, ordering and publication are available
+  together. A new draft is allocated internally on the first save or upload;
+  its URL change keeps the current fields and upload queue mounted. Versions,
+  chapter ranges, audio and reading anchors remain available in expandable
+  tools. **Publish** saves the visible edits and any dirty tools first and
+  checks every media window; failed uploads, processing or refused saves keep
+  the work unpublished. **Save draft** can save metadata while files upload.
+
   `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
+
+- **`AdminQuickSearch`**: autocomplete navigation to content and entity editors,
+  including managed drafts and hidden content. Supply the permitted
+  `contentKinds` / `entityKinds` and mandatory `contentHref` / `entityHref`
+  callbacks. Suggestions without an editor URL are omitted; public paths are
+  never a fallback. It reuses `SearchBox` geometry and arrow/Enter/Escape
+  controls, with no recent-search history or free-text results submission.
+  Management authorization remains enforced by the server. Set
+  `presentation="header"` for the shared centered-header dropdown.
 
 - **`PageReview`**: retained page sources, original filenames, automatic cleanup
   reasons, previews, inclusion overrides and ordering. `ContentManager` includes
@@ -853,11 +914,33 @@ access revision current; signed-out viewers do not fetch an inbox.
 including loading and empty states. Set `presentation="header"` for a portal
 panel directly below the input, matching its width and following it on resize
 or scroll: a dimmed backdrop, text rows with colored type icons, and no
-thumbnails. Recent-search dates appear when the panel is wide enough. The panel
+thumbnails. Recent searches omit dates. The panel
 slides downward when opened and honors reduced motion. Its mobile/desktop
 scroll limit is 70vh/60vh. The default inline
-presentation is unchanged. Both presentations keep the provider's result order;
-the host owns search-page navigation.
+presentation is unchanged. Both presentations show matching recent queries
+first, with prefixes before interior matches and newest first within each tier,
+then matching entities, then content titles. A
+recent query remains selectable while network suggestions debounce or load.
+Guest history persists in localStorage across tabs; account history comes from
+the server, fetched on opening rather than on every keystroke. `recent={false}`
+omits history. Only completed searches are recorded.
+
+`GET /v1/typeahead` matches literal substrings of a title, entity name or direct
+alias, preferring exact names and prefixes. Case, Latin accents and whitespace
+are normalized, and complete English filler words `the`, `a` and `an` are
+ignored in both autocomplete/history matching and full search. Filler-only
+queries return no matches. Identity and slug normalization stay unchanged.
+Autocomplete does not expand associated entities, contextual keywords or typos:
+Inazuma can suggest that artist, but not Business Question merely because
+Inazuma created it. Full `GET /v1/search` retains broader keyword and typo
+matching. Visibility, tenant, language and version eligibility still apply.
+The host owns search-page navigation and suggestion links.
+
+Core migration `0011_search_substrings` adds search-only indexes for native
+literal substring retrieval and normalized full search; apply normal migrations
+before serving the new core. Original functions/indexes remain in place so
+0.103 writers can overlap during an upgrade. Native query-plan tests verify
+the indexed Latin/CJK paths against a 50,000-document catalog.
 `ReaderSettings` combines language selection and content filters in one dialog:
 
 ```tsx
@@ -877,24 +960,28 @@ account languages use the provider's `languagePreference` adapter. Each domain
 only offers its configured, user-toggleable entities; internal classifications
 and required or locked rules never appear in reader settings. Labels use the
 entities' localized names. Saving this domain's settings preserves choices for
-entities offered by other domains and other content kinds. `kinds` limits the
-controls shown by either `ReaderSettings` or `ContentFilterSettings`; omit it to
-show all configured kinds. Multiple kinds get separate headings; `labels` can
-supply their display names. The same entity can have independent gallery and
-blog preferences. Resets follow the current domain default, including after it
-changes. Old unscoped browser choices remain a fallback until replaced
-by a choice for that content kind.
+entities offered by other domains. The configured `applies_to` content kinds
+share one preference per entity, so a tag toggle can affect galleries and blog
+posts together. `kinds` selects a listing context and displays controls when it
+intersects `applies_to`; it never creates a second per-kind preference. Rows use
+entity names and have no duplicate type headings.
 
-The HTTP shape groups preferences by kind:
+The HTTP shape is flat and updates only the submitted entities:
 
 ```json
-{"kinds":{"gallery":[{"entity_id":"tag-id","visible":false}]},"include_deleted":false}
+{"filters":[{"entity_id":"tag-id","visible":false}]}
 ```
 
-`PUT /me/content-filters` replaces only the submitted kinds. An empty gallery
-list resets that kind to its domain defaults without changing blog preferences.
-The registration initializer also accepts `legacy_filters` so old browser
-choices can be transferred without dropping preferences for another domain.
+`PATCH /me/content-filters` preserves omitted entities and `include_deleted`.
+`setVisible(entityId, visible)` performs that one-entity update. Reset a choice
+with `{entity_id, default: true}`; the reset follows current domain defaults and
+suppresses old legacy choices. Independent account updates merge atomically.
+
+Guest storage migrates v1 choices and pending registration snapshots into v2,
+keeping the original v1 bytes. Conflicting old per-kind choices resolve to
+hidden; explicit scoped resets suppress the older unscoped fallback. New shared
+choices override all old values. Registration initialization uses the flat
+`filters` array and never overwrites an existing account's settings.
 
 ```tsx
 <ContentKitProvider
@@ -926,35 +1013,58 @@ language choice. Ordinary sign-ins never import guest preferences.
 a retry action. ReaderSettings shows an incomplete transfer and lets the reader
 retry it. Guest preferences are retained separately after registration and logout.
 
-### Activity tracking
+### Measured engagement
 
-`useViewSignal(contentId, versionId)` starts an observation when its returned
-callback first reports progress. The shared `Beacons` client immediately requests
-an activity context from ContentKit, then includes that signed receipt in each
-revision. Its server timestamp stays fixed for the entire view. Pass a version
-when one is displayed; receipt requests use the provider's current language, or
-the client's configured request language outside React.
+`useReadingEngagement(contentId, versionId, options)` measures loaded, visible
+content while the page is focused. Keep the hook above the horizontal/vertical
+reader switch so a mode change retains its visit. Attach `engagement.page(index,
+filename)` to the actual image element (zero-based index), or `engagement.video`
+to the playing video. `engagement.setResume(filenameOrAnchor)` records the opaque
+reader selector separately from measured coverage. Optional
+`[data-reader-viewport]` on the reader container clips page measurements to that
+viewport, including long-page breakpoint readers.
 
-`useExposure(items, options)` records cumulative rendered and visible placements.
-It splits long lists into stable segments of at most 32 placements, increments
-each segment's stage revision, and attributes clicks to the matching segment.
-Each newly observed placement receives its own server context. The client does
-not supply premium status or eligibility claims. Receipt requests are batched in
-groups of at most 100 targets.
+Opening the route, preloading an image and changing the page selector produce
+no engagement on their own. The tracker measures the visible part of each image
+and focused active milliseconds; multiple visible pages share elapsed attention.
+Static-page attention pauses after 60 seconds without genuine input (configurable
+with `idleAfter`). Visible, focused playback continues without requiring mouse
+motion, but pauses, buffering and seeks do not become watched coverage. Suspended
+timer gaps over five seconds are discarded rather than guessed.
 
-For a custom integration, `client.discovery.activityContexts(targets, session,
-language)` exposes `POST /activity-contexts`. Request its contexts when the
-observation starts, not when a delayed event batch is flushed. An explicit
-`enabled: false` response permits legacy tracking for an embedding without a
-signer; a failed or invalid receipt never silently becomes an untrusted event.
+Page changes stay local. Cumulative snapshots flush at most every 120 seconds
+(`checkpointInterval` may shorten this), and on hiding/exiting the page or
+unmounting the reader. `engagement.flush()` offers an explicit checkpoint.
+Each segment captures its own immutable server activity receipt when observation
+starts, retaining event-time premium/free access across retries; a later receipt
+never reclassifies earlier attention. Revisions replace the same segment, rather
+than incrementing visit or page-open counters. Positive short partials are kept
+so later measured attention can accumulate; qualification happens server-side.
 
-The provider's identity changes invalidate buffered observations and active
-view sessions. Events collected for one account or guest are never reassigned
-to the next account. Custom callers using `Beacons.exposure` should call
-`endExposure(renderId)` after the list leaves the page to release receipt state;
-`useExposure` does this automatically.
+Use `enabled` to honor the host's consent and authentication-readiness policy.
+With an explicitly signed-out provider (`viewer={null}`), positive partials also
+save browser-local resume/history across tabs. This remains useful when the signal
+plane is unavailable, without inventing remote analytics. Account history stays
+server-owned. An account switch discards old in-flight observations instead of
+assigning them to the next account. The optional `kind` groups local guest history
+only; remote requests never trust a browser-supplied content kind.
 
-Tracking flushes pack complete events into byte-bounded requests and serialize
-keepalive sends across clients. Large queues flush while the page is active.
-A single cumulative event that exceeds the keepalive budget uses normal fetch;
-its delivery during page exit remains best effort.
+For a custom integration, `EngagementTracker` accepts injected `begin` and
+`submit` callbacks. `client.discovery.activityContexts(targets, session, language)`
+exposes `POST /activity-contexts`; `client.discovery.engagement(snapshots, options)`
+exposes `POST /engagement`. Capture receipts when their segments begin, not when
+delayed batches flush. A missing, disabled or invalid receipt prevents remote
+engagement submission and never falls back to legacy route-open tracking.
+
+`useExposure(items, options)` separately records cumulative rendered and visible
+list placements and attributes clicks to their original ranks. Hidden paid tiles
+are not impressions. An explicit item `position` preserves gaps from omitted
+cards. Each new placement receives a server context; the client supplies no
+premium-status or eligibility claims. End custom `Beacons.exposure` receipt state
+with `endExposure(renderId)` when its list leaves the page; `useExposure` does this
+automatically. These bounded exposure/click packets serialize keepalive requests;
+exit delivery remains best effort.
+
+The staff dashboard and SDK statistics queries use measured people and active
+time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
+for daily distinctness, qualification and active-time units.

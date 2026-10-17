@@ -1,6 +1,6 @@
 // Package discovery is ContentKit's public read surface over its own content:
 // lists, keyword search, typeahead, similar and "for you" lists, the release
-// date index, viewers' content filters and history, and the signals and
+// date index, readers' content filters and history, and the signals and
 // exposures clients send. Every read runs over content_facets under the
 // catalog's one visibility rule (Visibility): access, site scope, content
 // filters, listing and language apply inside ContentKit, and each content
@@ -8,8 +8,8 @@
 //
 // Similar and "for you" lists come from a Candidates source (Engagement, the
 // co-engagement default, or a provider's) through the Recommender's shared
-// policy; popular sorts read the policy scores an engine job copies from the
-// signal plane into content_facets.popularity.
+// policy; popular sorts rank population-normalized measured readership, or the
+// labeled standing order of current reactions and favorites without it.
 package discovery
 
 import (
@@ -58,6 +58,9 @@ type Options struct {
 	// ActivitySigner preserves trusted event-time access facts. Nil retains
 	// legacy telemetry without normalized-population qualification.
 	ActivitySigner ActivitySigner
+	// MeasuredEngagement activates new measured writes only after the erasure
+	// executor cohort understands their storage. False leaves this API disabled.
+	MeasuredEngagement bool
 	// Groups names the groups on cards and in typeahead.
 	Groups *groups.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.

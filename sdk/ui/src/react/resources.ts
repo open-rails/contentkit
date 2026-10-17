@@ -16,9 +16,11 @@ export interface Resource<T> {
 }
 
 /** A page of a list and how to get the next one (null: no more). */
-export interface Page<T> {
+export interface Page<T, M = unknown> {
   items: T[];
   next: string | number | null;
+  /** Metadata belongs to the first page of this selection. */
+  metadata?: M;
 }
 
 export type Fetcher<T> = (signal: AbortSignal) => Promise<T>;
@@ -138,7 +140,7 @@ export class ResourceStore {
       if (s.moreCtl !== ctl) return;
       const cur = s.entry.data as Page<{ id: string }>;
       const seen = new Set(cur.items.map((x) => x.id));
-      this.update(s, { data: { items: [...cur.items, ...next.items.filter((x) => !seen.has(x.id))], next: next.next }, error: undefined });
+      this.update(s, { data: { ...cur, items: [...cur.items, ...next.items.filter((x) => !seen.has(x.id))], next: next.next }, error: undefined });
     } catch (e) {
       const error = toContentKitError(e);
       if (s.moreCtl === ctl && error.code !== "aborted") this.update(s, { error });
@@ -317,6 +319,9 @@ export class ResourceStore {
         break;
       case "access.changed":
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases" || t.type === "standing");
+        break;
+      case "engagement.changed":
+        this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("stats") || (t.type === "content-detail" && !!t.id && c.ids.includes(t.id)));
         break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases");

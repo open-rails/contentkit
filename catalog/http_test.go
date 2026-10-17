@@ -37,8 +37,9 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusOK, "alice", "GET", "/v1/contents/"+id, nil, nil)
 
 	// Text per language, with the viewer's language and fallback.
-	f.want(http.StatusOK, "alice", "PUT", "/v1/contents/"+id+"/text/ja", Text{Title: "こんにちは", Description: "説明", Slug: "Konnichiwa"}, &c)
-	if c.Text["ja"].Slug != "konnichiwa" || c.Text["en"].Title != "Hello World" {
+	f.want(http.StatusOK, "alice", "PUT", "/v1/contents/"+id+"/text/ja", Text{Title: "こんにちは", Description: "説明", Slug: "ignored"}, &c)
+	// Slugs follow the title: a sent slug is ignored and a title without Latin letters or digits has none.
+	if c.Text["ja"].Slug != "" || c.Text["en"].Title != "Hello World" {
 		t.Fatalf("text %+v", c.Text)
 	}
 	f.want(http.StatusBadRequest, "alice", "PUT", "/v1/contents/"+id+"/text/de", Text{Title: "Hallo"}, nil)
@@ -158,6 +159,26 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, "bob", "GET", "/v1/manage?owner_group="+studio, nil, nil)
 	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?state=gone", nil, nil)
 	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage", nil, nil)
+
+	// Editor links carry the content code: any spelling, any state, same rights.
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage/gallery?code="+strings.ToLower(c.Code), nil, &list)
+	if len(list) != 1 || list[0].ID != c.ID {
+		t.Fatalf("manage by code %+v", list)
+	}
+	f.want(http.StatusOK, "bob", "GET", "/v1/manage?code="+c.Code, nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("code outside the caller's rights %+v", list)
+	}
+	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code, nil, &list)
+	if len(list) != 1 || list[0].ID != c.ID || list[0].State != StateDeleted {
+		t.Fatalf("deleted by code %+v", list)
+	}
+	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code+"&state=draft", nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("state narrows a code %+v", list)
+	}
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage?code=nope", nil, nil)
 }
 
 func (f *fixture) doWith(actor, method, target string, headers map[string]string) *httptest.ResponseRecorder {

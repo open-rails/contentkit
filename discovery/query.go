@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
@@ -42,6 +43,8 @@ type Reader struct {
 // Filter selects contents: what lists, search and release dates share.
 type Filter struct {
 	Kind string
+	// IDs bounds a public hydration read; normal visibility/domain rules apply.
+	IDs []string
 	// Groups are all required (effective on the card's version); a position
 	// sort orders by the first, which must be of an ordered group kind. A
 	// reader's content filter never hides a group's content from a list
@@ -184,6 +187,21 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 	listed, args := v.Listed("f")
 	q.and("f.tenant_id = @d_tenant", nil)
 	q.and("("+listed+")", args)
+	if f.IDs != nil {
+		if len(f.IDs) == 0 || len(f.IDs) > 100 {
+			return nil, fmt.Errorf("%w: 1-100 content ids", ErrInvalid)
+		}
+		ids := make([]string, 0, len(f.IDs))
+		for _, id := range f.IDs {
+			if err := contentref.ValidateID(id); err != nil {
+				return nil, fmt.Errorf("%w: content ids", ErrInvalid)
+			}
+			if !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		}
+		q.and("f.content_id = ANY(@d_content_ids::text[])", pgx.NamedArgs{"d_content_ids": ids})
+	}
 	var kind kinds.Kind
 	if f.Kind != "" {
 		var ok bool
@@ -418,7 +436,6 @@ const (
 	SortPopular       = "popular"
 	SortTopRated      = "top_rated"
 	SortMostFavorited = "most_favorited"
-	SortMostViewed    = "most_viewed"
 	SortPosition      = "position"
 	SortRandom        = "random"
 )
@@ -456,18 +473,24 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortTitle:
 		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
 	case SortPopular:
-		o.expr, o.args["d_period"] = "coalesce((f.popularity->'score'->>@d_period::text)::float8, 0)", cmpOr(period, popularity.DefaultPeriod)
-		o.ranking = &popularity.RankingInfo{Policy: popularity.PolicyV1.Name, Mode: "legacy"}
+		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
+		if err != nil {
+			return o, err
+		}
+		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
 			o.expr = "f.rating"
-		} else {
-			o.expr, o.args["d_period"] = "coalesce((f.popularity->'rating'->>@d_period::text)::float8, 0)", period
+			break
 		}
+		window, err := popularity.WindowForPeriod(period, s.now())
+		if err != nil {
+			return o, err
+		}
+		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
 		o.expr, o.cast = "f.favorites::bigint", "bigint"
-	case SortMostViewed:
-		o.expr, o.cast = "coalesce((f.popularity->>'views')::bigint, 0) + f.view_baseline", "bigint"
+
 	case SortPosition:
 		if len(f.Groups) == 0 {
 			return o, fmt.Errorf("%w: sort position needs groups: it orders by the first", ErrInvalid)

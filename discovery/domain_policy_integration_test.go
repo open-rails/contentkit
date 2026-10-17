@@ -19,20 +19,16 @@ import (
 func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	cfg := siteConfig()
 	locked, toggle := false, true
-	cfg.Domains = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-	}}, "video": {Filters: []kinds.ContentFilter{
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-	}}}}, {Name: "gay", Hosts: []string{"gay.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{
+	},
+	}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
-	}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, "video": {Filters: []kinds.ContentFilter{
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
-	}, RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}}}, {Name: "safe", Hosts: []string{"safe.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}}}, {Name: "other", Hosts: []string{"other.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}}}, {Name: "implicit", Hosts: []string{"implicit.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}}}},
-	}
+	},
+	}, {Name: "safe", Hosts: []string{"safe.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}, {Name: "other", Hosts: []string{"other.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}, {Name: "implicit", Hosts: []string{"implicit.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}},
+	}, []string{"gallery", "video"}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "big-breasts", "yaoi", "gore", "restricted")
 	internal := true
@@ -66,7 +62,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	}
 	for _, host := range []string{"gay.test", "safe.test", "implicit.test"} {
 		var settings ContentFilters
-		if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, &settings); status != http.StatusOK || len(settings.Kinds["gallery"]) != 0 {
+		if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, &settings); status != http.StatusOK || len(settings.Filters) != 0 {
 			t.Fatalf("locked/internal/required controls exposed on %s: %d %+v", host, status, settings)
 		}
 	}
@@ -75,7 +71,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	assertList("gay.test", "forged", 3, 7)
 	assertList("safe.test", "forged", 1, 2, 3, 4, 6)
 	assertList("implicit.test", "forged", 1, 2, 3, 4, 6)
-	header := `{"filters":[{"group_id":"` + f.ids["gore"] + `","visible":true},{"group_id":"` + f.ids["restricted"] + `","visible":true}]}`
+	header := `{"filters":[{"entity_id":"` + f.ids["gore"] + `","visible":true},{"entity_id":"` + f.ids["restricted"] + `","visible":true}]}`
 	var page ContentPage
 	if w := f.guestCall(http.MethodGet, "safe.test", "", "/contents?kind=gallery", header, nil, &page); w.Code != http.StatusOK || len(page.Contents) != 5 {
 		t.Fatalf("guest escaped internal rule: %d %s", w.Code, w.Body)
@@ -115,7 +111,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	// Saving another domain cannot erase main's choice and vice versa.
 	save := func(host string, filters []FilterSetting) {
 		t.Helper()
-		if status, _ := f.call(http.MethodPut, host, "reader", "/me/content-filters", ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": filters}}, nil); status != http.StatusOK {
+		if status, _ := f.call(http.MethodPatch, host, "reader", "/me/content-filters", ContentFiltersUpdate{Filters: filterChoices(filters...)}, nil); status != http.StatusOK {
 			t.Fatalf("save %s: %d", host, status)
 		}
 	}
@@ -123,7 +119,9 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	save("other.test", []FilterSetting{{EntityID: f.ids["gore"], Visible: false}})
 	assertList("main.test", "reader", 1, 2, 3, 4, 5, 6, 7)
 	assertList("other.test", "reader", 1, 2, 3, 5, 7)
-	save("main.test", nil)
+	if status, _ := f.call(http.MethodPatch, "main.test", "reader", "/me/content-filters", ContentFiltersUpdate{Filters: []GuestFilterSetting{{EntityID: f.ids["big-breasts"], Default: boolPtr(true)}}}, nil); status != http.StatusOK {
+		t.Fatal(status)
+	}
 	assertList("main.test", "reader", 1, 3, 4, 5, 6, 7)
 	assertList("other.test", "reader", 1, 2, 3, 5, 7)
 	// Internal entities are absent from cards and cannot be used as public selectors.

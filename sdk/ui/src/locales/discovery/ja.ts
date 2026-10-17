@@ -11,6 +11,8 @@ export const discovery: typeof en = {
     filters: "表示するコンテンツ：",
   },
   releases: {
+    goToDay: "日付を選ぶ",
+    invalidDate: "今日以前の有効な日付を選んでください。",
     premiumMore_one: "ほか {count} 件",
     premiumMore_other: "ほか {count} 件",
     premiumHint: "会員向けプレビュー · クリックして表示",
@@ -30,8 +32,6 @@ export const discovery: typeof en = {
     pages_other: "{count} ページ",
     minutes_one: "{count} 分",
     minutes_other: "{count} 分",
-    views_one: "{n} 回視聴",
-    views_other: "{n} 回視聴",
     moreChips_one: "他 {count} 件",
     moreChips_other: "他 {count} 件",
     completed: "読了",
@@ -72,6 +72,7 @@ export const discovery: typeof en = {
     removeRecent: "「{q}」を削除",
   },
   listing: {
+    activityRange: "{from}から{until}より前までのアクティビティ (UTC)",
     popularPeriod: "人気の集計期間",
     pastDays_one: "過去{count}日間",
     pastDays_other: "過去{count}日間",
@@ -82,7 +83,6 @@ export const discovery: typeof en = {
     sort_popular: "人気",
     sort_top_rated: "高評価",
     sort_most_favorited: "お気に入り数",
-    sort_most_viewed: "閲覧数",
     sort_random: "ランダム",
     sort_position: "順番",
     period_7d: "今週",

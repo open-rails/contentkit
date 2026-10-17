@@ -3,7 +3,7 @@ import { toContentKitError } from "./errors.js";
 import type { ActivityContext, ActivityTarget, ExposureInput, SignalInput } from "./generated/wire.js";
 
 export interface BeaconOptions {
-  /** A signed-out visitor's session; default one per browser tab. */
+  /** A signed-out visitor identity, persistent across this browser's tabs. */
   session?: () => string | undefined;
   /** How long events gather before they are sent, ms. Default 2000. */
   delay?: number;
@@ -11,7 +11,7 @@ export interface BeaconOptions {
   recheck?: number;
 }
 
-/** Where a click or a view came from: the list render it was shown in. */
+/** Where a click came from: the list render it was shown in. */
 export interface Attribution {
   /** Language of the displayed content; defaults to the client's request language. */
   language?: string;
@@ -21,10 +21,6 @@ export interface Attribution {
   position?: number;
 }
 
-export interface ViewSession {
-  /** Reports the view so far: pages read, seconds watched or percent scrolled; resume is where to pick up. */
-  update(o: { progress?: number; duration_s?: number; resume?: string }): void;
-}
 
 const MAX = 100;
 // Fetch's keepalive limit includes all in-flight bodies in the fetch group.
@@ -54,18 +50,18 @@ function serializeKeepalive(send: () => Promise<void>): Promise<void> {
   keepaliveTail = pending.then(() => {}, () => {});
   return pending;
 }
-const SESSION_KEY = "contentkit.session";
+const SESSION_KEY = "contentkit.visitor.v1";
 export const eventId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 
 let unstored: string | undefined;
 
-/** A signed-out reader's session: one per browser tab, kept across reloads. */
+/** A random signed-out browser identity shared across tabs/reloads, never an account credential. */
 export function readerSession(): string {
   try {
-    const kept = sessionStorage.getItem(SESSION_KEY);
+    const kept = localStorage.getItem(SESSION_KEY);
     if (kept) return kept;
     const made = eventId();
-    sessionStorage.setItem(SESSION_KEY, made);
+    localStorage.setItem(SESSION_KEY, made);
     return made;
   } catch {
     return (unstored ??= eventId());
@@ -136,41 +132,6 @@ export class Beacons {
       this.signal({ content_id: content, type: "click", event_id: event, ...attribution,
         occurred_at: receipt.context?.occurred_at ?? at, activity_token: receipt.context?.token });
     }), generation);
-  }
-
-  /** A consumption session: all revisions use its first server access snapshot. */
-  view(content: string, version?: string, a: Attribution = {}): ViewSession {
-    const event = eventId(), generation = this.generation;
-    const target = { content_id: content, version_id: version };
-    const { language, ...attribution } = a;
-    let revision = 0, occurredAt: string | undefined;
-    let latest: SignalInput | undefined, receipt: Receipt | undefined;
-    let started = false;
-    const send = () => {
-      if (!latest || !receipt || generation !== this.generation) return;
-      this.signal({ ...latest, occurred_at: receipt.context?.occurred_at ?? occurredAt!, activity_token: receipt.context?.token });
-    };
-    return {
-      update: (o) => {
-        if (generation !== this.generation || this.paused()) return;
-        occurredAt ??= new Date().toISOString();
-        latest = { content_id: content, version_id: version, type: "view", event_id: event,
-          revision: ++revision, occurred_at: occurredAt, ...attribution, ...o };
-        if (!started) {
-          started = true;
-          const attempt = this.contexts([target], generation, language).then((receipts) => {
-            if (generation !== this.generation) return;
-            receipt = receipts?.get(targetKey(target));
-            if (!receipt) { started = false; return; }
-            send();
-          }).catch((error: unknown) => {
-            if (generation === this.generation) started = false;
-            throw error;
-          });
-          this.track(attempt, generation);
-        } else send();
-      },
-    };
   }
 
   /** A cumulative result-list stage; each newly observed target gets one receipt. */
@@ -269,7 +230,8 @@ export class Beacons {
       return null;
     }
     if (generation !== this.generation) return null;
-    const unique = [...new Map(targets.map((target) => [targetKey(target), target])).values()];
+    // Exposure rows carry list fields (position); the strict endpoint takes only the target.
+    const unique = [...new Map(targets.map((t) => [targetKey(t), { content_id: t.content_id, version_id: t.version_id }])).values()];
     const batches = [];
     const session = this.session();
     for (let i = 0; i < unique.length; i += MAX) batches.push(this.client.discovery.activityContexts(unique.slice(i, i + MAX), session, language));
@@ -296,7 +258,6 @@ export class Beacons {
 
   private signal(s: SignalInput): void {
     if (this.paused()) return;
-    if (s.type === "view") this.signals = this.signals.filter((x) => x.event_id !== s.event_id);
     this.signals.push(s);
     this.schedule();
   }

@@ -154,20 +154,6 @@ it("makes each card the positioning parent of its hidden labels", () => {
   expect(post.container.querySelector('[data-ckui="post-card"]')?.classList.contains("relative")).toBe(true);
 });
 
-it("leads the meta line with views and ends it with the first named group, dot separated", () => {
-  const video: Card = { ...card, counts: { ...card.counts, views: 26_743 }, entities: { ...card.entities, season: [{ id: "season", slug: "season", name: "A season", path: "/seasons/a" }] } };
-  const view = render(<ContentCard card={video} metadata={{ views: true, languages: false, pages: false, duration: false, groups: ["missing", "season", "series"] }} />);
-  const meta = view.container.querySelector('[data-ckui="card-meta"]')!;
-  expect(meta.textContent).toBe("26.7K26.7K views · A season");
-  expect(meta.querySelector('[data-ckui="card-views"] svg')).not.toBeNull();
-  expect(meta).toHaveClass("line-clamp-2");
-  expect(meta.querySelectorAll('[data-ckui="card-meta-dot"]')).toHaveLength(1);
-  expect(within(meta as HTMLElement).getByRole("link", { name: "A season" })).toHaveAttribute("href", "/seasons/a");
-
-  view.rerender(<ContentCard card={{ ...video, counts: { ...video.counts, views: 0 } }} metadata={{ views: true, languages: false, pages: false, duration: false }} />);
-  expect(view.container.querySelector('[data-ckui="card-meta"]')).toBeNull();
-});
-
 it("counts the chips left out, per breakpoint, only when the host asks", () => {
   const tags = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, slug: id, name: `Tag ${id}` }));
   const tagged: Card = { ...card, entities: { tag: tags } };
@@ -182,21 +168,6 @@ it("counts the chips left out, per breakpoint, only when the host asks", () => {
   view.rerender(<ContentCard card={tagged} groupKinds={["tag"]} chips={3} />);
   expect(view.container.querySelector('[data-ckui="card-chip-more"]')).toBeNull();
   expect(view.container.querySelectorAll('[data-ckui="card-groups"] > li')).toHaveLength(3);
-});
-
-it("moves the chips up beside the views when the card names none of the meta groups", () => {
-  const video: Card = { ...card, counts: { ...card.counts, views: 900 }, entities: { tag: card.entities.tag } };
-  const metadata = { views: true, languages: false, pages: false, duration: false, groups: ["series"], groupsFallback: "chips" } as const;
-  const view = render(<ContentCard card={video} groupKinds={["tag"]} metadata={metadata} />);
-  const row = view.container.querySelector('[data-ckui="card-meta-row"]')!;
-  expect(row.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("900900 views");
-  expect(within(row as HTMLElement).getByText("A tag")).toBeVisible();
-  expect(view.container.querySelectorAll('[data-ckui="card-groups"]')).toHaveLength(1);
-
-  view.rerender(<ContentCard card={card} groupKinds={["tag"]} metadata={metadata} />);
-  expect(view.container.querySelector('[data-ckui="card-meta-row"]')).toBeNull();
-  expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("Original");
-  expect(screen.getByText("A tag")).toBeVisible();
 });
 
 // Each chip is as wide as its text in 10px letters; the list is `width` px.
@@ -237,3 +208,16 @@ it("skips chips hidden at this width when fitting", () => withWidths(500, () => 
     style.remove();
   }
 }));
+
+it("ends the meta line with the first named group, dot separated and linked", () => {
+  const video: Card = { ...card, entities: { ...card.entities, season: [{ id: "season", slug: "season", name: "A season", path: "/seasons/a" }] } };
+  const view = render(<ContentCard card={video} metadata={{ languages: true, pages: false, duration: false, groups: ["missing", "season", "series"] }} />);
+  const meta = view.container.querySelector('[data-ckui="card-meta"]')!;
+  expect(meta.textContent).toBe("English · A season");
+  expect(meta).toHaveClass("line-clamp-2");
+  expect(meta.querySelectorAll('[data-ckui="card-meta-dot"]')).toHaveLength(1);
+  expect(within(meta as HTMLElement).getByRole("link", { name: "A season" })).toHaveAttribute("href", "/seasons/a");
+
+  view.rerender(<ContentCard card={video} filterEntity={(_, kind) => kind !== "season"} metadata={{ languages: false, pages: false, duration: false, groups: ["season", "series"] }} />);
+  expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("Original");
+});

@@ -28,15 +28,20 @@ type Policies map[string]Policy
 
 // Resolve includes internal entities for policy evaluation, but never puts
 // them in Toggles. Missing fixed exclusions fail only their content kind closed.
-func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domain) (Policies, error) {
+func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domain, appliesTo []string) (Policies, error) {
 	refs := map[kinds.GroupRef]bool{}
-	for _, p := range d.Kinds {
-		for _, r := range p.RequireGroups {
-			refs[r] = true
+	targets := map[string]bool{}
+	for _, kind := range appliesTo {
+		targets[kind] = true
+	}
+	for kind, required := range d.RequireEntities {
+		targets[kind] = true
+		for _, ref := range required {
+			refs[ref] = true
 		}
-		for _, f := range p.Filters {
-			refs[f.Group] = true
-		}
+	}
+	for _, filter := range d.Filters {
+		refs[filter.Group] = true
 	}
 	type entity struct {
 		id       string
@@ -76,16 +81,19 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 		}
 	}
 	out := Policies{}
-	for kind, rule := range d.Kinds {
+	for kind := range targets {
 		p := Policy{Required: []string{}, Blocked: []string{}, Toggles: map[string]bool{}, ToggleRefs: map[kinds.GroupRef]string{}}
-		for _, r := range rule.RequireGroups {
+		for _, r := range d.RequireEntities[kind] {
 			if e, ok := found[r]; ok && e.active {
 				p.Required = append(p.Required, e.id)
 			} else {
 				p.MissingRequired = true
 			}
 		}
-		for _, f := range rule.Filters {
+		for _, f := range d.Filters {
+			if !slices.Contains(appliesTo, kind) {
+				break
+			}
 			if !f.Visible && inactiveInternal[f.Group] {
 				p.MissingHard = true
 				continue
@@ -97,7 +105,7 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 				}
 				continue
 			}
-			if f.Toggleable() && !e.internal && !rule.Requires(f.Group) {
+			if f.Toggleable() && !e.internal && !d.Requires(f.Group) {
 				p.Toggles[e.id] = f.Visible
 				p.ToggleRefs[f.Group] = e.id
 			} else if !f.Visible {

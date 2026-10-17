@@ -30,5 +30,5 @@ func (s *Service) publicGroups(ctx context.Context, ids []string) (map[string]bo
 // libraryDomain resolves only hard per-kind boundaries; ownership remains unchanged.
 func (s *Service) libraryDomain(ctx context.Context) (domainpolicy.Policies, error) {
 	d, _ := s.kinds.DomainFor(gate.Domain(ctx))
-	return domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, d)
+	return domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, d, s.kinds.ContentFilters.AppliesTo)
 }

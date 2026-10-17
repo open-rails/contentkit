@@ -54,7 +54,6 @@ const content = (o: Partial<Content> = {}): Content => ({
   path: "/p/ABCDEFGH1",
   language: "en",
   title: "A post",
-  views: 0,
   decision: { allowed: true },
   state: "draft",
   listing: "listed",

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,5 +79,63 @@ func TestClientSearch_Integration_Keyword(t *testing.T) {
 	}
 	if !strings.HasPrefix(schema, "ck_test_") {
 		t.Fatal(schema)
+	}
+}
+
+func TestTypeaheadOnlyMatchesOwnNameSubstrings(t *testing.T) {
+	pool := testPG(t)
+	ctx := t.Context()
+	schema := keywordSchema(t, ctx, pool)
+	upsertDocs(t, ctx, pool, schema,
+		doc("artist", grp(1), "en", "Inazuma", []string{"稲妻", "Lightning"}, nil),
+		doc("gallery", cid(1), "en", "Business Question", nil, []string{"Inazuma"}),
+		doc("gallery", cid(2), "en", "Inazuma Adventures", nil, nil),
+		doc("gallery", cid(3), "en", "The Inazuma Story", nil, nil),
+		doc("gallery", cid(4), "en", "Inazuma% Special", nil, nil),
+		doc("gallery", cid(5), "en", "Inazuma_ Special", nil, nil),
+		doc("gallery", cid(6), "en", "Café  Questions", []string{"Business Alias"}, nil),
+	)
+	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"  INAZUMA  ", []string{grp(1), cid(2), cid(3), cid(4), cid(5)}},
+		{"稲", []string{grp(1)}},
+		{"light", []string{grp(1)}},
+		{"inazmua", nil}, // Full search can tolerate typos; autocomplete cannot.
+		{"question", []string{cid(1), cid(6)}},
+		{"inazuma%", []string{cid(4)}},
+		{"inazuma_", []string{cid(5)}},
+		{" CAFE   qu", []string{cid(6)}},
+		{"business a", []string{cid(1), cid(6)}},
+		{"the a an", nil},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			hits, err := client.Typeahead(ctx, tc.query, TypeaheadOptions{ContentKinds: []string{"artist", "gallery"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, h := range hits {
+				got = append(got, h.ContentID)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("typeahead(%q) = %v; want %v", tc.query, got, tc.want)
+			}
+		})
+	}
+	full, err := client.Search(ctx, "Inazuma", SearchOptions{ContentKinds: []string{"gallery"}})
+	if err != nil || !slices.Contains(ids(full.Hits), cid(1)) || !slices.Contains(ids(full.Hits), cid(3)) {
+		t.Fatalf("full search lost its broader keyword matching: %+v %v", full, err)
+	}
+	// Apply eligibility before the limit, even when many earlier matches exist.
+	only := &Eligibility{SQL: "SELECT 0 AS priority WHERE sd.content_id=@allowed", Args: map[string]any{"allowed": cid(5)}}
+	hits, err := client.Typeahead(ctx, "inazuma", TypeaheadOptions{ContentKinds: []string{"gallery"}, Limit: 1, Eligibility: only})
+	if err != nil || len(hits) != 1 || hits[0].ContentID != cid(5) {
+		t.Fatalf("eligible name match with limit=1: %+v %v", hits, err)
 	}
 }
