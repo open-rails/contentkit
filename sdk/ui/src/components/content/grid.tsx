@@ -1,19 +1,23 @@
 import { cn } from "cn";
-import { useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
-import type { Card } from "../../client/generated/wire.js";
+import type { Card, ListingSummary } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
-import { ContentKitContext } from "../../react/context.js";
-import { useContents, useExposure, useHistory, useLockedCount, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
+import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
 import { useKinds } from "../../react/groups.js";
 import type { UseList } from "../../react/use-resource.js";
+import { ContentKitContext } from "../../react/context.js";
+import { useContentScope } from "../../react/use-resource.js";
 import { useNearViewport } from "../../react/viewport.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
-import { contentError, useAction } from "../social/parts.js";
+import { contentError } from "../social/parts.js";
+import { ContentFilterDialog } from "./filter-dialog.js";
+import { useReleaseReveal } from "./release-reveal.js";
+import { ContentSummaryTile } from "./summary-tile.js";
 import { ContentCard, type ContentCardProps } from "./card.js";
 
 export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className"> {
@@ -29,6 +33,18 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
   client?: ContentKitClient;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Collapse paid/locked cards into a counted tile, or hide them; default show. */
+  locked?: LockedCards;
+  /** Optional-filter summary tiles are on by default; hosts may suppress them in previews. */
+  showFilteredSummary?: boolean;
+  /** Show the collapsed locked tile only at this measured grid width. Default 0. */
+  lockedSummaryMinColumns?: number;
+  /** Limit rendered preview tiles without changing the matching selection or summary counts. */
+  cardLimit?: number;
+  /** Limit cards in mobile previews without mounting their images. */
+  mobileCardLimit?: number;
+  /** Host-specific nouns for summary controls. */
+  summaryLabels?: { premium?: (count: number) => string; filtered?: (count: number) => string };
   /** Opt into a fluid grid, optionally with a desktop column ceiling. */
   grid?: CardGridLayout;
 }
@@ -57,25 +73,106 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
   };
 }
 
-/** A list's cards in a responsive grid, paged, with exposures and click signals. */
-export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList<Card>; render: string }) {
+/** A list carries exact selection-wide counts when the API was asked for them. */
+type SummaryList = UseList<Card> & { summary?: ListingSummary };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string };
+
+/** A list's cards and summary controls share one responsive, animated grid. */
+export function CardGrid(p: GridProps) {
+  const { client, viewer, language } = useContentScope(p.client);
+  const context = useContext(ContentKitContext);
+  const [boundary, setBoundary] = useState({ client, viewer, language, access: context?.accessRevision, render: p.render, key: 0 });
+  let session = boundary;
+  if (
+    boundary.client !== client ||
+    boundary.viewer !== viewer ||
+    boundary.language !== language ||
+    boundary.access !== context?.accessRevision ||
+    boundary.render !== p.render
+  ) {
+    session = { client, viewer, language, access: context?.accessRevision, render: p.render, key: boundary.key + 1 };
+    setBoundary(session);
+  }
+  return <CardGridBody key={session.key} {...p} />;
+}
+
+function CardGridBody({ list, render, filterKinds, filterLanguage, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
-  const exposure = useExposure(list.items, { surface: p.surface ?? "list", render, client: p.client });
+  const [expanded, setExpanded] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterTrigger = useRef<HTMLElement | null>(null);
+  const [element, setElement] = useState<HTMLOListElement | null>(null);
+  const [columns, setColumns] = useState(0);
+  const [mobile, setMobile] = useState(() => globalThis.matchMedia?.("(max-width: 767px)").matches ?? false);
+  useLayoutEffect(() => {
+    if (!element) return;
+    const measure = () => {
+      const tracks = getComputedStyle(element).gridTemplateColumns.trim();
+      setColumns(tracks && tracks !== "none" ? tracks.split(/\s+/).length : 0);
+      setMobile(globalThis.matchMedia?.("(max-width: 767px)").matches ?? false);
+    };
+    measure();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    observer?.observe(element);
+    addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      removeEventListener("resize", measure);
+    };
+  }, [element]);
+  const lockedCount = list.summary?.locked_count ?? 0;
+  const filteredCount = p.showFilteredSummary === false ? 0 : (list.summary?.filtered_count ?? 0);
+  const collapse = p.locked === "collapse" && !expanded && lockedCount > 0;
+  const lockedTile = collapse && lockedCount > 0 && columns >= Math.max(0, p.lockedSummaryMinColumns ?? 0);
+  const entries = useMemo(() => {
+    const result: ({ key: string; card: Card; position: number } | { key: string; premium: true; card?: Card })[] = [];
+    let inserted = false;
+    for (const [i, card] of list.items.entries()) {
+      if (isLockedCard(card) && (collapse || p.locked === "hide")) {
+        if (lockedTile && !inserted) {
+          result.push({ key: "premium-summary", premium: true, card });
+          inserted = true;
+        }
+        continue;
+      }
+      result.push({ key: card.id, card, position: i + 1 });
+    }
+    if (lockedTile && !inserted) result.push({ key: "premium-summary", premium: true });
+    const limit = mobile && p.mobileCardLimit !== undefined ? p.mobileCardLimit : p.cardLimit;
+    return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
+  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit]);
+  const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
+  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
   const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
     if (p.infinite && near && hasMore && !loadingMore && !error) void loadMore();
   }, [p.infinite, near, hasMore, loadingMore, loadMore, error]);
-  const tiers = p.tiers ?? kinds?.tiers;
+  const { grid: animationGrid, prepare } = useReleaseReveal(entries.map((entry) => entry.key).join("\0"));
+  const grid = useCallback(
+    (node: HTMLOListElement | null) => {
+      animationGrid.current = node;
+      setElement(node);
+    },
+    [animationGrid],
+  );
   const layout = cardGridLayout(p.grid);
+  const lowerBound = list.summary?.truncated ? "≥ " : "";
+  const premiumLabel = lowerBound + (p.summaryLabels?.premium?.(lockedCount) ?? m.plural("contents.lockedShow", lockedCount));
+  const filteredLabel = lowerBound + (p.summaryLabels?.filtered?.(filteredCount) ?? m.plural("releases.filteredMore", filteredCount));
+  const showGrid = entries.length > 0 || filteredCount > 0 || (collapse && lockedCount > 0);
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-grid" aria-busy={list.loading}>
       {list.loading && !list.items.length ? (
         <div className={layout.className} style={layout.style}>
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
+            <Skeleton
+              key={i}
+              className={p.aspectRatio === undefined ? (p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full") : "w-full"}
+              style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }}
+            />
           ))}
         </div>
       ) : list.error && !list.items.length ? (
@@ -85,166 +182,156 @@ export function CardGrid({ list, render, ...p }: CardListProps & { list: UseList
             {t("common.retry")}
           </Button>
         </div>
-      ) : !list.items.length ? (
+      ) : !showGrid ? (
         <div className="text-muted-foreground" role="status">
           {p.empty ?? t("contents.empty")}
         </div>
       ) : (
-        <ol className={layout.className} style={layout.style}>
-          {list.items.map((card, i) => (
-            <li key={card.id} ref={exposure.track(card.id, i + 1)}>
-              {p.renderCard ? (
-                p.renderCard(card, i + 1)
-              ) : (
-                <ContentCard
-                  card={card}
-                  client={p.client}
-                  href={p.href}
-                  shape={p.shape}
-                  aspectRatio={p.aspectRatio}
-                  titlePosition={p.titlePosition}
-                  loadMedia={p.loadMedia}
-                  groupKinds={p.groupKinds}
-                  chips={p.chips}
-                  filterEntity={p.filterEntity}
-                  entityStyle={p.entityStyle}
-                  entityLayout={p.entityLayout}
-                  metadata={p.metadata}
-                  showCounts={p.showCounts}
-                  tiers={tiers}
-                  labels={p.labels}
-                  owner={p.owner}
-                  ownerHref={p.ownerHref}
-                  decorate={p.decorate}
-                  onOpen={() => exposure.click(card.id, i + 1)}
-                />
-              )}
-            </li>
-          ))}
+        <ol ref={grid} tabIndex={-1} className={layout.className} style={layout.style}>
+          {entries.map((entry) =>
+            "premium" in entry ? (
+              <ContentSummaryTile
+                key={entry.key}
+                tileKey={entry.key}
+                kind="premium"
+                contentKind={filterKinds?.[0] ?? entry.card?.kind}
+                preview={entry.card}
+                open
+                cardProps={p}
+                label={premiumLabel}
+                onClick={(event) => {
+                  prepare(event.detail === 0);
+                  setExpanded(true);
+                }}
+              />
+            ) : (
+              <li key={entry.key} data-release-key={entry.key} ref={exposure.track(entry.card.id, entry.position)}>
+                {p.renderCard ? (
+                  p.renderCard(entry.card, entry.position)
+                ) : (
+                  <ContentCard
+                    card={entry.card}
+                    client={p.client}
+                    href={p.href}
+                    shape={p.shape}
+                    aspectRatio={p.aspectRatio}
+                    titlePosition={p.titlePosition}
+                    loadMedia={p.loadMedia}
+                    groupKinds={p.groupKinds}
+                    chips={p.chips}
+                    filterEntity={p.filterEntity}
+                    entityStyle={p.entityStyle}
+                    entityLayout={p.entityLayout}
+                    metadata={p.metadata}
+                    showCounts={p.showCounts}
+                    tiers={p.tiers ?? kinds?.tiers}
+                    labels={p.labels}
+                    owner={p.owner}
+                    ownerHref={p.ownerHref}
+                    decorate={p.decorate}
+                    onOpen={() => exposure.click(entry.card.id, entry.position)}
+                  />
+                )}
+              </li>
+            ),
+          )}
+          {filteredCount > 0 && (
+            <ContentSummaryTile
+              tileKey="filtered-summary"
+              kind="filtered"
+              contentKind={filterKinds?.[0] ?? list.items[0]?.kind}
+              open
+              cardProps={p}
+              label={filteredLabel}
+              onClick={(event) => {
+                filterTrigger.current = event.currentTarget;
+                setFiltersOpen(true);
+              }}
+            />
+          )}
         </ol>
       )}
       {list.hasMore && (
         <div ref={sentinel} className="grid justify-items-center gap-2">
-          {list.error && list.items.length > 0 && <p role="alert" className="text-destructive">{contentError(m, list.error)}</p>}
+          {list.error && list.items.length > 0 && (
+            <p role="alert" className="text-destructive">
+              {contentError(m, list.error)}
+            </p>
+          )}
           <Button variant="outline" size="sm" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
             {list.loadingMore ? t("contents.loading") : list.error ? t("common.retry") : t("contents.loadMore")}
           </Button>
         </div>
       )}
+      <ContentFilterDialog
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        returnFocus={() => (filterTrigger.current?.isConnected ? filterTrigger.current : element)}
+        client={p.client}
+        kinds={filterKinds}
+        language={filterLanguage}
+        counts={list.summary?.filtered_entities}
+        countsLowerBound={list.summary?.truncated}
+        appearance={p.appearance}
+      />
     </ContentKitUiRoot>
   );
 }
 
 /**
  * What a list does with cards the reader doesn't open: shows them marked
- * (show), leaves them out (hide), or lists them apart, counted, behind a
- * toggle that loads them when opened (collapse).
+ * (show), leaves them out (hide), or replaces them with a counted tile
+ * that reveals the cached previews in place (collapse).
  */
 export type LockedCards = "show" | "hide" | "collapse";
 
-const LOCKED_LEVELS = ["tier", "group", "ppv", "group_ppv"] as const;
+const LOCKED_LEVELS: readonly string[] = ["tier", "group", "ppv", "group_ppv"];
+const isLockedCard = (card: Card) => !card.access.allowed && !card.access.unknown && LOCKED_LEVELS.includes(card.access.level);
 
 /** Contents as cards (GET /v1/contents): any sort and filter, paged. */
-export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery; locked?: LockedCards }) {
+export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery }) {
   const q = useMemo<ContentQuery>(
-    () => ({ ...query, limit: query.limit ?? p.pageSize, ...(locked === "show" ? {} : { mode: "hide" }) }),
+    () => ({
+      ...query,
+      summary: query.summary ?? true,
+      limit: query.limit ?? p.pageSize,
+      ...(locked === "show" ? {} : { mode: locked === "hide" ? "hide" : "lock" }),
+    }),
     [query, p.pageSize, locked],
   );
   const list = useContents(q, { client: p.client });
   return (
-    <>
-      {locked === "collapse" && <LockedSection {...p} query={query} />}
-      <CardGrid {...p} list={list} render={JSON.stringify(q)} />
-    </>
-  );
-}
-
-/** A list's locked cards, counted, loaded and shown on opening. */
-function LockedSection({ query, ...p }: CardListProps & { query: ContentQuery }) {
-  const m = useMessages();
-  const [open, setOpen] = useState(false);
-  const { count } = useLockedCount(query, { client: p.client });
-  const q = useMemo<ContentQuery | null>(
-    () => (open ? { ...query, mode: "lock", access: query.access ?? LOCKED_LEVELS, limit: query.limit ?? p.pageSize } : null),
-    [open, query, p.pageSize],
-  );
-  const list = useContents(q, { client: p.client });
-  const items = useMemo(() => list.items.filter((c) => !c.access.allowed), [list.items]);
-  if (!count) return null;
-  return (
-    <ContentKitUiRoot appearance={p.appearance} className="grid gap-3 text-sm" data-ckui="locked-cards">
-      <Button variant="outline" size="sm" className="justify-self-start" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? m.t("contents.lockedHide") : m.plural("contents.lockedShow", count)}
-      </Button>
-      {open && <CardGrid {...p} list={{ ...list, items }} render={JSON.stringify(q)} />}
-    </ContentKitUiRoot>
+    <CardGrid
+      {...p}
+      locked={locked}
+      list={list}
+      render={JSON.stringify(q)}
+      filterKinds={query.kind ? [query.kind] : undefined}
+      filterLanguage={query.display_language ?? query.language}
+    />
   );
 }
 
 /** Search results as cards; nothing until the query has text. */
 export function SearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
   const { t } = useMessages();
-  const q = useMemo(() => ({ ...query, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
+  const q = useMemo(() => ({ ...query, summary: query.summary ?? true, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
   const list = useSearch(q, { client: p.client });
   if (!query.q.trim()) return null;
-  return <CardGrid surface="search" empty={t("contents.noResults", { q: query.q.trim() })} {...p} list={list} render={JSON.stringify(q)} />;
-}
-
-/** The signed-in reader's history as cards, each removable, with a clear-all. */
-export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: HistoryQuery }) {
-  const { t } = useMessages();
-  const ctx = useContext(ContentKitContext);
-  const q = useMemo(() => ({ ...query, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
-  const list = useHistory(q, { client: p.client });
-  const forget = useAction("history.forget");
-  if (ctx?.viewer === null) return <p className="text-muted-foreground">{t("contents.historySignedOut")}</p>;
   return (
-    <div className="grid gap-3" data-ckui="content-history">
-      {list.items.length > 0 && (
-        <Button size="sm" variant="outline" className="justify-self-end" disabled={forget.pending} onClick={() => void forget.run(() => list.forget(query.kind ? { kind: query.kind } : {}))}>
-          {t("contents.clearHistory")}
-        </Button>
-      )}
-      <CardGrid
-        surface="history"
-        empty={t("contents.historyEmpty")}
-        {...p}
-        list={list}
-        render={JSON.stringify(q)}
-        renderCard={
-          p.renderCard ??
-          ((card) => (
-            <ContentCard
-              card={card}
-              client={p.client}
-              href={p.href}
-              shape={p.shape}
-              aspectRatio={p.aspectRatio}
-              titlePosition={p.titlePosition}
-              loadMedia={p.loadMedia}
-              groupKinds={p.groupKinds}
-              chips={p.chips}
-              filterEntity={p.filterEntity}
-              entityStyle={p.entityStyle}
-              entityLayout={p.entityLayout}
-              metadata={p.metadata}
-              showCounts={p.showCounts}
-              tiers={p.tiers}
-              labels={p.labels}
-              owner={p.owner}
-              ownerHref={p.ownerHref}
-              decorate={p.decorate}
-            >
-              <Button size="xs" variant="ghost" className="justify-self-start" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
-                {t("contents.removeFromHistory")}
-              </Button>
-            </ContentCard>
-          ))
-        }
-      />
-    </div>
+    <CardGrid
+      surface="search"
+      empty={t("contents.noResults", { q: query.q.trim() })}
+      {...p}
+      list={list}
+      render={JSON.stringify(q)}
+      filterKinds={query.kind ? [query.kind] : undefined}
+      filterLanguage={query.display_language ?? query.language}
+    />
   );
 }
+
+export { ContentHistory } from "./history.js";
 
 export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empty"> {
   /** The rail's heading. */

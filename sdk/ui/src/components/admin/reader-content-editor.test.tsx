@@ -74,7 +74,7 @@ const review: PageReview = { revision: "1", selected: 1, pages: [], flagged: 0 }
 const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean } = {}) {
+function server(options: { failText?: boolean; media?: ReadResult; review?: () => PageReview; memberships?: Promise<ContentMemberships>; noText?: boolean } = {}) {
   let item = gallery();
   if (options.noText) delete item.text;
   const calls: Call[] = [];
@@ -109,7 +109,7 @@ function server(options: { failText?: boolean; media?: ReadResult; memberships?:
       return Response.json(item.versions[0]);
     }
     if (method === "GET" && path === "/contents/c1/versions/v1") return Response.json(item.versions[0]);
-    if (method === "GET" && path === "/contents/c1/versions/v1/pages") return Response.json(review);
+    if (method === "GET" && path === "/contents/c1/versions/v1/pages") return Response.json(options.review?.() ?? review);
     if (method === "POST" && path === "/contents/c1/publish") {
       item = { ...item, state: "published", live: true };
       return Response.json(item);
@@ -137,6 +137,7 @@ it("opens a complete reader workspace without a create-draft step or writes on m
   expect(screen.queryByRole("button", { name: "Create draft" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save draft" })).toBeVisible();
   expect(screen.getByLabelText("Gallery files")).toBeInTheDocument();
+  expect(screen.getAllByRole("heading", { name: "Gallery files" })).toHaveLength(1);
   expect(screen.getByRole("combobox", { name: "Add: Artist" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Add: Series" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Add: Character" })).toBeVisible();
@@ -329,4 +330,41 @@ it("allocates one hidden draft on file selection and carries pending uploads thr
   expect(screen.getByLabelText("Title")).toHaveValue("first");
   expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
   expect(upload.mock.calls.every(([, o]) => o.ref.id === "c1" && o.ref.version === "v1")).toBe(true);
+});
+
+it("keeps the draft editing session when the built-in history router changes synchronously", async () => {
+  const s = server();
+  const user = userEvent.setup();
+  window.history.replaceState(null, "", "/standalone/galleries/new");
+  try {
+    render(<ContentManager client={s.client} kind="gallery" basePath="/standalone/galleries" />);
+    const title = await screen.findByLabelText("Title");
+    await user.type(title, "Synchronous route");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/standalone/galleries/c1"));
+    await screen.findByText("Saved.", { selector: "p[role=status]" });
+    expect(screen.getByLabelText("Title")).toBe(title);
+    expect(title).toHaveValue("Synchronous route");
+  } finally {
+    window.history.replaceState(null, "", "/");
+  }
+});
+
+it("refreshes page selection after asynchronous ZIP extraction replaces the archive with pages", async () => {
+  let extracted = false;
+  const options = {
+    media: read([{ path: "pages/gallery.zip", type: "application/zip", upload: true, size: 100, pending: ["extract"] }]),
+    review: () => ({ ...review, selected: extracted ? 1 : 0 }),
+  };
+  const s = server(options);
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByLabelText("Title");
+  await waitFor(() => expect(s.calls.some((call) => call.path.endsWith("/pages"))).toBe(true));
+  expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+  extracted = true;
+  options.media = read([page]);
+  // Exercise the normal editor-read polling, without a new client-side commit
+  // or media.processed event to invalidate the catalog's review separately.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), { timeout: 6_000 });
+  expect(s.calls.filter((call) => call.path.endsWith("/pages")).length).toBeGreaterThan(1);
 });

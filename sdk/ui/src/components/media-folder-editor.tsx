@@ -231,7 +231,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-3", className)} data-ckui="media-folder" data-over={over ? "" : undefined} {...drop}>
       <div className="flex flex-wrap items-center justify-between gap-2" data-ckui="folder-header">
-        <h3 className="text-sm font-semibold">{label ?? t("folder.label")}</h3>
+        {label !== false && <h3 className="text-sm font-semibold">{label ?? t("folder.label")}</h3>}
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}
           {!empty && picker(false)}

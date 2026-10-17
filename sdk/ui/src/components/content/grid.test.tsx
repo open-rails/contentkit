@@ -40,7 +40,7 @@ function serve() {
       const hide = u.searchParams.get("mode") === "hide";
       if (u.pathname === "/v1/release-dates") return Response.json({ dates: [{ date: "2026-10", count: hide ? 2 : 4, free: 2 }] });
       if (u.pathname === "/v1/contents")
-        return Response.json({ contents: hide ? [card("a"), card("b")] : u.searchParams.has("access") ? [card("p1", false), card("p2", false)] : [] });
+        return Response.json({ contents: hide ? [card("a"), card("b")] : [card("a"), card("p1", false), card("b"), card("p2", false)], summary: { filtered_count: 0, filtered_entities: [], locked_count: 2 } });
       return Response.json({ error: "not found", code: "not_found" }, { status: 404 });
     },
   });
@@ -102,26 +102,25 @@ it("decorates each cover with the host's badges, and a click still reports the c
   expect(click).toHaveBeenCalledWith("b", expect.objectContaining({ position: 2, render_id: expect.any(String) }));
 });
 
-it("collapses locked cards behind a counted toggle that loads them when opened", async () => {
+it("collapses locked cards into a counted tile and reveals cached cards in their original ranking", async () => {
   const { client, reads } = serve();
   const click = vi.spyOn(beaconsFor(client), "click");
-  render(<ContentGrid query={{ kind: "gallery", sort: "newest" }} locked="collapse" />, { wrapper: wrap(client) });
+  const view = render(<ContentGrid query={{ kind: "gallery", sort: "newest" }} locked="collapse" />, { wrapper: wrap(client) });
   await screen.findByText("Title a");
-  const toggle = await screen.findByRole("button", { name: "Show 2 locked items" });
-  expect(reads.filter((u) => u.pathname === "/v1/contents").map((u) => u.searchParams.get("mode"))).toEqual(["hide"]);
-  expect(screen.queryByText("Title p1")).toBeNull();
-
-  fireEvent.click(toggle);
+  const tile = await screen.findByRole("button", { name: "Show 2 locked items" });
+  expect(reads.filter((u) => u.pathname === "/v1/contents").map((u) => u.searchParams.get("mode"))).toEqual(["lock"]);
+  expect(reads.some((u) => u.pathname === "/v1/release-dates")).toBe(false);
+  expect(view.container.querySelector('article[data-id="p1"]')).toBeNull();
+  fireEvent.click(tile);
   expect(await screen.findByText("Title p2")).toBeInTheDocument();
-  expect(toggle).toHaveAttribute("aria-expanded", "true");
-  const locked = reads.find((u) => u.pathname === "/v1/contents" && u.searchParams.get("mode") === "lock")!;
-  expect([locked.searchParams.get("access"), locked.searchParams.get("sort")]).toEqual(["tier,group,ppv,group_ppv", "newest"]);
+  expect(tile).not.toBeInTheDocument();
+  expect(reads.filter((u) => u.pathname === "/v1/contents")).toHaveLength(1);
+  expect([...view.container.querySelectorAll("article[data-id]")].map((node) => node.getAttribute("data-id"))).toEqual(["a", "p1", "b", "p2"]);
   fireEvent.click(screen.getByText("Title p2"));
   fireEvent.click(screen.getByText("Title a"));
   const [p2, a] = click.mock.calls as [string, { position?: number; render_id?: string }][];
-  expect([p2![0], p2![1].position, a![0], a![1].position]).toEqual(["p2", 2, "a", 1]);
-  expect(p2![1].render_id).not.toBe(a![1].render_id);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Hide locked items" })).toBeInTheDocument());
+  expect([p2![0], p2![1].position, a![0], a![1].position]).toEqual(["p2", 4, "a", 1]);
+  expect(p2![1].render_id).toBe(a![1].render_id);
 });
 
 it("stops infinite loading after a failed next page and retries explicitly without losing loaded cards", async () => {

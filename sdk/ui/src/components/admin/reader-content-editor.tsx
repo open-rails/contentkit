@@ -175,19 +175,25 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   folderRef.current = folder;
   const files = folder.read.read?.files ?? [];
   const review = usePageReview(item?.id, version?.id, { client });
+  // A ZIP's pages appear after its commit. Media polling alone does not
+  // invalidate the separate review count when extraction changes the manifest.
+  const mediaReviewKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
+    files.filter((file) => file.upload).map((file) => [file.path, file.size, file.staged, file.pending, file.failed]),
+  ]) : null;
+  useEffect(() => {
+    if (mediaReviewKey) review.reload();
+  }, [mediaReviewKey, review.reload]);
   const mediaFailed = !!folder.error || folder.queue.items.some((q) => q.status === "failed") || files.some((f) => f.failed);
   const processing = files.some(isProcessing);
   const selectedPages = review.review?.selected ?? 0;
+  const filesPending = folder.busy || allocating || processing || folder.read.loading || review.loading || cover.pending;
   const publishingBlocked =
-    folder.busy ||
-    allocating ||
-    processing ||
+    filesPending ||
     mediaFailed ||
-    review.loading ||
+    !!folder.read.error ||
     !!review.error ||
     selectedPages === 0 ||
     coordinator.pending ||
-    cover.pending ||
     offer.pending;
   const add = (input: Iterable<File>) => {
     const added = [...input];
@@ -352,7 +358,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             <h1 className="truncate text-xl font-semibold">{text.title || t("readerEditor.new")}</h1>
             <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
               <Badge variant={item?.live ? "default" : "outline"}>{t(`contentManager.${status}`)}</Badge>
-              {version && <span>{t("contentEditor.pageCount", { count: version.pages ?? selectedPages })}</span>}
+              {version && <span>{t("contentEditor.pageCount", { count: review.review ? selectedPages : version.pages ?? 0 })}</span>}
               {allocating && <span role="status">{t("common.saving")}</span>}
             </div>
           </div>
@@ -455,7 +461,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               <p className="text-sm text-muted-foreground">{t("readerEditor.fileHelp")}</p>
               <MediaFolderEditor
                 folder={{ ...folder, add }}
-                label={t("readerEditor.files")}
+                label={false}
                 layout="grid"
                 disabled={saving}
                 inputLabel={t("readerEditor.files")}
@@ -474,9 +480,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                   ) : null
                 }
               />
-              {publishingBlocked && (
+              {folder.read.error && <LoadFailed error={folder.read.error} message={t("contentManager.loadFailed")} retry={folder.read.reload} />}
+              {review.error && <LoadFailed error={review.error} message={t("pageReview.loadFailed")} retry={review.reload} />}
+              {(mediaFailed || filesPending || (!review.error && !folder.read.error && selectedPages === 0)) && (
                 <p role="status" className="text-sm text-muted-foreground">
-                  {mediaFailed ? t("readerEditor.filesFailed") : processing || folder.busy ? t("readerEditor.processing") : t("readerEditor.addPages")}
+                  {mediaFailed ? t("readerEditor.filesFailed") : filesPending ? t("readerEditor.processing") : t("readerEditor.addPages")}
                 </p>
               )}
               {item && version && (

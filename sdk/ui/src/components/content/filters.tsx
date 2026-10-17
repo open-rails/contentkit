@@ -28,6 +28,8 @@ export interface ContentFilterSettingsProps {
   language?: string;
   /** Currently excluded matches in this listing/day; omitted shows no counts. */
   counts?: readonly ContentFilterCount[];
+  /** Counts cover a bounded candidate set, so each displayed count is a lower bound. */
+  countsLowerBound?: boolean;
   /** Offer listing deleted content the reader holds. Default true. */
   includeDeleted?: boolean;
   client?: ContentKitClient;
@@ -66,7 +68,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
               <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
                 {x.entity.name || x.entity.slug}
                 {p.counts !== undefined && (
-                  <span className="tabular-nums">: {new Intl.NumberFormat(m.language).format(p.counts.filter((entry) => entry.entity.id === x.entity.id).reduce((n, entry) => n + entry.count, 0))}</span>
+                  <span className="tabular-nums">: {p.countsLowerBound ? "≥ " : ""}{new Intl.NumberFormat(m.language).format(p.counts.filter((entry) => entry.entity.id === x.entity.id).reduce((n, entry) => n + entry.count, 0))}</span>
                 )}
               </Label>
             </li>

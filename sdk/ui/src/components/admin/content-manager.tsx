@@ -293,17 +293,18 @@ export interface ContentEditorProps {
  */
 export function ContentEditor(p:ContentEditorProps){
   const {client,scope}=useContentScope(p.client);
-  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,key:0,allocated:null as string|null});
+  const allocated=useRef<{id:string;session:number}|null>(null);
+  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,key:0});
   let boundary=session;
   if(session.id!==p.id||session.kind!==p.kind||session.client!==client||session.scope!==scope){
-    const continues=session.id==null&&p.id===session.allocated&&session.kind===p.kind&&session.client===client&&session.scope===scope;
-    boundary={id:p.id,kind:p.kind,client,scope,key:continues?session.key:session.key+1,allocated:null};
+    const continues=session.id==null&&p.id===allocated.current?.id&&allocated.current?.session===session.key&&session.kind===p.kind&&session.client===client&&session.scope===scope;
+    boundary={id:p.id,kind:p.kind,client,scope,key:continues?session.key:session.key+1};
     setSession(boundary);
   }
   const {kinds,error,reload}=useKinds({client});
   const {t}=useMessages();
   if(!kinds)return error?<LoadFailed error={error} message={t("contentManager.loadFailed")} retry={reload}/>:<Rows/>;
-  const props={...p,client,onCreated:(content:Content)=>{setSession((old)=>({...old,allocated:content.id}));p.onCreated?.(content);}};
+  const props={...p,client,onCreated:(content:Content)=>{allocated.current={id:content.id,session:boundary.key};p.onCreated?.(content);}};
   if(kinds.kinds[p.kind]?.presentation==="reader")return <ReaderContentEditor key={boundary.key} {...props} model={kinds}/>;
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }

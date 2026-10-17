@@ -7,12 +7,12 @@ import { createContentKitClient } from "../../client/client.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { SearchBox } from "./search.js";
 
-it("shows prefix-matching history before entities and titles, even while fresh suggestions load", async () => {
+it("shows matching history before entities and titles, ignoring fillers and favoring prefixes over interior matches", async () => {
   const onSearch = vi.fn(), navigate = vi.fn();
   let complete: ((response: Response) => void) | undefined;
   const fetcher = vi.fn(async (url: RequestInfo | URL) => {
     if (String(url).includes("/typeahead")) return new Promise<Response>((resolve) => { complete = resolve; });
-    return Response.json({ searches: [{ query: "Inazuma art" }, { query: "The Inazuma" }, { query: "INAZUMA manga" }, { query: "unrelated" }] });
+    return Response.json({ searches: [{ query: "Discover Inazuma" }, { query: "Inazuma art" }, { query: "The Inazuma" }, { query: "INAZUMA manga" }, { query: "unrelated" }] });
   });
   const client = createContentKitClient({ baseUrl: "https://content.test/prefix-history", fetch: fetcher });
   render(<ContentKitProvider client={client} viewer="alice" navigate={navigate}><SearchBox onSearch={onSearch} /></ContentKitProvider>);
@@ -20,14 +20,27 @@ it("shows prefix-matching history before entities and titles, even while fresh s
   const input = screen.getByRole("combobox", { name: "Search" });
   await user.type(input, "inazuma");
   await waitFor(() => expect(complete).toBeTypeOf("function"));
-  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Inazuma art", "INAZUMA manga"]);
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Inazuma art", "The Inazuma", "INAZUMA manga", "Discover Inazuma"]);
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/me/searches"))).toHaveLength(1);
   complete!(Response.json({ contents: [{ id: "gallery", kind: "gallery", title: "Inazuma Adventures", path: "/gallery" }], entities: [{ id: "artist", kind: "artist", name: "Inazuma", slug: "inazuma", path: "/artist" }] }));
   await screen.findByRole("option", { name: "Inazuma Adventures" });
-  expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-type"))).toEqual(["recent", "recent", "group", "content"]);
+  expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-type"))).toEqual(["recent", "recent", "recent", "recent", "group", "content"]);
   await user.keyboard("{ArrowDown}{Enter}");
   expect(onSearch).toHaveBeenCalledExactlyOnceWith("Inazuma art");
   expect(navigate).not.toHaveBeenCalled();
+});
+
+it("does not turn filler-only input into a wildcard over recent searches", async () => {
+  const client = createContentKitClient({ baseUrl: "https://content.test/filler-history", fetch: async () => Response.json({ contents: [], entities: [] }) });
+  client.discovery.browserSearches.record("The Azure Journey", 1);
+  const user = userEvent.setup();
+  render(<ContentKitProvider client={client} viewer={null}><SearchBox onSearch={vi.fn()} /></ContentKitProvider>);
+  const input = screen.getByRole("combobox", { name: "Search" });
+  await user.type(input, "the a an");
+  expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  await user.clear(input);
+  await user.type(input, "THE journey");
+  expect(screen.getByRole("option", { name: /The Azure Journey/ })).toBeVisible();
 });
 
 it("keeps matching guest recents usable without waiting for autocomplete and hides stale server suggestions", async () => {

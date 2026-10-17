@@ -1,21 +1,19 @@
-import { ArrowDown01Icon, LockIcon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useCallback, useContext, useId, useMemo, useState, useRef, type CSSProperties, type MouseEvent } from "react";
+import { useCallback, useContext, useId, useMemo, useState, useRef, type MouseEvent } from "react";
 import type { DailyReleasesQuery } from "../../client/discovery.js";
 import type { Card, ReleaseDay } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useDailyReleases, useExposure } from "../../react/discovery.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useContentScope } from "../../react/use-resource.js";
-import { usePresets } from "../../react/public.js";
-import { ratio } from "../../client/aspect.js";
-import { RenditionImg } from "../rendition-img.js";
 import { useNearViewport } from "../../react/viewport.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { contentError } from "../social/parts.js";
+import { ContentSummaryTile } from "./summary-tile.js";
 import { ContentFilterDialog } from "./filter-dialog.js";
 import { useReleaseReveal } from "./release-reveal.js";
 import { ContentCard } from "./card.js";
@@ -101,7 +99,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
       return [{ key: "premium-summary", card, summary: true, position: i + 1 }];
     });
   }, [cards, collapsePremium, premiumExpanded]);
-  const exposed = useMemo(() => open && !pending ? entries.filter((entry) => !entry.summary).map((entry) => entry.card) : [], [open, pending, entries]);
+  const exposed = useMemo(() => open && !pending ? entries.filter((entry) => !entry.summary).map((entry) => ({ ...entry.card, position: entry.position })) : [], [open, pending, entries]);
   const exposure = useExposure(exposed, { surface: p.surface ?? "releases", render: day.date, client: p.client });
   const layout = cardGridLayout(p.grid);
   const reveal = useReleaseReveal(`${visible}|${entries.map((entry) => entry.key).join("\0")}`);
@@ -127,9 +125,9 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
         <div className="min-h-0 overflow-hidden">
           <ol ref={reveal.grid} className={cn(layout.className, "pt-2")} style={layout.style}>
             {entries.map((entry) => entry.summary ?
-              <ReleaseSummaryTile key={entry.key} tileKey={entry.key} contentKind={kinds?.[0] ?? entry.card.kind} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
+              <ContentSummaryTile key={entry.key} tileKey={entry.key} contentKind={kinds?.[0] ?? entry.card.kind} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
               <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} position={entry.position} exposure={exposure} cardProps={p} />)}
-            {day.filtered_count > 0 && <ReleaseSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
+            {day.filtered_count > 0 && <ContentSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
           </ol>
           {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="outline" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
         </div>
@@ -139,25 +137,6 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   );
 }
 
-function ReleaseSummaryTile({ tileKey, kind, contentKind, preview, open, label, onClick, cardProps: p }: {
-  tileKey: string; kind: "premium" | "filtered"; contentKind?: string; preview?: Card; open: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void; cardProps: ReleaseCardProps;
-}) {
-  const { t } = useMessages();
-  const [ref, near] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });
-  const { presets } = usePresets({ client: p.client });
-  const aspect: CSSProperties["aspectRatio"] = p.aspectRatio ?? ratio(presets.find((preset) => preset.kind === contentKind && preset.name === "cover")?.aspect) ?? (p.shape === "landscape" ? "16 / 9" : "3 / 4");
-  return <li ref={ref} data-release-key={tileKey}>
-    <Button type="button" variant="outline" data-ckui={`${kind}-release-tile`} aria-label={label} aria-expanded={kind === "premium" ? false : undefined} aria-haspopup={kind === "filtered" ? "dialog" : undefined} className="relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal" style={{ aspectRatio: aspect }} onClick={onClick}>
-      {preview && open && near && <RenditionImg outputs={preview.cover} alt="" fit="cover" loading="lazy" className="absolute inset-0 size-full opacity-20" />}
-      <span className="relative grid justify-items-center gap-3 p-4">
-        <HugeiconsIcon icon={kind === "premium" ? LockIcon : Settings01Icon} strokeWidth={2} className="size-8" aria-hidden />
-        <span className="text-xl font-semibold">{label}</span>
-        <span className="text-sm text-muted-foreground">{t(kind === "premium" ? "releases.premiumHint" : "releases.manageFilters")}</span>
-      </span>
-    </Button>
-    {preview && <p className="mt-2 line-clamp-2 text-lg leading-snug text-muted-foreground">{preview.title}</p>}
-  </li>;
-}
 
 function ReleaseCard({ card, open, position, exposure, cardProps: p }: { card: Card; open: boolean; position: number; exposure: ReturnType<typeof useExposure>; cardProps: ReleaseCardProps }) {
   const [viewport, visible] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });

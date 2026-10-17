@@ -345,9 +345,24 @@ Custom page-thumbnail or media grids can use the same primitive: call
 gaps and responsive behavior identical to content-card lists.
 
 `ContentGrid` and `ContentListing` take `locked`: `show` (default) marks the
-cards the reader doesn't open, `hide` leaves them out, and `collapse` lists
-the open ones and puts the rest behind a counted toggle that loads them on
-opening (`useLockedCount` counts them).
+cards the reader doesn't open, `hide` leaves them out, and `collapse` replaces
+locked cards with a cover-sized summary tile. Opening it reveals the cached
+cards in their original ranking order, with a reduced-motion-aware animation.
+The locked and optional-filter tiles use the same component as daily releases.
+
+`ContentGrid` and `SearchResults` request `summary=true` on the first page.
+`useContents` and `useSearch` expose that selection's `summary` across pagination:
+the distinct `filtered_count`, overlapping `filtered_entities` counts, and
+`locked_count` before cursor pagination. All counts retain the query's hard
+domain, language, entity, access and popularity-window eligibility. A bounded
+keyword selection may report `truncated`; its tiles and contextual filter
+counts then show `≥` to identify lower bounds. Clicking a filtered tile opens
+the shared filter dialog with this selection's per-entity counts.
+
+Preview policy belongs to the host. Set `showFilteredSummary={false}` to omit
+that tile, `lockedSummaryMinColumns={6}` to offer a locked tile only when six
+grid columns fit, and `cardLimit={6}` / `mobileCardLimit={4}` to limit mounted
+preview cards. `summaryLabels` supplies the host's nouns for both tile labels.
 
 ### Daily releases
 
@@ -718,6 +733,15 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   <ContentManager kind="blog" client={contentkit} basePath="/admin/blog" navigation={nav} renderEditor={richTextEditor} />
   ```
 
+  A `reader` kind uses one gallery workspace: localized metadata, configured
+  entities, access, cover, ZIP/pages, ordering and publication are available
+  together. A new draft is allocated internally on the first save or upload;
+  its URL change keeps the current fields and upload queue mounted. Versions,
+  chapter ranges, audio and reading anchors remain available in expandable
+  tools. **Publish** saves the visible edits and any dirty tools first and
+  checks every media window; failed uploads, processing or refused saves keep
+  the work unpublished. **Save draft** can save metadata while files upload.
+
   `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
@@ -884,24 +908,30 @@ or scroll: a dimmed backdrop, text rows with colored type icons, and no
 thumbnails. Recent searches omit dates. The panel
 slides downward when opened and honors reduced motion. Its mobile/desktop
 scroll limit is 70vh/60vh. The default inline
-presentation is unchanged. Both presentations show prefix-matching recent
-queries first (newest first), then matching entities, then content titles. A
+presentation is unchanged. Both presentations show matching recent queries
+first, with prefixes before interior matches and newest first within each tier,
+then matching entities, then content titles. A
 recent query remains selectable while network suggestions debounce or load.
 Guest history persists in localStorage across tabs; account history comes from
 the server, fetched on opening rather than on every keystroke. `recent={false}`
 omits history. Only completed searches are recorded.
 
-`GET /v1/typeahead` matches the beginning of a title, entity name or direct
-alias, using the keyword index's case/accent/whitespace normalization. It does
-not expand associated entities, contextual keywords, interior words or typos:
+`GET /v1/typeahead` matches literal substrings of a title, entity name or direct
+alias, preferring exact names and prefixes. Case, Latin accents and whitespace
+are normalized, and complete English filler words `the`, `a` and `an` are
+ignored in both autocomplete/history matching and full search. Filler-only
+queries return no matches. Identity and slug normalization stay unchanged.
+Autocomplete does not expand associated entities, contextual keywords or typos:
 Inazuma can suggest that artist, but not Business Question merely because
 Inazuma created it. Full `GET /v1/search` retains broader keyword and typo
 matching. Visibility, tenant, language and version eligibility still apply.
 The host owns search-page navigation and suggestion links.
 
-Core migration `0010_name_prefix_index` adds the name-only prefix index; apply
-normal ContentKit migrations before serving the new core. Original keyword
-indexes and full-search behavior remain in place.
+Core migration `0011_search_substrings` adds search-only indexes for native
+literal substring retrieval and normalized full search; apply normal migrations
+before serving the new core. Original functions/indexes remain in place so
+0.103 writers can overlap during an upgrade. Native query-plan tests verify
+the indexed Latin/CJK paths against a 50,000-document catalog.
 `ReaderSettings` combines language selection and content filters in one dialog:
 
 ```tsx
