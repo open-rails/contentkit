@@ -75,11 +75,23 @@ func (s *Service) pending(ctx context.Context, q querier, k *media.Kind, t Targe
 		return "", nil
 	}
 	tracks, err := tracksOf(k, m)
-	if reason, err := notReady(err, "video is still processing"); reason != "" || err != nil {
+	if reason, err := notReady(err, "playback media is still processing"); reason != "" || err != nil {
 		return reason, err
 	}
+	if len(tracks) == 0 {
+		// Nothing to play: only a current publication still offering removed tracks waits.
+		pb, err := s.current(ctx, q, t, kindPlayback)
+		if err != nil || pb == nil {
+			return "", err
+		}
+		var snap playbackSnapshot
+		if err := json.Unmarshal(pb.Source, &snap); err != nil || len(snap.Tracks) == 0 {
+			return "", err
+		}
+		return "playback is still being published", nil
+	}
 	if ok, err := s.currentFor(ctx, q, t, kindPlayback, playbackSnapshot{Tracks: tracks}); err != nil || !ok {
-		return "video is still being published", err
+		return "playback is still being published", err
 	}
 	return "", nil
 }

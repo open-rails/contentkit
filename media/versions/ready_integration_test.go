@@ -67,4 +67,25 @@ func TestPendingUntilPublished(t *testing.T) {
 	if p := pending(); len(p) != 1 || !strings.HasPrefix(p[0].Reason, "a file failed to process: originals/002") {
 		t.Fatalf("a failed page: %+v", p)
 	}
+	edit(func(f *media.File) { f.Failed = nil })
+
+	// Audio is waited for once the version has some; image-only versions never are.
+	s.mustUpload(s.creator, ref, "audio/theme", "audio/wav", wav(t))
+	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil && len(p.Playback.Tracks) == 1 })
+	if p := pending(); len(p) != 0 {
+		t.Fatalf("published audio is pending: %+v", p)
+	}
+	if _, err := s.ms.EditExisting(s.ctx, ref, func(m *media.Manifest) error {
+		for i := range m.Files {
+			if m.Files[i].IsUpload() && strings.HasPrefix(m.Files[i].Path, "audio/theme") {
+				m.Files[i].Pending = append(m.Files[i].Pending, "listen")
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if p := pending(); len(p) != 1 || p[0].Reason != "playback media is still processing" {
+		t.Fatalf("producing audio: %+v", p)
+	}
 }
