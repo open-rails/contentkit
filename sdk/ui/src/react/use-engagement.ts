@@ -20,15 +20,17 @@ export interface ReadingEngagement {
   page: (index: number, resume?: string) => (element: HTMLImageElement | null) => void;
   /** Attach to the playing video. Seeks do not count as watched intervals. */
   video: (element: HTMLVideoElement | null) => void;
+  /** Attach to a text post's body: one unit covered by its visible share. */
+  text: (element: HTMLElement | null) => void;
   /** Existing filename/anchor selector to restore, independent of page index. */
   setResume: (resume: string | undefined) => void;
   flush: () => Promise<void>;
 }
 
 interface PageBinding {
-  element: HTMLImageElement | null;
+  element: HTMLElement | null;
   resume?: string;
-  ref: (element: HTMLImageElement | null) => void;
+  ref: (element: HTMLElement | null) => void;
 }
 
 function visibleRange(element: HTMLElement): { from: number; to: number; area: number } | undefined {
@@ -106,7 +108,8 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
       let selected: { area: number; resume?: string } | undefined;
       for (const [index, binding] of pages) {
         const image = binding.element;
-        if (!image?.complete || image.naturalWidth <= 0 || intersections.get(image) === false) continue;
+        // An image counts once loaded; a text body as soon as it shows.
+        if (!image || image instanceof HTMLImageElement && (!image.complete || image.naturalWidth <= 0) || intersections.get(image) === false) continue;
         const range = visibleRange(image);
         if (!range) continue;
         visible.push({ index, ranges: [{ from: range.from, to: range.to }] });
@@ -226,5 +229,6 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
   }, [permitted, state]);
 
   const video = useCallback((element: HTMLVideoElement | null) => state.bindVideo(element), [state]);
-  return useMemo(() => ({ page: state.page, video, setResume: state.setResume, flush: state.flush }), [state, video]);
+  const text = useCallback((element: HTMLElement | null) => state.page(0)(element), [state]);
+  return useMemo(() => ({ page: state.page, video, text, setResume: state.setResume, flush: state.flush }), [state, video, text]);
 }

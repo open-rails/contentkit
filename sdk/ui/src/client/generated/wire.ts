@@ -232,6 +232,7 @@ export interface Card {
   ranking?: ContentRanking;
   updated_at?: string;
   deleted?: boolean;
+  excerpt?: string;
 }
 
 export interface CardAccess {

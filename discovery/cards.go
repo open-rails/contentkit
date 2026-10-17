@@ -60,6 +60,9 @@ type Card struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// Deleted marks a deleted item or version for staff and its creators.
 	Deleted bool `json:"deleted,omitempty"`
+	// Excerpt is a post kind's plain-text summary, about 300 characters: its
+	// description, else its body's opening for readers who open it.
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 type ContentRanking struct {
@@ -147,6 +150,8 @@ type cardRow struct {
 	creator     bool
 	listing     string
 	slug        string
+	description string
+	bodyExcerpt string
 	counts      struct {
 		likes, dislikes, favorites int
 	}
@@ -179,7 +184,34 @@ func (s *Service) lock(rows []cardRow) {
 		if !s.shows(c, kinds.ShowGroups) {
 			c.groupIDs = nil
 		}
+		if s.o.Kinds.Kinds[c.Kind].Presentation == "post" {
+			text := c.description
+			if !s.shows(c, kinds.ShowDescription) {
+				text = ""
+			}
+			if text == "" && c.Access.Allowed {
+				text = c.bodyExcerpt
+			}
+			c.Excerpt = excerpt(text, excerptChars)
+		}
 	}
+}
+
+// excerptChars bounds a card excerpt; clients trim further.
+const excerptChars = 300
+
+// excerpt cuts text to at most n characters at a word boundary, with an ellipsis.
+func excerpt(text string, n int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	r := []rune(text)
+	if len(r) <= n {
+		return text
+	}
+	cut := string(r[:n])
+	if i := strings.LastIndexByte(cut, ' '); i > len(cut)*3/5 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " .,;:!?-") + "…"
 }
 
 // cardRows hydrates and settles picks in order, applying locked-property
@@ -204,6 +236,7 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
  f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio, f.listing,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
+ coalesce(nullif(vt.description, ''), t.description, ''), coalesce(t.body_excerpt, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
   ORDER BY %[9]s LIMIT 1) = f.version_id, true)
@@ -212,7 +245,7 @@ JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.vid
 JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
 JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id
 LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.content_id = c.id
-LEFT JOIN LATERAL (SELECT x.title, x.language FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
+LEFT JOIN LATERAL (SELECT x.title, x.language, left(x.description, 600) AS description, x.body_excerpt FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
 LEFT JOIN %[6]s vt ON vt.tenant_id = v.tenant_id AND vt.version_id = v.id AND vt.language = t.language
 ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text")),
@@ -226,7 +259,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var isDefault bool
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&c.Version.HasAudio, &c.listing, &code, &c.slug, &c.Title, &c.Language, &c.owner, &c.creator, &isDefault)
+			&c.Version.HasAudio, &c.listing, &code, &c.slug, &c.Title, &c.Language, &c.description, &c.bodyExcerpt, &c.owner, &c.creator, &isDefault)
 		if err != nil {
 			return c, err
 		}

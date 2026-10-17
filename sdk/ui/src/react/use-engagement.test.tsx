@@ -108,6 +108,18 @@ it("measures tall-page coverage instead of treating one viewport as an entire pa
   expect(f.submit.mock.calls[0]?.[0][0]?.pages).toEqual([{ index: 0, active_ms: 1000, ranges: [{ from: 0, to: 4000 }] }]);
 });
 
+it("measures a text post's body as its one unit by its visible share, without waiting for an image load", async () => {
+  const f = fixture(), body = document.createElement("article");
+  const state = { top: 0 };
+  Object.defineProperty(body, "getBoundingClientRect", { value: () => ({ x: 0, y: state.top, top: state.top, left: 0, bottom: state.top + 4000, right: 700, width: 700, height: 4000, toJSON() {} }) });
+  document.body.append(body);
+  act(() => f.result.current.text(body)); await advance(500);
+  act(() => { state.top = -2000; window.dispatchEvent(new Event("scroll")); });
+  await advance(500); await act(async () => f.result.current.flush());
+  // Only the parts actually on screen count: the jump skipped 25-50%.
+  expect(f.submit.mock.calls[0]?.[0][0]?.pages).toEqual([{ index: 0, active_ms: 1000, ranges: [{ from: 0, to: 2500 }, { from: 5000, to: 7500 }] }]);
+});
+
 it("preserves one visit and stable page bindings across renderer mode switches and StrictMode replay", async () => {
   const f = fixture({ strict: true }), a = image(), b = image();
   const firstRef = f.result.current.page(0, "001.png"); act(() => firstRef(a.element)); await advance(500);

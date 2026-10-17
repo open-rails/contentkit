@@ -15,4 +15,4 @@ export { OfferFields } from "./offer-fields.js";
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
 export { VersionDownloadButton, type VersionDownloadButtonProps } from "./download-button.js";
 export { ContentFavorites } from "./favorites.js";
-export { PostList, excerpt, plainText, type PostListProps } from "./post-list.js";
+export { PostList, excerpt, type PostListProps } from "./post-list.js";

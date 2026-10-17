@@ -13101,6 +13101,9 @@
           },
           "deleted": {
             "type": "boolean"
+          },
+          "excerpt": {
+            "type": "string"
           }
         },
         "required": [

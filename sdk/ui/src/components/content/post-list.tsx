@@ -7,10 +7,8 @@ import type { ContentKitClient } from "../../client/client.js";
 import type { Period } from "../../client/discovery.js";
 import type { Card } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
-import { useContentDetail } from "../../react/detail.js";
 import { useContents } from "../../react/discovery.js";
 import { usePostReads } from "../../react/post-reads.js";
-import { useNearViewport } from "../../react/viewport.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
@@ -32,6 +30,8 @@ export interface PostListProps {
   sidebarSize?: number;
   /** Excerpt length in characters; default 220. */
   excerptLength?: number;
+  /** Signed in, posts unread within this many days are marked; default 30. */
+  unreadDays?: number;
   tiers?: readonly string[];
   labels?: PostCardProps["labels"];
   empty?: ReactNode;
@@ -45,11 +45,11 @@ export interface PostListProps {
  * Newest/Trending sidebar. Trending is the kind's popular window; it never
  * counts views.
  */
-export function PostList({ kind, language, href, pageSize = 10, trending = "30d", sidebarSize = 5, excerptLength = 220, tiers, labels, empty, client, appearance, className }: PostListProps) {
+export function PostList({ kind, language, href, pageSize = 10, trending = "30d", sidebarSize = 5, excerptLength = 220, unreadDays = 30, tiers, labels, empty, client, appearance, className }: PostListProps) {
   const m = useMessages();
   const { t } = m;
   const list = useContents(useMemo(() => ({ kind, sort: "newest" as const, limit: pageSize, display_language: language }), [kind, pageSize, language]), { client });
-  const reads = usePostReads();
+  const reads = usePostReads(unreadDays);
   const url = (card: Card) => (href ? href(card) : card.path);
   const sidebar = sidebarSize > 0;
   return (
@@ -79,10 +79,8 @@ export function PostList({ kind, language, href, pageSize = 10, trending = "30d"
                 card={card}
                 url={url(card)}
                 unread={reads.unread(card.id, card.published_at, card.viewer?.seen || card.viewer?.completed)}
-                language={language}
                 excerptLength={excerptLength}
                 lock={lockLabel(m, card.access, tiers, labels)}
-                client={client}
               />
             ))}
           </ol>
@@ -103,11 +101,11 @@ export function PostList({ kind, language, href, pageSize = 10, trending = "30d"
   );
 }
 
-function PostRow({ card, url, unread, lock, language, excerptLength, client }: { card: Card; url: string; unread: boolean; lock: string | null; language?: string; excerptLength: number; client?: ContentKitClient }) {
+function PostRow({ card, url, unread, lock, excerptLength }: { card: Card; url: string; unread: boolean; lock: string | null; excerptLength: number }) {
   const { t } = useMessages();
-  const [ref, near] = useNearViewport();
+  const text = excerpt(card.excerpt ?? "", excerptLength);
   return (
-    <li ref={ref} className="grid gap-4 py-4 sm:grid-cols-[14rem_minmax(0,1fr)]" data-ckui="post-row" data-id={card.id} data-unread={unread || undefined} lang={card.language || undefined}>
+    <li className="grid gap-4 py-4 sm:grid-cols-[14rem_minmax(0,1fr)]" data-ckui="post-row" data-id={card.id} data-unread={unread || undefined} lang={card.language || undefined}>
       {card.cover.length > 0 && (
         <a href={url} className="relative block aspect-[331/232] overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", lock && "blur-md")} />
@@ -131,24 +129,10 @@ function PostRow({ card, url, unread, lock, language, excerptLength, client }: {
             </span>
           )}
         </p>
-        {near ? <PostExcerpt id={card.id} language={language} length={excerptLength} client={client} /> : <span className="block h-10" />}
+        {text && <p className="line-clamp-3 leading-relaxed text-muted-foreground">{text}</p>}
       </div>
     </li>
   );
-}
-
-function PostExcerpt({ id, language, length, client }: { id: string; language?: string; length: number; client?: ContentKitClient }) {
-  const detail = useContentDetail(id, { language, client, version: null });
-  if (detail.loading) {
-    return (
-      <span className="grid gap-1.5" aria-hidden>
-        <Skeleton className="h-3 w-full" />
-        <Skeleton className="h-3 w-4/5" />
-      </span>
-    );
-  }
-  const text = excerpt(detail.content?.description || plainText(detail.content?.body ?? ""), length);
-  return text ? <p className="line-clamp-3 leading-relaxed text-muted-foreground">{text}</p> : null;
 }
 
 function SidebarSection({ title, kind, sort, size, language, url, client }: { title: string; kind: string; sort: "newest" | `popular:${Period}`; size: number; language?: string; url: (card: Card) => string; client?: ContentKitClient }) {
@@ -178,13 +162,6 @@ function SidebarSection({ title, kind, sort, size, language, url, client }: { ti
       </ol>
     </section>
   );
-}
-
-/** Text without markup, whitespace collapsed. */
-export function plainText(html: string): string {
-  if (!html) return "";
-  if (typeof DOMParser === "function") return (new DOMParser().parseFromString(html, "text/html").body.textContent ?? "").replace(/\s+/g, " ").trim();
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 /** At most length characters, cut at a word boundary with an ellipsis. */
