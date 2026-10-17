@@ -40,6 +40,7 @@ const gallery = (): Content => ({
   path: "/g/GALLERY01",
   language: "en",
   title: "Old title",
+  decision: { allowed: true },
   state: "draft",
   listing: "listed",
   comments: "open",
@@ -70,11 +71,12 @@ const read = (files: FileInfo[] = [page]): ReadResult => ({
   ],
 });
 const review: PageReview = { revision: "1", selected: 1, pages: [], flagged: 0 };
-const links: ContentMemberships = { memberships: [], entities: [] };
+const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships> } = {}) {
+function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean } = {}) {
   let item = gallery();
+  if (options.noText) delete item.text;
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "https://test.invalid");
@@ -132,15 +134,21 @@ it("opens a complete reader workspace without a create-draft step or writes on m
   const s = server();
   render(<ContentEditor client={s.client} kind="gallery" id={null} />);
   expect(await screen.findByLabelText("Title")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Create draft", exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save draft", exact: true })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Create draft" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeVisible();
   expect(screen.getByLabelText("Gallery files")).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Add Artist" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Add Series" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Add Character" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Add Tag" })).toBeVisible();
   expect(writes(s)).toEqual([]);
-  expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+});
+
+it("loads an editor response that supplies its localized fields without a text map", async () => {
+  const s = server({ noText: true });
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  expect(await screen.findByLabelText("Title")).toHaveValue("Old title");
 });
 
 it("allocates the technical draft only when saving and keeps the edited title", async () => {
@@ -149,7 +157,7 @@ it("allocates the technical draft only when saving and keeps the edited title", 
     onCreated = vi.fn();
   render(<ContentEditor client={s.client} kind="gallery" id={null} onCreated={onCreated} />);
   await user.type(await screen.findByLabelText("Title"), "New gallery");
-  await user.click(screen.getByRole("button", { name: "Save draft", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
   expect(writes(s).filter((c) => c.path === "/contents")).toHaveLength(1);
   expect(onCreated).toHaveBeenCalledOnce();
@@ -165,8 +173,8 @@ it("saves the visible text and current revision before publishing", async () => 
   const title = await screen.findByLabelText("Title");
   await user.clear(title);
   await user.type(title, "New title");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
-  await user.click(screen.getByRole("button", { name: "Publish", exact: true }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/publish")).toBe(true));
   expect(writes(s).map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /contents/c1/text/en", "PATCH /contents/c1", "POST /contents/c1/publish"]);
   expect(s.item.title).toBe("New title");
@@ -179,9 +187,9 @@ it("keeps unsaved input and refuses publication when saving fails", async () => 
   const title = await screen.findByLabelText("Title");
   await user.clear(title);
   await user.type(title, "Keep me");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
-  await user.click(screen.getByRole("button", { name: "Publish", exact: true }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
   expect(title).toHaveValue("Keep me");
   expect(writes(s).some((c) => c.path.endsWith("/publish"))).toBe(false);
 });
@@ -194,14 +202,14 @@ it("retains language drafts when switching languages and saves both", async () =
   await user.clear(title);
   await user.type(title, "English edit");
   await user.click(screen.getByRole("combobox", { name: "Language" }));
-  await user.click(await screen.findByRole("option", { name: "ja", exact: true }));
+  await user.click(await screen.findByRole("option", { name: "ja" }));
   await waitFor(() => expect(title).toHaveValue("旧タイトル"));
   await user.clear(title);
   await user.type(title, "日本語の編集");
   await user.click(screen.getByRole("combobox", { name: "Language" }));
-  await user.click(await screen.findByRole("option", { name: "en", exact: true }));
+  await user.click(await screen.findByRole("option", { name: "en" }));
   expect(title).toHaveValue("English edit");
-  await user.click(screen.getByRole("button", { name: "Save draft", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(writes(s).filter((c) => c.method === "PUT")).toHaveLength(2));
   expect(s.item.text?.en?.title).toBe("English edit");
   expect(s.item.text?.ja?.title).toBe("日本語の編集");
@@ -224,7 +232,7 @@ it("prevents publishing a processing or failed page", async () => {
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
   await screen.findByLabelText("Title");
   expect(await screen.findByText(/Some files need attention/)).toBeVisible();
-  expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
   expect(writes(s)).toEqual([]);
 });
 
@@ -238,7 +246,7 @@ it("keeps the editor mounted when its internal draft changes the route", async (
   render(<Route />);
   const title = await screen.findByLabelText("Title");
   await user.type(title, "Stable editor");
-  await user.click(screen.getByRole("button", { name: "Save draft", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(writes(s).some((c) => c.method === "PATCH")).toBe(true));
   expect(screen.getByLabelText("Title")).toBe(title);
   expect(title).toHaveValue("Stable editor");
@@ -265,7 +273,7 @@ it("saves an advanced version edit before publishing even after its panel closes
   const label = await screen.findByLabelText("Label (optional)");
   await user.type(label, "Revised edition");
   await user.click(screen.getByText("Versions and chapters", { selector: "summary" }));
-  await user.click(screen.getByRole("button", { name: "Publish", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/publish")).toBe(true));
   const order = writes(s).map((c) => c.path);
   expect(order.indexOf("/contents/c1/versions/v1")).toBeLessThan(order.indexOf("/contents/c1/publish"));
@@ -318,6 +326,6 @@ it("allocates one hidden draft on file selection and carries pending uploads thr
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
   expect(writes(s).filter((c) => c.path === "/contents")).toHaveLength(1);
   expect(screen.getByLabelText("Title")).toHaveValue("first");
-  expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
   expect(upload.mock.calls.every(([, o]) => o.ref.id === "c1" && o.ref.version === "v1")).toBe(true);
 });

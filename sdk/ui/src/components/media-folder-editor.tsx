@@ -615,7 +615,7 @@ function PendingRow({ file: f, folder, auto, disabled }: { file: FileInfo; folde
         : t("folder.notAdded");
   return (
     <li className="flex min-h-11 items-center gap-2 px-1" data-ckui="pending-row" data-path={f.path}>
-      <Thumb kind={kind} url={thumb?.url} busy={busy} grid={grid} aspect={thumb?.w&&thumb.h?thumb.w/thumb.h:undefined} />
+      <Thumb kind={kind} url={thumb?.url} busy={busy} />
       <div className="grid min-w-0 flex-1 gap-1">
         <span className="truncate text-sm" title={f.path}>
           {f.path.slice(f.path.lastIndexOf("/") + 1)}

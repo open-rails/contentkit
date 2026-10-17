@@ -36,6 +36,9 @@ import { LoadFailed, Rows, useConfirm } from "./shell.js";
 import { contentStatus, type ContentEditorProps } from "./content-manager.js";
 
 const blank = (): CatalogText => ({ title: "", slug: "", description: "", body: "" });
+const editableText = (item: Content | null, language: string): CatalogText =>
+  item?.text?.[language] ??
+  (item?.language === language ? { title: item.title, slug: item.slug, description: item.description, body: item.body } : blank());
 const fileTitle = (name: string) =>
   name
     .replace(/\.[^.]+$/, "")
@@ -106,9 +109,9 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const membership = useContentGroups(item?.id, { language, client });
   const names = useMemo(() => new Map(membership.entities), [membership.entities]);
   const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
-  const cards = useMemo(() => new Map([...names, ...picked]), [names, picked]);
+  const cards = useMemo(() => new Map([...picked, ...names]), [names, picked]);
   const groupKinds = useMemo(() => spec.entities ?? [], [spec.entities]);
-  const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, item?.text?.[l] ?? blank()])), [item?.text, languageKey]));
+  const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, editableText(item, l)])), [item, languageKey]));
   const details = useDraft(
     useMemo(
       () => ({
@@ -238,7 +241,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
       if (!current()) return;
       if (membership.error) throw membership.error;
       await guarded(async () => {
-        for (const l of changedText) {
+        for (const key of changedText) {
+          const l = String(key);
           const next = snapshotTexts[l];
           if (!next?.title.trim()) throw new ValidationError(t("contentManager.titleRequired"));
           content = await client.contents.putText(content.id, l, textOf(next));
