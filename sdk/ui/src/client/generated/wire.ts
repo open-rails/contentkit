@@ -230,6 +230,8 @@ export interface Card {
   published_at?: string;
   attributes: Record<string, unknown>;
   ranking?: ContentRanking;
+  updated_at?: string;
+  deleted?: boolean;
 }
 
 export interface CardAccess {
@@ -2112,6 +2114,7 @@ export interface VideoLimits {
 
 export interface ViewerState {
   favorited: boolean;
+  reaction?: number;
   seen: boolean;
   completed: boolean;
   progress: number;

@@ -12833,6 +12833,13 @@
           },
           "ranking": {
             "$ref": "#/components/schemas/ContentRanking"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -19088,6 +19095,9 @@
         "properties": {
           "favorited": {
             "type": "boolean"
+          },
+          "reaction": {
+            "type": "integer"
           },
           "seen": {
             "type": "boolean"
