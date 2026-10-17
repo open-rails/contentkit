@@ -24,10 +24,17 @@ func TestNamePrefixIndexUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if steps[len(steps)-1].Name != "0010_name_prefix_index.up.sql" {
-		t.Fatal("update the pre-prefix migration boundary")
+	boundary := -1
+	for i, step := range steps {
+		if step.Name == "0010_name_prefix_index.up.sql" {
+			boundary = i
+			break
+		}
 	}
-	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:len(steps)-1]); err != nil {
+	if boundary < 0 {
+		t.Fatal("name-prefix migration is missing")
+	}
+	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:boundary]); err != nil {
 		t.Fatal(err)
 	}
 	quoted := pgx.Identifier{schema}.Sanitize()
@@ -47,6 +54,23 @@ func TestNamePrefixIndexUpgrade(t *testing.T) {
 	var present bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname='content_search_documents_name_prefix')`, schema).Scan(&present); err != nil || !present {
 		t.Fatalf("name prefix index missing after upgrade: %v", err)
+	}
+	var identity, searched, empty, voiced, unvoiced string
+	if err := pool.QueryRow(ctx, `SELECT `+quoted+`.contentkit_keyword_normalize('The Café'),
+ `+quoted+`.contentkit_search_normalize('The Café'), `+quoted+`.contentkit_search_normalize('the a an'),
+ `+quoted+`.contentkit_search_normalize('ガンダム'), `+quoted+`.contentkit_search_normalize('カンタム')`).Scan(&identity, &searched, &empty, &voiced, &unvoiced); err != nil {
+		t.Fatal(err)
+	}
+	if identity != "the cafe" || searched != "cafe" || empty != "" || voiced != "ガンダム" || unvoiced != "カンタム" {
+		t.Fatalf("search normalization changed identity/native scripts: identity=%q search=%q filler=%q voiced=%q unvoiced=%q", identity, searched, empty, voiced, unvoiced)
+	}
+	var retained int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=$1 AND indexname=ANY($2::text[])`, schema, []string{
+		"content_search_documents_keyword_exact", "content_search_documents_keyword_fuzzy", "content_search_documents_keyword_native", "content_search_documents_name_prefix",
+		"content_search_documents_search_exact", "content_search_documents_search_fuzzy", "content_search_documents_search_native", "content_search_documents_search_substring",
+		"content_search_documents_names_prefix", "content_search_documents_names_substring",
+	}).Scan(&retained); err != nil || retained != 10 {
+		t.Fatalf("rolling upgrade must retain old and new search indexes: %d %v", retained, err)
 	}
 }
 
@@ -78,7 +102,7 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql"}
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql"}
 	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}

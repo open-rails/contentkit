@@ -1,6 +1,6 @@
 // Package search is ContentKit's keyword retrieval over content_search_documents:
-// exact names and aliases, native-script prefixes and bounded typos for every
-// language, with the visibility join (Eligibility) applied inside every route.
+// exact names and aliases, literal substrings, prefixes and bounded typos for
+// every language, with eligibility applied inside every indexed route.
 package search
 
 import (
@@ -38,7 +38,7 @@ type Options struct {
 	Limit        int
 
 	// Eligibility binds pgx '@name' placeholders other than the reserved
-	// tenant, language, q, prefix, limit, kinds and candidates.
+	// tenant, language, q, prefix, contains, limit, kinds and candidates.
 	Eligibility *Eligibility
 }
 

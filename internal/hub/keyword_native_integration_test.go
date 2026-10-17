@@ -105,6 +105,18 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		"zh": {native: doc("gallery", native, "zh", "魔法少女", nil, nil), negative: doc("gallery", negative, "zh", "鬼滅の刃", nil, nil)},
 		"ko": {native: doc("gallery", native, "ko", "마법소녀", nil, nil), negative: doc("gallery", negative, "ko", "바다소년", nil, nil)},
 	}
+	for id, d := range map[string]KeywordDocument{
+		cid(11): doc("gallery", cid(11), "en", "The Azure Journey", nil, nil),
+		cid(12): doc("gallery", cid(12), "en", "Ancient Azure Journey", nil, nil),
+		cid(13): doc("gallery", cid(13), "en", "Strawberry", nil, nil),
+		cid(14): doc("gallery", cid(14), "en", "100%_done", nil, nil),
+		cid(15): doc("gallery", cid(15), "en", "1000xdone", nil, nil),
+		cid(16): doc("gallery", cid(16), "en", "Unrelated Work", []string{"The Hidden Name"}, nil),
+		cid(17): doc("gallery", cid(17), "en", "Business Question", nil, []string{"Inazuma"}),
+		cid(18): doc("gallery", cid(18), "en", "Inazuma", nil, nil),
+	} {
+		documents["en"][id] = d
+	}
 	var all []KeywordDocument
 	for _, docs := range documents {
 		for _, d := range docs {
@@ -112,14 +124,14 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		}
 	}
 	upsertDocs(t, ctx, pool, schema, all...)
-	// Full search retains every fuzzy/interior match below; typeahead only
-	// admits these literal title/alias prefixes (including normalized scripts).
-	prefixQueries := map[string]bool{
+	// Full search retains fuzzy/contextual matches; typeahead only admits these
+	// literal title/alias substrings, including native-script interior text.
+	nameQueries := map[string]bool{
 		"Not Guilty": true, "ＮＯＴ　ＧＵＩＬＴＹ": true, "not gui": true, "ca": true,
 		"Café Moon": true, "Two-Factor": true, "cafe moon": true, "resume faconne": true,
 		"鬼滅の刃": true, "demon slayer": true, "ｶﾞﾝﾀﾞﾑ": true, "ガンダム": true,
 		"カンタム": true, "마법소녀": true,
-		"鬼滅": true, "ガン": true, "魔法少": true, "마법소": true,
+		"鬼滅": true, "ガン": true, "魔法少": true, "마법소": true, "の刃": true,
 	}
 	for _, tc := range []struct{ lang, query, id string }{
 		{"en", "Not Guilty", canonical}, {"en", "not giulty", canonical}, {"en", "not guily", canonical}, {"en", "not guillty", canonical}, {"en", "not guxlty", canonical},
@@ -144,15 +156,62 @@ func TestKeywordNativeIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if prefixQueries[tc.query] {
+			if nameQueries[tc.query] {
 				if len(suggestions) == 0 || suggestions[0].ContentID != tc.id || suggestions[0].Score <= 0 {
-					t.Fatalf("prefix suggestions=%v", suggestions)
+					t.Fatalf("literal name suggestions=%v", suggestions)
 				}
 			} else if len(suggestions) != 0 {
-				t.Fatalf("non-prefix full-search match leaked into suggestions: %v", suggestions)
+				t.Fatalf("nonliteral full-search match leaked into suggestions: %v", suggestions)
 			}
 		})
 	}
+	t.Run("literal substrings, fillers and prefix priority", func(t *testing.T) {
+		for _, tc := range []struct {
+			query string
+			want  []string
+		}{
+			{"azure", []string{cid(11), cid(12)}},
+			{"the azure", []string{cid(11), cid(12)}},
+			{"berry", []string{cid(13)}},
+			{"hidden", []string{cid(16)}},
+			{"100%", []string{cid(14)}},
+			{"%_done", []string{cid(14)}},
+			{"_done", []string{cid(14)}},
+			{"inazuma", []string{cid(18)}},
+			{"the a an", nil}, {"%", nil}, {"_", nil},
+		} {
+			hits, err := client.Typeahead(ctx, tc.query, TypeaheadOptions{Language: "en", ContentKinds: []string{"gallery"}, Limit: 20})
+			if err != nil || len(hits) != len(tc.want) {
+				t.Fatalf("%q: hits=%v want=%v err=%v", tc.query, hits, tc.want, err)
+			}
+			for i, id := range tc.want {
+				if hits[i].ContentID != id {
+					t.Fatalf("%q: hits=%v want=%v", tc.query, hits, tc.want)
+				}
+			}
+		}
+		for _, query := range []string{"the azure", "berry", "the a an", "inazuma"} {
+			page, err := client.Search(ctx, query, SearchOptions{Language: "en", ContentKinds: []string{"gallery"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if query == "the azure" || query == "inazuma" {
+				want = 2
+			}
+			if query == "the a an" {
+				want = 0
+			}
+			if len(page.Hits) != want {
+				t.Fatalf("full search %q: %+v want=%d", query, page, want)
+			}
+		}
+		hits, err := client.Typeahead(ctx, "azure", TypeaheadOptions{Language: "en", ContentKinds: []string{"gallery"}, Limit: 1,
+			Eligibility: &Eligibility{SQL: "SELECT 0 AS priority WHERE sd.content_id=@only", Args: map[string]any{"only": cid(12)}}})
+		if err != nil || len(hits) != 1 || hits[0].ContentID != cid(12) {
+			t.Fatalf("substring eligibility before limit: %v %v", hits, err)
+		}
+	})
 	for _, tc := range []struct{ lang, query string }{{"en", "not aquarium"}, {"en", "not guxxxy"}, {"ja", "鬼刀"}, {"ja", "鬼月の刀"}, {"zh", "魔刀"}, {"zh", "海洋世界"}, {"ko", "마너"}, {"ko", "바다세계"}, {"en", "not OR guilty"}} {
 		page, err := client.Search(ctx, tc.query, SearchOptions{Language: tc.lang, ContentKinds: []string{"gallery"}})
 		if err != nil {
@@ -168,6 +227,10 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		if err != nil || len(page.Hits) != 3 {
 			t.Fatalf("statement budget: %v %v", page, err)
 		}
+		names, err := client.Typeahead(ctx, "Not Guilty", TypeaheadOptions{Language: "en", ContentKinds: []string{"gallery"}, Eligibility: &Eligibility{SQL: "SELECT 0 AS priority WHERE current_setting('statement_timeout')='2s'"}})
+		if err != nil || len(names) != 2 {
+			t.Fatalf("name-search statement budget: %v %v", names, err)
+		}
 		for _, duration := range []time.Duration{25 * time.Millisecond, 10 * time.Second} {
 			request, cancel := context.WithTimeout(ctx, duration)
 			started := time.Now()
@@ -179,6 +242,11 @@ func TestKeywordNativeIntegration(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > 4*time.Second {
 				t.Fatalf("request exceeded keyword ceiling: %s", elapsed)
 			}
+		}
+		started := time.Now()
+		_, err = client.Typeahead(ctx, "Not Guilty", TypeaheadOptions{Language: "en", ContentKinds: []string{"gallery"}, Eligibility: &Eligibility{SQL: "SELECT 0 AS priority FROM pg_sleep(5)"}})
+		if err == nil || time.Since(started) > 4*time.Second {
+			t.Fatalf("name-search exceeded two-second ceiling: elapsed=%s err=%v", time.Since(started), err)
 		}
 	})
 	page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}})
@@ -204,7 +272,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
-	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),NULL,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
+	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),NULL,CASE WHEN i%2=0 THEN 'zh' ELSE 'en' END,'占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
 		t.Fatal(err)
 	}
 	var trgm string
@@ -256,6 +324,42 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	t.Log(plan.String())
 	if !strings.Contains(plan.String(), "content_search_documents_name_prefix") || strings.Contains(plan.String(), "Seq Scan") {
 		t.Fatalf("expected indexed name-prefix path:\n%s", plan.String())
+	}
+	for _, tc := range []struct{ query, index string }{
+		{fmt.Sprintf(`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
+ AND app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '魔法女少'
+ ORDER BY app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qt, qt), "content_search_documents_search_fuzzy"},
+		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
+ AND app.contentkit_search_terms(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) '魔法' LIMIT 20`, "content_search_documents_names_prefix"},
+		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='en'
+ AND app.contentkit_search_names(sd.title,sd.aliases) LIKE '%berry%' LIMIT 20`, "content_search_documents_names_substring"},
+		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='en'
+ AND app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) LIKE '%berry%' LIMIT 100`, "content_search_documents_search_substring"},
+	} {
+		rows, err := pool.Query(ctx, `EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) `+tc.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.Reset()
+		for rows.Next() {
+			var line string
+			if err = rows.Scan(&line); err != nil {
+				t.Fatal(err)
+			}
+			plan.WriteString(line + "\n")
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s:\n%s", tc.index, plan.String())
+		if !strings.Contains(plan.String(), tc.index) || strings.Contains(plan.String(), "Seq Scan") {
+			t.Fatalf("expected native indexed path for %s:\n%s", tc.index, plan.String())
+		}
+	}
+	largeNames, err := client.Typeahead(ctx, "berry", TypeaheadOptions{Language: "en", ContentKinds: []string{"gallery"}})
+	if err != nil || len(largeNames) != 1 || largeNames[0].ContentID != cid(13) {
+		t.Fatalf("large-catalog Latin interior matching: %v %v", largeNames, err)
 	}
 	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", ContentKinds: []string{"gallery"}})
 	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != native || page.HasMore {

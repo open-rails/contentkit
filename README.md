@@ -61,7 +61,7 @@ another tenant is an error, never remapped.
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the `content_events` outbox, search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF |
+| `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
 | `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
@@ -175,10 +175,19 @@ route or a wire type, run `go generate ./internal/contract`;
 Documents are one per content item or group and language. The engine's
 search job keeps them current from the dirty queue and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
-typeahead and discovery are internal (`internal/hub`) until their routes
-land (#122). A hit's score is the keyword match tier (exact title 1, alias
-0.9, token/prefix 0.75–0.77, typo 0.5–0.52); queries are capped at 256
-characters, 16 tokens and two seconds.
+autocomplete and discovery apply eligibility before every bounded retrieval.
+Autocomplete matches literal substrings of an item's own title/name/aliases,
+with exact names and prefixes first. It does not suggest a gallery merely
+because an associated artist matches. Full search also uses contextual keywords
+and conservative one-edit typos. Search-only normalization ignores complete
+English filler words `the`, `a` and `an`; filler-only queries return no matches.
+Entity identity, aliases and slug normalization are unchanged.
+
+A full-search score is a match tier: exact title 1, alias 0.9, name prefix
+0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
+and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
+seconds. Migration `0011_search_substrings` adds search-only expression indexes
+while retaining previous functions and indexes for mixed 0.103 writers.
 
 ## Errors
 

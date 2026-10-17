@@ -3,34 +3,36 @@ package search
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PrefixSearch matches only the beginning of a document's title or aliases.
-// Contextual keywords, interior words and typos belong to KeywordSearch, not
-// autocomplete. It shares search normalization and eligibility, with a dedicated
-// name-prefix index.
-func PrefixSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
-	return queryDocuments(ctx, pool, query, opts, prefixSearch)
+// NameSearch matches literal substrings of a document's own title or aliases.
+// Exact names and prefixes precede interior matches. Contextual keywords and
+// typos belong to KeywordSearch. Every indexed retrieval applies eligibility
+// before its bounded limit; no catalog is scanned in Go.
+func NameSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
+	return queryDocuments(ctx, pool, query, opts, nameSearch)
 }
 
-func prefixSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
+func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
 	result := Result{Hits: []Hit{}}
 	if utf8.RuneCountInString(query) > 256 {
 		return result, fmt.Errorf("keyword query exceeds 256 characters")
 	}
-	sqlLimit := min(MaxCandidateLimit, opts.Limit+1)
-	args := pgx.NamedArgs{"q": "", "limit": sqlLimit}
+	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
+	args := pgx.NamedArgs{"q": "", "contains": "", "limit": sqlLimit}
 	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
 		return result, err
 	}
 	qs, _ := quoteIdent(opts.Schema)
 	var q, nativeSchema string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_search_normalize($1),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &nativeSchema)
 	if err != nil {
 		return result, err
@@ -43,46 +45,72 @@ func prefixSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (R
 		return result, fmt.Errorf("keyword query exceeds 16 tokens")
 	}
 	args["q"] = q
+	args["contains"] = literalSubstring(q)
 	qn, _ := quoteIdent(nativeSchema)
-	// A term-prefix index covers only names, not contextual keywords. Unlike
-	// full-text token prefixes, this also handles complete CJK names correctly.
-	// starts_with verifies literal normalized spelling, independent of the
-	// extension's own normalizer. Neither predicate interprets query syntax.
-	names := qs + `.contentkit_keyword_terms(sd.title,sd.aliases,'{}'::text[],'')`
-	sql := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,matched.score
+	names := qs + `.contentkit_search_terms(sd.title,sd.aliases,'{}'::text[],'')`
+	corpus := qs + `.contentkit_search_names(sd.title,sd.aliases)`
+	// The prefix route protects strong matches from a broad substring candidate
+	// cap. LIKE and strpos both treat query punctuation literally; neither route
+	// accepts Groonga's query language or contextual keywords.
+	base := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,matched.score
  FROM %s
  CROSS JOIN LATERAL (
-   SELECT max(CASE WHEN names.ordinal=1 THEN CASE WHEN name=@q THEN 1.0 ELSE 0.9 END
-              ELSE CASE WHEN name=@q THEN 0.95 ELSE 0.85 END END)::real AS score
+   SELECT max(CASE WHEN names.ordinal=1 THEN CASE WHEN name=@q THEN 1.0 WHEN starts_with(name,@q) THEN 0.9 ELSE 0.8 END
+              ELSE CASE WHEN name=@q THEN 0.95 WHEN starts_with(name,@q) THEN 0.85 ELSE 0.75 END END)::real AS score
    FROM unnest(%s) WITH ORDINALITY AS names(name,ordinal)
-   WHERE starts_with(name,@q)
+   WHERE strpos(name,@q)>0
  ) matched
- WHERE %s AND %s OPERATOR(%s.&^) @q AND matched.score IS NOT NULL
+ WHERE %s AND matched.score IS NOT NULL AND `, priority, from, names, where)
+	order := `
  ORDER BY matched.score DESC,sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST
- LIMIT @limit`, priority, from, names, where, names, qn)
+ LIMIT @limit`
+	queries := []string{
+		base + fmt.Sprintf(`%s OPERATOR(%s.&^) @q`, names, qn) + order,
+		base + corpus + ` LIKE @contains ESCAPE E'\\'` + order,
+	}
 	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 		return result, err
 	}
-	rows, err := tx.Query(ctx, sql, args)
-	if err != nil {
-		return result, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		h := Hit{Language: opts.Language}
-		h.TenantID = opts.Tenant
-		if err := rows.Scan(&h.ContentKind, &h.ContentID, &h.ContentVersionID, &h.Language, &h.Priority, &h.Score); err != nil {
+	found := map[documentKey]Hit{}
+	for _, sql := range queries {
+		rows, err := tx.Query(ctx, sql, args)
+		if err != nil {
 			return result, err
 		}
+		seen := 0
+		for rows.Next() {
+			seen++
+			h := Hit{Language: opts.Language}
+			h.TenantID = opts.Tenant
+			if err := rows.Scan(&h.ContentKind, &h.ContentID, &h.ContentVersionID, &h.Language, &h.Priority, &h.Score); err != nil {
+				rows.Close()
+				return result, err
+			}
+			key := documentKey{h.Key(), h.Language}
+			if old, ok := found[key]; !ok || h.Score > old.Score {
+				found[key] = h
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return result, err
+		}
+		result.Truncated = result.Truncated || seen >= sqlLimit
+	}
+	for _, h := range found {
 		result.Hits = append(result.Hits, h)
 	}
-	if err := rows.Err(); err != nil {
+	sort.Slice(result.Hits, func(i, j int) bool { return hitLess(result.Hits[i], result.Hits[j]) })
+	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	result.Truncated = len(result.Hits) == MaxCandidateLimit
 	if len(result.Hits) > opts.Limit {
 		result.Hits = result.Hits[:opts.Limit]
 		result.Truncated = true
 	}
 	return result, nil
+}
+
+func literalSubstring(query string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
 }

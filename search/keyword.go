@@ -22,7 +22,9 @@ type documentKey struct {
 }
 
 // KeywordSearch preserves names and aliases, including native scripts. Exact
-// names precede aliases, token/prefix matches, then conservative one-edit typos.
+// names precede aliases, name prefixes/substrings, contextual token matches,
+// then conservative one-edit typos. Common English fillers are search-only
+// normalization, never entity identity normalization.
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
 // The eligibility join runs inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
@@ -58,7 +60,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	if utf8.RuneCountInString(query) > 256 {
 		return result, fmt.Errorf("keyword query exceeds 256 characters")
 	}
-	args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0}
+	args := pgx.NamedArgs{"q": "", "prefix": "", "contains": "", "limit": 0}
 	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
 		return result, err
@@ -67,7 +69,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	// Normalize in the same database function as the expression indexes. This
 	// avoids Go/Postgres Unicode casing and locale differences.
 	var q, trgmSchema, nativeSchema string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_search_normalize($1),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
 	if err != nil {
@@ -83,10 +85,11 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	}
 	qt, _ := quoteIdent(trgmSchema)
 	qn, _ := quoteIdent(nativeSchema)
-	terms := qs + `.contentkit_keyword_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
-	corpus := qs + `.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
+	terms := qs + `.contentkit_search_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
+	corpus := qs + `.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
 	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
 	args["q"], args["limit"] = q, sqlLimit
+	args["contains"] = literalSubstring(q)
 	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
 	// each token a literal prefix, never an OR/NOT/query-language operator.
 	prefixes := make([]string, len(tokens))
@@ -98,6 +101,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, priority, terms, from, where)
 	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,%s LIMIT @limit`, terms, "("+terms+")", terms, order)
 	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
+	substring := selectSQL + corpus + ` LIKE @contains ESCAPE E'\\' ORDER BY ` + order + ` LIMIT @limit`
 	// The GiST word-distance order can stop after a bounded number of candidates.
 	// Acceptance below requires at most one Unicode edit, not a low similarity
 	// threshold. Queries of one/two characters never enter the fuzzy route.
@@ -108,7 +112,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
 		return result, err
 	}
-	queries := []string{exact, prefix}
+	queries := []string{exact, prefix, substring}
 	if utf8.RuneCountInString(q) >= 3 {
 		queries = append(queries, fuzzy)
 	}
@@ -260,7 +264,7 @@ func keywordTokens(s string) []string {
 }
 
 func keywordScore(ctx context.Context, q string, tokens, fields []string, aliases int) float32 {
-	if len(fields) == 0 {
+	if len(fields) == 0 || q == "" {
 		return 0
 	}
 	if fields[0] == q {
@@ -269,6 +273,22 @@ func keywordScore(ctx context.Context, q string, tokens, fields []string, aliase
 	for i := 1; i < len(fields) && i <= aliases; i++ {
 		if fields[i] == q {
 			return .9
+		}
+	}
+	if strings.HasPrefix(fields[0], q) {
+		return .85
+	}
+	for i := 1; i < len(fields) && i <= aliases; i++ {
+		if strings.HasPrefix(fields[i], q) {
+			return .84
+		}
+	}
+	if strings.Contains(fields[0], q) {
+		return .82
+	}
+	for i := 1; i < len(fields) && i <= aliases; i++ {
+		if strings.Contains(fields[i], q) {
+			return .81
 		}
 	}
 	// Prefer a single name matching every token to matches scattered across
