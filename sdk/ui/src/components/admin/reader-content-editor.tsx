@@ -53,10 +53,11 @@ const textOf = (text: CatalogText): CatalogText => ({
 });
 class ValidationError extends Error {}
 
-function Panel({ title, children, className = "" }: { title: ReactNode; children: ReactNode; className?: string }) {
+// Without a visible title, label names the section for assistive technology.
+function Panel({ title, label, children, className = "" }: { title?: ReactNode; label?: string; children: ReactNode; className?: string }) {
   return (
-    <section className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-card p-4 ${className}`}>
-      <h2 className="text-base font-semibold">{title}</h2>
+    <section aria-label={title ? undefined : label} className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-card p-4 ${className}`}>
+      {title && <h2 className="text-base font-semibold">{title}</h2>}
       {children}
     </section>
   );
@@ -356,8 +357,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
       <div className="grid gap-5 text-base" data-ckui="reader-content-editor">
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-sm">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-xl font-semibold">{text.title || t("readerEditor.new")}</h1>
-            <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+            <h1 className="sr-only">{text.title || t("readerEditor.new")}</h1>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Badge variant={item?.live ? "default" : "outline"}>{t(`contentManager.${status}`)}</Badge>
               {version && <span>{t("contentEditor.pageCount", { count: review.review ? selectedPages : version.pages ?? 0 })}</span>}
               {allocating && <span role="status">{t("common.saving")}</span>}
@@ -385,7 +386,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
         )}
         <fieldset disabled={saving} className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
           <div className="grid min-w-0 gap-5">
-            <Panel title={t("readerEditor.details")}>
+            <Panel label={t("readerEditor.details")}>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
                 <div className="grid gap-1.5">
                   <Label htmlFor={`${ids}-title`}>{t("contentManager.itemTitle")}</Label>
