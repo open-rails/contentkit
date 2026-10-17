@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
 import type { Card, GroupCard, ListingSummary } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
-import { CardGrid, ContentGrid, ContentRail } from "./grid.js";
+import { CardGrid, ContentGrid, ContentRail, SearchResults } from "./grid.js";
 import { ContentFavorites } from "./favorites.js";
 
 const at = "2026-10-16T00:00:00Z";
@@ -34,16 +34,17 @@ const summary = (overrides: Partial<ListingSummary> = {}): ListingSummary => ({
   locked_count: 50,
   ...overrides,
 });
-function server(items: Card[] = [], metadata: ListingSummary = summary()) {
+function server(items: Card[] | ((request: URL) => Card[]) = [], metadata: ListingSummary = summary()) {
   const reads: URL[] = [];
   const client = createContentKitClient({
     baseUrl: "https://summary.test",
     fetch: async (input) => {
       const u = new URL(String(input));
       reads.push(u);
-      if (u.pathname === "/v1/contents") return Response.json({ contents: items, summary: metadata });
-      if (u.pathname.endsWith("/similar")) return Response.json({ contents: items, summary: metadata });
-      if (u.pathname === "/v1/me/favorites") return Response.json({ items: items.map((content) => ({ content, value: 1, at })), summary: metadata });
+      const selected = typeof items === "function" ? items(u) : items;
+      if (["/v1/contents", "/v1/search", "/v1/me/history", "/v1/recommendations"].includes(u.pathname) || u.pathname.endsWith("/similar"))
+        return Response.json({ contents: selected, summary: metadata });
+      if (u.pathname === "/v1/me/favorites") return Response.json({ items: selected.map((content) => ({ content, value: 1, at })), summary: metadata });
       if (u.pathname.endsWith("/content-filters"))
         return Response.json({
           applies_to: ["gallery", "blog"],
@@ -158,8 +159,7 @@ it("applies the homepage preview policy to measured columns and never mounts mor
   const computed = getComputedStyle;
   vi.spyOn(globalThis, "getComputedStyle").mockImplementation((element, pseudo) => {
     const styles = computed(element, pseudo);
-    if (element.tagName === "OL")
-      Object.defineProperty(styles, "gridTemplateColumns", { value: Array.from({ length: columns }, () => "180px").join(" "), configurable: true });
+    if (element.tagName === "OL") Object.defineProperty(styles, "gridTemplateColumns", { value: Array.from({ length: columns }, () => "180px").join(" "), configurable: true });
     return styles;
   });
   const s = server();
@@ -214,26 +214,38 @@ it("measures an all-locked preview before deciding whether its summary tile fits
 
 it("shows filter controls for a favorites selection even when every favorite is filtered", async () => {
   const s = server([]);
-  render(<ContentKitProvider client={s.client} viewer="reader"><ContentFavorites query={{ kind: "gallery" }} empty="No favorites yet" /></ContentKitProvider>);
+  render(
+    <ContentKitProvider client={s.client} viewer="reader">
+      <ContentFavorites query={{ kind: "gallery" }} empty="No favorites yet" />
+    </ContentKitProvider>,
+  );
   expect(await screen.findByRole("button", { name: "5 items filtered out" })).toBeVisible();
   expect(screen.queryByText("No favorites yet")).toBeNull();
-  expect(s.reads.find(u => u.pathname === "/v1/me/favorites")?.searchParams.get("summary")).toBe("true");
+  expect(s.reads.find((u) => u.pathname === "/v1/me/favorites")?.searchParams.get("summary")).toBe("true");
 });
 
 it("keeps an entirely filtered related rail visible and uses the shared filter dialog", async () => {
   const s = server([], summary({ truncated: true }));
-  render(<ContentKitProvider client={s.client} viewer={null}><ContentRail title="Related" similar="anchor" query={{ kind: "gallery" }} /></ContentKitProvider>);
+  render(
+    <ContentKitProvider client={s.client} viewer={null}>
+      <ContentRail title="Related" similar="anchor" query={{ kind: "gallery" }} />
+    </ContentKitProvider>,
+  );
   const tile = await screen.findByRole("button", { name: "≥ 5 items filtered out" });
   expect(screen.getByRole("heading", { name: "Related" })).toBeVisible();
   await userEvent.setup().click(tile);
   const dialog = await screen.findByRole("dialog", { name: "Content filters" });
   expect(await within(dialog).findByRole("switch", { name: "FUTA: ≥ 5" })).toBeVisible();
-  expect(s.reads.find(u => u.pathname.endsWith("/similar"))?.searchParams.get("summary")).toBe("true");
+  expect(s.reads.find((u) => u.pathname.endsWith("/similar"))?.searchParams.get("summary")).toBe("true");
 });
 
 it("uses the shared premium reveal in related rails", async () => {
   const s = server([card("paid", false)], summary({ filtered_count: 0, filtered_entities: [], locked_count: 1 }));
-  const view = render(<ContentKitProvider client={s.client} viewer={null}><ContentRail title="Related" similar="anchor" locked="collapse" /></ContentKitProvider>);
+  const view = render(
+    <ContentKitProvider client={s.client} viewer={null}>
+      <ContentRail title="Related" similar="anchor" locked="collapse" />
+    </ContentKitProvider>,
+  );
   expect(view.container.querySelector('article[data-id="paid"]')).toBeNull();
   await userEvent.setup().click(await screen.findByRole("button", { name: "Show 1 locked item" }));
   expect(await screen.findByText("Gallery paid")).toBeVisible();
@@ -241,7 +253,68 @@ it("uses the shared premium reveal in related rails", async () => {
 
 it("keeps guest favorites empty without asking the account endpoint", async () => {
   const s = server([card("private")]);
-  render(<ContentKitProvider client={s.client} viewer={null}><ContentFavorites empty="Favorite galleries will appear here" /></ContentKitProvider>);
+  render(
+    <ContentKitProvider client={s.client} viewer={null}>
+      <ContentFavorites empty="Favorite galleries will appear here" />
+    </ContentKitProvider>,
+  );
   expect(await screen.findByText("Favorite galleries will appear here")).toBeVisible();
-  expect(s.reads.some(u => u.pathname === "/v1/me/favorites")).toBe(false);
+  expect(s.reads.some((u) => u.pathname === "/v1/me/favorites")).toBe(false);
+});
+
+it.each(["related", "recommended", "list", "history", "favorites", "search"] as const)(
+  "applies hide before the %s page limit so a paid first candidate cannot mask a free result",
+  async (surface) => {
+    // The server's first candidate is paid. A client-only hide would render an
+    // empty page; requesting admission before the limit returns the free one.
+    const s = server(
+      (u) => (u.searchParams.get("mode") === "hide" ? [card("free")] : [card("paid", false)]),
+      summary({ filtered_count: 0, filtered_entities: [], locked_count: 0 }),
+    );
+    const props = { locked: "hide" as const, pageSize: 1 };
+    const element =
+      surface === "favorites" ? (
+        <ContentFavorites {...props} query={{ kind: "gallery" }} />
+      ) : surface === "search" ? (
+        <SearchResults {...props} query={{ kind: "gallery", q: "example" }} />
+      ) : surface === "related" ? (
+        <ContentRail {...props} title="Related" similar="anchor" />
+      ) : surface === "recommended" ? (
+        <ContentRail {...props} title="Recommended" recommendations />
+      ) : surface === "history" ? (
+        <ContentRail {...props} title="History" history={{ kind: "gallery" }} />
+      ) : (
+        <ContentRail {...props} title="Latest" list={{ kind: "gallery" }} />
+      );
+    render(
+      <ContentKitProvider client={s.client} viewer="reader">
+        {element}
+      </ContentKitProvider>,
+    );
+    expect(await screen.findByText("Gallery free")).toBeVisible();
+    expect(screen.queryByText("Gallery paid")).toBeNull();
+    expect(s.reads.some((u) => u.searchParams.get("limit") === "1" && u.searchParams.get("mode") === "hide")).toBe(true);
+  },
+);
+
+it.each([undefined, "show"] as const)("keeps an explicitly supplied hide query when locked is %s", async (locked) => {
+  const s = server((u) => (u.searchParams.get("mode") === "hide" ? [card("free")] : [card("paid", false)]), summary({ filtered_count: 0, filtered_entities: [], locked_count: 0 }));
+  render(
+    <ContentKitProvider client={s.client} viewer="reader">
+      <ContentFavorites locked={locked} query={{ mode: "hide" }} />
+    </ContentKitProvider>,
+  );
+  expect(await screen.findByText("Gallery free")).toBeVisible();
+  expect(screen.queryByText("Gallery paid")).toBeNull();
+});
+
+it("requests locked previews before collapsing them when the supplied query was hide", async () => {
+  const s = server((u) => (u.searchParams.get("mode") === "lock" ? [card("paid", false)] : []), summary({ filtered_count: 0, filtered_entities: [], locked_count: 1 }));
+  render(
+    <ContentKitProvider client={s.client} viewer="reader">
+      <ContentFavorites locked="collapse" query={{ mode: "hide" }} />
+    </ContentKitProvider>,
+  );
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Show 1 locked item" }));
+  expect(await screen.findByText("Gallery paid")).toBeVisible();
 });

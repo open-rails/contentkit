@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
+import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
 import type { Card, ListingSummary } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
@@ -63,12 +63,14 @@ export interface CardGridLayout {
 /** Shared by complete lists, release-day sections and grid-style previews. */
 export function cardGridLayout(layout?: CardGridLayout): { className: string; style?: CSSProperties } {
   if (!layout) return { className: GRID };
-  const width = typeof layout.minCardWidth === "string" ? layout.minCardWidth.trim() || "160px" : `${Number.isFinite(layout.minCardWidth) ? Math.max(1, layout.minCardWidth) : 160}px`;
+  const width =
+    typeof layout.minCardWidth === "string" ? layout.minCardWidth.trim() || "160px" : `${Number.isFinite(layout.minCardWidth) ? Math.max(1, layout.minCardWidth) : 160}px`;
   const columns = layout.mobileColumns !== undefined && Number.isFinite(layout.mobileColumns) ? Math.max(1, Math.floor(layout.mobileColumns)) : 2;
   const maximum = layout.maxColumns !== undefined && Number.isFinite(layout.maxColumns) ? Math.max(1, Math.floor(layout.maxColumns)) : undefined;
   const trackWidth = maximum === undefined ? width : `max(${width}, calc((100% - ${maximum - 1}rem) / ${maximum}))`;
   return {
-    className: "grid grid-cols-[repeat(var(--ckui-card-mobile-columns),minmax(0,1fr))] gap-x-4 gap-y-6 md:grid-cols-[repeat(auto-fill,minmax(min(100%,var(--ckui-card-min-width)),1fr))]",
+    className:
+      "grid grid-cols-[repeat(var(--ckui-card-mobile-columns),minmax(0,1fr))] gap-x-4 gap-y-6 md:grid-cols-[repeat(auto-fill,minmax(min(100%,var(--ckui-card-min-width)),1fr))]",
     style: { "--ckui-card-min-width": trackWidth, "--ckui-card-mobile-columns": columns } as CSSProperties,
   };
 }
@@ -83,13 +85,7 @@ export function CardGrid(p: GridProps) {
   const context = useContext(ContentKitContext);
   const [boundary, setBoundary] = useState({ client, viewer, language, access: context?.accessRevision, render: p.render, key: 0 });
   let session = boundary;
-  if (
-    boundary.client !== client ||
-    boundary.viewer !== viewer ||
-    boundary.language !== language ||
-    boundary.access !== context?.accessRevision ||
-    boundary.render !== p.render
-  ) {
+  if (boundary.client !== client || boundary.viewer !== viewer || boundary.language !== language || boundary.access !== context?.accessRevision || boundary.render !== p.render) {
     session = { client, viewer, language, access: context?.accessRevision, render: p.render, key: boundary.key + 1 };
     setBoundary(session);
   }
@@ -168,15 +164,16 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-grid" aria-busy={list.loading}>
       {list.loading && !list.items.length ? (
-        <div className={layout.className} style={layout.style}>
+        <ol aria-hidden className={layout.className} style={layout.style}>
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton
-              key={i}
-              className={p.aspectRatio === undefined ? (p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full") : "w-full"}
-              style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }}
-            />
+            <li key={i}>
+              <Skeleton
+                className={p.aspectRatio === undefined ? (p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full") : "w-full"}
+                style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }}
+              />
+            </li>
           ))}
-        </div>
+        </ol>
       ) : list.error && !list.items.length ? (
         <div role="alert" className="grid justify-items-start gap-2">
           <p className="text-destructive">{contentError(m, list.error)}</p>
@@ -287,6 +284,11 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
  */
 export type LockedCards = "show" | "hide" | "collapse";
 
+/** Settle locked-card admission before pagination, retaining explicit reader modes otherwise. */
+export function cardListMode(locked: LockedCards | undefined, mode?: AccessMode): AccessMode | undefined {
+  return locked === "hide" ? "hide" : locked === "collapse" ? "lock" : mode;
+}
+
 const LOCKED_LEVELS: readonly string[] = ["tier", "group", "ppv", "group_ppv"];
 const isLockedCard = (card: Card) => !card.access.allowed && !card.access.unknown && LOCKED_LEVELS.includes(card.access.level);
 
@@ -297,7 +299,7 @@ export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { 
       ...query,
       summary: query.summary ?? true,
       limit: query.limit ?? p.pageSize,
-      ...(locked === "show" ? {} : { mode: locked === "hide" ? "hide" : "lock" }),
+      mode: cardListMode(locked, query.mode),
     }),
     [query, p.pageSize, locked],
   );
@@ -317,7 +319,10 @@ export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { 
 /** Search results as cards; nothing until the query has text. */
 export function SearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
   const { t } = useMessages();
-  const q = useMemo(() => ({ ...query, summary: query.summary ?? true, limit: query.limit ?? p.pageSize }), [query, p.pageSize]);
+  const q = useMemo(
+    () => ({ ...query, mode: cardListMode(p.locked, query.mode), summary: query.summary ?? true, limit: query.limit ?? p.pageSize }),
+    [query, p.pageSize, p.locked],
+  );
   const list = useSearch(q, { client: p.client });
   if (!query.q.trim()) return null;
   return (
@@ -361,14 +366,21 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
  */
 export function ContentRail({ title, similar, recommendations, history, group, list: listQuery, query = {}, more, ...p }: ContentRailProps) {
   const limit = query.limit ?? p.pageSize ?? 12;
-  const q = useMemo(() => ({ ...query, summary: query.summary ?? true, limit }), [query, limit]);
+  const q = useMemo(() => ({ ...query, mode: cardListMode(p.locked, query.mode), summary: query.summary ?? true, limit }), [query, limit, p.locked]);
   const listing = useMemo(
-    () => (listQuery ? { ...listQuery, summary: listQuery.summary ?? true, limit: listQuery.limit ?? limit } : group ? { groups: [group], sort: "position" as const, summary: true, limit } : null),
-    [listQuery, group, limit],
+    () =>
+      listQuery
+        ? { ...listQuery, mode: cardListMode(p.locked, listQuery.mode), summary: listQuery.summary ?? true, limit: listQuery.limit ?? limit }
+        : group
+          ? { groups: [group], sort: "position" as const, mode: cardListMode(p.locked), summary: true, limit }
+          : null,
+    [listQuery, group, limit, p.locked],
   );
   const like = useSimilar(recommendations || history || listing ? null : similar, q, { client: p.client });
   const mine = useRecommendations(recommendations ? q : null, { client: p.client });
-  const seen = useHistory(history ? { ...history, summary: history.summary ?? true, limit: history.limit ?? limit } : null, { client: p.client });
+  const seen = useHistory(history ? { ...history, mode: cardListMode(p.locked, history.mode), summary: history.summary ?? true, limit: history.limit ?? limit } : null, {
+    client: p.client,
+  });
   const listed = useContents(listing, { client: p.client });
   const rail: UseRail = recommendations
     ? mine
