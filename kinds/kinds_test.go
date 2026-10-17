@@ -133,7 +133,7 @@ func TestDomainFor(t *testing.T) {
 		t.Fatalf("doujins.gay -> %s", s.Name)
 	}
 	if s, _ := c.DomainFor("localhost"); s.Name != "main" {
-		t.Fatalf("unmatched host -> %s, want the first site", s.Name)
+		t.Fatalf("unmatched host -> %s, want main", s.Name)
 	}
 }
 
@@ -246,5 +246,53 @@ func TestContentFiltersCloneDoesNotAliasConfiguration(t *testing.T) {
 	*original.Domains[0].Filters[0].UserToggle = true
 	if cloned.AppliesTo[0] != "gallery" || cloned.Domains[0].Name != "main" || cloned.Domains[0].Hosts[0] != "example.test" || cloned.Domains[0].RequireEntities["gallery"][0].Slug != "yaoi" || cloned.Domains[0].Filters[0].Group.Slug != "restricted" || *cloned.Domains[0].Filters[0].UserToggle {
 		t.Fatalf("mutable source changed snapshot %+v", cloned)
+	}
+}
+
+func TestMainFallbackIsIndependentOfDomainOrder(t *testing.T) {
+	for _, order := range [][]int{{0, 1, 2}, {1, 0, 2}, {1, 2, 0}} {
+		cfg := doujins()
+		original := slices.Clone(cfg.ContentFilters.Domains)
+		for index, source := range order {
+			cfg.ContentFilters.Domains[index] = original[source]
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		for host, expected := range map[string]string{"": "main", "unknown.test": "main", "doujins.com": "main", "DOUJINS.GAY.:443": "gay", "hmovie-moe.us": "moe"} {
+			if domain, ok := cfg.DomainFor(host); !ok || domain.Name != expected {
+				t.Fatalf("order %v, host %q: %+v %v", order, host, domain, ok)
+			}
+		}
+	}
+}
+
+func TestMainFallbackValidation(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"no main":                   func(c *Config) { c.ContentFilters.Domains[0].Name = "renamed" },
+		"two main":                  func(c *Config) { c.ContentFilters.Domains[1].Name = "main" },
+		"hostless alternate first":  func(c *Config) { c.ContentFilters.Domains[1].Hosts = nil; slices.Reverse(c.ContentFilters.Domains) },
+		"ambiguous normalized host": func(c *Config) { c.ContentFilters.Domains[1].Hosts = []string{" DOUJINS.COM.:443 "} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := doujins()
+			mutate(&cfg)
+			if err := cfg.Validate(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("invalid domains accepted: %v", err)
+			}
+		})
+	}
+	cfg := doujins()
+	cfg.ContentFilters.Domains[0].Hosts = nil
+	slices.Reverse(cfg.ContentFilters.Domains)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("main may omit aliases wherever placed: %v", err)
+	}
+	cfg.ContentFilters.Domains = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("optional domain policy cannot be disabled: %v", err)
+	}
+	if _, ok := cfg.DomainFor("unknown.test"); ok {
+		t.Fatal("disabled policy returned a fallback")
 	}
 }

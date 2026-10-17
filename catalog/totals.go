@@ -36,8 +36,8 @@ type TotalsQuery struct {
 	// Languages are the languages Total.Languages reports; empty means every
 	// language with a counted item. Kind totals ignore it.
 	Languages []string
-	// Site is the site whose scope applies (its name); empty is the first
-	// site. The HTTP route takes it from the request's host.
+	// Domain is the stable domain name whose scope applies; empty selects
+	// main. The HTTP route takes it from the request's host.
 	Domain string
 }
 

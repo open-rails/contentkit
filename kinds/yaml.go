@@ -35,6 +35,21 @@ func (c *ContentFilters) UnmarshalYAML(data []byte) error {
 	if err := yaml.UnmarshalWithOptions(data, &next, yaml.Strict()); err != nil {
 		return fmt.Errorf("%w: content_filters YAML: %w", ErrInvalid, err)
 	}
-	*c = ContentFilters(next)
+	policy := ContentFilters(next)
+	if err := policy.validateDomains(); err != nil {
+		return err
+	}
+	*c = policy
+	return nil
+}
+
+// UnmarshalYAML keeps flat entity references strict even when decoded alone.
+func (f *ContentFilter) UnmarshalYAML(data []byte) error {
+	type plain ContentFilter
+	var next plain
+	if err := yaml.UnmarshalWithOptions(data, &next, yaml.Strict()); err != nil {
+		return fmt.Errorf("%w: content filter YAML: %w", ErrInvalid, err)
+	}
+	*f = ContentFilter(next)
 	return nil
 }

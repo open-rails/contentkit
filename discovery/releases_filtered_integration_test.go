@@ -136,7 +136,7 @@ func TestDailyReleasesFilteredCountsOverlapAndPreferences(t *testing.T) {
 func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 	cfg := siteConfig()
 	no := false
-	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "required", Hosts: []string{"required.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
+	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Hosts: []string{"required.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
 		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, UserToggle: &no},

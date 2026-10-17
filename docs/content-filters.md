@@ -1,9 +1,14 @@
 # Shared content filters and domain rules
 
 A domain is a hostname entrypoint into one app's catalog. Aliases can share a
-policy; the first domain is the fallback for unmatched hosts. Preserve the
+policy; the domain named `main` is the fallback for unmatched hosts,
+independent of list order. A configured list requires exactly one `main`; only
+`main` may omit `hosts`. An empty list disables domain policies. Preserve the
 original Host through trusted proxies. Selecting a domain changes neither the
-account tenant nor the caller's authority.
+account tenant nor the caller's authority. `name` is the stable key used for
+branding, activity and domain totals; `hosts` groups hostname aliases under
+that identity. Renaming it changes the identity, so keep it stable when adding
+or removing aliases.
 
 An app has one entity pool and one reader preference per entity. The same tag
 can be associated with galleries and blog posts. Another app's catalog and
@@ -34,14 +39,14 @@ content_filters:
     - name: main
       hosts: [catalog.example.test]
       filters:
-        - {entity: {kind: tag, slug: spoilers}, visible: false}
-        - {entity: {kind: tag, slug: restricted}, visible: false, user_toggle: false}
+        - {kind: tag, slug: spoilers, visible: false}
+        - {kind: tag, slug: restricted, visible: false, user_toggle: false}
     - name: gay
       hosts: [doujins.gay, www.doujins.gay]
       require_entities:
         gallery: [{kind: tag, slug: yaoi}]
       filters:
-        - {entity: {kind: tag, slug: furry}, visible: true}
+        - {kind: tag, slug: furry, visible: true}
 ```
 
 `applies_to` explicitly names the content kinds sharing the filter layer. Each
@@ -59,7 +64,10 @@ returns `kinds.ContentFilters`. Assign it to `model.ContentFilters`, then
 validate the full model. The decoder is strict even inside a permissive outer
 loader: retired per-kind blocks, labels and misspelled fields fail instead of
 silently broadening a restricted domain. Entity display names and translations
-are not configuration fields.
+are not configuration fields. Filter rows are flat `{kind, slug, visible,
+user_toggle?}` references in YAML and JSON; the retired `entity: {...}` wrapper
+is rejected. The typed Go API continues to use `ContentFilter.Group` as a
+`GroupRef`, so application code retains the same compiler-checked model.
 
 ## Visibility
 

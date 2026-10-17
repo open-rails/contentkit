@@ -65,8 +65,9 @@ func (c ContentFilters) Clone() ContentFilters {
 	return out
 }
 
-// Domain is an entrypoint matched by request host. The first domain is the
-// default for unmatched hosts. Names belong to entities, never policy config.
+// Domain is an entrypoint matched by request host. The domain named main is
+// the fallback for unmatched hosts. Name is its stable branding/activity identity;
+// entity display names belong to entity records, never policy config.
 type Domain struct {
 	Name            string                `json:"name" yaml:"name"`
 	Hosts           []string              `json:"hosts" yaml:"hosts"`
@@ -95,7 +96,7 @@ type GroupRef struct {
 // UserToggle allows reader overrides. Internal and required entities are
 // never reader-toggleable, irrespective of UserToggle.
 type ContentFilter struct {
-	Group      GroupRef `json:"entity" yaml:"entity"`
+	Group      GroupRef `json:"-" yaml:",inline"`
 	Visible    bool     `json:"visible" yaml:"visible"`
 	UserToggle *bool    `json:"user_toggle,omitempty" yaml:"user_toggle,omitempty"`
 }
@@ -436,8 +437,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%w: group %s/%s names an unknown group kind or no slug", ErrInvalid, r.Kind, r.Slug)
 		}
 	}
-	domains := map[string]bool{}
-	hosts := map[string]bool{}
+	if err := c.ContentFilters.validateDomains(); err != nil {
+		return err
+	}
 	applies := map[string]bool{}
 	for _, kind := range c.ContentFilters.AppliesTo {
 		if _, ok := c.Kinds[kind]; !ok || applies[kind] {
@@ -445,21 +447,7 @@ func (c Config) Validate() error {
 		}
 		applies[kind] = true
 	}
-	for i, d := range c.ContentFilters.Domains {
-		if d.Name == "" || (len(d.Hosts) == 0 && i > 0) {
-			return fmt.Errorf("%w: domain %d needs a name and hosts", ErrInvalid, i)
-		}
-		if domains[d.Name] {
-			return fmt.Errorf("%w: domain name %q is repeated", ErrInvalid, d.Name)
-		}
-		domains[d.Name] = true
-		for _, h := range d.Hosts {
-			host := domainHost(h)
-			if host == "" || hosts[host] {
-				return fmt.Errorf("%w: domain host %q is empty or repeated", ErrInvalid, h)
-			}
-			hosts[host] = true
-		}
+	for _, d := range c.ContentFilters.Domains {
 		if len(d.Filters) > 0 && len(applies) == 0 {
 			return fmt.Errorf("%w: domain %s filters require explicit applies_to content kinds", ErrInvalid, d.Name)
 		}
@@ -598,26 +586,62 @@ func (c Config) Routes() map[string]string {
 	return out
 }
 
-// DomainFor returns the domain serving host, ignoring case and port; the first
-// domain when none matches. Host is the request host, not an authority selector.
+func (c ContentFilters) validateDomains() error {
+	if len(c.Domains) == 0 {
+		return nil
+	}
+	mainDomains := 0
+	for _, domain := range c.Domains {
+		if domain.Name == "main" {
+			mainDomains++
+		}
+	}
+	if mainDomains != 1 {
+		return fmt.Errorf("%w: configured domains need exactly one domain named main", ErrInvalid)
+	}
+	names, hosts := map[string]bool{}, map[string]bool{}
+	for _, domain := range c.Domains {
+		if domain.Name == "" || names[domain.Name] || (domain.Name != "main" && len(domain.Hosts) == 0) {
+			return fmt.Errorf("%w: domain %q needs a unique name and non-main domains need hosts", ErrInvalid, domain.Name)
+		}
+		names[domain.Name] = true
+		for _, alias := range domain.Hosts {
+			host := domainHost(alias)
+			if host == "" || hosts[host] {
+				return fmt.Errorf("%w: domain host %q is empty or repeated", ErrInvalid, alias)
+			}
+			hosts[host] = true
+		}
+	}
+	return nil
+}
+
+// DomainFor returns an exact hostname match, ignoring case, port and the DNS
+// trailing dot, or the domain named main. Domain order has no meaning. Host is
+// the request host, not an authority selector; no configured policy returns false.
 func (c Config) DomainFor(host string) (Domain, bool) {
 	host = domainHost(host)
-	for _, s := range c.ContentFilters.Domains {
-		for _, h := range s.Hosts {
-			if domainHost(h) == host {
-				return s, true
+	if host != "" {
+		for _, domain := range c.ContentFilters.Domains {
+			for _, alias := range domain.Hosts {
+				if domainHost(alias) == host {
+					return domain, true
+				}
 			}
 		}
 	}
-	if len(c.ContentFilters.Domains) > 0 {
-		return c.ContentFilters.Domains[0], true
+	for _, domain := range c.ContentFilters.Domains {
+		if domain.Name == "main" {
+			return domain, true
+		}
 	}
 	return Domain{}, false
 }
 
 func domainHost(host string) string {
+	host = strings.TrimSpace(host)
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return strings.ToLower(host)
+	return strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
 }

@@ -101,7 +101,7 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 		key, _ := access.ContentKey("policy", c.id)
 		billing.keys = append(billing.keys, key.String())
 	}
-	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "safe", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, []string{"gallery"}
+	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, []string{"gallery"}
 	page, err := s.Library(ctx, actor, LibraryQuery{})
 	if err != nil || len(page.Items) != 1 || page.Items[0].ContentID != visibleContent {
 		t.Fatalf("domain library: %+v %v", page, err)
@@ -111,13 +111,13 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 	if err != nil || len(page.Items) != 2 {
 		t.Fatalf("unrestricted library: %+v %v", page, err)
 	}
-	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "missing", RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, []string{"gallery"}
+	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, []string{"gallery"}
 	page, err = s.Library(ctx, actor, LibraryQuery{})
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("missing requirement: %+v %v", page, err)
 	}
 	locked := false
-	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "missing-hidden", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}}, []string{"gallery"}
+	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}}, []string{"gallery"}
 	page, err = s.Library(ctx, actor, LibraryQuery{})
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("missing hard exclusion: %+v %v", page, err)
@@ -130,7 +130,7 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 	exec(`INSERT INTO `+table("content_facets")+` (tenant_id,content_id,version_id,kind,listing,languages,access_level) VALUES ('policy',$1,$2,'blog','listed',ARRAY['en'],'public')`, blog, version)
 	key, _ := access.ContentKey("policy", blog)
 	billing.keys = append(billing.keys, key.String())
-	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "scoped", RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, []string{"gallery"}
+	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, []string{"gallery"}
 	page, err = s.Library(ctx, actor, LibraryQuery{})
 	if err != nil || len(page.Items) != 1 || page.Items[0].ContentID != blog {
 		t.Fatalf("kind-scoped library: %+v %v", page, err)

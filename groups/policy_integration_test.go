@@ -21,7 +21,7 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 				GroupInput{Kind: "tag", Slug: "unrelated", Names: []Name{canonical("en", "Unrelated")}},
 			)
 			bound, survivor, unrelated := made[0], made[1], made[2]
-			domain := kinds.Domain{Name: "restricted", Hosts: []string{"restricted.test"}}
+			domain := kinds.Domain{Name: "main", Hosts: []string{"restricted.test"}}
 			ref := kinds.GroupRef{Kind: bound.Kind, Slug: bound.Slug}
 			if mode == "required" {
 				domain.RequireEntities = map[string][]kinds.GroupRef{"gallery": {ref}}
@@ -103,7 +103,7 @@ func TestHardPolicyBindingsProtectEntityMutations(t *testing.T) {
 func TestHardPolicyBindingConflictsAreActionableOverHTTP(t *testing.T) {
 	f := newFixture(t)
 	bound := f.create(GroupInput{Kind: "tag", Slug: "restricted", Internal: true})[0]
-	f.s.cfg.ContentFilters.Domains, f.s.cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "restricted", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, []string{"gallery"}
+	f.s.cfg.ContentFilters.Domains, f.s.cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, []string{"gallery"}
 	h, err := f.s.Handler(testauth.Auth{Authz: testauth.All{}})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestHardPolicyBindingConflictsAreActionableOverHTTP(t *testing.T) {
 func TestInactiveInternalPolicyEvidenceCannotBeRenamedAway(t *testing.T) {
 	f := newFixture(t)
 	bound := f.create(GroupInput{Kind: "tag", Slug: "restricted", Internal: true})[0]
-	f.s.cfg.ContentFilters = kinds.ContentFilters{Domains: []kinds.Domain{{Name: "restricted", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, AppliesTo: []string{"gallery"}}
+	f.s.cfg.ContentFilters = kinds.ContentFilters{Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}}}, AppliesTo: []string{"gallery"}}
 	// Simulate an entity deleted by an older binary before mutation guards.
 	f.exec("UPDATE {s}.content_groups SET state='deleted' WHERE id=$1", bound.ID)
 	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: bound.ID, Slug: ptr("renamed")}}); !errors.Is(err, ErrConflict) {

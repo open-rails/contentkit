@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -91,6 +92,15 @@ func TestTotalsIntegration(t *testing.T) {
 				t.Fatalf("totals %+v\n want %+v", got.Kinds, c.want)
 			}
 		})
+	}
+	beforeReorder, err := f.s.Totals(f.ctx, TotalsQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(f.s.cfg.ContentFilters.Domains)
+	afterReorder, err := f.s.Totals(f.ctx, TotalsQuery{})
+	if err != nil || !reflect.DeepEqual(beforeReorder, afterReorder) {
+		t.Fatalf("reordering domains changed default totals: before %+v, after %+v, error %v", beforeReorder, afterReorder, err)
 	}
 	for _, q := range []TotalsQuery{{Kinds: []string{"video"}}, {Languages: []string{"de"}}, {Domain: "nowhere"}} {
 		if _, err := f.s.Totals(f.ctx, q); err == nil {
