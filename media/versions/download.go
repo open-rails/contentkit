@@ -492,14 +492,18 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 }
 
 // zipPages are the files the archive zips, in manifest order: each page's
-// original or output under the zip's prefix. ErrNotReady while one is missing.
+// original or output under the zip's prefix. ErrNoDownload once one failed,
+// ErrNotReady while one is missing.
 func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File, error) {
 	var out []media.File
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || f.Gone || !inPattern(k.Publish.Pages, f.Path) || !media.PageIncluded(f) {
 			continue
 		}
-		if f.Fail() != nil || f.Blob == "" {
+		if f.Fail() != nil {
+			return nil, ErrNoDownload
+		}
+		if f.Blob == "" {
 			return nil, ErrNotReady
 		}
 		if strings.HasPrefix(f.Path, z.Zip) {

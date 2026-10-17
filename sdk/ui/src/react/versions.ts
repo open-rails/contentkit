@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import { throwIfAborted, toContentKitError, type ContentKitError } from "../client/errors.js";
+import { ContentKitError, throwIfAborted, toContentKitError } from "../client/errors.js";
 import type { FileDownload, Pending, PlanSegment, ReaderPlan } from "../client/generated/wire.js";
 import { isPending } from "../client/versions.js";
 import { sleep } from "../client/media/client.js";
@@ -135,7 +135,9 @@ export function downloadMessage(m: Translator, err: ContentKitError | undefined,
 
 /**
  * A version's download, charged to the viewer's download quota: the
- * original or rendition its kind serves, or its pages as a zip.
+ * original or rendition its kind serves, or its pages as a zip. Polls while
+ * it is prepared (a zip is built after its pages publish, behind the worker
+ * queue); render_timeout after ten minutes.
  */
 export function useVersionDownload(
   content: string,
@@ -154,6 +156,7 @@ export function useVersionDownload(
     const controller = owner.active = new AbortController();
     const { signal } = controller;
     setState({ owner, preparing: true });
+    const until = Date.now() + 600_000;
     try {
       for (;;) {
         const out = await client.versions.download(content, version, signal);
@@ -163,6 +166,7 @@ export function useVersionDownload(
           start(out);
           return out;
         }
+        if (Date.now() >= until) throw new ContentKitError("render_timeout", "the download is still being prepared");
         await sleep(o.poll ?? 3000, signal);
       }
     } catch (e) {
