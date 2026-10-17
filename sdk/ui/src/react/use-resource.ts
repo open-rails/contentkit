@@ -55,7 +55,7 @@ export function useResource<T>(
 }
 
 /** A shared list, a page at a time. */
-export interface UseList<T> {
+export interface UseList<T, M = unknown> {
   items: T[];
   /** The first page is loading (also on reload). */
   loading: boolean;
@@ -64,15 +64,16 @@ export interface UseList<T> {
   hasMore: boolean;
   loadMore: () => Promise<void>;
   reload: () => void;
+  metadata?: M;
 }
 
-export type PageFetcher<T> = (cursor: string | number | undefined, signal: AbortSignal) => Promise<Page<T>>;
+export type PageFetcher<T, M = unknown> = (cursor: string | number | undefined, signal: AbortSignal) => Promise<Page<T, M>>;
 
 // The items of a list not loaded: one array, so effects keyed on items don't run every render.
 const NO_ITEMS: never[] = [];
 
-export function useList<T extends { id: string }>(store: ResourceStore, key: string | null, tag: Tag, page: PageFetcher<T>): UseList<T> {
-  const r = useResource<Page<T>>(store, key, tag, (s) => page(undefined, s), { more: (c, s) => page(c, s) });
+export function useList<T extends { id: string }, M = unknown>(store: ResourceStore, key: string | null, tag: Tag, page: PageFetcher<T, M>): UseList<T, M> {
+  const r = useResource<Page<T, M>>(store, key, tag, (s) => page(undefined, s), { more: (c, s) => page(c, s) });
   const loadMore = useCallback(() => (key ? store.loadMore(key) : Promise.resolve()), [store, key]);
   return {
     items: r.data?.items ?? NO_ITEMS,
@@ -82,6 +83,7 @@ export function useList<T extends { id: string }>(store: ResourceStore, key: str
     hasMore: r.data ? r.data.next !== null : false,
     loadMore,
     reload: r.reload,
+    metadata: r.data?.metadata,
   };
 }
 

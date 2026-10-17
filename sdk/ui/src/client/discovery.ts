@@ -28,6 +28,8 @@ export type AccessMode = "lock" | "hide";
 /** Which contents a list holds. */
 export interface ContentFilterQuery {
   kind?: string;
+  /** Public card hydration under current domain/access/preferences; at most 100. */
+  ids?: readonly string[];
   /** Group ids every listed version is in. */
   groups?: readonly string[];
   /** Group ids no listed version is in. */
@@ -74,6 +76,8 @@ export interface PageQuery {
 }
 
 export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & {
+  /** Selection-wide metadata; requested only on the first page. */
+  summary?: boolean;
   sort?: ListSort;
   /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
   activity_from?: string;
@@ -107,6 +111,7 @@ export type SearchQuery = ContentFilterQuery &
     q: string;
     sort?: "relevance" | ListSort;
     personalize?: boolean;
+    summary?: boolean;
     /** Explicit legacy server-side anonymous history. Omit for public search without server history. */
     session?: string;
   };
@@ -137,7 +142,7 @@ export interface TypeaheadQuery extends ReaderQuery {
 }
 
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
+const LISTS = new Set(["ids", "groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {

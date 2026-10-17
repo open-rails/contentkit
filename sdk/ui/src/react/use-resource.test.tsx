@@ -62,3 +62,19 @@ it("keeps pagination fetchers on their key after another shared subscriber moves
   expect(result.current.a.items).toEqual([{ id: "X-first" }, { id: "X-next" }]);
   expect(result.current.b.items).toEqual([{ id: "Y-first" }]);
 });
+
+it("preserves first-page selection metadata when loading more and resets it for another selection", async () => {
+  const store = storeForTest();
+  const { result, rerender } = renderHook(({ selection }) => useList(store, selection, { type: "cards" }, async (cursor) => ({
+    items: [{ id: `${selection}-${cursor ?? "first"}` }],
+    next: cursor ? null : "second",
+    metadata: cursor ? undefined : { filtered_count: selection === "X" ? 3 : 7 },
+  })), { initialProps: { selection: "X" } });
+  await waitFor(() => expect(result.current.metadata).toEqual({ filtered_count: 3 }));
+  await act(() => result.current.loadMore());
+  expect(result.current.items).toHaveLength(2);
+  expect(result.current.metadata).toEqual({ filtered_count: 3 });
+  rerender({ selection: "Y" });
+  await waitFor(() => expect(result.current.metadata).toEqual({ filtered_count: 7 }));
+  expect(result.current.items).toEqual([{ id: "Y-first" }]);
+});

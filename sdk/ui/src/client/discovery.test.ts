@@ -53,3 +53,15 @@ it("discovery query types take exactly their routes' parameters (checked by tsc)
   expectTypeOf<Gap<MineQuery, "GET", "/me/favorites">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<MineQuery & { value?: string }, "GET", "/me/reactions">>().toEqualTypeOf<never>();
 });
+
+it("sends selection summary and bounded public card hydration IDs as ordinary query fields", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/app", fetch: async (input) => {
+    requests.push(new URL(String(input)));
+    return Response.json({ contents: [], summary: { filtered_count: 3, filtered_entities: [], locked_count: 2 } });
+  } });
+  const out = await client.discovery.list({ ids: ["first", "second"], summary: true, mode: "lock" });
+  expect(requests[0]!.searchParams.get("ids")).toBe("first,second");
+  expect(requests[0]!.searchParams.get("summary")).toBe("true");
+  expect(out.summary?.locked_count).toBe(2);
+});
