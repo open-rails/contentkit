@@ -175,14 +175,15 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   folderRef.current = folder;
   const files = folder.read.read?.files ?? [];
   const review = usePageReview(item?.id, version?.id, { client });
+  const reloadReview = review.reload;
   // A ZIP's pages appear after its commit. Media polling alone does not
   // invalidate the separate review count when extraction changes the manifest.
   const mediaReviewKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
     files.filter((file) => file.upload).map((file) => [file.path, file.size, file.staged, file.pending, file.failed]),
   ]) : null;
   useEffect(() => {
-    if (mediaReviewKey) review.reload();
-  }, [mediaReviewKey, review.reload]);
+    if (mediaReviewKey) reloadReview();
+  }, [mediaReviewKey, reloadReview]);
   const mediaFailed = !!folder.error || folder.queue.items.some((q) => q.status === "failed") || files.some((f) => f.failed);
   const processing = files.some(isProcessing);
   const selectedPages = review.review?.selected ?? 0;
