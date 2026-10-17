@@ -110,12 +110,14 @@ func (st *Store) recordMeasured(ctx context.Context, tenant string, events []Sig
 
 // measuredCanonical fixes one winning cumulative snapshot per receipt before
 // any sum/union. Revisiting a work creates measurements, never a new counter.
+// LIMIT BY over the sort key streams receipts; argMax over the array/map tuple
+// held a heavy per-receipt state and exhausted memory on long histories.
 func (st *Store) measuredCanonical(filter string) string {
-	return fmt.Sprintf(`SELECT %s,subject_kind,subject,receipt_id,
- argMax(tuple(occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,revision),version) AS c,
- max(version) AS ver
- FROM %s.engagement_segments WHERE tenant=? AND %s AND %s
- GROUP BY %s,subject_kind,subject,receipt_id`, refColumns, st.db, filter, st.notErased(), refColumns)
+	return fmt.Sprintf(`SELECT %[1]s,subject_kind,subject,receipt_id,
+ tuple(occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,revision) AS c,version AS ver
+ FROM %[2]s.engagement_segments WHERE tenant=? AND %[3]s AND %[4]s
+ ORDER BY tenant,%[1]s,subject_kind,subject,receipt_id,version DESC
+ LIMIT 1 BY %[1]s,subject_kind,subject,receipt_id`, refColumns, st.db, filter, st.notErased())
 }
 
 // measuredVersions is shared by projections and window ranking. Quality is
