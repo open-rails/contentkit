@@ -3,7 +3,7 @@ import "../../test/dom.js";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { Card } from "../../client/generated/wire.js";
-import { ContentCard, PostCard } from "./card.js";
+import { ContentCard, PostCard, cardStatus } from "./card.js";
 import { createContentKitClient } from "../../client/client.js";
 import { ContentKitProvider } from "../../react/provider.js";
 
@@ -152,4 +152,30 @@ it("makes each card the positioning parent of its hidden labels", () => {
   expect(content.container.querySelector('[data-ckui="content-card"]')?.classList.contains("relative")).toBe(true);
   const post = render(<PostCard card={{ ...card, kind: "post" }} />);
   expect(post.container.querySelector('[data-ckui="post-card"]')?.classList.contains("relative")).toBe(true);
+});
+
+it("marks updated, completed and deleted cards and dims what the reader disliked", () => {
+  const viewer = { favorited: false, seen: true, completed: true, progress: 24, progress_max: 24, last_read_at: "2026-10-01T00:00:00Z", reaction: -1 };
+  const marked: Card = { ...card, updated_at: "2026-10-05T00:00:00Z", deleted: true, viewer };
+  const view = render(<ContentCard card={marked} loadMedia={false} />);
+  expect(screen.getByRole("img", { name: "Updated" })).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Finished" })).toBeInTheDocument();
+  expect(screen.getByText("Deleted")).toBeVisible();
+  const frame = view.container.querySelector('[data-ckui="card-cover-frame"]');
+  expect(frame).toHaveAttribute("data-disliked", "true");
+  expect(screen.getByRole("link", { name: /You disliked this/ })).toBeInTheDocument();
+  view.unmount();
+  const plain = render(<ContentCard card={marked} loadMedia={false} status={false} dimDisliked={false} />);
+  expect(plain.container.querySelector('[data-ckui="card-status"]')).toBeNull();
+  expect(plain.container.querySelector('[data-ckui="card-cover-frame"]')).not.toHaveAttribute("data-disliked");
+});
+
+it("calls a newer version updated only after the reader's last read, else for two weeks", () => {
+  const now = Date.parse("2026-10-20T00:00:00Z");
+  const read = { favorited: false, seen: true, completed: false, progress: 3, progress_max: 24, last_read_at: "2026-10-10T00:00:00Z" };
+  expect(cardStatus({ ...card, updated_at: "2026-10-12T00:00:00Z", viewer: read }, now).updated).toBe(true);
+  expect(cardStatus({ ...card, updated_at: "2026-10-08T00:00:00Z", viewer: read }, now).updated).toBe(false);
+  expect(cardStatus({ ...card, updated_at: "2026-10-15T00:00:00Z" }, now).updated).toBe(true);
+  expect(cardStatus({ ...card, updated_at: "2026-09-01T00:00:00Z" }, now).updated).toBe(false);
+  expect(cardStatus(card, now)).toEqual({ updated: false, completed: false, deleted: false, disliked: false });
 });
