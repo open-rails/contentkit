@@ -36,8 +36,11 @@ for (const mode of ["alone", "router"] as const) {
       await flow.getByRole("button", { name: "Bold" }).click();
       await page.keyboard.type(" Bold words.");
       await flow.getByRole("button", { name: "Create draft" }).click();
-      await expect(page).toHaveURL(/\/admin\/posts\/[0-9a-f-]{36}$/);
-      const id = page.url().split("/").pop()!;
+      // Admin URLs name the item by its public code.
+      await expect(page).toHaveURL(/\/admin\/posts\/[0-9A-HJKMNP-TV-Z]{9,10}$/);
+      const code = page.url().split("/").pop()!;
+      const ck = contentKit(h, editor);
+      const id = (await ck.codes.resolve(code)).content_id;
       const form = flow.locator("[data-ckui=content-form]");
       await expect(form.getByText("Draft", { exact: true })).toBeVisible();
       await expect(body.locator("strong")).toHaveText("Bold words.");
@@ -48,11 +51,10 @@ for (const mode of ["alone", "router"] as const) {
       await expect.poll(() => imagesLoaded(page), { timeout: 30_000 }).toBe(true);
       await form.getByRole("button", { name: "Save", exact: true }).click();
       await expect(form.getByText("Saved.")).toBeVisible();
-      const ck = contentKit(h, editor);
       await expect.poll(async () => (await ck.contents.get(id)).text?.en?.body, { timeout: 15_000 }).toMatch(/<img src="contentkit:i-[0-9a-f-]{36}"/);
 
       // A deep link opens the draft with its image (an editor view).
-      await page.goto(admin(`/admin/posts/${id}`, editor, { mode, theme }));
+      await page.goto(admin(`/admin/posts/${code}`, editor, { mode, theme }));
       await expect(flow.getByRole("textbox", { name: "Title" })).toHaveValue(`Launch notes ${tag}`, { timeout: 30_000 });
       await expect.poll(() => imagesLoaded(page), { timeout: 60_000 }).toBe(true);
       await page.screenshot({ path: `${dir}/content-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
