@@ -505,9 +505,11 @@ func cloneValue(v any) any {
 
 // SetOutputs replaces preset's outputs from the upload (or zip prefix) from
 // with outs (whose From and Preset it sets) and clears preset from the
-// upload's Pending. Outputs at paths taken by other files are an error.
+// upload's Pending. A ZIP has one output set per preset, including when a
+// deployment changes its input prefix. Paths taken by other files are an error.
 func (m *Manifest) SetOutputs(from, preset string, outs []File) error {
-	m.Files = slices.DeleteFunc(m.Files, func(f File) bool { return f.Preset == preset && f.From == from })
+	zip := strings.HasSuffix(from, "/")
+	m.Files = slices.DeleteFunc(m.Files, func(f File) bool { return f.Preset == preset && (zip || f.From == from) })
 	m.index = nil
 	for _, o := range outs {
 		if m.Find(o.Path) >= 0 {

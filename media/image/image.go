@@ -629,11 +629,17 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if err != nil {
 			return p.permanent(d, err)
 		}
-		blob, err := p.putBlob(ctx, item, k.Area("", pr.Name), bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
-		if err != nil {
-			return d, err
+		typ := outputType(s, w.src.Type)
+		blob := w.src.Blob
+		area := k.Area("", pr.Name)
+		sourceArea, _, _ := layout.SplitBlobRef(blob)
+		if s.Format != media.ImageFormatSource || !bytes.Equal(out, src) || sourceArea != area {
+			blob, err = p.putBlob(ctx, item, area, bytes.NewReader(out), int64(len(out)), sha(out), typ)
+			if err != nil {
+				return d, err
+			}
 		}
-		d.outputs[pr.Name] = media.File{Path: k.OutputPath(pr, w.src.Path), Blob: blob, Type: "image/webp", Size: int64(len(out)),
+		d.outputs[pr.Name] = media.File{Path: k.OutputPath(pr, w.src.Path), Blob: blob, Type: typ, Size: int64(len(out)),
 			W: dims.W, H: dims.H, FP: media.SpecFP(w.src, s, Recipe)}
 	}
 	if d.dims.W == 0 {

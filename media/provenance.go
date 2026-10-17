@@ -138,6 +138,14 @@ func (k *Kind) Normalize(m *Manifest) {
 	for i := range m.Files {
 		f := &m.Files[i]
 		if f.IsUpload() {
+			// A deployment can remove a preset. It must not leave the upload
+			// permanently processing for work no current producer can perform.
+			f.Pending = slices.DeleteFunc(slices.Clone(f.Pending), func(name string) bool {
+				return k.private(name) == nil && k.public(name) == nil
+			})
+			if len(f.Pending) == 0 {
+				f.Pending = nil
+			}
 			f.Public = slices.DeleteFunc(slices.Clone(f.Public), func(pub Publication) bool {
 				p := k.public(pub.Preset)
 				return p == nil || !k.owned(m, *f, p, pub)

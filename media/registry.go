@@ -54,6 +54,9 @@ func NewRegistry(c Config) (*Registry, error) {
 	if err := c.Editor.validate(); err != nil {
 		return nil, fmt.Errorf("media: Editor: %w", err)
 	}
+	if c.Editor.Format != ImageFormatWebP {
+		return nil, errors.New("media: Editor images use WebP")
+	}
 	kinds := slices.Clone(c.Kinds)
 	r := &Registry{cfg: c, declared: len(c.Kinds), kinds: make(map[string]*Kind, len(kinds))}
 	r.cfg.Kinds = make([]Kind, len(kinds))

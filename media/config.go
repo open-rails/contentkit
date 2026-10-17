@@ -170,7 +170,8 @@ type Private struct {
 	From string `json:"from,omitempty"`
 	// To is the output path template: a file ("low-res/{name}.webp",
 	// "video/source-1080p.mp4") or, for producers with several outputs, a
-	// directory ending in "/" ("hls/", "listen/{name}/").
+	// directory ending in "/" ("hls/", "listen/{name}/"). Source-format
+	// images end in {ext}, the upload's extension: "download/{name}{ext}".
 	To string `json:"to"`
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
@@ -219,14 +220,17 @@ type Public struct {
 	Stable bool `json:"stable,omitempty"`
 }
 
-// Image is a WebP rendering. Zero Width and Height keep the full size;
-// nothing is upscaled.
+// Image is a rendering, WebP by default. Source-format private presets retain
+// the upload's codec and copy unchanged bytes when no resize/edit is needed.
+// Resizing and editing in source format support JPEG, PNG, WebP and GIF.
+// Zero Width and Height keep the full size; nothing is upscaled.
 type Image struct {
-	Width   int     `json:"width,omitempty"`
-	Height  int     `json:"height,omitempty"`
-	Fit     FitMode `json:"fit,omitempty"`
-	Quality int     `json:"quality,omitempty"` // default 80
-	Blur    float64 `json:"blur,omitempty"`
+	Format  ImageFormat `json:"format,omitempty"`
+	Width   int         `json:"width,omitempty"`
+	Height  int         `json:"height,omitempty"`
+	Fit     FitMode     `json:"fit,omitempty"`
+	Quality int         `json:"quality,omitempty"` // default 80
+	Blur    float64     `json:"blur,omitempty"`
 	// Aspect and MinWidth bound an upload's edit when this is its public
 	// preset's image: the crop is fitted to Aspect, and an edit narrower
 	// than MinWidth fails.
@@ -234,6 +238,17 @@ type Image struct {
 	MinWidth  int       `json:"min_width,omitempty"`
 	Animation Animation `json:"animation,omitempty"`
 }
+
+// ImageFormat selects WebP encoding or the upload's original codec.
+type ImageFormat string
+
+const (
+	// ImageFormatWebP is the default for all images and the only format for
+	// public presets and editor previews.
+	ImageFormatWebP ImageFormat = ""
+	// ImageFormatSource preserves the upload's codec in a private preset.
+	ImageFormatSource ImageFormat = "source"
+)
 
 // FitMode is how an image fits its Width×Height box.
 type FitMode string

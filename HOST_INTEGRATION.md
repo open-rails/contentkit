@@ -882,6 +882,18 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
   and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
   tracks). Nothing is upscaled.
+  Image presets default to WebP. A private preset with
+  `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
+  (the upload's original extension), such as `download-pages/{name}{ext}`.
+  With an inside fit and no edit/blur, a source within its width/height box
+  passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
+  edge proportionally; zero leaves an edge unbounded. Oversized or edited
+  JPEG, PNG, WebP and GIF files retain their codec, including animation;
+  other accepted codecs support unchanged passthrough only. Keep archival
+  uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/`
+  packs the resulting original-format pages in reading order. Upgrade the
+  worker/gateway cohort before declaring this registry, then regenerate
+  existing items to replace an old download rendition.
 - **Public presets** render an upload through its edit at fixed names,
   `{w}` for each width (a width past the edited image renders at its width,
   so every name exists). The object carries its `from` and `fp` as metadata.

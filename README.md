@@ -399,6 +399,26 @@ declared type binds the decoder, and every other libvips loader is blocked
 spec (a width past the edited image at its width) and carry `from` and `fp`
 as object metadata.
 
+A private image preset can instead use `Format: media.ImageFormatSource`
+and `To: "download-pages/{name}{ext}"` to retain the upload's format.
+With no edit or blur and an inside fit, files already inside the configured
+box keep their exact bytes; zero dimensions leave that side unbounded.
+`Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
+pixels without cropping or enlarging. Only an oversized or edited image is
+re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and
+WebP; other accepted codecs can pass through unchanged but cannot currently
+be resized in source format. `Quality` controls JPEG/WebP re-encoding;
+unchanged files keep their bytes and PNG stays lossless. `KeepOriginals: true`
+retains the uploaded source even when a bounded download is generated, and
+the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs
+those files in the selected reading order, excluding pages omitted by ingestion review. Public
+images, thumbnails and editor previews continue to use WebP.
+
+Deploy media workers and gateways that understand the source-format registry
+before an app starts declaring it. When replacing an existing download
+preset, queue `Regenerate` for existing items so their new download files and
+ZIPs are generated; changing configuration alone does not enqueue every item.
+
 **Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's
 codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio

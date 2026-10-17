@@ -285,12 +285,12 @@ func (o *opRun) apply(n int, op Op) error {
 	return nil
 }
 
-// dropZips removes the zips bundling outputs of the upload at path; the
+// dropZips removes zips bundling the upload at path or its outputs; the
 // worker builds them again without it.
 func (o *opRun) dropZips(path string) {
 	for i := range o.k.Private {
 		z := &o.k.Private[i]
-		if z.Zip == "" || !slices.ContainsFunc(o.m.Files, func(x File) bool { return x.From == path && strings.HasPrefix(x.Path, z.Zip) }) {
+		if z.Zip == "" || !strings.HasPrefix(path, z.Zip) && !slices.ContainsFunc(o.m.Files, func(x File) bool { return x.From == path && strings.HasPrefix(x.Path, z.Zip) }) {
 			continue
 		}
 		o.m.Files = slices.DeleteFunc(o.m.Files, func(x File) bool { return x.Preset == z.Name && x.From == z.Zip })
