@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
 import type { Period } from "../../client/discovery.js";
+import { formatDuration } from "../../client/gallery.js";
+import type { TopQuery } from "../../client/stats.js";
 import type { RankedContent } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
@@ -10,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
-type Metric = "views" | "comments";
+type Metric = NonNullable<TopQuery["metric"]>;
 
 export interface StatsDashboardProps extends AdminFlowProps {
   /** Content kinds offered: codes, or codes with labels; the first shows first. */
@@ -23,15 +25,15 @@ export interface StatsDashboardProps extends AdminFlowProps {
 
 const choices = (list: readonly Choice[]) => list.map((c) => (typeof c === "string" ? { value: c, label: c } : c));
 const DAYS = [7, 30, 90] as const;
-const METRICS: readonly Metric[] = ["views", "comments"];
+const METRICS: readonly Metric[] = ["readers", "comments"];
 const PERIODS: readonly Period[] = ["7d", "30d", "90d", "365d", "all"];
 const refused = (e?: ContentKitError) => e?.code === "forbidden" || e?.code === "unauthorized";
 
 /**
- * Content statistics for staff (root:content:view-restricted): a kind's views
- * per day (view sessions, distinct and signed-in viewers) and its content
- * ranked by views or comments over a period. Views need the signal plane;
- * without it the dashboard says so and still ranks by comments.
+ * Staff statistics from measured attention: daily distinct people and focused
+ * active time, plus content ranked by distinct engaged people or comments.
+ * Daily people are never summed into a misleading period-unique total.
+ * Comments remain available without the signal plane.
  */
 export function StatsDashboard({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: StatsDashboardProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
@@ -49,27 +51,30 @@ function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
   const options = choices(kinds);
   const [kind, setKind] = useState(options[0]?.value ?? "");
   const [days, setDays] = useState<number>(7);
-  const [metric, setMetric] = useState<Metric>("views");
+  const [metric, setMetric] = useState<Metric>("readers");
   const [period, setPeriod] = useState<Period>("30d");
   const activity = useActivity(kind ? { kind, days } : null, { client });
   const top = useTopContents(kind ? { kind, metric, period, limit } : null, { client });
   if (refused(activity.error) || refused(top.error)) return <NoAccess>{t("stats.noAccess")}</NoAccess>;
   const rows = activity.data?.days ?? [];
-  const most = Math.max(1, ...rows.map((d) => d.views));
-  const total = rows.reduce((n, d) => n + d.views, 0);
+  const most = Math.max(1, ...rows.map((d) => d.readers));
+  const totalActiveMS = rows.reduce((n, d) => n + d.active_ms, 0);
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">{t("stats.title")}</h2>
-        {options.length > 1 && (
-          <Pick label={t("stats.kind")} value={kind} onChange={setKind} options={options} />
-        )}
+        {options.length > 1 && <Pick label={t("stats.kind")} value={kind} onChange={setKind} options={options} />}
       </div>
 
       <section className="grid gap-3" data-ckui="stats-activity">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-medium">{t("stats.activity")}</h3>
-          <Pick label={t("stats.days")} value={String(days)} onChange={(v) => setDays(Number(v))} options={DAYS.map((d) => ({ value: String(d), label: t("stats.lastDays", { count: d }) }))} />
+          <Pick
+            label={t("stats.days")}
+            value={String(days)}
+            onChange={(v) => setDays(Number(v))}
+            options={DAYS.map((d) => ({ value: String(d), label: t("stats.lastDays", { count: d }) }))}
+          />
         </div>
         {activity.unavailable ? (
           <p className="text-muted-foreground" role="status">
@@ -86,9 +91,9 @@ function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
             <thead className="text-xs text-muted-foreground">
               <tr>
                 <th className="py-1 font-medium">{t("stats.date")}</th>
-                <th className="py-1 font-medium">{t("stats.views")}</th>
-                <th className="py-1 text-end font-medium">{t("stats.viewers")}</th>
+                <th className="py-1 font-medium">{t("stats.readers")}</th>
                 <th className="py-1 text-end font-medium">{t("stats.users")}</th>
+                <th className="py-1 text-end font-medium">{t("stats.activeTime")}</th>
               </tr>
             </thead>
             <tbody>
@@ -97,23 +102,23 @@ function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
                   <td className="py-1.5 pe-3 whitespace-nowrap">{d.date}</td>
                   <td className="w-1/2 py-1.5 pe-3">
                     <span className="flex items-center gap-2">
-                      <span aria-hidden className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(2, (d.views / most) * 100)}%` }} />
-                      {d.views}
+                      <span aria-hidden className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(2, (d.readers / most) * 100)}%` }} />
+                      {d.readers}
                     </span>
                   </td>
-                  <td className="py-1.5 text-end">{d.viewers}</td>
                   <td className="py-1.5 text-end">{d.users}</td>
+                  <td className="py-1.5 text-end">{formatDuration(Math.floor(d.active_ms / 1000))}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-border font-medium">
-                <td className="py-1.5">{t("stats.total")}</td>
-                <td className="py-1.5" data-ckui="stats-total">
-                  {total}
+                <th scope="row" colSpan={3} className="py-1.5 font-medium">
+                  {t("stats.totalActiveTime")}
+                </th>
+                <td className="py-1.5 text-end" data-ckui="stats-active-total">
+                  {formatDuration(Math.floor(totalActiveMS / 1000))}
                 </td>
-                <td />
-                <td />
               </tr>
             </tfoot>
           </table>

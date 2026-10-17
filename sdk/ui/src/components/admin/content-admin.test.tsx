@@ -100,7 +100,7 @@ it("uses native manager refusal and keeps statistics independent of content-writ
   render(<ContentAdmin client={s.client} sections={["contents", "statistics"]} contentKinds={["video"]} />);
   expect(await screen.findByText("You don't have permission to manage this content.")).toBeVisible();
   await user.click(nav().getByRole("button", { name: "Statistics" }));
-  expect(await screen.findByRole("heading", { name: "Views per day" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "People engaged per day" })).toBeVisible();
   await waitFor(() => expect(paths(s)).toContain("/stats/activity"));
   expect(s.requests.filter((r) => r.pathname.includes("/stats/")).every((r) => r.searchParams.get("kind") === "video")).toBe(true);
 });

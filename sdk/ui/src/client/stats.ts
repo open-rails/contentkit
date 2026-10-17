@@ -11,8 +11,8 @@ export interface ActivityQuery {
 
 export interface TopQuery {
   kind: string;
-  /** views (the default) or comments. */
-  metric?: "views" | "comments";
+  /** Distinct people with measured attention (the default), or published comments. */
+  metric?: "readers" | "comments";
   /** 30d by default. */
   period?: Period;
   access?: readonly ("public" | "tier" | "group" | "ppv" | "group_ppv")[];
@@ -23,15 +23,15 @@ export interface TopQuery {
   limit?: number;
 }
 
-/** Content statistics: staff activity and rankings (root:content:view-restricted), and the signed-in reader's own. */
+/** Content statistics: staff activity and rankings (content statistics permission), and the signed-in reader's own. */
 export class StatsClient {
   constructor(private readonly http: Http) {}
 
-  /** A kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers. */
+  /** A kind's measured activity per UTC day: distinct engaged people, signed-in people and focused active milliseconds. */
   activity(q: ActivityQuery, signal?: AbortSignal): Promise<Activity> {
     return call(this.http, "GET", "/stats/activity", { query: { kind: q.kind, days: q.days }, signal });
   }
-  /** A kind's live, listed content ranked by views or published comments over a period. */
+  /** A kind's live, listed content ranked by distinct engaged people or published comments over a period. */
   top(q: TopQuery, signal?: AbortSignal): Promise<TopContents> {
     const { access, tiers, ...rest } = q;
     return call(this.http, "GET", "/stats/top", { query: { ...rest, access: access?.join(","), tiers: tiers?.join(",") }, signal });
