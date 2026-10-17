@@ -22,6 +22,8 @@ const noSubscription = () => () => {};
 export interface ReaderSettingsProps {
   /** Content kinds offered in this dialog; omitted shows all configured kinds. */
   kinds?: ContentFilterSettingsProps["kinds"];
+  /** Offers reader content filters (default); false shows only the language, e.g. on admin screens. */
+  filters?: boolean;
   languages: readonly { value: string; label: string }[];
   /** The current language, controlled by the host. */
   language: string;
@@ -74,7 +76,7 @@ export function ReaderSettings(p: ReaderSettingsProps) {
                 </SelectContent>
               </Select>
             </div>
-            {client && <ReaderFilters language={p.language} kinds={p.kinds} client={client} onError={p.onError} />}
+            {client && p.filters !== false && <ReaderFilters language={p.language} kinds={p.kinds} client={client} onError={p.onError} />}
             {(state.pending || save.pending) && !state.error && <p className="text-sm text-muted-foreground" role="status">{t("readerSettings.savingPreferences")}</p>}
             <ErrorLine>{state.error || save.error ? t("readerSettings.preferencesNotSaved") : null}</ErrorLine>
             {state.error && preferences && <Button type="button" variant="outline" onClick={() => { void save.run(() => preferences.retry()); }}>{t("common.retry")}</Button>}

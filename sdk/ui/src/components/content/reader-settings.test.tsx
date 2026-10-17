@@ -123,3 +123,14 @@ it("omits the filter heading when the signed-in site has no configured filters",
   expect(screen.getByRole("combobox", { name: "Language" })).toBeVisible();
   expect(screen.queryByRole("switch")).toBeNull();
 });
+
+it("offers only the language, without loading filters, when filters are off", async () => {
+  const fetcher = vi.fn(async () => Response.json({ applies_to: ["gallery", "blog"], filters: [{ entity: { id: "filter", slug: "furry", name: "Furry" }, default_visible: false, visible: false, overridden: false }], include_deleted: false }));
+  const client = createContentKitClient({ baseUrl: "https://content.test/admin", fetch: fetcher });
+  render(<ContentKitProvider client={client} viewer="admin"><ReaderSettings filters={false} languages={languages} language="en" onLanguageChange={() => {}} /></ContentKitProvider>);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Reader settings" }));
+  expect(await screen.findByRole("combobox", { name: "Language" })).toBeVisible();
+  expect(screen.queryByText("Show Content:")).toBeNull();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes("content-filters"))).toBe(false);
+});
