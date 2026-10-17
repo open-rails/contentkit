@@ -21,7 +21,7 @@ func TestMeasuredPersonRelationCanBeJoined(t *testing.T) {
 			prefix := ""
 			if intervalJoin {
 				prefix = "intervals AS (SELECT 'gallery' AS interval_id,'" + event.ContentID + "' AS content_id),receipts AS (" + canonical + "),"
-				canonical = "SELECT i.interval_id AS content_kind,c.content_id,c.content_version_id,c.subject_kind,c.subject,c.receipt_id,c.c,c.ver FROM intervals i INNER JOIN receipts c ON i.content_id=c.content_id"
+				canonical = "SELECT " + intervalMeasurementProjection() + " FROM intervals i INNER JOIN receipts receipt ON i.content_id=receipt.content_id"
 			}
 			query := `WITH ` + prefix + `versions AS (` + measuredVersions(canonical) + ` SELECT content_kind AS interval_id,subject_kind,subject,qualified,attention_quality FROM scored),
  people AS (SELECT interval_id,subject_kind,subject,max(attention_quality) AS quality FROM versions WHERE qualified GROUP BY interval_id,subject_kind,subject)

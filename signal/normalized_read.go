@@ -91,11 +91,11 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
 	// revision; its earliest trusted receipt fixes the audience across retries.
 	// Bound aggregation fan-out as well as memory. A many-core server's default
 	// can otherwise exhaust the budget on per-stream state for tiny windows.
-	intervalCanonical := `SELECT i.interval_id AS content_kind,c.content_id,c.content_version_id,c.subject_kind,c.subject,c.receipt_id,c.c,c.ver
- FROM intervals i INNER JOIN receipts c ON i.content_id=c.content_id
- WHERE JSONExtractString(c.a,'viewer_access')='full' AND c.c.1>=i.start_at AND c.c.1<i.end_at
- AND (i.audience='public' OR (JSONExtractBool(c.a,'eligibility_known') AND hasAny(JSONExtract(c.a,'eligible_tiers','Array(String)'),i.tiers)))
- AND (?='' OR JSONExtractString(c.a,'domain')=?) AND (?='' OR JSONExtractString(c.a,'language')=?)`
+	intervalCanonical := `SELECT ` + intervalMeasurementProjection() + `
+ FROM intervals i INNER JOIN receipts receipt ON i.content_id=receipt.content_id
+ WHERE JSONExtractString(receipt.a,'viewer_access')='full' AND receipt.c.1>=i.start_at AND receipt.c.1<i.end_at
+ AND (i.audience='public' OR (JSONExtractBool(receipt.a,'eligibility_known') AND hasAny(JSONExtract(receipt.a,'eligible_tiers','Array(String)'),i.tiers)))
+ AND (?='' OR JSONExtractString(receipt.a,'domain')=?) AND (?='' OR JSONExtractString(receipt.a,'language')=?)`
 	measured := strings.TrimPrefix(measuredVersions("SELECT * FROM interval_measurements"), "WITH ")
 	query := fmt.Sprintf(`WITH
  intervals AS (SELECT * FROM contentkit_activity_intervals),
@@ -198,4 +198,12 @@ FROM normalized WHERE normalized_rate>0 OR invalid_population ORDER BY rank_scor
 		hits[i].Normalization = m
 	}
 	return hits, nil
+}
+
+// Joined ClickHouse columns retain qualified headers when a name appears on
+// both sides. Export explicit names before the generic measurement aggregation;
+// otherwise content_id can bind to an outer ranking join as a free identifier.
+func intervalMeasurementProjection() string {
+	return `i.interval_id AS content_kind,receipt.content_id AS content_id,receipt.content_version_id AS content_version_id,
+ receipt.subject_kind AS subject_kind,receipt.subject AS subject,receipt.receipt_id AS receipt_id,receipt.c AS c,receipt.ver AS ver`
 }
