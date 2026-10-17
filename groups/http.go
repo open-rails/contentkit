@@ -65,8 +65,8 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
 		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(GroupDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
-	staff(httpapi.GET, "/manage/entities", "Lists active entities for administration, including internal classifications that are never exposed by public reads.", nil, httpapi.OK(GroupPage{}), httpapi.H(handler.manageList), nil,
-		httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
+	staff(httpapi.GET, "/manage/entities", "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.", nil, httpapi.OK(GroupPage{}), httpapi.H(handler.manageList), nil,
+		httpapi.Text("state", "active (the default) or deleted, the restorable ones"), httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
 		httpapi.Text("slug", "only the entity with this slug"), httpapi.Text("q", "match a canonical name, alias or slug"), httpapi.Text("letter", "only sort names starting with this letter"), language,
 		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name, count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
 	staff(httpapi.GET, "/manage/entities/{id}", "An entity's administration view, including internal classifications and their relationships.", nil, httpapi.OK(GroupDetail{}), httpapi.H(handler.manageDetail), notFound, language),
@@ -261,6 +261,14 @@ func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management
 		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Page: page, Limit: limit, IncludeInternal: management}
 	if management {
 		opts.Query = q.Get("q")
+		switch q.Get("state") {
+		case "", string(StateActive):
+		case string(StateDeleted):
+			opts.Deleted = true
+		default:
+			reply(w, http.StatusOK, GroupPage{}, fmt.Errorf("%w: state is active or deleted", ErrInvalid))
+			return
+		}
 	}
 	out, err := h.as(r).List(r.Context(), opts)
 	reply(w, http.StatusOK, out, err)

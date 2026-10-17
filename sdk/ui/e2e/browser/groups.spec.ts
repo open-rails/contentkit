@@ -176,10 +176,12 @@ for (const [mode, theme] of [
     // A member, then its cover as the group's.
     const content = await seedContent(ck, { kind: "comic", titles: { en: `Member ${r}` }, versions: [{ languages: ["en"] }] });
     const members = flow.locator("[data-ckui=group-members]");
-    await members.getByLabel("Content id").fill(content.id);
+    await members.getByRole("combobox", { name: "Search titles to add" }).fill(`Member ${r}`);
+    await page.getByRole("option", { name: new RegExp(`Member ${r}`) }).click();
+    // Artists have roles: picking opens the role choice before adding.
     await members.getByRole("button", { name: "Add member" }).click();
-    await expect(members.locator("[data-ckui=group-member]")).toHaveText(new RegExp(content.id));
-    await members.getByRole("button", { name: "Use as cover" }).click();
+    await expect(members.locator(`[data-ckui=group-member][data-content="${content.id}"]`)).toContainText(`Member ${r}`);
+    await members.getByRole("button", { name: `Use as cover: Member ${r}` }).click();
     await expect(flow.locator("[data-ckui=cover-mode]")).toHaveText("A member's cover.");
     await page.screenshot({ path: `${dir}/group-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
 
@@ -195,7 +197,7 @@ for (const [mode, theme] of [
     await dialog.getByRole("button", { name: "Merge" }).click();
     await expect(page).toHaveURL(new RegExp(`/admin/groups/artist/${target!.id}$`));
     await expect(flow.locator("[data-ckui=group-head]").getByRole("heading", { name: `Target ${r}` })).toBeVisible();
-    await expect(flow.locator("[data-ckui=group-members] [data-ckui=group-member]")).toHaveText(new RegExp(content.id));
+    await expect(flow.locator(`[data-ckui=group-members] [data-ckui=group-member][data-content="${content.id}"]`)).toContainText(`Member ${r}`);
     await expect(flow.locator("[data-ckui=group-names-editor]")).toContainText(`Studio ${r}`);
 
     await flow.locator("[data-ckui=group-head]").getByRole("button", { name: "Delete" }).click();

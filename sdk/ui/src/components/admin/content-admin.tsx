@@ -26,7 +26,7 @@ export interface ContentAdminProps extends AdminFlowProps, AdminRouteProps {
   groupKinds?: readonly string[];
   labels?: Labels;
   content?: Pick<ContentManagerProps, "renderEditor" | "contentHref">;
-  groups?: Pick<GroupManagerProps, "renderContent">;
+  groups?: Pick<GroupManagerProps, "renderContent" | "contentHref">;
   moderation?: Pick<CommentModerationProps, "itemHref" | "userHref" | "sections">;
   polls?: Pick<PollManagerProps, "freeText" | "maxOptions">;
 }

@@ -91,7 +91,7 @@ func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 			c := sh.cover
 			asked, put = append(asked, CoverOf{Kind: sh.kind, ID: sh.id, Cover: *c, Language: language}), append(put, func(r []Rendition) { c.Renditions = r })
 		}
-		if s.covers != nil && gk.Owner == "user" && sh.avatar != nil {
+		if s.covers != nil && gk.HasAvatar() && sh.avatar != nil {
 			a, image := sh.avatar, ""
 			if *a != nil {
 				image = (*a).Image

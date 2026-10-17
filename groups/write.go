@@ -51,7 +51,7 @@ type GroupUpdate struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 	// Cover selects a cover; an empty one returns to the automatic cover.
 	Cover *Cover `json:"cover,omitempty"`
-	// Avatar selects a user-owned group's avatar; an empty one returns to
+	// Avatar selects the group's avatar (kinds with avatars); an empty one returns to
 	// the first.
 	Avatar      *Avatar `json:"avatar,omitempty"`
 	OwnerUserID *string `json:"owner_user_id,omitempty"`
@@ -185,7 +185,7 @@ func (s *Store) fields(gk kinds.GroupKind, kind string, g *groupRow) error {
 	if g.AuthScope != nil && !gk.AuthScope {
 		return fmt.Errorf("%w: %s groups take no auth scope", ErrInvalid, kind)
 	}
-	if g.Avatar != nil && gk.Owner != "user" {
+	if g.Avatar != nil && !gk.HasAvatar() {
 		return fmt.Errorf("%w: %s groups take no avatar", ErrInvalid, kind)
 	}
 	attrs, err := kinds.ValidateAttributes(gk.Attributes, g.Attributes)

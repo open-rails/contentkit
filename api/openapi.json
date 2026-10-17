@@ -7015,8 +7015,16 @@
         "tags": [
           "entities"
         ],
-        "summary": "Lists active entities for administration, including internal classifications that are never exposed by public reads.",
+        "summary": "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.",
         "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "active (the default) or deleted, the restorable ones",
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "kind",
             "in": "query",
@@ -15463,6 +15471,9 @@
           },
           "max_per_owner": {
             "type": "integer"
+          },
+          "avatar": {
+            "type": "boolean"
           },
           "uploads": {
             "$ref": "#/components/schemas/UploadLimits"

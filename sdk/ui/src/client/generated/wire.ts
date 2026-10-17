@@ -952,6 +952,7 @@ export interface GroupKind {
   scoped_by?: string;
   owner?: string;
   max_per_owner?: number;
+  avatar?: boolean;
   uploads?: UploadLimits;
   sellable?: boolean;
   auth_scope?: boolean;

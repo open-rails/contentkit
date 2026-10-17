@@ -6,7 +6,7 @@ import { createContentKitClient } from "../../client/client.js";
 import type { AdminComment, ContentModel, HeldItem } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { UserCommentStanding } from "../admin/user-comment-standing.js";
-import { GroupMembers } from "../groups/memberships.js";
+import { GroupMembers } from "../groups/group-members.js";
 import { CommentModeration } from "../social/moderation.js";
 
 const callers = ["members", "standing", "queue"] as const;

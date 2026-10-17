@@ -32,7 +32,7 @@ func config() kinds.Config {
 				Attributes: map[string]kinds.Attribute{"artist_type": {Type: "enum", Values: []string{"artist", "circle", "company"}}}},
 			"series":      {Route: "series", Ordered: true, Parent: "series"},
 			"character":   {Route: "characters", ScopedBy: "series", Attributes: map[string]kinds.Attribute{"external_link": {Type: "string"}}},
-			"voice_actor": {Route: "voice-actors", VersionLevel: true},
+			"voice_actor": {Route: "voice-actors", VersionLevel: true, Avatar: true},
 			"rail":        {Ordered: true, Windows: true},
 			"channel":     {Route: "c", Owner: "user", AuthScope: true, Sellable: true},
 		},

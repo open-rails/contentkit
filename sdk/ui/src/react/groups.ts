@@ -58,6 +58,10 @@ export interface GroupFilter {
   sort?: GroupSort;
   /** Default 50, at most 200. */
   pageSize?: number;
+  /** Management: a canonical name, alias or slug containing this. */
+  query?: string;
+  /** Management: the deleted, restorable groups instead of active ones. */
+  deleted?: boolean;
 }
 
 /** One numbered page of groups and every matching group's total. */
@@ -90,11 +94,13 @@ export function useGroups(f: GroupFilter = {}, o: { client?: ContentKitClient; m
   const size = f.pageSize ?? 50;
   return useList(
     store,
-    keyOf("groups", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size),
+    keyOf("groups", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, f.query, f.deleted),
     { type: "groups" },
     async (cursor, signal) => {
       const query = { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, cursor: cursor as string | undefined, limit: size };
-      const page = await (o.management ? client.entities.manage(query, signal) : client.entities.list(query, signal));
+      const page = await (o.management
+        ? client.entities.manage({ ...query, q: f.query?.trim() || undefined, state: f.deleted ? "deleted" : undefined }, signal)
+        : client.entities.list(query, signal));
       return { items: page.entities, next: page.next_cursor ?? null };
     },
   );

@@ -538,8 +538,10 @@ function Names({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          const name = text.trim();
-          if (name) void save.run(() => g.names("add", [{ language, kind, name }])).then((d) => d && setText(""));
+          // Aliases take a comma-separated list, as entity chips do; a canonical name stays whole.
+          const have = new Set(group.names.filter((n) => n.language === language).map((n) => n.name.toLowerCase()));
+          const tokens = kind === "alias" ? [...new Set(text.split(/[,\n]/).map((x) => x.trim()).filter((x) => x && !have.has(x.toLowerCase())))] : [text.trim()].filter(Boolean);
+          if (tokens.length) void save.run(() => g.names("add", tokens.map((name) => ({ language, kind, name })))).then((d) => d && setText(""));
         }}
       >
         {offered.length > 1 && (
@@ -568,7 +570,7 @@ function Names({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
         <Label htmlFor={`${id}-name`} className="sr-only">
           {t("groupEditor.newName")}
         </Label>
-        <Input id={`${id}-name`} className="h-8 min-w-40 flex-1" lang={language} value={text} placeholder={t("groupEditor.newName")} onChange={(e) => setText(e.target.value)} />
+        <Input id={`${id}-name`} className="h-8 min-w-40 flex-1" lang={language} value={text} placeholder={t(kind === "alias" ? "groupEditor.newAliases" : "groupEditor.newName")} onChange={(e) => setText(e.target.value)} />
         <Button type="submit" size="sm" variant="outline" disabled={save.pending || !text.trim()}>
           {t("groupEditor.addName")}
         </Button>
@@ -656,13 +658,14 @@ function Images({ group, spec, onError, client, management }: { management?: boo
   const { t } = useMessages();
   const c = group.cover;
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
+  const avatar = spec.owner === "user" || !!spec.avatar;
   return (
-    <Section title={t(spec.owner === "user" ? "groupEditor.images" : "groupEditor.cover")} ckui="group-cover-editor">
+    <Section title={t(avatar ? "groupEditor.images" : "groupEditor.cover")} ckui="group-cover-editor">
       <p className="text-muted-foreground" data-ckui="cover-mode">
         {t(mode === "image" ? "groupEditor.coverImage" : mode === "content" ? "groupEditor.coverContent" : "groupEditor.coverAuto")}
       </p>
       <GroupImageEditor management={management} group={group} slot="cover" client={client} onError={onError} />
-      {spec.owner === "user" && <GroupImageEditor management={management} group={group} slot="avatar" client={client} onError={onError} />}
+      {avatar && <GroupImageEditor management={management} group={group} slot="avatar" client={client} onError={onError} />}
     </Section>
   );
 }

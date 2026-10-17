@@ -1628,6 +1628,8 @@ func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (gr
 
 // GetManageEntitiesQuery is the query of GetManageEntities.
 type GetManageEntitiesQuery struct {
+	// active (the default) or deleted, the restorable ones
+	State string
 	// only entities of this kind
 	Kind string
 	// only children of this entity
@@ -1654,6 +1656,9 @@ type GetManageEntitiesQuery struct {
 
 func (q GetManageEntitiesQuery) values() url.Values {
 	v := url.Values{}
+	if q.State != "" {
+		v.Set("state", q.State)
+	}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
 	}
@@ -1690,7 +1695,7 @@ func (q GetManageEntitiesQuery) values() url.Values {
 	return v
 }
 
-// GetManageEntities is GET /v1/manage/entities (staff). Lists active entities for administration, including internal classifications that are never exposed by public reads.
+// GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.
 func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (groups.GroupPage, error) {
 	var out groups.GroupPage
 	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)

@@ -287,6 +287,9 @@ type GroupKind struct {
 	// MaxPerOwner caps the active groups of the kind one person owns; 0 is
 	// no cap. Staff are not capped.
 	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
+	// Avatar gives site-owned entities a square avatar beside their cover;
+	// user-owned kinds always have one.
+	Avatar bool `json:"avatar,omitempty" yaml:"avatar"`
 	// Uploads limit what editors other than staff upload to a user-owned
 	// group's media.
 	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
@@ -306,6 +309,9 @@ type GroupKind struct {
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 }
+
+// HasAvatar reports whether the kind's entities take an avatar.
+func (k GroupKind) HasAvatar() bool { return k.Owner == "user" || k.Avatar }
 
 // UploadLimits bound a user-owned group's uploads; zero fields are off.
 type UploadLimits struct {

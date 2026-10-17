@@ -35,6 +35,8 @@ type ListOptions struct {
 	Query string
 	// IncludeInternal is a trusted management read; As stores require staff.
 	IncludeInternal bool
+	// Deleted lists deleted groups instead of active ones; with IncludeInternal only.
+	Deleted bool
 	// Parent keeps the children of one group (sub-series of a series).
 	Parent GroupID
 	// Scope keeps the groups scoped by one group (characters of a series).
@@ -169,6 +171,12 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	c.args["language"], c.args["count_language"] = lang, c.pathLang
 	where := []string{"g.tenant_id = @tenant", "g.state = 'active'"}
+	if opts.Deleted {
+		if !opts.IncludeInternal {
+			return c, fmt.Errorf("%w: deleted groups are listed for management only", ErrForbidden)
+		}
+		where[1] = "g.state = 'deleted'"
+	}
 	if !opts.IncludeInternal {
 		where = append(where, "NOT g.internal")
 	}

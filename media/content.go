@@ -104,8 +104,8 @@ func downloads(mk *Kind, k kinds.Kind) error {
 }
 
 // GroupKind is a group kind's media: named cover images ("cover/i-{uuid}"),
-// and for user-owned groups named avatars, each the group's selection
-// (groups.Cover.Image) among them.
+// and for kinds with avatars (kinds.GroupKind.HasAvatar) named avatars, each
+// the group's selection (groups.Cover.Image) among them.
 func GroupKind(name string, gk kinds.GroupKind) Kind {
 	image := func(path string) Upload {
 		return Upload{Path: path + "/{name}", Types: slices.Clone(ImageTypes), MaxBytes: 20 << 20, Named: true, Max: 20}
@@ -113,7 +113,7 @@ func GroupKind(name string, gk kinds.GroupKind) Kind {
 	k := Kind{Name: name, KeepOriginals: true, Uploads: []Upload{image(CoverPreset)},
 		Public: []Public{{Name: CoverPreset, From: CoverPreset + "/{name}", To: "cover-{name}-{w}.webp", Widths: []int{320, 640, 1280},
 			Image: Image{Quality: 82}}}}
-	if gk.Owner == "user" {
+	if gk.HasAvatar() {
 		k.Uploads = append(k.Uploads, image(AvatarPreset))
 		k.Public = append(k.Public, Public{Name: AvatarPreset, From: AvatarPreset + "/{name}", To: "avatar-{name}-{w}.webp",
 			Widths: []int{64, 128, 256}, Image: Image{Aspect: Square, Quality: 85}})

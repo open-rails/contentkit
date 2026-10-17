@@ -85,7 +85,7 @@ type Cover struct {
 	Renditions []Rendition `json:"renditions,omitempty"`
 }
 
-// Avatar is a user-owned group's square picture: an image uploaded to the
+// Avatar is a group's square picture (kinds.GroupKind.HasAvatar): an image uploaded to the
 // group's media folder ("avatar/i-{uuid}"), selected by name. Without a
 // selection a read shows the folder's first avatar, else the kind's default.
 type Avatar struct {

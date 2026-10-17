@@ -1,19 +1,21 @@
-import { useMemo, type ReactNode } from "react";
+import { cn } from "cn";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/group-fields.js";
-import type { ContentModel, Membership } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Membership } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useGroups, useKinds, type GroupSort } from "../../react/groups.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
+import { Input } from "#ckui/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
-import { GroupMembers } from "../groups/memberships.js";
+import { GroupMembers } from "../groups/group-members.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { ScopedGroups } from "../groups/scoped.js";
-import { contentError } from "../social/parts.js";
+import { contentError, useAction } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {
@@ -23,8 +25,10 @@ export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {
   labels?: Labels;
   /** Counts of this content kind; default every kind. */
   contentKind?: string;
-  /** One member, e.g. a link with its title; default its content id. */
-  renderContent?: (member: Membership) => ReactNode;
+  /** Where a member's card links, e.g. the host's editor; none: not a link. */
+  contentHref?: (content: Content) => string | undefined;
+  /** Replaces a member's card body; default its cover and title. */
+  renderContent?: (member: Membership, content?: Content) => ReactNode;
   pageSize?: number;
 }
 
@@ -101,20 +105,37 @@ function Back({ loc, kind }: { loc: AdminLocation; kind: string }) {
   );
 }
 
-function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: Ctx) {
+function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize = 50 }: Ctx) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
   const languages = kinds.languages;
+  const deleted = loc.query.get("deleted") === "1";
+  const query = loc.query.get("q") ?? "";
+  // Typing narrows the list as it goes; the URL keeps the search.
+  const [text, setText] = useState(query);
+  useEffect(() => setText(query), [query]);
   const letterParam = loc.query.get("letter") ?? "";
   const letter = LETTERS.includes(letterParam) ? letterParam : undefined;
   const sortParam = loc.query.get("sort") ?? "";
   const sort = (SORTS as readonly string[]).includes(sortParam) ? (sortParam as GroupSort) : "name";
   const languageParam = loc.query.get("language") ?? "";
   const language = languages.includes(languageParam) ? languageParam : languages[0];
-  const filters: { letter?: string; sort?: GroupSort; language?: string } = { letter, sort: sort === "name" ? undefined : sort, language: language === languages[0] ? undefined : language };
+  const filters: { letter?: string; sort?: GroupSort; language?: string; q?: string; deleted?: string } = {
+    letter,
+    sort: sort === "name" ? undefined : sort,
+    language: language === languages[0] ? undefined : language,
+    q: query || undefined,
+    deleted: deleted ? "1" : undefined,
+  };
   const filter = (next: Partial<typeof filters>) => loc.go(kind, { ...filters, ...next });
-  const groups = useGroups({ kind, letter, sort, language, contentKind, pageSize }, { client, management: true });
+  useEffect(() => {
+    if (text.trim() === query) return;
+    const timer = setTimeout(() => loc.go(kind, { ...filters, q: text.trim() || undefined }, { replace: true }), 250);
+    return () => clearTimeout(timer);
+  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groups = useGroups({ kind, letter, sort, language, contentKind, pageSize, query: query || undefined, deleted }, { client, management: true });
+  const restore = useAction("group.save", onError);
   const label = labelOf(labels, kind);
   return (
     <div className="grid gap-4" data-ckui="group-list" data-kind={kind}>
@@ -124,7 +145,23 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
           {t("groupManager.new", { kind: label })}
         </Button>
       </div>
+      <div className="flex gap-2" role="group" aria-label={label}>
+        <Button size="sm" variant={deleted ? "outline" : "default"} aria-pressed={!deleted} onClick={() => filter({ deleted: undefined })}>
+          {t("groupManager.active")}
+        </Button>
+        <Button size="sm" variant={deleted ? "default" : "outline"} aria-pressed={deleted} onClick={() => filter({ deleted: "1" })}>
+          {t("groupManager.deleted")}
+        </Button>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
+        <Input
+          type="search"
+          className="h-8 min-w-48 flex-1"
+          aria-label={t("groupManager.search")}
+          placeholder={t("groupManager.search")}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
         <Select value={sort} onValueChange={(v) => filter({ sort: v === "name" ? undefined : (String(v) as GroupSort) })}>
           <SelectTrigger size="sm" aria-label={t("groupManager.sort")}>
             <SelectValue>{(v: string) => t(`groupManager.sort_${v as GroupSort}`)}</SelectValue>
@@ -172,11 +209,14 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
       ) : groups.error && !groups.items.length ? (
         <LoadFailed error={groups.error} message={t("groupManager.loadFailed")} retry={groups.reload} />
       ) : !groups.items.length ? (
-        <p className="text-muted-foreground">{t("groups.empty")}</p>
+        <p className="text-muted-foreground">{t(deleted ? "groupManager.noDeleted" : query ? "groupManager.noMatches" : "groups.empty")}</p>
       ) : (
         <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={groups.loading}>
           {groups.items.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="group-row" data-slug={g.slug}>
+            <li key={g.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="group-row" data-slug={g.slug} data-state={deleted ? "deleted" : "active"}>
+              {(g.avatar?.renditions?.[0] ?? g.cover?.renditions?.[0]) && (
+                <img src={(g.avatar?.renditions?.[0] ?? g.cover?.renditions?.[0])!.url} alt="" loading="lazy" className={cn("size-9 shrink-0 object-cover", g.avatar?.renditions?.[0] ? "rounded-full" : "rounded-sm")} />
+              )}
               <div className="grid min-w-0 flex-1 gap-0.5">
                 <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => loc.go(`${kind}/${g.id}`)}>
                   {g.name || g.slug}
@@ -187,6 +227,12 @@ function List({ loc, kind, kinds, client, contentKind, labels, pageSize = 50 }: 
               <span className="text-sm text-muted-foreground tabular-nums" title={t("groupManager.count")}>
                 {new Intl.NumberFormat(m.language).format(g.count)}
               </span>
+              {deleted && (
+                <Button size="sm" variant="outline" disabled={restore.pending}
+                  onClick={() => void restore.run(() => client.entities.update(g.id, { state: "active" })).then((d) => d !== undefined && groups.reload())}>
+                  {t("groupEditor.restore")}
+                </Button>
+              )}
             </li>
           ))}
         </ul>
@@ -220,7 +266,7 @@ function Create({ loc, kind, client, labels, onError }: Ctx) {
   );
 }
 
-function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & { id: string }) {
+function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, id }: Ctx & { id: string }) {
   return (
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
@@ -242,6 +288,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & {
               client={client}
               onError={onError}
               renderContent={renderContent}
+              contentHref={contentHref}
               onUseCover={(content) => client.entities.update(group.id, { cover: { content_id: content } })}
             />
           </>
