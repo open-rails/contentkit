@@ -108,6 +108,8 @@ export const groups: typeof en = {
     chipsPlaceholder: "Escribe o pega nombres separados por comas",
     notFound: "No encontrado, no se guardará: {names}",
     chipDetails: "Editar {name}",
+    newHint: "Los nombres nuevos (resaltados) se crean al guardar.",
+    newChip: "{name}: nuevo, se crea al guardar",
   },
   membership: {
     unknown: "Ahora no podemos comprobar tu membresía.",

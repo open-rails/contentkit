@@ -13,7 +13,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-
 import { DragDropVerticalIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useMemo, useState, type HTMLAttributes, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type HTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../appearance.js";
 import { useMessages } from "../i18n/context.js";
 import { ContentKitUiRoot } from "../scope.js";
@@ -36,8 +36,14 @@ export interface SortableListProps<T> {
   className?: string;
   /** Accessible name of the list. */
   label?: string;
+  /** The whole item is the drag handle (Space lifts and drops; Enter is left to the item). */
+  wholeItem?: boolean;
+  /** Unsortable entries after the items, in the same list (e.g. uploads in progress). */
+  trailing?: ReactNode;
   appearance?: ContentKitUiAppearance;
 }
+
+const SPACE_ONLY = { start: ["Space"], cancel: ["Escape"], end: ["Space"] };
 
 // Items stay put while dragging; a bar marks where the item will land.
 const noShift = () => null;
@@ -50,9 +56,12 @@ const handleClass =
  * or Enter drops, Escape cancels), with localized screen reader
  * announcements. onMove gets the old and new index once, on drop.
  */
-export function SortableList<T>({ items, id, name, onMove, layout = "list", disabled, row, children, className, label, appearance }: SortableListProps<T>) {
+export function SortableList<T>({ items, id, name, onMove, layout = "list", disabled, row, children, className, label, appearance, wholeItem, trailing }: SortableListProps<T>) {
   const { t } = useMessages();
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, ...(wholeItem ? { keyboardCodes: SPACE_ONLY } : {}) }),
+  );
   const ids = useMemo(() => items.map(id), [items, id]);
   const [active, setActive] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -69,7 +78,7 @@ export function SortableList<T>({ items, id, name, onMove, layout = "list", disa
       over ? t("sortable.dropped", { name: spoken(active.id), position: at(over.id) + 1, total }) : t("sortable.droppedAway", { name: spoken(active.id) }),
     onDragCancel: ({ active }) => t("sortable.canceled", { name: spoken(active.id) }),
   };
-  const instructions: ScreenReaderInstructions = { draggable: t("sortable.instructions") };
+  const instructions: ScreenReaderInstructions = { draggable: t(wholeItem ? "sortable.instructionsTile" : "sortable.instructions") };
   const from = active ? at(active) : -1;
   const to = over ? at(over) : -1;
   const dragged = from >= 0 ? items[from] : undefined;
@@ -115,11 +124,12 @@ export function SortableList<T>({ items, id, name, onMove, layout = "list", disa
                 attrs={row?.(item)}
                 disabled={disabled}
                 grid={grid}
+                whole={wholeItem}
                 dragging={i === from}
                 drop={from >= 0 && i === to && to !== from ? (to > from ? "after" : "before") : undefined}
                 render={(handle) => children(item, handle, i)}
               />
-            )),
+            )).concat(trailing ? [<Fragment key="trailing">{trailing}</Fragment>] : []),
           )}
         </SortableContext>
         <DragOverlay dropAnimation={null}>
@@ -128,9 +138,11 @@ export function SortableList<T>({ items, id, name, onMove, layout = "list", disa
                 <li {...row?.(dragged)} className={cn(row?.(dragged).className, "cursor-grabbing rounded-md bg-background shadow-lg ring-1 ring-border")}>
                   {children(
                     dragged,
-                    <span className={handleClass}>
-                      <HugeiconsIcon icon={DragDropVerticalIcon} strokeWidth={2} className="size-4.5" />
-                    </span>,
+                    wholeItem ? null : (
+                      <span className={handleClass}>
+                        <HugeiconsIcon icon={DragDropVerticalIcon} strokeWidth={2} className="size-4.5" />
+                      </span>
+                    ),
                     from,
                   )}
                 </li>,
@@ -149,6 +161,7 @@ function Item({
   attrs,
   disabled,
   grid,
+  whole,
   dragging,
   drop,
   render,
@@ -158,12 +171,13 @@ function Item({
   attrs?: HTMLAttributes<HTMLLIElement>;
   disabled?: boolean;
   grid: boolean;
+  whole?: boolean;
   dragging: boolean;
   drop?: "before" | "after";
   render: (handle: ReactNode) => ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef } = useSortable({ id });
-  const handle = (
+  const handle = whole ? null : (
     <button type="button" ref={setActivatorNodeRef} className={handleClass} aria-label={label} disabled={disabled} data-ckui="sort-handle" {...attributes} {...listeners}>
       <HugeiconsIcon icon={DragDropVerticalIcon} strokeWidth={2} className="size-4.5" />
     </button>
@@ -171,6 +185,17 @@ function Item({
   return (
     <li
       {...attrs}
+      {...(whole && !disabled
+        ? {
+            ...attributes,
+            ...listeners,
+            onKeyDown: (e: KeyboardEvent<HTMLLIElement>) => {
+              listeners?.onKeyDown?.(e);
+              attrs?.onKeyDown?.(e);
+            },
+            "aria-label": label,
+          }
+        : {})}
       ref={setNodeRef}
       className={cn(
         attrs?.className,

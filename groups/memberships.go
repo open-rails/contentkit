@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -45,6 +47,9 @@ type ContentGroups struct {
 	// kind the content's kind declares.
 	Kinds       []string     `json:"kinds,omitempty"`
 	Memberships []Membership `json:"memberships"`
+	// Create links these names too, creating entities of creatable kinds that
+	// no active entity names yet, in the same transaction.
+	Create []NewEntity `json:"create,omitempty"`
 }
 
 // MemberRef names a member of a group: content, or one version of it.
@@ -351,9 +356,9 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		ContentID string `json:"content_id"`
 		Kind      string `json:"kind"`
 	}
-	var all []Membership
+	sets = slices.Clone(sets)
 	var contentIDs []string
-	for _, set := range sets {
+	for i, set := range sets {
 		if err := contentref.ValidateID(set.ContentID); err != nil {
 			return fmt.Errorf("%w: content id: %w", ErrInvalid, err)
 		}
@@ -361,12 +366,12 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 			return fmt.Errorf("%w: content %s is set twice", ErrInvalid, set.ContentID)
 		}
 		contentIDs = append(contentIDs, set.ContentID)
-		for _, m := range set.Memberships {
+		sets[i].Memberships = slices.Clone(set.Memberships)
+		for j, m := range sets[i].Memberships {
 			if m.ContentID != "" && m.ContentID != set.ContentID {
 				return fmt.Errorf("%w: a membership of %s names content %s", ErrInvalid, set.ContentID, m.ContentID)
 			}
-			m.ContentID = set.ContentID
-			all = append(all, m)
+			sets[i].Memberships[j].ContentID = set.ContentID
 		}
 	}
 	return s.run(ctx, func(q Querier) error {
@@ -374,6 +379,23 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('contentkit:groups:' || $1 || ':' || id, 0)) FROM unnest($2::text[]) AS id ORDER BY id`,
 			s.tenant, contentIDs); err != nil {
 			return err
+		}
+		var all []Membership
+		for i := range sets {
+			if len(sets[i].Create) > 0 {
+				known, err := s.facts(ctx, q, nil, []string{sets[i].ContentID}, nil)
+				if err != nil {
+					return err
+				}
+				contentKind, ok := known.contents[sets[i].ContentID]
+				if !ok {
+					return fmt.Errorf("%w: content %s", ErrNotFound, sets[i].ContentID)
+				}
+				if err := s.linkNames(ctx, q.(pgx.Tx), contentKind, &sets[i]); err != nil {
+					return err
+				}
+			}
+			all = append(all, sets[i].Memberships...)
 		}
 		rows, f, err := s.prepare(ctx, q, all)
 		if err != nil {

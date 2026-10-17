@@ -28,6 +28,9 @@ export const discovery: typeof en = {
     joinFree: "Kostenlos beitreten",
     forSale: "Zu kaufen",
     locked: "Gesperrt",
+    updated: "Aktualisiert",
+    deleted: "Gelöscht",
+    disliked: "Gefällt dir nicht",
     pages_one: "{count} Seite",
     pages_other: "{count} Seiten",
     minutes_one: "{count} Min.",
@@ -103,5 +106,10 @@ export const discovery: typeof en = {
     any: "Alle",
     filters: "Filter",
     clear: "Filter zurücksetzen",
+  },
+  postList: {
+    newest: "Neueste",
+    trending: "Im Trend",
+    unread: "Ungelesen",
   },
 };

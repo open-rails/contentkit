@@ -108,6 +108,8 @@ export const groups: typeof en = {
     chipsPlaceholder: "Namen eingeben oder einfügen, durch Kommas getrennt",
     notFound: "Nicht gefunden, wird nicht gespeichert: {names}",
     chipDetails: "{name} bearbeiten",
+    newHint: "Neue Namen (hervorgehoben) werden beim Speichern angelegt.",
+    newChip: "{name}: neu, wird beim Speichern angelegt",
   },
   membership: {
     unknown: "Wir können deine Mitgliedschaft gerade nicht prüfen.",

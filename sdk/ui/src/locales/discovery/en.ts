@@ -27,6 +27,9 @@ export const discovery = {
     joinFree: "Free to join",
     forSale: "For sale",
     locked: "Locked",
+    updated: "Updated",
+    deleted: "Deleted",
+    disliked: "You disliked this",
     pages_one: "{count} page",
     pages_other: "{count} pages",
     minutes_one: "{count} min",
@@ -102,5 +105,10 @@ export const discovery = {
     any: "Any",
     filters: "Filters",
     clear: "Clear filters",
+  },
+  postList: {
+    newest: "Newest",
+    trending: "Trending",
+    unread: "Unread",
   },
 };

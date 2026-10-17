@@ -28,6 +28,9 @@ export const discovery: typeof en = {
     joinFree: "免费加入",
     forSale: "可购买",
     locked: "已锁定",
+    updated: "已更新",
+    deleted: "已删除",
+    disliked: "已点踩",
     pages_one: "{count} 页",
     pages_other: "{count} 页",
     minutes_one: "{count} 分钟",
@@ -103,5 +106,10 @@ export const discovery: typeof en = {
     any: "全部",
     filters: "筛选",
     clear: "清除筛选",
+  },
+  postList: {
+    newest: "最新",
+    trending: "热门",
+    unread: "未读",
   },
 };

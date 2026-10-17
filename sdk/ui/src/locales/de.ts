@@ -46,6 +46,7 @@ export const de: ContentKitUiMessageBundle = {
   sortable: {
     handle: "{name} verschieben",
     instructions: "Zum Umsortieren Leertaste oder Eingabe drücken, mit den Pfeiltasten verschieben und mit Leertaste oder Eingabe ablegen. Escape bricht ab.",
+    instructionsTile: "Zum Umsortieren Leertaste drücken, mit den Pfeiltasten bewegen und zum Ablegen erneut die Leertaste drücken. Eingabe wählt aus. Escape bricht ab.",
     pickedUp: "{name} aufgenommen, Position {position} von {total}.",
     over: "{name} wird an Position {position} von {total} verschoben.",
     dropped: "{name} an Position {position} von {total} abgelegt.",

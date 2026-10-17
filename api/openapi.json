@@ -13398,6 +13398,12 @@
           "slug": {
             "type": "string"
           },
+          "slugs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "description": {
             "type": "string"
           },
@@ -13629,6 +13635,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Membership"
+            }
+          },
+          "create": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewEntity"
             }
           }
         }
@@ -15286,6 +15298,9 @@
           "version_level": {
             "type": "boolean"
           },
+          "creatable": {
+            "type": "boolean"
+          },
           "roles": {
             "type": "array",
             "items": {
@@ -16391,6 +16406,20 @@
           "kind",
           "name"
         ]
+      },
+      "NewEntity": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          }
+        }
       },
       "NoticePage": {
         "type": "object",

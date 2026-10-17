@@ -108,6 +108,8 @@ export const groups: typeof en = {
     chipsPlaceholder: "输入或粘贴名称，用逗号分隔",
     notFound: "未找到，不会保存：{names}",
     chipDetails: "编辑 {name}",
+    newHint: "新名称（高亮显示）会在保存时创建。",
+    newChip: "{name}：新建，保存时创建",
   },
   membership: {
     unknown: "暂时无法确认你的会员身份。",

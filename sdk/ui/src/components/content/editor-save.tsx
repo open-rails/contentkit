@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { RefBody } from "../../client/generated/wire.js";
-import { isProcessing } from "../../client/media/windows.js";
+import { ruleFor } from "../../client/media/rules.js";
+import { isProcessing, pageRemoved } from "../../client/media/windows.js";
 
 interface EditorTask {
   label: string;
@@ -69,15 +70,16 @@ export function useEditorSaveCoordinator() {
 /** Check every metadata window, not only the first page of a long gallery. */
 export async function readerMediaReady(client: ContentKitClient, ref: RefBody): Promise<boolean> {
   if (!ref.version) return false;
-  const pages = await client.versions.pages(ref.id, ref.version);
-  if (!pages.selected) return false;
   let offset = 0;
   let total: number;
+  let pages = 0;
   do {
     const read = await client.media.read(ref, { editor: true, offset, limit: 200 });
     if (read.files.some((file) => !!file.failed || isProcessing(file))) return false;
+    const rules = read.uploads ?? [];
+    pages += read.files.filter((file) => file.upload && ruleFor(rules, file.path)?.page && !pageRemoved(file)).length;
     total = read.total;
     offset += read.limit || 200;
   } while (offset < total);
-  return total > 0;
+  return pages > 0;
 }

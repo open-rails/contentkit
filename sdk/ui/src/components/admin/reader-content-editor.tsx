@@ -1,17 +1,17 @@
-import { StarIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Rule } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, NewEntity, RefBody, Rule } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
-import { isProcessing } from "../../client/media/windows.js";
+import { ruleFor } from "../../client/media/rules.js";
+import { isProcessing, pageRemoved } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContent } from "../../react/contents.js";
 import { useErrorReporter, useGuarded } from "../../react/context.js";
 import { useMediaFolder } from "../../react/folder.js";
 import { useContentGroups } from "../../react/groups.js";
-import { usePageReview } from "../../react/page-review.js";
+import { useEditorCrop } from "../../react/crop.js";
+import { usePageNotices } from "../../react/page-notices.js";
 import { useContentScope } from "../../react/use-resource.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
@@ -22,7 +22,8 @@ import { Textarea } from "#ckui/ui/textarea";
 import { AttributeFields, formOf } from "../groups/fields.js";
 import { EntityChips } from "../groups/entity-chips.js";
 import { labelOf } from "../groups/parts.js";
-import { MediaFolderEditor } from "../media-folder-editor.js";
+import { ImageCropDialog } from "../image-crop-dialog.js";
+import { MediaFolderEditor, positionalName } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionsEditor, versionLabel } from "../content/editors.js";
 import { OfferFields } from "../content/offer-fields.js";
@@ -30,10 +31,11 @@ import { ErrorLine, contentError, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
 import { EditorSaveContext, readerMediaReady, useEditorSaveCoordinator } from "../content/editor-save.js";
 import { ReaderManifestEditor } from "./reader-manifest.js";
-import { PageReview } from "./page-review.js";
+import { PageNotices } from "./page-notices.js";
 import { LoadFailed, Rows, useConfirm } from "./shell.js";
 import { contentStatus, type ContentEditorProps } from "./content-manager.js";
 
+const NO_REF: RefBody = { kind: "", id: "" };
 const blank = (): CatalogText => ({ title: "", slug: "", description: "", body: "" });
 const editableText = (item: Content | null, language: string): CatalogText =>
   item?.text?.[language] ??
@@ -100,7 +102,9 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const [versionsOpened, setVersionsOpened] = useState(false);
   const [toolsOpened, setToolsOpened] = useState<string[]>([]);
   const [toolsExpanded, setToolsExpanded] = useState(false);
-  const [reviewOpened, setReviewOpened] = useState(false);
+  // A page tile picked as the thumbnail's source, and the cover upload being cropped.
+  const [page, setPage] = useState<FileInfo | null>(null);
+  const [thumb, setThumb] = useState<{ path: string; aspect: string } | null>(null);
   const versions = useMemo(() => [...(item?.versions ?? [])].sort((a, b) => a.position - b.position), [item?.versions]);
   const version = versions.find((v) => v.id === chosen) ?? versions[0];
   useEffect(() => {
@@ -125,7 +129,10 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   );
   const associations = useDraft(
     useMemo(
-      () => ({ memberships: membership.memberships.filter((a) => groupKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")) }),
+      () => ({
+        memberships: membership.memberships.filter((a) => groupKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")),
+        create: [] as NewEntity[],
+      }),
       [membership.memberships, membership.entities, groupKinds],
     ),
   );
@@ -172,25 +179,32 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const folderRef = useRef(folder);
   folderRef.current = folder;
   const files = folder.read.read?.files ?? [];
-  const review = usePageReview(item?.id, version?.id, { client });
-  const reloadReview = review.reload;
+  const notices = usePageNotices(item?.id, version?.id, { client });
+  const reloadNotices = notices.reload;
   // A ZIP's pages appear after its commit. Media polling alone does not
-  // invalidate the separate review count when extraction changes the manifest.
-  const mediaReviewKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
+  // refresh the notices when extraction changes the manifest.
+  const mediaKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
     files.filter((file) => file.upload).map((file) => [file.path, file.size, file.staged, file.pending, file.failed]),
   ]) : null;
   useEffect(() => {
-    if (mediaReviewKey) reloadReview();
-  }, [mediaReviewKey, reloadReview]);
+    if (mediaKey) reloadNotices();
+  }, [mediaKey, reloadNotices]);
+  const pages = folder.groups.filter((g) => g.rule?.page).flatMap((g) => g.files.filter((f) => !pageRemoved(f)));
+  useEffect(() => {
+    if (page && !pages.some((f) => f.path === page.path)) setPage(null);
+  }, [page, pages]);
+  const rules = folder.groups.flatMap((g) => (g.rule ? [g.rule] : []));
+  const coverFile = version?.cover?.image ? files.find((f) => f.upload && !ruleFor(rules, f.path)?.page && stem(f.path).split("/").at(-1) === version.cover?.image) : undefined;
+  const coverCrop = useEditorCrop(ref ?? NO_REF, thumb?.path, { client, onError: p.onError, onSaved: () => setThumb(null) });
+  const editThumbnail = (path: string) => setThumb({ path, aspect: ruleFor(rules, path)?.aspect ?? "" });
   const mediaFailed = !!folder.error || folder.queue.items.some((q) => q.status === "failed") || files.some((f) => f.failed);
   const processing = files.some(isProcessing);
-  const selectedPages = review.review?.selected ?? 0;
-  const filesPending = folder.busy || allocating || processing || folder.read.loading || review.loading || cover.pending;
+  const selectedPages = pages.length;
+  const filesPending = folder.busy || allocating || processing || folder.read.loading || cover.pending;
   const publishingBlocked =
     filesPending ||
     mediaFailed ||
     !!folder.read.error ||
-    !!review.error ||
     selectedPages === 0 ||
     coordinator.pending ||
     offer.pending;
@@ -241,6 +255,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const snapshotTexts = { ...state.texts.get() };
     const snapshotDetails = state.details.get();
     const snapshotAssociations = state.associations.get().memberships.slice();
+    const snapshotCreate = state.associations.get().create.slice();
     let cleanAssociations = true;
     try {
       let content = await ensure();
@@ -272,9 +287,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             const kind = cards.get(a.group_id ?? "")?.kind;
             return kind && model.entity_kinds[kind]?.version_level && !a.version_id ? { ...a, version_id: targetVersion?.id } : a;
           });
-          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships }, language);
+          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships, create: snapshotCreate }, language);
+          setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
           cleanAssociations = settleAssociations({
             memberships: saved.memberships.filter((a) => groupKinds.includes(saved.entities.find((g) => g.id === a.group_id)?.kind ?? "")),
+            create: [],
           });
         }
       });
@@ -321,11 +338,14 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const up = await client.media.uploadNamed(target, file, { path: await client.media.presetPath(p.kind, "cover", file) });
     if (current()) await client.contents.setCover(content.id, v.id, up.name);
   };
-  const selectCover = async (file: FileInfo) => {
+  // The thumbnail is the version's cover: a copy of the chosen page, then cropped.
+  const setThumbnail = async (file: FileInfo) => {
     if (!ref || !item || !version) return;
     const path = await client.media.presetPath(p.kind, "cover", new File([], file.path.split("/").at(-1) ?? "cover", { type: file.type }));
     await client.media.commit(ref, [{ op: "copy", from: { id: item.id, version: version.id, path: file.path }, to: path }]);
-    if (current()) await client.contents.setCover(item.id, version.id, stem(path).split("/").at(-1)!);
+    if (!current()) return;
+    await client.contents.setCover(item.id, version.id, stem(path).split("/").at(-1)!);
+    if (current()) editThumbnail(path);
   };
   const { confirm, dialog } = useConfirm();
   const remove = async () => {
@@ -353,11 +373,23 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     <EditorSaveContext.Provider value={coordinator.context}>
       <div className="grid gap-5 text-base" data-ckui="reader-content-editor">
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-sm">
+          <button
+            type="button"
+            className="h-20 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default"
+            style={{ aspectRatio: 0.7071 }}
+            disabled={!coverFile || saving}
+            title={t("readerEditor.thumbnail")}
+            aria-label={t("readerEditor.editThumbnail")}
+            onClick={() => coverFile && editThumbnail(coverFile.path)}
+            data-ckui="editor-thumbnail"
+          >
+            {version?.cover?.url && <img src={version.cover.url} alt="" className="size-full object-cover" />}
+          </button>
           <div className="min-w-0 flex-1">
             <h1 className="sr-only">{text.title || t("readerEditor.new")}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Badge variant={item?.live ? "default" : "outline"}>{t(`contentManager.${status}`)}</Badge>
-              {version && <span>{t("contentEditor.pageCount", { count: review.review ? selectedPages : version.pages ?? 0 })}</span>}
+              {version && <span>{t("contentEditor.pageCount", { count: folder.read.read ? selectedPages : version.pages ?? 0 })}</span>}
               {allocating && <span role="status">{t("common.saving")}</span>}
             </div>
           </div>
@@ -432,40 +464,32 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 </Select>
               )}
               <p className="text-sm text-muted-foreground">{t("readerEditor.fileHelp")}</p>
+              {page && (
+                <div className="flex flex-wrap items-center gap-2 text-sm" data-ckui="selected-page">
+                  <span className="text-muted-foreground">
+                    {t("readerEditor.pageSelected", { name: positionalName(pages.findIndex((f) => f.path === page.path) + 1, pages.length, page.path) })}
+                  </span>
+                  <Button size="sm" variant="secondary" disabled={cover.pending || saving} onClick={() => void cover.run(() => setThumbnail(page))}>
+                    {t("readerEditor.setThumbnail")}
+                  </Button>
+                </div>
+              )}
               <MediaFolderEditor
                 folder={{ ...folder, add }}
                 label={false}
                 layout="grid"
                 disabled={saving}
                 inputLabel={t("readerEditor.files")}
-                rowActions={(file) =>
-                  file.type.startsWith("image/") && folder.groups.some((g) => g.rule?.page && g.files.some((f) => f.path === file.path)) ? (
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      title={t("readerEditor.useCover")}
-                      aria-label={t("readerEditor.useCoverFor", { name: file.path.split("/").at(-1) ?? file.path })}
-                      disabled={cover.pending || saving}
-                      onClick={() => void cover.run(() => selectCover(file))}
-                    >
-                      <HugeiconsIcon icon={StarIcon} />
-                    </Button>
-                  ) : null
-                }
+                selectedPage={page?.path ?? null}
+                onSelectPage={setPage}
               />
               {folder.read.error && <LoadFailed error={folder.read.error} message={t("contentManager.loadFailed")} retry={folder.read.reload} />}
-              {review.error && <LoadFailed error={review.error} message={t("pageReview.loadFailed")} retry={review.reload} />}
-              {(mediaFailed || filesPending || (!review.error && !folder.read.error && selectedPages === 0)) && (
+              {(mediaFailed || filesPending || (!folder.read.error && selectedPages === 0)) && (
                 <p role="status" className="text-sm text-muted-foreground">
                   {mediaFailed ? t("readerEditor.filesFailed") : filesPending ? t("readerEditor.processing") : t("readerEditor.addPages")}
                 </p>
               )}
-              {item && version && (
-                <details onToggle={(e) => e.currentTarget.open && setReviewOpened(true)}>
-                  <summary className="cursor-pointer font-medium">{t("pageReview.title")}</summary>
-                  {reviewOpened && <PageReview key={version.id} content={item.id} version={version.id} client={client} onError={p.onError} />}
-                </details>
-              )}
+              {item && version && <PageNotices content={item.id} version={version.id} client={client} onError={p.onError} />}
             </Panel>
             {item && (
               <details className="rounded-xl border border-border bg-card p-4" onToggle={(e) => e.currentTarget.open && setVersionsOpened(true)}>
@@ -508,11 +532,14 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                     management={p.management}
                     client={client}
                     disabled={!!item && membership.loading}
-                    onChange={(i, patch) => associations.edit((d) => ({ memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
-                    onRemove={(i) => associations.edit((d) => ({ memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}
+                    created={associations.value.create.filter((c) => c.kind === kind).map((c) => c.name)}
+                    onCreatedChange={(names) => associations.edit((d) => ({ ...d, create: [...d.create.filter((c) => c.kind !== kind), ...names.map((name) => ({ kind, name, language }))] }))}
+                    onChange={(i, patch) => associations.edit((d) => ({ ...d, memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
+                    onRemove={(i) => associations.edit((d) => ({ ...d, memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}
                     onAdd={(card) => {
                       setPicked((all) => new Map(all).set(card.id, card));
                       associations.edit((d) => ({
+                        ...d,
                         memberships: [...d.memberships, { group_id: card.id, ...(model.entity_kinds[kind]?.version_level && version ? { version_id: version.id } : {}) }],
                       }));
                     }}
@@ -521,11 +548,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               })}
             </Panel>
             <Panel title={t("contentManager.cover")}>
-              {version?.cover?.url ? (
-                <img src={version.cover.url} alt="" className="mx-auto max-h-64 rounded-lg object-contain" />
-              ) : (
-                <p className="text-sm text-muted-foreground">{t("readerEditor.firstPageCover")}</p>
-              )}
+              <p className="text-sm text-muted-foreground">{t("readerEditor.thumbnailHelp")}</p>
               <label className="inline-flex cursor-pointer justify-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
                 {t("contentManager.addCover")}
                 <input
@@ -611,6 +634,19 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
           </aside>
         </fieldset>
         {dialog}
+        <ImageCropDialog
+          open={!!thumb}
+          onOpenChange={(open) => !open && coverCrop.status !== "saving" && setThumb(null)}
+          source={"source" in coverCrop ? (coverCrop.source ?? null) : null}
+          aspect={thumb?.aspect ?? ""}
+          rotatable={false}
+          initialEdit={"edit" in coverCrop ? coverCrop.edit : null}
+          title={t("readerEditor.thumbnail")}
+          confirmLabel={t("readerEditor.setThumbnail")}
+          busy={coverCrop.status === "saving"}
+          error={coverCrop.status === "error" ? contentError(m, coverCrop.error) : undefined}
+          onConfirm={(edit) => void coverCrop.save(edit)}
+        />
       </div>
     </EditorSaveContext.Provider>
   );

@@ -106,10 +106,10 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			c.EverSold = it.everSold
 		}
 		if l, ok := links[id]; ok {
-			c.Code = string(l.Code)
+			page := contenturl.Prefix(s.cfg.Languages, v.language)
+			c.Code, c.Slug, c.Slugs = string(l.Code), l.SlugFor(page), l.Slugs
 			if route := s.cfg.Kinds[it.kind].Route; route != "" {
-				page := contenturl.Prefix(s.cfg.Languages, v.language)
-				c.Path = contenturl.Path(s.cfg.Languages, page, route, l.Code, l.SlugFor(page))
+				c.Path = contenturl.Path(s.cfg.Languages, page, route, l.Code, c.Slug)
 			}
 		}
 		for _, r := range iv.versions {

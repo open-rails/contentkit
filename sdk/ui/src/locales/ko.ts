@@ -46,6 +46,7 @@ export const ko: ContentKitUiMessageBundle = {
   sortable: {
     handle: "{name} 순서 변경",
     instructions: "순서를 바꾸려면 Space 또는 Enter를 누르고 화살표 키로 옮긴 뒤 Space 또는 Enter를 다시 눌러 놓으세요. Escape를 누르면 취소됩니다.",
+    instructionsTile: "순서를 바꾸려면 스페이스를 누르고 화살표 키로 옮긴 뒤 스페이스를 다시 눌러 놓으세요. Enter는 선택, Escape는 취소입니다.",
     pickedUp: "{name}을(를) 들었습니다. {total}개 중 {position}번째입니다.",
     over: "{name}이(가) {total}개 중 {position}번째로 이동합니다.",
     dropped: "{name}을(를) {total}개 중 {position}번째에 놓았습니다.",

@@ -42,3 +42,8 @@ export function processing(read: ReadResult | null | undefined): boolean {
   if (!read || read.full) return false;
   return read.state === "processing" || read.files.some(isProcessing);
 }
+
+/** A page automatic processing removed (blank, duplicate or covered by a spread); a notice offers it back. */
+export function pageRemoved(f: FileInfo): boolean {
+  return (f.meta?.page as { included?: boolean } | undefined)?.included === false;
+}

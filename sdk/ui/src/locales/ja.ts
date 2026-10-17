@@ -46,6 +46,7 @@ export const ja: ContentKitUiMessageBundle = {
   sortable: {
     handle: "{name} を並べ替え",
     instructions: "並べ替えるには Space か Enter を押し、矢印キーで移動して、もう一度 Space か Enter で配置します。Escape でキャンセルします。",
+    instructionsTile: "並べ替えるにはスペースキーを押し、矢印キーで移動して、もう一度スペースキーで配置します。Enter で選択、Escape で取り消します。",
     pickedUp: "{name} を持ち上げました。{total} 件中 {position} 番目です。",
     over: "{name} は {total} 件中 {position} 番目に移動します。",
     dropped: "{name} を {total} 件中 {position} 番目に配置しました。",

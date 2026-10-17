@@ -1,4 +1,4 @@
-import { FavouriteIcon, LockIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
+import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { Fragment, useCallback, useContext, useLayoutEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
@@ -60,6 +60,10 @@ export interface ContentCardProps {
   ownerHref?: (g: GroupLike) => string | undefined;
   /** Over the cover: the host's badges for the card, placed in the cover's box; clicks reach the card. */
   decorate?: (card: Card) => ReactNode;
+  /** Mark updated, completed and (for staff) deleted cards over the cover. Default true; false when the host draws cardStatus itself. */
+  status?: boolean;
+  /** Dim the cover of what the reader disliked. Default true. */
+  dimDisliked?: boolean;
   /** Below the meta line: the host's own. */
   children?: ReactNode;
   className?: string;
@@ -73,6 +77,44 @@ export interface CardMetadata {
   duration?: boolean;
   /** Group kinds named last in the meta line: the first entity of the first kind the card has, linked. */
   groups?: readonly string[];
+}
+
+/** What a card says about the reader's standing and the work's state. */
+export interface CardStatus {
+  /** A newer version since the reader last read it, else within the last two weeks. */
+  updated: boolean;
+  completed: boolean;
+  /** Only staff and the item's creators are told. */
+  deleted: boolean;
+  disliked: boolean;
+}
+
+const RECENT_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function cardStatus(card: Card, now = Date.now()): CardStatus {
+  const updated = card.updated_at ? Date.parse(card.updated_at) : NaN;
+  const read = card.viewer?.last_read_at ? Date.parse(card.viewer.last_read_at) : NaN;
+  return {
+    updated: Number.isFinite(updated) && (Number.isFinite(read) ? updated > read : now - updated < RECENT_MS),
+    completed: !!card.viewer?.completed,
+    deleted: !!card.deleted,
+    disliked: card.viewer?.reaction === -1,
+  };
+}
+
+/** Quiet marks for a card's status: updated, completed and deleted. */
+export function CardStatusBadges({ card, className }: { card: Card; className?: string }) {
+  const { t } = useMessages();
+  const st = cardStatus(card);
+  if (!st.updated && !st.completed && !st.deleted) return null;
+  const icon = "size-4 text-white drop-shadow-[0_0_3px_rgba(0,0,0,0.9)]";
+  return (
+    <span className={cn("pointer-events-none flex items-center gap-1.5", className)} data-ckui="card-status">
+      {st.deleted && <span className="rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm">{t("contents.deleted")}</span>}
+      {st.updated && <HugeiconsIcon icon={SparklesIcon} strokeWidth={2} className={icon} role="img" aria-label={t("contents.updated")} />}
+      {st.completed && <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className={icon} role="img" aria-label={t("contents.completed")} />}
+    </span>
+  );
 }
 
 /** The host's badges over a cover. */
@@ -154,7 +196,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -164,6 +206,8 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
   const onClick = useLink(url, open);
   const lock = lockLabel(m, card.access, tiers, labels);
+  const st = cardStatus(card);
+  const dim = dimDisliked && st.disliked;
   const v = card.version;
   const progress = card.viewer?.completed ? 1 : card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
   const kinds = groupKinds ?? Object.keys(card.entities);
@@ -241,13 +285,14 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
+    {dim && <span className="sr-only"> ({t("contents.disliked")})</span>}
   </a>;
   const [article, setArticle] = useState<HTMLElement | null>(null);
   return (
     <article ref={setArticle} className={cn("group/card relative grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
         <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
-          <div data-ckui="card-cover-frame" className={coverAspect === undefined ? shape === "landscape" ? "aspect-video" : "aspect-[3/4]" : undefined} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
+          <div data-ckui="card-cover-frame" data-disliked={dim || undefined} className={cn(coverAspect === undefined && (shape === "landscape" ? "aspect-video" : "aspect-[3/4]"), "transition-[opacity,filter]", dim && "opacity-50 brightness-75", st.deleted && "opacity-60 grayscale")} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
             {loadMedia ? <RenditionImg
               outputs={card.cover}
               alt=""
@@ -272,6 +317,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
           )}
         </a>
         {titlePosition === "cover" && titleLink}
+        {status && <CardStatusBadges card={card} className={cn("absolute right-2 z-20", titlePosition === "cover" ? "top-2" : "bottom-2.5")} />}
         {loadMedia && <Decorations card={card} decorate={decorate} aboveTitle={titlePosition === "cover"} />}
       </div>
       <div className="grid gap-1">

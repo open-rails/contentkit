@@ -380,6 +380,7 @@ export interface Content {
   language: string;
   title: string;
   slug?: string;
+  slugs?: Record<string, string>;
   description?: string;
   body?: string;
   decision: Decision;
@@ -439,6 +440,7 @@ export interface ContentFiltersUpdate {
 export interface ContentGroups {
   kinds?: string[];
   memberships: Membership[];
+  create?: NewEntity[];
 }
 
 export interface ContentInput {
@@ -955,6 +957,7 @@ export interface GroupKind {
   auth_scope?: boolean;
   windows?: boolean;
   version_level?: boolean;
+  creatable?: boolean;
   roles?: string[];
   attributes?: Record<string, Attribute>;
 }
@@ -1281,6 +1284,12 @@ export interface Name {
   language: string;
   kind: "alias" | "name";
   name: string;
+}
+
+export interface NewEntity {
+  kind: string;
+  name: string;
+  language?: string;
 }
 
 export interface NoticePage {

@@ -108,6 +108,8 @@ export const groups: typeof en = {
     chipsPlaceholder: "이름을 입력하거나 붙여넣기 (쉼표로 구분)",
     notFound: "찾을 수 없어 저장되지 않음: {names}",
     chipDetails: "{name} 편집",
+    newHint: "새 이름(강조 표시)은 저장할 때 생성됩니다.",
+    newChip: "{name}: 새 항목, 저장 시 생성",
   },
   membership: {
     unknown: "지금은 멤버십을 확인할 수 없습니다.",

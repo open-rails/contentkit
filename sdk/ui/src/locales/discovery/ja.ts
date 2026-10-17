@@ -28,6 +28,9 @@ export const discovery: typeof en = {
     joinFree: "無料で参加",
     forSale: "販売中",
     locked: "ロック中",
+    updated: "更新あり",
+    deleted: "削除済み",
+    disliked: "低評価済み",
     pages_one: "{count} ページ",
     pages_other: "{count} ページ",
     minutes_one: "{count} 分",
@@ -103,5 +106,10 @@ export const discovery: typeof en = {
     any: "すべて",
     filters: "絞り込み",
     clear: "絞り込みを解除",
+  },
+  postList: {
+    newest: "最新",
+    trending: "トレンド",
+    unread: "未読",
   },
 };

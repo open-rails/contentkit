@@ -219,7 +219,7 @@ export class ResourceStore {
     switch (c.type) {
       case "media.committed":
       case "media.processed":
-        this.invalidate((t) => t.type === "page-review" && t.id === c.ref.version);
+        this.invalidate((t) => t.type === "page-notices" && t.id === c.ref.version);
         break;
       case "notifications.updated":
         this.updateNotification(c.item, scope);
@@ -333,7 +333,7 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "moderation-rules" && t.scope === c.rules);
         break;
       case "reader.changed":
-        this.invalidate((t) => (t.type === "reader-plan" || t.type === "page-review") && t.id === c.version);
+        this.invalidate((t) => (t.type === "reader-plan" || t.type === "page-notices") && t.id === c.version);
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));

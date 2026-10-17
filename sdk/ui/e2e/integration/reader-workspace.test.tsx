@@ -35,17 +35,22 @@ it("uploads, associates, chooses a stored cover and publishes the current galler
   await user.type(title, `Workspace published ${suffix}`);
   await user.type(screen.getByRole("combobox", { name: "Add: Artist" }), artistName);
   await user.click(await screen.findByRole("option", { name: new RegExp(artistName) }, { timeout: 90_000 }));
-  await waitFor(() => expect(view.container.querySelectorAll('[data-ckui="upload-row"]')).toHaveLength(2), wait);
+  await waitFor(() => expect(view.container.querySelectorAll('[data-ckui="page-tile"]')).toHaveLength(2), wait);
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
-  const cover = screen.getAllByRole("button", { name: /Use .+ as cover/ })[0]!;
-  await user.click(cover);
+  await user.click(screen.getByRole("button", { name: "Reorder 01.png" }));
+  await user.click(screen.getByRole("button", { name: "Set as thumbnail" }));
+  await screen.findByRole("dialog", {}, wait);
+  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(async () => expect((await c.contents.get(created!.id, "en")).live).toBe(true), wait);
   expect((await c.contents.get(created!.id, "en")).title).toBe(`Workspace published ${suffix}`);
   expect((await c.entities.ofContent(created!.id)).memberships.some((membership) => membership.group_id === artist!.id)).toBe(true);
   const version = (await c.contents.get(created!.id, "en")).versions[0]!;
-  expect((await c.versions.pages(created!.id, version.id)).selected).toBe(2);
+  await waitFor(async () => {
+    const plan = await c.versions.reader(created!.id, version.id);
+    expect("pages" in plan ? plan.pages : undefined).toBe(2);
+  }, wait);
   await waitFor(async () => expect((await visitor.contents.get(created!.id, "en")).title).toBe(`Workspace published ${suffix}`), wait);
   expect(record.presigns).toHaveLength(2);
   expect(record.commits.flat().some((operation) => operation.op === "copy")).toBe(true);

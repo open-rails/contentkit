@@ -16,6 +16,7 @@ import type {
   MergeReport,
   MyGroup,
   Name,
+  NewEntity,
   Edit,
 } from "../client/generated/wire.js";
 import type { EntityImageSlot, MyEntityQuery } from "../client/entities.js";
@@ -271,8 +272,8 @@ export interface UseContentGroups {
   error?: ContentKitError;
   saving: boolean;
   reload: () => void;
-  /** Replaces the content's memberships, its versions' included, in these group kinds (every kind its kind joins when omitted). */
-  set: (memberships: Membership[], kinds?: string[]) => Promise<ContentMemberships>;
+  /** Replaces the content's memberships, its versions' included, in these group kinds (every kind its kind joins when omitted); create links new names, creating entities of creatable kinds. */
+  set: (memberships: Membership[], kinds?: string[], create?: NewEntity[]) => Promise<ContentMemberships>;
 }
 
 /** Staff: one content's memberships, its versions' included, and their replacement. */
@@ -286,11 +287,11 @@ export function useContentGroups(contentId: string | null | undefined, o: { lang
   const guarded = useGuarded();
   const [inflight, setInflight] = useState(0);
   const set = useCallback(
-    async (memberships: Membership[], kinds?: string[]) => {
+    async (memberships: Membership[], kinds?: string[], create?: NewEntity[]) => {
       if (!contentId) throw new Error("contentkit-ui: no content");
       setInflight((n) => n + 1);
       try {
-        const out = await guarded(() => client.entities.setOfContent(contentId, { kinds, memberships }, language));
+        const out = await guarded(() => client.entities.setOfContent(contentId, { kinds, memberships, ...(create?.length ? { create } : {}) }, language));
         if (key) store.set(key, out);
         return out;
       } finally {

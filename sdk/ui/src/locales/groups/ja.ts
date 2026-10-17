@@ -108,6 +108,8 @@ export const groups: typeof en = {
     chipsPlaceholder: "名前を入力または貼り付け（カンマ区切り）",
     notFound: "見つからないため保存されません: {names}",
     chipDetails: "{name} を編集",
+    newHint: "新しい名前（強調表示）は保存時に作成されます。",
+    newChip: "{name}: 新規、保存時に作成",
   },
   membership: {
     unknown: "現在メンバーシップを確認できません。",

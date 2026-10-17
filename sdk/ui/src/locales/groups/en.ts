@@ -107,6 +107,8 @@ export const groups = {
     chipsPlaceholder: "Type or paste names, separated by commas",
     notFound: "Not found, so not saved: {names}",
     chipDetails: "Edit {name}",
+    newHint: "New names (highlighted) are created when you save.",
+    newChip: "{name}: new, created on save",
   },
   membership: {
     unknown: "We can't check your membership right now.",

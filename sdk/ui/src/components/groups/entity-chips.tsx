@@ -32,6 +32,9 @@ export interface EntityChipsProps {
   management?: boolean;
   client?: ContentKitClient;
   disabled?: boolean;
+  /** Names no entity carries yet, created on save (kinds with spec.creatable). */
+  created?: readonly string[];
+  onCreatedChange?: (names: string[]) => void;
   onAdd: (card: GroupCard) => void;
   onChange: (index: number, patch: Partial<Membership>) => void;
   onRemove: (index: number) => void;
@@ -63,8 +66,9 @@ export function resolveToken(token: string, found: readonly GroupCard[], kind: s
 /**
  * A content's links to one entity kind as chips: type or paste names
  * separated by commas, remove with × or Backspace. A chip with roles,
- * versions, positions or a proposal opens those details. Names without a
- * match stay marked and are not saved.
+ * versions, positions or a proposal opens those details. A name without a
+ * match is new, created on save, where the kind is creatable; elsewhere it
+ * stays marked and is not saved.
  */
 export function EntityChips(p: EntityChipsProps) {
   const { t } = useMessages();
@@ -74,6 +78,15 @@ export function EntityChips(p: EntityChipsProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<string[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
+  const created = p.created ?? [];
+  const creatable = !!p.spec.creatable && !!p.onCreatedChange;
+  // Lookups settle out of order; each appends to the latest list.
+  const latestCreated = useRef(created);
+  latestCreated.current = created;
+  const setCreated = (names: string[]) => {
+    latestCreated.current = names;
+    p.onCreatedChange?.(names);
+  };
   const [open, setOpen] = useState<number | null>(null);
   const [active, setActive] = useState(0);
   const fragment = text.trim();
@@ -98,7 +111,7 @@ export function EntityChips(p: EntityChipsProps) {
       ? client.entities.manage({ q: token, kind: p.kind, language: p.language, limit: 10 }).then((page) => page.entities)
       : client.discovery.typeahead({ q: token, entity_kinds: [p.kind], display_language: p.language, limit: 10 }).then((r) => r.entities);
   const commit = (tokens: string[]) => {
-    const known = new Set([...p.memberships.map((m) => fold(name(m))), ...pending.map(fold), ...missing.map(fold)]);
+    const known = new Set([...p.memberships.map((m) => fold(name(m))), ...pending.map(fold), ...missing.map(fold), ...created.map(fold)]);
     const fresh: string[] = [];
     for (const token of tokens) {
       if (known.has(fold(token))) continue;
@@ -112,6 +125,7 @@ export function EntityChips(p: EntityChipsProps) {
         (cards) => {
           const card = resolveToken(token, cards, p.kind);
           if (card) add(card);
+          else if (creatable) setCreated([...latestCreated.current, token]);
           else setMissing((all) => [...all, token]);
         },
         () => setMissing((all) => [...all, token]),
@@ -131,6 +145,7 @@ export function EntityChips(p: EntityChipsProps) {
   };
   const removeLast = () => {
     if (missing.length) return setMissing((all) => all.slice(0, -1));
+    if (created.length) return setCreated(created.slice(0, -1));
     if (p.memberships.length) p.onRemove(p.memberships.length - 1);
   };
   const detail = open !== null ? p.memberships[open] : undefined;
@@ -172,6 +187,16 @@ export function EntityChips(p: EntityChipsProps) {
               {token}
             </li>
           ))}
+          {created.map((token, i) => (
+            <li key={`new:${token}`} className="inline-flex items-center gap-1 rounded-md bg-destructive/15 py-0.5 ps-2 pe-1 text-sm text-destructive" data-ckui="entity-chip-new">
+              <span className="min-w-0 truncate" title={t("memberships.newChip", { name: token })}>
+                {token}
+              </span>
+              <button type="button" className="rounded-sm p-0.5 hover:bg-destructive/15" aria-label={t("memberships.remove", { name: token })} onClick={(e) => (e.stopPropagation(), setCreated(created.filter((_, j) => j !== i)))}>
+                <HugeiconsIcon icon={Cancel01Icon} className="size-3" strokeWidth={2.5} />
+              </button>
+            </li>
+          ))}
           {missing.map((token, i) => (
             <li key={`missing:${token}`} className="inline-flex items-center gap-1 rounded-md border border-dashed border-destructive py-0.5 ps-2 pe-1 text-sm text-destructive" data-ckui="entity-chip-missing">
               <span className="line-through">{token}</span>
@@ -193,7 +218,7 @@ export function EntityChips(p: EntityChipsProps) {
           autoComplete="off"
           disabled={p.disabled}
           className="min-w-32 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          placeholder={p.memberships.length || missing.length ? "" : t("memberships.chipsPlaceholder")}
+          placeholder={p.memberships.length || missing.length || created.length ? "" : t("memberships.chipsPlaceholder")}
           value={text}
           onChange={(e) => type(e.target.value)}
           onBlur={() => {
@@ -242,6 +267,7 @@ export function EntityChips(p: EntityChipsProps) {
           </ul>
         )}
       </div>
+      {created.length > 0 && <p className="text-xs text-muted-foreground">{t("memberships.newHint")}</p>}
       {missing.length > 0 && (
         <p className="text-xs text-destructive" role="status">
           {t("memberships.notFound", { names: missing.join(", ") })}
