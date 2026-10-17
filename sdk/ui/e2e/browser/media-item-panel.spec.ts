@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { fixture, mediaClient, seedVideo } from "../support/seed.ts";
+import { fixture, mediaClient, processed, seedVideo } from "../support/seed.ts";
 import { mediaRef, admin, harness, inheritsHostTheme, screenshots as dir } from "./pages.ts";
 
 // MediaItemPanel in demo/admin.tsx over the real media worker: a video's
@@ -62,7 +62,9 @@ test.describe("re-encode", () => {
       expect((await replacement).status()).toBe(200);
       // Processing may finish between polls; the source dimensions identify the replacement.
       await expect(panel.locator("[data-ckui=media-source]")).toContainText("360×640", { timeout: 180_000 });
-      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 180_000 });
+      // The server finishing and the panel following it are separate claims: a failure names which, with the pending files.
+      await processed(h, owner, mediaRef(video));
+      await expect(state(page)).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
 
       await panel.getByRole("button", { name: "Choose poster" }).click();
       const picker = page.getByRole("dialog", { name: "Set cover" });
