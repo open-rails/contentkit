@@ -76,7 +76,10 @@ func TestIntegrationBulkSearchReadsQueryLimit(t *testing.T) {
 		if len(states) != 3 {
 			t.Fatalf("missing references must stay absent: %+v", states)
 		}
-		for ref, score := range map[ContentKey]int16{refs[0].Key(): 50, refs[7000].Key(): 70, edition.Key(): 90} {
+		for _, ref := range []ContentKey{refs[0].Key(), refs[7000].Key(), edition.Key()} {
+			if value := states[ref]; value.ActiveMS == 0 || value.Quality <= 0 || value.Quality > 1 {
+				t.Fatalf("measured standing missing: %+v", value)
+			}
 		}
 	})
 	t.Run("popularity", func(t *testing.T) {

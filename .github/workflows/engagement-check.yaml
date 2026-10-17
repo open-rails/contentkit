@@ -1,4 +1,5 @@
 name: engagement-check
+run-name: Engagement ${{ inputs.package }} @ ${{ inputs.ref }}
 'on':
   workflow_dispatch:
     inputs:

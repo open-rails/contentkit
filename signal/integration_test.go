@@ -222,6 +222,9 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 		t.Fatalf("g2 not healed: %+v (ok=%v)", s, ok)
 	}
 	m := metricsByID(t, st, tenant, []string{g1, g2}, AllTime())
+	if m[g1].Readers != 1 || m[g2].Readers != 1 {
+		t.Fatalf("replayed/repaired visits must remain one person perwork: %+v", m)
+	}
 
 	res, err := st.RepairProjections(ctx, tenant, RepairOptions{})
 	if err != nil {
