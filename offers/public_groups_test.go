@@ -191,6 +191,17 @@ func TestReconcileQueuesOneSyncPerTarget(t *testing.T) {
 		}
 	}
 	waiting(2)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Kind: ContentTarget, ID: contentref.NewID()}
+	if err := s.enqueue(ctx, tx, []Target{target, target}); err != nil {
+		t.Fatalf("a batch naming one target twice: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
 	exec(`UPDATE ` + jobs + ` SET state = 'completed', finalized_at = now()`)
 	exec(`UPDATE ` + pgx.Identifier{schema, "content_offers"}.Sanitize() + ` SET revision = revision + 1`)
 	waiting(0)

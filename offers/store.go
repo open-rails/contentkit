@@ -343,9 +343,16 @@ func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, targets []Target) erro
 	if client == nil || len(targets) == 0 {
 		return nil
 	}
-	params := make([]river.InsertManyParams, len(targets))
-	for i, t := range targets {
-		params[i] = river.InsertManyParams{Args: syncArgs{Tenant: s.tenant, Target: t}, InsertOpts: s.syncOpts()}
+	// Sync jobs are unique per target; a duplicate in one batch would make the
+	// insert conflict with itself.
+	seen := make(map[Target]bool, len(targets))
+	params := make([]river.InsertManyParams, 0, len(targets))
+	for _, t := range targets {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		params = append(params, river.InsertManyParams{Args: syncArgs{Tenant: s.tenant, Target: t}, InsertOpts: s.syncOpts()})
 	}
 	_, err := client.InsertManyTx(ctx, tx, params)
 	return err
