@@ -3,6 +3,20 @@ package signal
 // These additive tables have a separate lineage from the retired open/session
 // projections. Old writers never write them during a rolling app update.
 func init() {
+	expectedSchema["measured_population_observations"] = expectedSchema["population_observations"]
+	expectedSchema["measured_population_coverage"] = expectedSchema["population_coverage"]
+	for _, name := range retiredTables {
+		delete(expectedSchema, name)
+	}
+	source := expectedSchema["signals"]
+	var columns []columnSpec
+	for _, column := range source.columns {
+		if _, retired := retiredSourceColumns[column.name]; !retired {
+			columns = append(columns, column)
+		}
+	}
+	source.columns = columns
+	expectedSchema["signals"] = source
 	for name, spec := range measuredSchema {
 		expectedSchema[name] = spec
 	}

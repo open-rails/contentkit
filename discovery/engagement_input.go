@@ -127,7 +127,7 @@ func (s *Service) RecordEngagement(ctx context.Context, actor access.Actor, in E
 			Type: signal.TypeEngagement, EventID: receipt.ID, Revision: x.Revision, OccurredAt: receipt.Access.ObservedAt,
 			Resume: x.Resume, Access: &receipt.Access, Measurement: &m}
 		if receipt.Access.ViewerAccess != "full" {
-			sig.Type = signal.TypePreview
+			continue
 		}
 		out = append(out, sig)
 	}

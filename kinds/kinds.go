@@ -196,12 +196,11 @@ const (
 	ShowLength      = "length"     // versions' page counts, durations and segments
 	ShowReactions   = "reactions"  // like and dislike counts; locked viewers may react
 	ShowFavorites   = "favorites"  // favorite counts
-	ShowViews       = "views"      // view counts
 	ShowComments    = "comments"   // comments and their counts; locked viewers may comment
 )
 
 // Shown are the properties a Locked view may show.
-var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowViews, ShowComments}
+var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowComments}
 
 // DefaultLocked shows a kind's metadata and cover: no preview, counts or
 // comments.

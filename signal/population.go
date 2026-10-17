@@ -105,7 +105,7 @@ func (st *Store) RecordPopulation(ctx context.Context, tenant string, observatio
 			parts = append(parts, "SELECT ? AS tenant, ? AS content_kind, ? AS subject_kind, ? AS subject, ? AS observation_id, toDateTime64(?,6,'UTC') AS observed_at, ? AS domain, ? AS language, ? AS eligible_tiers, ? AS eligibility_known")
 			args = append(args, tenant, o.ContentKind, o.Subject.Kind(), o.Subject.Key(), o.ID, o.ObservedAt.UTC().Format("2006-01-02 15:04:05.000000"), o.Domain, o.Language, tiers, o.EligibilityKnown)
 		}
-		query := fmt.Sprintf(`INSERT INTO %s.population_observations
+		query := fmt.Sprintf(`INSERT INTO %s.measured_population_observations
 (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
 SELECT tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known
 FROM (%s) WHERE %s`, st.db, strings.Join(parts, " UNION ALL "), st.notErased())
@@ -120,7 +120,7 @@ FROM (%s) WHERE %s`, st.db, strings.Join(parts, " UNION ALL "), st.notErased())
 			}
 		}
 		for key, at := range first {
-			if err := st.conn.Exec(ctx, "INSERT INTO "+st.db+".population_coverage (tenant,content_kind,domain,language,started_at) SELECT ?,?,?,?,toDateTime64(?,6,'UTC')", tenant, key[0], key[1], key[2], at.Format("2006-01-02 15:04:05.000000")); err != nil {
+			if err := st.conn.Exec(ctx, "INSERT INTO "+st.db+".measured_population_coverage (tenant,content_kind,domain,language,started_at) SELECT ?,?,?,?,toDateTime64(?,6,'UTC')", tenant, key[0], key[1], key[2], at.Format("2006-01-02 15:04:05.000000")); err != nil {
 				return fmt.Errorf("signal: record population coverage: %w", err)
 			}
 		}
@@ -135,7 +135,7 @@ func (st *Store) PopulationCoverage(ctx context.Context, tenant, kind string, sc
 	if err := window.Validate(); err != nil {
 		return time.Time{}, false, err
 	}
-	rows, err := st.conn.Query(ctx, "SELECT count(),min(started_at) FROM "+st.db+".population_coverage WHERE tenant=? AND content_kind=? AND (?='' OR domain=?) AND (?='' OR language=?)", tenant, kind, scope.Domain, scope.Domain, scope.Language, scope.Language)
+	rows, err := st.conn.Query(ctx, "SELECT count(),min(started_at) FROM "+st.db+".measured_population_coverage WHERE tenant=? AND content_kind=? AND (?='' OR domain=?) AND (?='' OR language=?)", tenant, kind, scope.Domain, scope.Domain, scope.Language, scope.Language)
 	if err != nil {
 		return time.Time{}, false, err
 	}

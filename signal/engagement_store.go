@@ -124,6 +124,7 @@ func measuredVersions(canonical string) string {
 	return `WITH canonical AS (` + canonical + `),
  measured AS (SELECT ` + refColumns + `,subject_kind,subject,
  min(c.1) AS first_at,max(c.1) AS last_at,sum(toUInt64(c.2)) AS active_ms,
+ groupUniqArrayIf(toDate(c.1),c.2>0) AS days,
  groupUniqArrayArray(c.3) AS units,sumMap(c.4) AS attention,max(c.5) AS total,max(c.6) AS scale,
  argMax(c.7,tuple(c.1,c.8,receipt_id)) AS resume,sum(toUInt256(ver)+1) AS generation
  FROM canonical GROUP BY ` + refColumns + `,subject_kind,subject),
@@ -189,9 +190,39 @@ func (st *Store) projectMeasured(ctx context.Context, tenant string, keys []Proj
  SELECT %s,subject_kind,subject,day,toUInt8(0),toUInt64(0),CAST([],'Array(UInt32)'),
  CAST(map(),'Map(UInt32, UInt64)'),toUInt32(0),toUInt32(0),toUInt256(0)
  FROM %s.engagement_daily FINAL WHERE tenant=? AND %s AND %s)
- GROUP BY %s,subject_kind,subject,day`, st.db, refColumns, canonical, refColumns, refColumns, refColumns, refColumns, st.db, measuredKeyFilter, st.notErased(), refColumns)
-	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant); err != nil {
-		return fmt.Errorf("signal: project measured days: %w", err)
+ GROUP BY %s,subject_kind,subject,day
+ HAVING toYYYYMM(day) IN ?`, st.db, refColumns, canonical, refColumns, refColumns, refColumns, refColumns, st.db, measuredKeyFilter, st.notErased(), refColumns)
+	months, err := st.measuredMonths(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(months); start += 100 {
+		batch := months[start:min(start+100, len(months))]
+		if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, batch); err != nil {
+			return fmt.Errorf("signal: project measured days: %w", err)
+		}
 	}
 	return nil
+}
+
+func (st *Store) measuredMonths(ctx context.Context, tenant string) ([]uint32, error) {
+	q := fmt.Sprintf(`SELECT DISTINCT month FROM (
+ SELECT toYYYYMM(occurred_at) AS month FROM %s.engagement_segments WHERE tenant=? AND %s AND %s
+ UNION ALL
+ SELECT toYYYYMM(day) AS month FROM %s.engagement_daily FINAL WHERE tenant=? AND %s AND %s AND present)
+ ORDER BY month`, st.db, measuredKeyFilter, st.notErased(), st.db, measuredKeyFilter, st.notErased())
+	rows, err := st.conn.Query(ctx, q, tenant, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uint32
+	for rows.Next() {
+		var month uint32
+		if err := rows.Scan(&month); err != nil {
+			return nil, err
+		}
+		out = append(out, month)
+	}
+	return out, rows.Err()
 }

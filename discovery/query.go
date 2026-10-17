@@ -436,7 +436,6 @@ const (
 	SortPopular       = "popular"
 	SortTopRated      = "top_rated"
 	SortMostFavorited = "most_favorited"
-	SortMostViewed    = "most_viewed"
 	SortPosition      = "position"
 	SortRandom        = "random"
 )
@@ -484,8 +483,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 	case SortMostFavorited:
 		o.expr, o.cast = "f.favorites::bigint", "bigint"
-	case SortMostViewed:
-		o.expr, o.cast = "coalesce((f.popularity->>'views')::bigint, 0) + f.view_baseline", "bigint"
+
 	case SortPosition:
 		if len(f.Groups) == 0 {
 			return o, fmt.Errorf("%w: sort position needs groups: it orders by the first", ErrInvalid)

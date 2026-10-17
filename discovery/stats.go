@@ -22,13 +22,13 @@ type Activity struct {
 	Days []ActivityDay `json:"days"`
 }
 
-// ActivityDay is one day: view sessions, the distinct viewers and the
+// ActivityDay is one day: view sessions, the distinct readers and the
 // signed-in ones among them.
 type ActivityDay struct {
-	Date    string `json:"date"`
-	Views   uint64 `json:"views"`
-	Viewers uint64 `json:"viewers"`
-	Users   uint64 `json:"users"`
+	Date     string `json:"date"`
+	Readers  uint64 `json:"readers"`
+	ActiveMS uint64 `json:"active_ms"`
+	Users    uint64 `json:"users"`
 }
 
 // TopContents ranks a kind's live, listed content by a metric over a
@@ -63,7 +63,7 @@ type MyStats struct {
 
 // Top metrics.
 const (
-	MetricViews    = "views"
+	MetricReaders  = "readers"
 	MetricComments = "comments"
 )
 
@@ -73,12 +73,12 @@ const topCandidates = 1000
 
 var statsRoutes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/stats/activity", Resource: "stats", Auth: httpapi.Staff, Perm: string(access.ContentViewRestricted),
-		Doc:       "A content kind's views per UTC day, newest first: view sessions, distinct viewers and signed-in viewers, from the signal plane.",
+		Doc:       "A content kind's measured readership per UTC day, newest first: distinct qualified readers, focused active time and signed-in readers, from the signal plane.",
 		Query:     []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Int("days", "the last days, today included: 7 by default, at most 90")},
 		Responses: []httpapi.Reply{httpapi.OK(Activity{})}, Errors: signals}, Serve: httpapi.H(handler.activity)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/stats/top", Resource: "stats", Auth: httpapi.Staff, Perm: string(access.ContentViewRestricted),
-		Doc: "A content kind's live, listed content in the request's site ranked by views (the signal plane's) or published comments over a period.",
-		Query: []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Text("metric", "views (the default) or comments"),
+		Doc: "A content kind's live, listed content in the request's site ranked by readers (the signal plane's) or published comments over a period.",
+		Query: []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Text("metric", "readers (the default) or comments"),
 			httpapi.Text("period", "7d, 30d (the default), 90d, 365d or all"),
 			httpapi.List("access", "public, tier, group, ppv or group_ppv, as lists filter"), httpapi.List("tiers", "configured tiers, as lists filter"),
 			httpapi.Text("language", "the language of titles and paths; the site's first by default"), httpapi.Int("limit", "10 by default, at most 100")},
@@ -115,7 +115,7 @@ func (h handler) myStats(w http.ResponseWriter, r *http.Request) {
 	h.reply(w, r, out, err)
 }
 
-// Activity reads a kind's views per day of the last days (7 by default, at
+// Activity reads a kind's measured readership per day of the last days (7 by default, at
 // most 90).
 func (s *Service) Activity(ctx context.Context, kind string, days int) (Activity, error) {
 	out := Activity{Days: []ActivityDay{}}
@@ -136,7 +136,7 @@ func (s *Service) Activity(ctx context.Context, kind string, days int) (Activity
 		return out, err
 	}
 	for _, d := range got {
-		out.Days = append(out.Days, ActivityDay{Date: d.Day.Format(time.DateOnly), Views: d.Views, Viewers: d.Viewers, Users: d.Users})
+		out.Days = append(out.Days, ActivityDay{Date: d.Day.Format(time.DateOnly), Readers: d.Readers, ActiveMS: d.ActiveMS, Users: d.Users})
 	}
 	return out, nil
 }
@@ -152,7 +152,7 @@ type TopOptions struct {
 	Limit         int
 }
 
-// Top ranks a kind's live, listed content in the site by views or published
+// Top ranks a kind's live, listed content in the site by measured readers or published
 // comments over a period, filtered by access as lists are.
 func (s *Service) Top(ctx context.Context, o TopOptions) (TopContents, error) {
 	out := TopContents{Contents: []RankedContent{}}
@@ -185,18 +185,18 @@ func (s *Service) Top(ctx context.Context, o TopOptions) (TopContents, error) {
 	}
 	args["d_tenant"], args["d_kind"], args["d_limit"] = s.o.Tenant, o.Kind, o.Limit
 	var ranked []RankedContent
-	switch cmpOr(o.Metric, MetricViews) {
-	case MetricViews:
+	switch cmpOr(o.Metric, MetricReaders) {
+	case MetricReaders:
 		if err := s.signals(); err != nil {
 			return out, err
 		}
-		hits, err := s.o.Hub.Popular(ctx, o.Kind, signal.PopularOptions{Window: window, Limit: topCandidates, RankExpr: "toFloat64(views)"})
+		hits, err := s.o.Hub.Popular(ctx, o.Kind, signal.PopularOptions{Window: window, Limit: topCandidates, RankExpr: "toFloat64(readers)"})
 		if err != nil {
 			return out, err
 		}
 		ids, views := make([]string, len(hits)), make([]int64, len(hits))
 		for i, h := range hits {
-			ids[i], views[i] = h.ContentID, int64(h.Views)
+			ids[i], views[i] = h.ContentID, int64(h.Readers)
 		}
 		args["d_ids"], args["d_values"] = ids, views
 		ranked, err = s.ranked(ctx, `SELECT r.id, r.value FROM unnest(@d_ids::text[], @d_values::bigint[]) WITH ORDINALITY AS r(id, value, n)
@@ -218,7 +218,7 @@ func (s *Service) Top(ctx context.Context, o TopOptions) (TopContents, error) {
 			return out, err
 		}
 	default:
-		return out, fmt.Errorf("%w: metric %q is views or comments", ErrInvalid, o.Metric)
+		return out, fmt.Errorf("%w: metric %q is readers or comments", ErrInvalid, o.Metric)
 	}
 	if err := s.name(ctx, o.Kind, language, ranked); err != nil {
 		return out, err
@@ -302,7 +302,7 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 	}
 	subject := signal.Subject{UserID: actor.AccountID()}
 	for _, kind := range s.kindNames() {
-		n, err := s.o.Hub.HistoryCount(ctx, subject, signal.HistoryOptions{ContentKind: kind, Status: signal.HistoryCompleted})
+		n, err := s.o.Hub.CompletedCount(ctx, subject, kind)
 		if err != nil {
 			s.o.Logger.WarnContext(ctx, "discovery: completed counts unavailable", "err", err)
 			out.Completed = map[string]int64{}

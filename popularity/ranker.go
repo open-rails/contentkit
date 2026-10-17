@@ -128,12 +128,12 @@ type Hit struct {
 	signal.ContentMetrics
 }
 
-// MeanEngagement is the mean session score in [0, 1]: ScoreSum / (100·Views).
+// MeanEngagement is mean bounded measured quality per distinct qualified reader.
 func (h Hit) MeanEngagement() float64 {
-	if h.Views == 0 {
+	if h.Readers == 0 {
 		return 0
 	}
-	return float64(h.ScoreSum) / (100 * float64(h.Views))
+	return h.ReaderQualitySum / float64(h.Readers)
 }
 
 // GroupHit is one ranked group, derived from its member works.
@@ -142,7 +142,7 @@ type GroupHit struct {
 	GroupKind    string
 	Score        float64 // summed member scores
 	ContentCount uint64  // ranked members inside the candidate bound
-	Viewers      uint64  // summed member viewers (a subject viewing two members counts twice)
+	Readers      uint64  // summed member readers (a subject viewing two members counts twice)
 	MeanScore    float64 // Score / ContentCount
 }
 
@@ -249,7 +249,7 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 	}
 	out := make([]Hit, 0, len(metrics))
 	for key, m := range metrics {
-		if key.ContentVersionID != "" || m.Views == 0 {
+		if key.ContentVersionID != "" || m.Readers == 0 {
 			continue
 		}
 		out = append(out, Hit{ContentID: key.ContentID, Score: r.policy.Score(m), ContentMetrics: m})
@@ -316,7 +316,7 @@ func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, wind
 					byID[tid] = e
 				}
 				e.ContentCount++
-				e.Viewers += w.Viewers
+				e.Readers += w.Readers
 				e.Score += w.Score
 			}
 		}
@@ -356,7 +356,7 @@ func (r *Ranker) cacheKey(parts ...string) string {
 		Scope         signal.ActivityScope
 		Normalization *signal.NormalizationOptions
 	}{r.source.Tenant(), r.policy, parts, r.scope, r.normalization})
-	return fmt.Sprintf("contentkit:popularity:%x", sha256.Sum256(body))
+	return fmt.Sprintf("contentkit:measured-popularity:v1:%x", sha256.Sum256(body))
 }
 
 func (r *Ranker) cached(ctx context.Context, key string, into any) bool {

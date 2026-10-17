@@ -123,7 +123,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		return nil, c.ExternalID, err
 	}
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
-		Listing: c.Listing, Comments: c.Comments, ViewBaseline: c.ViewBaseline, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
+		Listing: c.Listing, Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
 		Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.OwnerGroup != nil {
 		if in.OwnerGroupID, err = r.ref(EntityGroup, *c.OwnerGroup); err != nil {
@@ -281,7 +281,7 @@ func (run *batchRun) signal(r *resolver, i int) (any, string, error) {
 		return nil, x.EventID, fmt.Errorf("%w: a signal names a user_id or an anon_key", errInvalid)
 	}
 	return discovery.ImportSignal{ContentID: t.content, VersionID: t.version, Subject: signal.Subject{UserID: x.UserID, AnonKey: x.AnonKey}, Type: x.Type,
-		EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt, DurationS: x.DurationS, Progress: x.Progress, Resume: x.Resume}, x.EventID, nil
+		EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt}, x.EventID, nil
 }
 
 // deletion is one record to delete, resolved to its id.

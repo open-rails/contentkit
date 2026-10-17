@@ -12,7 +12,6 @@ import (
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -137,14 +136,8 @@ func (s *Service) kindsOf(ctx context.Context, ids []string) (map[string]string,
 	return out, rows.Err()
 }
 
-// Signal types a client sends.
-const (
-	// TypeView is a consumption session: its progress is cumulative per
-	// revision.
-	TypeView = signal.TypeView
-	// TypeClick is a click on a listed card, attributed to its render.
-	TypeClick = "click"
-)
+// TypeClick attributes an explicit card selection to its render.
+const TypeClick = "click"
 
 // maxSignals bounds one signals request.
 const maxSignals = 100
@@ -160,18 +153,11 @@ type Signals struct {
 type SignalInput struct {
 	ContentID string `json:"content_id"`
 	VersionID string `json:"version_id,omitempty"`
-	// Type is view or click.
-	Type string `json:"type"`
-	// EventID is the client's stable identity of the event; retries reuse it.
-	EventID string `json:"event_id"`
-	// Revision orders cumulative snapshots of one view.
+	// Only click is accepted here. Measured reading has its own snapshot route.
+	Type       string    `json:"type"`
+	EventID    string    `json:"event_id"`
 	Revision   uint64    `json:"revision,omitempty"`
 	OccurredAt time.Time `json:"occurred_at"`
-	DurationS  uint32    `json:"duration_s,omitempty"`
-	// Progress is pages read (reader kinds), seconds watched (player kinds)
-	// or percent scrolled (post kinds).
-	Progress uint32 `json:"progress,omitempty"`
-	Resume   string `json:"resume,omitempty"`
 	// RenderID, Surface and Position attribute it to an exposure.
 	RenderID string `json:"render_id,omitempty"`
 	Surface  string `json:"surface,omitempty"`
@@ -208,10 +194,8 @@ type versionFacts struct {
 	duration *int64
 }
 
-// RecordSignals records a client's events: a view on a version also counts
-// for its content. A view is scored against its version's own size
-// (popularity.SessionScore), so it completes at 90% of its pages, duration
-// or scroll.
+// RecordSignals records explicit card clicks. Loaded/visible reading attention
+// is submitted separately through RecordEngagement.
 func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Signals) error {
 	if err := s.signals(); err != nil {
 		return err
@@ -228,7 +212,7 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 		if err := contentref.ValidateID(x.ContentID); err != nil {
 			return fmt.Errorf("%w: content_id: %w", ErrInvalid, err)
 		}
-		if err := identifiers(x.EventID, x.Resume, x.RenderID, x.Surface); err != nil || x.EventID == "" || x.OccurredAt.IsZero() {
+		if err := identifiers(x.EventID, x.RenderID, x.Surface); err != nil || x.EventID == "" || x.OccurredAt.IsZero() {
 			return fmt.Errorf("%w: a signal needs an event_id and occurred_at, and identifiers of at most %d bytes", ErrInvalid, signal.MaxIdentifierBytes)
 		}
 		ids = append(ids, x.ContentID)
@@ -252,7 +236,7 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 		if !ok || !seen[ref.Key()].Visible {
 			return fmt.Errorf("%w: content %s", ErrNotFound, x.ContentID)
 		}
-		facts, versioned := t.versions[x.VersionID]
+		_, versioned := t.versions[x.VersionID]
 		if x.VersionID != "" && !versioned {
 			return fmt.Errorf("%w: version %s of content %s", ErrNotFound, x.VersionID, x.ContentID)
 		}
@@ -266,41 +250,20 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 				return err
 			}
 			receipt = &r
-			if f, ok := t.versions[r.ResolvedVersion]; ok {
-				facts = f
-			}
 		}
-		sig := signal.Signal{ContentRef: ref, Subject: subject, Type: x.Type, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC(),
-			DurationS: x.DurationS, Resume: x.Resume}
+		if x.Type != TypeClick {
+			return fmt.Errorf("%w: only click signals are accepted; reading uses /engagement", ErrInvalid)
+		}
+		sig := signal.Signal{ContentRef: ref, Subject: subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
 		if receipt != nil {
 			sig.Access = &receipt.Access
 			sig.OccurredAt = receipt.Access.ObservedAt
-			if x.Type == TypeView {
-				// One signed open is one view session, regardless of how many
-				// client event identifiers are submitted with its receipt.
-				sig.EventID = receipt.ID
-			}
 		}
-		switch x.Type {
-		case TypeView:
-			sig.Progress, sig.ProgressMax = x.Progress, progressMax(t.presentation, facts)
-			if sig.ProgressMax > 0 {
-				sig.Progress = min(sig.Progress, sig.ProgressMax)
-			}
-			sig.Score, sig.Completed = popularity.SessionScore(sig.Progress, sig.ProgressMax, x.DurationS, secondsPerUnit(t.presentation))
-		case TypeClick:
-		default:
-			return fmt.Errorf("%w: signal type %q is view or click", ErrInvalid, x.Type)
-		}
+
 		if x.RenderID != "" || x.Surface != "" || x.Position != 0 {
 			sig = sig.WithAttribution(signal.Attribution{RenderID: x.RenderID, Surface: x.Surface, Position: x.Position})
 		}
 		out = append(out, sig)
-		if x.Type == TypeView && x.VersionID != "" {
-			v := sig
-			v.ContentRef = ref.WithVersion(x.VersionID)
-			out = append(out, v)
-		}
 	}
 	return s.o.Hub.RecordSignals(ctx, out)
 }
@@ -313,15 +276,6 @@ func identifiers(values ...string) error {
 		}
 	}
 	return nil
-}
-
-// secondsPerUnit is the dwell a page needs to count as read; seconds and
-// percent need none.
-func secondsPerUnit(presentation string) float64 {
-	if presentation == "reader" {
-		return 8
-	}
-	return 0
 }
 
 // progressMax is a version's size: pages for a reader, seconds for a

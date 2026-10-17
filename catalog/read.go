@@ -98,9 +98,6 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		if show(kinds.ShowAttributes) {
 			c.Attributes = it.attributes
 		}
-		if show(kinds.ShowViews) {
-			c.Views = &it.views
-		}
 		if iv.editor {
 			c.Text = texts[id]
 			if it.moderation != "approved" {
@@ -426,14 +423,13 @@ type itemRow struct {
 	everSold                          bool
 	publishAt, publishedAt, deletedAt *time.Time
 	createdAt, updatedAt              time.Time
-	revision, views                   int64
+	revision                          int64
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, c.listing, coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
  c.access, c.restrictions, c.attributes, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
- c.revision, c.comments, c.view_baseline + coalesce((SELECT max((f.popularity->>'views')::bigint) FROM `+s.t.facets+` f
-  WHERE f.tenant_id = c.tenant_id AND f.content_id = c.id), 0)
+ c.revision, c.comments
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
@@ -445,8 +441,7 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var r itemRow
 		var access, attrs, snapshot []byte
 		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
-			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments,
-			&r.views); err != nil {
+			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(access, &r.access); err != nil {

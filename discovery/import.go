@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -20,9 +19,6 @@ type ImportSignal struct {
 	EventID    string
 	Revision   uint64
 	OccurredAt time.Time
-	DurationS  uint32
-	Progress   uint32
-	Resume     string
 }
 
 // SignalPlane reports whether signals are recorded now.
@@ -46,7 +42,7 @@ func (s *Service) ImportSignals(ctx context.Context, in []ImportSignal) error {
 		if err := x.Subject.Validate(); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
-		if err := identifiers(x.EventID, x.Resume, x.Subject.Key()); err != nil || x.EventID == "" || x.OccurredAt.IsZero() {
+		if err := identifiers(x.EventID, x.Subject.Key()); err != nil || x.EventID == "" || x.OccurredAt.IsZero() {
 			return fmt.Errorf("%w: a signal needs an event_id and occurred_at, and identifiers of at most %d bytes", ErrInvalid, signal.MaxIdentifierBytes)
 		}
 		ids = append(ids, x.ContentID)
@@ -61,30 +57,16 @@ func (s *Service) ImportSignals(ctx context.Context, in []ImportSignal) error {
 		if !ok {
 			return fmt.Errorf("%w: content %s", ErrNotFound, x.ContentID)
 		}
-		facts, versioned := t.versions[x.VersionID]
+		_, versioned := t.versions[x.VersionID]
 		if x.VersionID != "" && !versioned {
 			return fmt.Errorf("%w: version %s of content %s", ErrNotFound, x.VersionID, x.ContentID)
 		}
 		ref := contentref.New(s.o.Tenant, t.kind, x.ContentID)
-		sig := signal.Signal{ContentRef: ref, Subject: x.Subject, Type: x.Type, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC(),
-			DurationS: x.DurationS, Resume: x.Resume}
-		switch x.Type {
-		case TypeView:
-			sig.Progress, sig.ProgressMax = x.Progress, progressMax(t.presentation, facts)
-			if sig.ProgressMax > 0 {
-				sig.Progress = min(sig.Progress, sig.ProgressMax)
-			}
-			sig.Score, sig.Completed = popularity.SessionScore(sig.Progress, sig.ProgressMax, x.DurationS, secondsPerUnit(t.presentation))
-		case TypeClick:
-		default:
-			return fmt.Errorf("%w: signal type %q is view or click", ErrInvalid, x.Type)
+		if x.Type != TypeClick {
+			return fmt.Errorf("%w: imported signals are explicit clicks; legacy resume/progress is preserved separately", ErrInvalid)
 		}
-		out = append(out, sig)
-		if x.Type == TypeView && x.VersionID != "" {
-			v := sig
-			v.ContentRef = ref.WithVersion(x.VersionID)
-			out = append(out, v)
-		}
+		out = append(out, signal.Signal{ContentRef: ref, Subject: x.Subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()})
+
 	}
 	return s.o.Hub.RecordSignals(ctx, out)
 }

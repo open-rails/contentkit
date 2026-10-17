@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,12 +64,31 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 	if len(kinds) == 0 {
 		return fmt.Errorf("signal: contentKinds are required")
 	}
-	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+	tables, err := st.activeSubjectTables(ctx)
+	if err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if table == "exposures" {
+			continue
+		}
 		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
 			return err
 		}
 	}
-	return st.mutate(ctx, "content_pairs", "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds)
+	pairs, err := st.existing(ctx, []string{"content_pairs", "engagement_pairs"})
+	if err != nil {
+		return err
+	}
+	for _, table := range pairs {
+		if !slices.Contains([]string{"content_pairs", "engagement_pairs"}, table) {
+			continue
+		}
+		if err := st.mutate(ctx, table, "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mutate runs ALTER TABLE DELETE and waits for completion on all replicas.

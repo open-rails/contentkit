@@ -137,10 +137,6 @@ type ContentRecord struct {
 	Listing string `json:"listing,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
-	// ViewBaseline is the legacy system's all-time view count. Displayed
-	// views and the most_viewed sort add it to the viewers the signal plane
-	// counts; popularity and trending never see it.
-	ViewBaseline int64 `json:"view_baseline,omitempty"`
 	// Access defaults to public. A group rule names the group's id.
 	Access       *access.Rule            `json:"access,omitempty"`
 	Restrictions []string                `json:"restrictions,omitempty"`
@@ -317,11 +313,6 @@ type SignalRecord struct {
 	EventID    string    `json:"event_id"`
 	Revision   uint64    `json:"revision,omitempty"`
 	OccurredAt time.Time `json:"occurred_at"`
-	DurationS  uint32    `json:"duration_s,omitempty"`
-	// Progress is pages read (reader kinds), seconds watched (player kinds)
-	// or percent scrolled (post kinds).
-	Progress uint32 `json:"progress,omitempty"`
-	Resume   string `json:"resume,omitempty"`
 }
 
 // DeleteRecord deletes a record the source no longer has, as its delete

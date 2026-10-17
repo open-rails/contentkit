@@ -19,7 +19,7 @@ const PopularityDepth = 100_000
 // content_facets.popularity, so popular and windowed top_rated sorts are one
 // Postgres query under any filter: each period's policy score, each window's
 // rating (the Wilson lower bound of the subjects whose feedback in it is
-// positive) and all-time viewers. Run it periodically (the engine's
+// positive) and all-time readers. Run it periodically (the engine's
 // contentkit_popularity job).
 func (s *Service) RefreshPopularity(ctx context.Context) error {
 	if err := s.signals(); err != nil {
@@ -55,9 +55,6 @@ func (s *Service) RefreshPopularity(ctx context.Context) error {
 				}
 				if r := wilson(h.PositiveSubjects, h.NegativeSubjects); r > 0 {
 					f.Rating[period] = r
-				}
-				if period == "all" {
-					f.Views = int64(h.Viewers)
 				}
 			}
 		}

@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -51,7 +52,7 @@ func (r ErasureReport) Complete() bool {
 
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
 var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "population_observations",
-	"engagement_segments", "engagement_state", "engagement_daily", "legacy_reading_state"}
+	"engagement_segments", "engagement_state", "engagement_daily", "legacy_reading_state", "measured_population_observations"}
 
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.
@@ -199,6 +200,18 @@ func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []
 
 func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
+	tables, err := st.activeSubjectTables(ctx)
+	if err != nil {
+		return report, err
+	}
+	optional, err := st.existing(ctx, []string{"content_pairs"})
+	if err != nil {
+		return report, err
+	}
+	pairs := []string{"engagement_pairs"}
+	if len(optional) > 0 {
+		pairs = append(pairs, "content_pairs")
+	}
 	// Pairs first: the contributed work set is read from the rows being
 	// erased, and passed as literals so every replica deletes the same pairs
 	// (replicated mutations reject subqueries as nondeterministic).
@@ -218,7 +231,7 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 		in := "(" + strings.Join(tuples, ", ") + ")"
 		pairArgs = append(pairArgs, pairArgs[1:]...)
 		where := fmt.Sprintf("tenant = ? AND ((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
-		for _, table := range []string{"content_pairs", "engagement_pairs"} {
+		for _, table := range pairs {
 			n, err := st.count(ctx, table, tenant, where[len("tenant = ? AND "):], pairArgs[1:])
 			if err != nil {
 				return report, err
@@ -232,12 +245,12 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 			report.PairsRemoved += n
 		}
 	}
-	for _, table := range subjectTables {
+	for _, table := range tables {
 		if err := st.mutate(ctx, table, "tenant = ? AND "+filter, append([]any{tenant}, args...)...); err != nil {
 			return report, err
 		}
 	}
-	for _, table := range subjectTables {
+	for _, table := range tables {
 		n, err := st.count(ctx, table, tenant, filter, args)
 		if err != nil {
 			return report, err
@@ -255,7 +268,14 @@ const mutationTupleChunk = 1000
 func (st *Store) contributedContent(ctx context.Context, tenant, filter string, args []any) ([][2]string, error) {
 	var parts []string
 	var bindings []any
-	for _, table := range []string{"subject_content_daily", "engagement_daily", "engagement_segments", "legacy_reading_state"} {
+	tables, err := st.activeSubjectTables(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range tables {
+		if !slices.Contains([]string{"subject_content_daily", "engagement_daily", "engagement_segments", "legacy_reading_state"}, table) {
+			continue
+		}
 		parts = append(parts, fmt.Sprintf(`SELECT content_kind,content_id FROM %s.%s WHERE tenant=? AND %s`, st.db, table, filter))
 		bindings = append(bindings, tenant)
 		bindings = append(bindings, args...)

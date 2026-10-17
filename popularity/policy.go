@@ -1,11 +1,11 @@
 // Package popularity ranks host content by a named, bounded policy over the
 // signal plane's canonical window metrics (docs/popularity-policy.md).
 //
-//	reach   = log10(1 + viewers)
-//	engage  = (viewer_engagement_sum + e0·ke) / (viewers + ke)
-//	finish  = (completers + f0·kf) / (viewers + kf)
+//	reach   = log10(1 + readers)
+//	engage  = (reader_quality_sum + e0·ke) / (readers + ke)
+//	finish  = (completers + f0·kf) / (readers + kf)
 //	approve = (positive + a0·ka) / (positive + negative + ka)
-//	revisit = returning_viewers / (viewers + kr)
+//	revisit = returning_readers / (readers + kr)
 //	rank    = reach × (1 + we·engage + wf·finish + wa·approve + wr·revisit)
 //
 // Every quality term lies in [0, 1], so reach (distinct subjects) dominates
@@ -35,7 +35,7 @@ type Weights struct {
 }
 
 // Priors smooth each term with pseudo-observations: a prior mean in [0, 1]
-// and its weight (>= 1) in pseudo-viewers or pseudo-votes.
+// and its weight (>= 1) in pseudo-readers or pseudo-votes.
 type Priors struct {
 	Engagement       float64
 	EngagementWeight float64
@@ -161,18 +161,17 @@ func (p Policy) Score(m signal.ContentMetrics) float64 {
 		}
 		return n.Rate + p.Weights.Engagement*n.Engagement + p.Weights.Completion*n.Completion + p.Weights.Approval*n.Approval + p.Weights.Revisit*n.Revisit
 	}
-	viewers := float64(m.Viewers)
-	views := float64(m.Views)
-	if views == 0 || viewers == 0 {
+	readers := float64(m.Readers)
+	if readers == 0 {
 		return 0
 	}
-	engage := (m.ViewerEngagementSum + p.Priors.Engagement*p.Priors.EngagementWeight) / (viewers + p.Priors.EngagementWeight)
-	finish := (float64(m.Completers) + p.Priors.Completion*p.Priors.CompletionWeight) / (viewers + p.Priors.CompletionWeight)
+	engage := (m.ReaderQualitySum + p.Priors.Engagement*p.Priors.EngagementWeight) / (readers + p.Priors.EngagementWeight)
+	finish := (float64(m.Completers) + p.Priors.Completion*p.Priors.CompletionWeight) / (readers + p.Priors.CompletionWeight)
 	positive, negative := float64(m.PositiveSubjects), float64(m.NegativeSubjects)
 	approve := (positive + p.Priors.Approval*p.Priors.ApprovalWeight) / (positive + negative + p.Priors.ApprovalWeight)
-	revisit := float64(m.ReturningViewers) / (viewers + p.Priors.RevisitWeight)
+	revisit := float64(m.ReturningReaders) / (readers + p.Priors.RevisitWeight)
 	quality := 1 + p.Weights.Engagement*engage + p.Weights.Completion*finish + p.Weights.Approval*approve + p.Weights.Revisit*revisit
-	return math.Log10(1+viewers) * quality
+	return math.Log10(1+readers) * quality
 }
 
 // RankExpr renders Score as a ClickHouse expression over the window metric
@@ -183,11 +182,11 @@ func (p Policy) RankExpr() string {
 		return fmt.Sprintf("normalized_rate + %s*normalized_engagement + %s*normalized_completion + %s*normalized_approval + %s*normalized_revisit",
 			lit(p.Weights.Engagement), lit(p.Weights.Completion), lit(p.Weights.Approval), lit(p.Weights.Revisit))
 	}
-	return fmt.Sprintf(`log10(1 + toFloat64(viewers)) * (1
- + %s * ((toFloat64(viewer_engagement_sum) + %s) / (toFloat64(viewers) + %s))
- + %s * ((toFloat64(completers) + %s) / (toFloat64(viewers) + %s))
+	return fmt.Sprintf(`log10(1 + toFloat64(readers)) * (1
+ + %s * ((toFloat64(reader_quality_sum) + %s) / (toFloat64(readers) + %s))
+ + %s * ((toFloat64(completers) + %s) / (toFloat64(readers) + %s))
  + %s * ((toFloat64(positive_subjects) + %s) / (toFloat64(positive_subjects) + toFloat64(negative_subjects) + %s))
- + %s * (toFloat64(returning_viewers) / (toFloat64(viewers) + %s)))`,
+ + %s * (toFloat64(returning_readers) / (toFloat64(readers) + %s)))`,
 		lit(p.Weights.Engagement), lit(p.Priors.Engagement*p.Priors.EngagementWeight), lit(p.Priors.EngagementWeight),
 		lit(p.Weights.Completion), lit(p.Priors.Completion*p.Priors.CompletionWeight), lit(p.Priors.CompletionWeight),
 		lit(p.Weights.Approval), lit(p.Priors.Approval*p.Priors.ApprovalWeight), lit(p.Priors.ApprovalWeight),

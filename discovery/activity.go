@@ -182,8 +182,10 @@ func (s *Service) ActivityContexts(ctx context.Context, actor access.Actor, in A
 			ObservedAt: at, Domain: domain.Name, Language: language, EligibleTiers: tiers,
 			EligibilityKnown: filterErr == nil && filter != nil && !filter.Unknown()})
 	}
-	if err := s.o.Hub.Signals().RecordPopulation(ctx, s.o.Tenant, observations); err != nil {
-		return ActivityContexts{}, err
+	if s.o.MeasuredEngagement {
+		if err := s.o.Hub.Signals().RecordPopulation(ctx, s.o.Tenant, observations); err != nil {
+			return ActivityContexts{}, err
+		}
 	}
 	out.Enabled = true
 	return out, nil

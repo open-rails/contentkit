@@ -146,7 +146,7 @@ type ViewerState struct {
 	Progress    uint32     `json:"progress"`
 	ProgressMax uint32     `json:"progress_max"`
 	Resume      string     `json:"resume,omitempty"`
-	LastViewAt  *time.Time `json:"last_view_at,omitempty"`
+	LastReadAt  *time.Time `json:"last_read_at,omitempty"`
 }
 
 // GroupSummary names one group a content item belongs to; Code and Path are
@@ -206,10 +206,6 @@ type Content struct {
 	Creators []Creator         `json:"creators"`
 	Groups   []GroupSummary    `json:"entities"`
 	Versions []Version         `json:"versions"`
-	// Views counts its distinct viewers of all time plus its imported legacy
-	// view count, as cards' counts.views do; absent when its kind's locked
-	// view hides views from this viewer.
-	Views *int64 `json:"views,omitempty"`
 	// Viewer is the signed-in reader's standing with the item, to resume
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`

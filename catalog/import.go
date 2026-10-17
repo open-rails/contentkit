@@ -36,10 +36,7 @@ type ImportContent struct {
 	DeletedAt   *time.Time
 	Listing     string
 	// Comments is open (when empty), closed or hidden.
-	Comments string
-	// ViewBaseline is the legacy all-time view count, added to the viewers
-	// the signal plane counts.
-	ViewBaseline int64
+	Comments     string
 	Access       *access.Rule
 	Restrictions []string
 	Attributes   map[string]any
@@ -93,7 +90,6 @@ type importItemRow struct {
 	DeletedAt    *time.Time      `json:"deleted_at"`
 	Listing      string          `json:"listing"`
 	Comments     string          `json:"comments"`
-	ViewBaseline int64           `json:"view_baseline"`
 	Access       json.RawMessage `json:"access"`
 	Restrictions []string        `json:"restrictions"`
 	Attributes   map[string]any  `json:"attributes"`
@@ -296,7 +292,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		} else {
 			b.fresh[c.ID] = true
 		}
-		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, Listing: c.Listing, Comments: c.Comments, ViewBaseline: c.ViewBaseline,
+		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, Listing: c.Listing, Comments: c.Comments,
 			Restrictions: c.Restrictions, Attributes: c.Attributes}
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
@@ -400,20 +396,20 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
 	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, listing, comments,
- view_baseline, access, restrictions, attributes, owner_group_id, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.listing, r.comments, r.view_baseline, r.access, r.restrictions,
+ access, restrictions, attributes, owner_group_id, created_at, updated_at)
+ SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.listing, r.comments, r.access, r.restrictions,
   r.attributes, r.owner_group_id, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, state text, publish_at timestamptz, published_at timestamptz, deleted_at timestamptz,
-  listing text, comments text, view_baseline bigint, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
+  listing text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
   created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at,
-  deleted_at = EXCLUDED.deleted_at, listing = EXCLUDED.listing, comments = EXCLUDED.comments, view_baseline = EXCLUDED.view_baseline,
+  deleted_at = EXCLUDED.deleted_at, listing = EXCLUDED.listing, comments = EXCLUDED.comments,
   access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_group_id = EXCLUDED.owner_group_id,
   created_at = EXCLUDED.created_at
- WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.listing, c.comments, c.view_baseline, c.access, c.restrictions, c.attributes,
+ WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.listing, c.comments, c.access, c.restrictions, c.attributes,
   c.owner_group_id, c.created_at)
   IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.listing, EXCLUDED.comments,
-  EXCLUDED.view_baseline, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at)
+  EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at)
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
 		return nil, nil, err
 	}
@@ -633,9 +629,7 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	if err := checkComments(c.Comments); err != nil {
 		return err
 	}
-	if c.ViewBaseline < 0 {
-		return invalid("view_baseline %d is negative", c.ViewBaseline)
-	}
+
 	rule := access.Rule{Level: access.Public}
 	if c.Access != nil {
 		rule = *c.Access
