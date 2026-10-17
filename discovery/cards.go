@@ -321,11 +321,39 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 	return out, nil
 }
 
-// decide asks the Gate for every card's version in one call, and the offers
-// its paywalls sell in one more. Editors open what they edit (staff, its
-// creators, its owner group's editors): owner-group editorship is asked only
-// of cards the rule leaves locked, once per owner group.
+// decide settles every card's access, then asks for the offers its paywalls
+// sell in one more call.
 func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
+	if err := s.settle(ctx, q, rows); err != nil {
+		return err
+	}
+	var keys []string
+	for _, c := range rows {
+		keys = append(keys, c.Access.Sell...)
+	}
+	if s.o.Sales == nil || len(keys) == 0 {
+		return nil
+	}
+	sales, err := s.o.Sales.Sales(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		a := &rows[i].Access
+		for _, k := range a.Sell {
+			if sale, ok := sales[k]; ok {
+				a.Offers = append(a.Offers, sale)
+			}
+		}
+	}
+	return nil
+}
+
+// settle asks the Gate for every card's version in one call. Editors open
+// what they edit (staff, its creators, its owner group's editors):
+// owner-group editorship is asked only of cards the rule leaves locked, once
+// per owner group.
+func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
 		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override).Previewed(s.o.Kinds.Kinds[c.Kind]),
@@ -339,7 +367,6 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	if err != nil {
 		return err
 	}
-	var keys []string
 	now := s.o.Now()
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter, Level: access.Public}
@@ -374,22 +401,6 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 		c := &rows[i]
 		if !c.Access.Allowed && (q.viewer.Staff() || c.creator || editors[c.owner]) {
 			c.Access = CardAccess{Allowed: true, Level: c.Access.Level, Tiers: c.Access.Tiers}
-		}
-		keys = append(keys, c.Access.Sell...)
-	}
-	if s.o.Sales == nil || len(keys) == 0 {
-		return nil
-	}
-	sales, err := s.o.Sales.Sales(ctx, keys)
-	if err != nil {
-		return err
-	}
-	for i := range rows {
-		a := &rows[i].Access
-		for _, k := range a.Sell {
-			if sale, ok := sales[k]; ok {
-				a.Offers = append(a.Offers, sale)
-			}
 		}
 	}
 	return nil

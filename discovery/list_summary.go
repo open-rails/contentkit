@@ -125,9 +125,9 @@ func summaryCandidateSelection(q *sel, ids []string) *sel {
 	return q.with("f.content_id = ANY(@summary_candidates::text[])", pgx.NamedArgs{"summary_candidates": ids})
 }
 
-// summaryRows does not fetch images or entity names. Each batch uses the same
-// exact access settlement and locked-property redaction as visible cards.
-// Finish reading picks before hydration, including with a one-connection pool.
+// summaryRows visits each selected content once, with the version its card
+// would show, settled and redacted exactly as cards are. It reads only what
+// the counts need, in one query: no titles, codes, media or offers.
 func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit func(cardRow)) error {
 	args := maps.Clone(q.args)
 	for key, value := range sort.args {
@@ -136,25 +136,35 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit fun
 	if name, _, _ := strings.Cut(sort.raw, ":"); name == SortPopular {
 		q = q.with("("+sort.expr+") > 0", nil)
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id
- FROM %s f %s WHERE %s ORDER BY f.content_id, %s`, s.t.facets, sort.join, q.predicate(), preference), args)
+	args["d_user"] = person(q.reader.Actor)
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, f.listing, coalesce(f.owner_group_id, ''),
+ @d_user <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
+ FROM (SELECT DISTINCT ON (f.content_id) f.version_id FROM %[1]s f %[5]s WHERE %[6]s ORDER BY f.content_id, %[7]s) p
+ JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.version_id
+ JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
+ JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`,
+		s.t.facets, s.t.items, s.t.versions, s.t.creators, sort.join, q.predicate(), preference), args)
 	if err != nil {
 		return err
 	}
-	picks, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (pick, error) {
-		var p pick
-		err := row.Scan(&p.content, &p.version)
-		return p, err
+	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
+		var c cardRow
+		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.listing, &c.owner, &c.creator)
+		return c, err
 	})
 	if err != nil {
 		return err
 	}
-	const batchSize = 256
-	for start := 0; start < len(picks); start += batchSize {
-		batch, err := s.cardRows(ctx, q, picks[start:min(start+batchSize, len(picks))])
-		if err != nil {
+	const batchSize = 2048
+	for start := 0; start < len(got); start += batchSize {
+		batch := got[start:min(start+batchSize, len(got))]
+		if err := s.settle(ctx, q, batch); err != nil {
 			return err
 		}
+		batch = slices.DeleteFunc(batch, func(c cardRow) bool {
+			return !c.Access.Allowed && (q.reader.Mode == access.Hide || c.listing == "members")
+		})
+		s.lock(batch)
 		for _, row := range batch {
 			visit(row)
 		}
