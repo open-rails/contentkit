@@ -60,7 +60,9 @@ func (s *Service) cachedListingSummary(ctx context.Context, filter Filter, q *se
 	if err != nil {
 		return nil, err
 	}
-	s.summaries.put(key, *out, now)
+	if !out.unknown {
+		s.summaries.put(key, *out, now)
+	}
 	return out, nil
 }
 

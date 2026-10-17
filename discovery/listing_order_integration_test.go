@@ -49,3 +49,39 @@ func TestPagesListEachContentOnceAcrossVersions(t *testing.T) {
 		t.Fatalf("newest page 2 = %v, want %v", got, newest[2:4])
 	}
 }
+
+// Copied counts can differ between a content's versions until the counts job
+// runs; paging by them still lists each content once.
+func TestPagesByCopiedCountsListEachContentOnce(t *testing.T) {
+	f := newFixture(t, nil, "")
+	for n := 1; n <= 3; n++ {
+		f.seed(item{n: n, titles: map[string]string{"en": fmt.Sprintf("Counted %d", n)}, age: time.Duration(n) * time.Hour,
+			versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}}}})
+	}
+	f.exec(`UPDATE `+f.table("content_facets")+` SET favorites = 5, rating = 0.5 WHERE version_id = $1`, f.vid(1, 0))
+	for _, sort := range []string{"most_favorited", "top_rated"} {
+		var got []string
+		for cursor := ""; ; {
+			kv := []string{"kind", "gallery", "sort", sort, "limit", "1"}
+			if cursor != "" {
+				kv = append(kv, "cursor", cursor)
+			}
+			ids, page := f.list("main.test", "", q("/contents", kv...))
+			got = append(got, ids...)
+			if cursor = page.NextCursor; cursor == "" {
+				break
+			}
+		}
+		if len(got) != 3 || got[0] != f.cid(1) {
+			t.Fatalf("%s by cursor = %v, want content 1 first and each content once", sort, got)
+		}
+		var numbered []string
+		for _, page := range []string{"1", "2", "3", "4"} {
+			ids, _ := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", sort, "limit", "1", "page", page))
+			numbered = append(numbered, ids...)
+		}
+		if !reflect.DeepEqual(numbered, got) {
+			t.Fatalf("%s numbered pages = %v, want %v", sort, numbered, got)
+		}
+	}
+}

@@ -451,6 +451,9 @@ type order struct {
 	args     pgx.NamedArgs
 	ranking  *popularity.RankingInfo
 	rankings map[string]ContentRanking
+	// perVersion keys can differ between a content's versions for a while
+	// (copied counts): a content sorts by its greatest.
+	perVersion bool
 }
 
 // titleKey is a content's title sort key in the display language's text.
@@ -480,7 +483,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
-			o.expr = "f.rating"
+			o.expr, o.perVersion = "f.rating", true
 			break
 		}
 		window, err := popularity.WindowForPeriod(period, s.now())
@@ -489,7 +492,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
-		o.expr, o.cast = "f.favorites::bigint", "bigint"
+		o.expr, o.cast, o.perVersion = "f.favorites::bigint", "bigint", true
 
 	case SortPosition:
 		if len(f.Groups) == 0 {
@@ -610,15 +613,24 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	if o.desc {
 		dir, cmp = "DESC", "<"
 	}
+	// Order the contents first, then pick each one's version. A key every
+	// version shares groups in the sort's order, so an index can end the scan
+	// at the page; a per-version key takes the content's greatest.
+	key, group, having := "("+o.expr+")", "("+o.expr+"), f.content_id", "true"
+	if o.perVersion {
+		key, group = "max("+o.expr+")", "f.content_id"
+	}
 	if cur.ID != "" {
-		ordered = ordered.with(fmt.Sprintf("((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast), nil)
+		after := fmt.Sprintf("(%s, f.content_id) %s (@d_cv::%s, @d_cid::text)", key, cmp, o.cast)
+		if o.perVersion {
+			having = after
+		} else {
+			ordered = ordered.with(after, nil)
+		}
 		args["d_cv"], args["d_cid"] = cur.Value, cur.ID
 	}
-	// Every sort key is the content's, shared by all its versions: order the
-	// contents first, grouped in the sort's order so an index can end the scan
-	// at the page, then pick each one's version.
-	sql := fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM %[2]s f %[3]s WHERE %[4]s
- GROUP BY (%[1]s), f.content_id ORDER BY (%[1]s) %[5]s, f.content_id %[5]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, o.join, ordered.predicate(), dir)
+	sql := fmt.Sprintf(`SELECT f.content_id, %[1]s::text FROM %[2]s f %[3]s WHERE %[4]s
+ GROUP BY %[5]s HAVING %[6]s ORDER BY %[1]s %[7]s, f.content_id %[7]s LIMIT @d_limit OFFSET @d_offset`, key, s.t.facets, o.join, ordered.predicate(), group, having, dir)
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", err

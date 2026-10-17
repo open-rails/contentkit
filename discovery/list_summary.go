@@ -24,6 +24,8 @@ type ListingSummary struct {
 	// Truncated makes counts lower bounds for bounded keyword or recommendation
 	// candidate windows. Ordinary lists have exact selection counts.
 	Truncated bool `json:"truncated,omitempty"`
+	// unknown: some access went unsettled (billing unavailable).
+	unknown bool
 }
 
 // summaryCandidates optionally bounds a keyword selection independently before
@@ -52,6 +54,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 	visibleIDs := map[string]struct{}{}
 	err = s.summaryRows(ctx, visible, sort, func(row cardRow) {
 		visibleIDs[row.ID] = struct{}{}
+		out.unknown = out.unknown || row.Access.Unknown
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
 			case access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV:
