@@ -192,8 +192,8 @@ type Typeahead struct {
 }
 
 // Typeahead suggests contents the reader's listing shows and active groups,
-// matching only the beginning of their own titles, names or aliases. Full
-// search separately handles contextual keywords, interior words and typos.
+// matching literal substrings of their own titles, names or aliases, with
+// prefix bias. Full search separately handles contextual keywords and typos.
 func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead, error) {
 	out := Typeahead{Contents: []Card{}, Groups: []groups.GroupCard{}}
 	text := strings.TrimSpace(o.Query)

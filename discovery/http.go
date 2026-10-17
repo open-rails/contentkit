@@ -37,6 +37,7 @@ func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 	httpapi.Mount(mux, g.Guard, handler{s}, searchRoutes)
 	httpapi.Mount(mux, g.Guard, handler{s}, sitemapRoutes)
 	httpapi.Mount(mux, g.Guard, handler{s}, statsRoutes)
+	httpapi.Mount(mux, g.Guard, handler{s}, managementRoutes)
 	return mux, nil
 }
 
@@ -46,6 +47,7 @@ func init() {
 	httpapi.Register(httpapi.Discovery, searchRoutes)
 	httpapi.Register(httpapi.Discovery, sitemapRoutes)
 	httpapi.Register(httpapi.Discovery, statsRoutes)
+	httpapi.Register(httpapi.Discovery, managementRoutes)
 }
 
 type handler struct{ s *Service }
@@ -122,18 +124,18 @@ var routes = []httpapi.Route[handler]{
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Completes direct title and entity-name/alias prefixes while the reader types; excludes contextual keywords, interior words and typos.",
+		Doc: "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the partial query"), httpapi.Text("kind", "only contents of this kind"),
 			httpapi.List("entity_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
 			[]httpapi.Param{httpapi.Int("limit", "per section: 8 by default, at most 20")}),
 		Responses: []httpapi.Reply{httpapi.OK(Typeahead{})}}, Serve: httpapi.H(handler.typeahead)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/similar", Resource: "discovery", Auth: httpapi.Public,
 		Doc:       "Contents like this one (co-engagement, or the configured source), of its kind unless kind names another.",
-		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50")}),
+		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50"), httpapi.Bool("summary", "lower-bound counts within considered candidates")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.similar)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/recommendations", Resource: "discovery", Auth: httpapi.User,
 		Doc:       "Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out.",
-		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50")}),
+		Query:     params(filterParams, readerParams, []httpapi.Param{cardGroups, httpapi.Int("limit", "12 by default, at most 50"), httpapi.Bool("summary", "lower-bound counts within considered candidates")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.recommendations)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/release-dates", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free.",
@@ -154,7 +156,7 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.OK(ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.initializeContentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
-		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"),
+		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"), httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page"),
 			cardGroups}, readerParams, []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.history)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
@@ -300,7 +302,11 @@ func (h handler) typeahead(w http.ResponseWriter, r *http.Request) {
 
 func (h handler) recOptions(r *http.Request) (RecommendationOptions, error) {
 	limit, err := intParam(r, "limit")
-	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_entities")), Limit: limit}, err
+	summary, flagErr := optionalFlag(r, "summary")
+	if err == nil {
+		err = flagErr
+	}
+	return RecommendationOptions{Reader: readerOf(r), Filter: filterOf(r), CardGroups: list(r.URL.Query().Get("card_entities")), Limit: limit, Summary: summary}, err
 }
 
 func (h handler) similar(w http.ResponseWriter, r *http.Request) {
@@ -367,6 +373,11 @@ func (h handler) initializeContentFilters(w http.ResponseWriter, r *http.Request
 }
 
 func (h handler) history(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -374,7 +385,7 @@ func (h handler) history(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	page, err := h.s.History(r.Context(), HistoryOptions{Reader: readerOf(r), Kind: q.Get("kind"), Status: q.Get("status"),
-		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit})
+		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
@@ -455,6 +466,8 @@ func (h handler) done(w http.ResponseWriter, r *http.Request, err error) {
 func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	code, msg, failed := httpapi.CodeInternal, "", true
 	switch {
+	case errors.Is(err, auth.ErrUnauthenticated):
+		code, failed = httpapi.CodeUnauthorized, false
 	case errors.Is(err, auth.ErrForbidden):
 		code, failed = httpapi.CodeForbidden, false
 	case errors.Is(err, ErrInvalid):

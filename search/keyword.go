@@ -58,7 +58,7 @@ func queryDocuments(ctx context.Context, pool *pgxpool.Pool, query string, opts 
 func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
 	var result Result
 	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("keyword query exceeds 256 characters")
+		return result, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
 	}
 	args := pgx.NamedArgs{"q": "", "prefix": "", "contains": "", "limit": 0}
 	from, where, priority, err := hostClauses(opts, args)
@@ -81,7 +81,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 		return result, nil
 	}
 	if len(tokens) > 16 {
-		return result, fmt.Errorf("keyword query exceeds 16 tokens")
+		return result, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
 	}
 	qt, _ := quoteIdent(trgmSchema)
 	qn, _ := quoteIdent(nativeSchema)
@@ -182,7 +182,10 @@ func hitLess(a, b Hit) bool {
 	if a.ContentID != b.ContentID {
 		return a.ContentID < b.ContentID
 	}
-	return a.Version() < b.Version()
+	if a.Version() != b.Version() {
+		return a.Version() < b.Version()
+	}
+	return a.Language < b.Language
 }
 
 // Eligible returns the candidates that exist as documents of the request tenant

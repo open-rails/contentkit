@@ -16,17 +16,48 @@ import (
 // typos belong to KeywordSearch. Every indexed retrieval applies eligibility
 // before its bounded limit; no catalog is scanned in Go.
 func NameSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
-	return queryDocuments(ctx, pool, query, opts, nameSearch)
+	return NameSearchFrom(ctx, pool, query, opts, PublishedNames)
 }
 
-func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
+// NameSource is a trusted indexed source, never a request-supplied relation.
+type NameSource uint8
+
+const (
+	PublishedNames NameSource = iota
+	CurrentContentNames
+	CurrentEntityNames
+)
+
+// NameSearchFrom uses the same literal matcher against current management
+// names in every language. Management callers must supply their authorization
+// as Eligibility; the requested display language does not hide editable names.
+func NameSearchFrom(ctx context.Context, pool *pgxpool.Pool, query string, opts Options, source NameSource) (Result, error) {
+	relation := "content_search_documents"
+	switch source {
+	case PublishedNames:
+	case CurrentContentNames:
+		relation = "content_management_content_names"
+	case CurrentEntityNames:
+		relation = "content_management_entity_names"
+	default:
+		return Result{}, fmt.Errorf("invalid name source")
+	}
+	if source != PublishedNames && (opts.Eligibility == nil || opts.Eligibility.SQL == "") {
+		return Result{}, fmt.Errorf("management name search requires authorization eligibility")
+	}
+	return queryDocuments(ctx, pool, query, opts, func(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
+		return nameSearch(ctx, tx, query, opts, relation)
+	})
+}
+
+func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, relation string) (Result, error) {
 	result := Result{Hits: []Hit{}}
 	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("keyword query exceeds 256 characters")
+		return result, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
 	}
 	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
 	args := pgx.NamedArgs{"q": "", "contains": "", "limit": sqlLimit}
-	from, where, priority, err := hostClauses(opts, args)
+	from, where, priority, err := hostClausesFrom(opts, args, relation, relation != "content_search_documents")
 	if err != nil {
 		return result, err
 	}
@@ -42,7 +73,7 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Res
 		return result, nil
 	}
 	if len(tokens) > 16 {
-		return result, fmt.Errorf("keyword query exceeds 16 tokens")
+		return result, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
 	}
 	args["q"] = q
 	args["contains"] = literalSubstring(q)
@@ -52,7 +83,7 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Res
 	// The prefix route protects strong matches from a broad substring candidate
 	// cap. LIKE and strpos both treat query punctuation literally; neither route
 	// accepts Groonga's query language or contextual keywords.
-	base := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,matched.score
+	base := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,max(matched.score) AS score
  FROM %s
  CROSS JOIN LATERAL (
    SELECT max(CASE WHEN names.ordinal=1 THEN CASE WHEN name=@q THEN 1.0 WHEN starts_with(name,@q) THEN 0.9 ELSE 0.8 END
@@ -62,7 +93,8 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Res
  ) matched
  WHERE %s AND matched.score IS NOT NULL AND `, priority, from, names, where)
 	order := `
- ORDER BY matched.score DESC,sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST
+ GROUP BY 1,2,3,4,5
+ ORDER BY score DESC,sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST,sd.language
  LIMIT @limit`
 	queries := []string{
 		base + fmt.Sprintf(`%s OPERATOR(%s.&^) @q`, names, qn) + order,

@@ -268,6 +268,9 @@ type TypeaheadOptions struct {
 	MinSimilarity float32
 	// Eligibility groups suggestions per content item; see SearchOptions.
 	Eligibility *Eligibility
+	// Source is current management names only for an authorized management
+	// caller. The public route always leaves it at PublishedNames.
+	Source search.NameSource
 }
 
 // TypeaheadHit is one suggested content item and its matched document.
@@ -310,7 +313,7 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 
 	var docs []groupedDoc
 	for i, lang := range languages {
-		result, err := search.NameSearch(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility})
+		result, err := search.NameSearchFrom(ctx, c.pool, q, search.Options{Schema: c.schema, Tenant: c.tenant, Language: lang, ContentKinds: kinds, Limit: limit * 2, Eligibility: opts.Eligibility}, opts.Source)
 		if err != nil {
 			return nil, err
 		}

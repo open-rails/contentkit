@@ -24,6 +24,7 @@ type HistoryOptions struct {
 	Status     string
 	CardGroups []string
 	Cursor     string
+	Summary    bool
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
 }
@@ -81,7 +82,32 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 		return empty, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
-	return ContentPage{Contents: cards, NextCursor: next}, err
+	if err != nil {
+		return empty, err
+	}
+	out := ContentPage{Contents: cards, NextCursor: next}
+	if o.Summary && offset == 0 {
+		// Bound the caller's own selection, never another subject's state. Large
+		// histories are explicitly lower-bound summaries rather than invented totals.
+		const summaryLimit = 100_000
+		history, err := s.o.Hub.History(ctx, signal.Subject{UserID: o.Actor.AccountID()}, signal.HistoryOptions{ContentKind: o.Kind, Status: status, Limit: summaryLimit})
+		if err != nil {
+			return empty, err
+		}
+		all := make([]string, 0, len(history))
+		for _, row := range history {
+			all = append(all, row.ContentID)
+		}
+		sort, err := s.parseSort(ctx, SortNewest, Filter{Kind: o.Kind})
+		if err != nil {
+			return empty, err
+		}
+		out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{visible: all, relaxed: all, truncated: len(history) == summaryLimit})
+		if err != nil {
+			return empty, err
+		}
+	}
+	return out, nil
 }
 
 // ForgetHistory erases the signed-in reader's signals for one content item,

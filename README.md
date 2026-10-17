@@ -189,6 +189,16 @@ and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
 seconds. Migration `0011_search_substrings` adds search-only expression indexes
 while retaining previous functions and indexes for mixed 0.103 writers.
 
+`GET /v1/manage/search-suggestions` is private quick navigation to editors.
+Explicitly request `include_contents` and/or `include_entities`, optionally
+limiting `content_kinds` / `entity_kinds`; `limit` defaults to 8 per section
+and is capped at 20. Current draft/held names and internal entities are matched
+only within the caller's management authority. `display_language` chooses
+labels while matching current names in every language. This API does not use
+body/associated-entity keywords, public reader filters or a results-page fallback.
+Migration `0012_management_names` adds separate current-name views and indexes;
+approved/published search documents and old writers remain unchanged.
+
 ## Errors
 
 Every module answers failures with one flat body. Branch on `code`; `error`
