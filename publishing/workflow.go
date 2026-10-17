@@ -153,17 +153,16 @@ func (s *Store) reconcile(ctx context.Context, id string) error {
 				return err
 			}
 			if ready.PublicReady {
-				return s.finish(ctx, r, lease, Published, ready.Pages, ready.PageReview)
+				return s.finish(ctx, r, lease, Published, ready.Pages)
 			}
 			_, err = s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET state='publishing',progress=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, id, lease, jsonBytes(Progress{Stage: "exposing", Completed: ready.Completed, Total: ready.Pages}))
 			return err
 		case state == catalog.StatePublished && moderation == content.ModerationApproved && !live:
 			if r.request.PublishAt != nil && r.request.PublishAt.After(s.o.Clock()) {
-				ready, err := s.o.Versions.ArchiveStatus(ctx, versions.Target{Content: r.ContentID, Version: r.VersionID}, id, r.request.Archive.SHA256)
-				if err != nil {
+				if _, err := s.o.Versions.ArchiveStatus(ctx, versions.Target{Content: r.ContentID, Version: r.VersionID}, id, r.request.Archive.SHA256); err != nil {
 					return err
 				}
-				return s.finish(ctx, r, lease, Scheduled, r.Progress.Total, ready.PageReview)
+				return s.finish(ctx, r, lease, Scheduled, r.Progress.Total)
 			}
 			// The catalog's ordinary due-publication job owns activation and
 			// exposure. A due operation waits without changing its intended date.
@@ -204,7 +203,7 @@ func (s *Store) reconcile(ctx context.Context, id string) error {
 		return nil
 	}
 	if r.request.Publish == Draft {
-		return s.finish(ctx, r, lease, Ready, ready.Pages, ready.PageReview)
+		return s.finish(ctx, r, lease, Ready, ready.Pages)
 	}
 	if s.o.Authority == nil {
 		return s.fail(ctx, r, lease, Blocked, failure("forbidden", "publish", "background publication authority is unavailable"))
@@ -291,7 +290,7 @@ func (s *Store) fail(ctx context.Context, r record, lease string, state State, f
 	return err
 }
 
-func (s *Store) finish(ctx context.Context, r record, lease string, state State, pages int, review *versions.PageReviewSummary) error {
+func (s *Store) finish(ctx context.Context, r record, lease string, state State, pages int) error {
 	viewer, err := s.o.Catalog.Viewer(ctx, catalog.ViewerOptions{Actor: gate.Host()})
 	if err != nil {
 		return err
@@ -307,7 +306,7 @@ func (s *Store) finish(ctx context.Context, r record, lease string, state State,
 	if state == Scheduled {
 		stage = "scheduled"
 	}
-	_, err = s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET state=$4,result=$5,progress=$6,failure=NULL,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, r.ID, lease, state, jsonBytes(OperationResult{Path: contents[0].Path, Pages: pages, PageReview: review}), jsonBytes(Progress{Stage: stage, Completed: pages, Total: pages}))
+	_, err = s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET state=$4,result=$5,progress=$6,failure=NULL,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, r.ID, lease, state, jsonBytes(OperationResult{Path: contents[0].Path, Pages: pages}), jsonBytes(Progress{Stage: stage, Completed: pages, Total: pages}))
 	return err
 }
 

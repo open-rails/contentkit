@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -28,60 +27,61 @@ type PageSpan struct {
 	To   int `json:"to"`
 }
 
-type PageDecision struct {
+type pageDecision struct {
 	Reason     string   `json:"reason"`
 	Confidence string   `json:"confidence"`
 	Related    []string `json:"related,omitempty"`
 }
 
-// PageReviewEntry includes retained sources, including those not in the reader.
-// Source URLs are signed and returned only to an editor of this version.
-type PageReviewEntry struct {
-	ID            string              `json:"id"`
-	Path          string              `json:"path"`
-	SourceName    string              `json:"source_name"`
-	SourceEntry   string              `json:"source_entry,omitempty"`
-	ArchiveSHA256 string              `json:"archive_sha256,omitempty"`
-	SourceSHA256  string              `json:"source_sha256"`
-	Span          *PageSpan           `json:"span,omitempty"`
-	Included      bool                `json:"included"`
-	Mode          string              `json:"mode"`
-	Decision      PageDecision        `json:"decision"`
-	Flags         []string            `json:"flags"`
-	Analysis      *media.PageAnalysis `json:"analysis,omitempty"`
-	PreviewURL    string              `json:"preview_url,omitempty"`
-	SourceURL     string              `json:"source_url,omitempty"`
+// selectedPage is one retained source and the automatic or restored choice.
+type selectedPage struct {
+	ID           string
+	Path         string
+	SourceName   string
+	SourceSHA256 string
+	ArchiveSHA   string
+	UploadIndex  int
+	SourceIndex  int
+	Span         *PageSpan
+	Included     bool
+	Mode         string
+	Decision     pageDecision
+	Flags        []string
+	Analysis     *media.PageAnalysis
 }
 
-type PageReview struct {
-	Revision string            `json:"revision"`
-	Pages    []PageReviewEntry `json:"pages"`
-	Selected int               `json:"selected"`
-	Flagged  int               `json:"flagged"`
-	Cookie   *http.Cookie      `json:"-"`
+type pageSelection struct {
+	Pages    []selectedPage
+	Selected int
 }
 
-type PageReviewSummary struct {
-	Sources  int `json:"sources"`
-	Selected int `json:"selected"`
-	Excluded int `json:"excluded"`
-	Flagged  int `json:"flagged"`
+// PageNotice is a quiet note about an automatic page change: removed pages
+// (blank, duplicate, or a single covered by a two-page spread) can be
+// restored, and an archive reordered into natural name order can be
+// dismissed. Neither ever blocks saving or publishing.
+type PageNotice struct {
+	ID    string       `json:"id"`
+	Kind  string       `json:"kind"` // removed | reordered
+	Pages []NoticePage `json:"pages"`
 }
 
-type PageReviewChange struct {
-	ID   string `json:"id"`
-	Mode string `json:"mode"` // auto | include | exclude
+// NoticePage is one page a notice concerns. A removed page names why
+// (blank, duplicate or spread); a reordered page gives its archive position
+// and the position applied.
+type NoticePage struct {
+	ID         string `json:"id"`
+	SourceName string `json:"source_name"`
+	Reason     string `json:"reason,omitempty"`
+	From       int    `json:"from,omitempty"`
+	To         int    `json:"to,omitempty"`
+	PreviewURL string `json:"preview_url,omitempty"`
 }
 
-// PageReviewPatch is an optimistic edit. Order, when present, names every
-// retained source exactly once; moving a page never changes its ID.
-type PageReviewPatch struct {
-	Revision string             `json:"revision"`
-	Pages    []PageReviewChange `json:"pages,omitempty"`
-	Order    []string           `json:"order,omitempty"`
+// PageNotices are a version's undismissed notices, for its editors.
+type PageNotices struct {
+	Notices []PageNotice `json:"notices"`
+	Cookie  *http.Cookie `json:"-"`
 }
-
-var ErrPageReviewConflict = errors.New("versions: page review changed; reload before saving")
 
 type pageMetadata struct {
 	SchemaVersion  int                 `json:"schema_version,omitempty"`
@@ -90,13 +90,14 @@ type pageMetadata struct {
 	SourceEntry    string              `json:"source_entry,omitempty"`
 	ArchiveSHA256  string              `json:"archive_sha256,omitempty"`
 	SourceIndex    int                 `json:"source_index,omitempty"`
+	UploadIndex    int                 `json:"upload_index,omitempty"`
 	SourceSHA256   string              `json:"source_sha256,omitempty"`
 	Span           *PageSpan           `json:"span,omitempty"`
 	Mode           string              `json:"mode,omitempty"`
 	Flags          []string            `json:"flags,omitempty"`
 	Included       *bool               `json:"included,omitempty"`
 	SelectionGuard *bool               `json:"selection_guard,omitempty"`
-	Decision       *PageDecision       `json:"decision,omitempty"`
+	Decision       *pageDecision       `json:"decision,omitempty"`
 	OverrideActor  string              `json:"override_actor,omitempty"`
 	OverrideAt     string              `json:"override_at,omitempty"`
 	Analysis       *media.PageAnalysis `json:"analysis,omitempty"`
@@ -175,9 +176,9 @@ func guardSegmentedPages(k *media.Kind, m *media.Manifest, segmented bool) {
 	}
 }
 
-func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
+func selectionOf(k *media.Kind, m *media.Manifest) pageSelection {
 	files := sourcePages(k, m)
-	out := PageReview{Pages: make([]PageReviewEntry, 0, len(files))}
+	out := pageSelection{Pages: make([]selectedPage, 0, len(files))}
 	for _, f := range files {
 		meta := pageMeta(f)
 		name := meta.SourceName
@@ -188,9 +189,9 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 		if mode == "" {
 			mode = "auto"
 		}
-		entry := PageReviewEntry{ID: pageID(k, f), Path: f.Path, SourceName: name, SourceEntry: meta.SourceEntry,
-			ArchiveSHA256: meta.ArchiveSHA256, SourceSHA256: pageDigest(f), Span: meta.Span, Included: true, Mode: mode,
-			Decision: PageDecision{Reason: "kept", Confidence: "high"}, Flags: slices.Clone(meta.Flags), Analysis: meta.Analysis}
+		entry := selectedPage{ID: pageID(k, f), Path: f.Path, SourceName: name, SourceSHA256: pageDigest(f), ArchiveSHA: meta.ArchiveSHA256,
+			UploadIndex: meta.UploadIndex, SourceIndex: meta.SourceIndex, Span: meta.Span, Included: true, Mode: mode,
+			Decision: pageDecision{Reason: "kept", Confidence: "high"}, Flags: slices.Clone(meta.Flags), Analysis: meta.Analysis}
 		if entry.Flags == nil {
 			entry.Flags = []string{}
 		}
@@ -204,18 +205,18 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 			}
 			if a.Blank == "blank" && (a.Confidence == "exact" || a.Confidence == "high") {
 				entry.Included = false
-				entry.Decision = PageDecision{Reason: "blank", Confidence: a.Confidence}
+				entry.Decision = pageDecision{Reason: "blank", Confidence: a.Confidence}
 			}
 		} else if meta.SchemaVersion > 0 {
 			entry.Flags = append(entry.Flags, "analysis_unavailable")
 		}
 		if mode == "exclude" {
 			entry.Included = false
-			entry.Decision = PageDecision{Reason: "manual_exclude", Confidence: "exact"}
+			entry.Decision = pageDecision{Reason: "manual_exclude", Confidence: "exact"}
 		}
 		if mode == "include" {
 			entry.Included = true
-			entry.Decision = PageDecision{Reason: "manual_include", Confidence: "exact"}
+			entry.Decision = pageDecision{Reason: "manual_include", Confidence: "exact"}
 		}
 		out.Pages = append(out.Pages, entry)
 	}
@@ -233,7 +234,7 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 			}
 			if p.Span.From >= join.Span.From && p.Span.To <= join.Span.To {
 				p.Included = false
-				p.Decision = PageDecision{Reason: "covered_by_joined_page", Confidence: "high", Related: []string{join.ID}}
+				p.Decision = pageDecision{Reason: "covered_by_joined_page", Confidence: "high", Related: []string{join.ID}}
 				break
 			}
 		}
@@ -276,7 +277,7 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 		}
 		if duplicate >= 0 && p.Mode == "auto" {
 			p.Included = false
-			p.Decision = PageDecision{Reason: "duplicate", Confidence: "exact", Related: []string{out.Pages[duplicate].ID}}
+			p.Decision = pageDecision{Reason: "duplicate", Confidence: "exact", Related: []string{out.Pages[duplicate].ID}}
 			continue
 		}
 		for _, key := range keys {
@@ -289,12 +290,12 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 		if p.Decision.Reason != "covered_by_joined_page" {
 			continue
 		}
-		covered := slices.ContainsFunc(out.Pages, func(j PageReviewEntry) bool {
+		covered := slices.ContainsFunc(out.Pages, func(j selectedPage) bool {
 			return j.Included && j.Span != nil && j.Span.To > j.Span.From && p.Span != nil && p.Span.From >= j.Span.From && p.Span.To <= j.Span.To
 		})
 		if !covered {
 			p.Included = true
-			p.Decision = PageDecision{Reason: "kept", Confidence: "high"}
+			p.Decision = pageDecision{Reason: "kept", Confidence: "high"}
 		}
 	}
 	for i := range out.Pages {
@@ -310,14 +311,13 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 			}
 		}
 	}
-	// A blank-only submission still completes for review; retain one source in
+	// A blank-only submission still publishes; retain one source in
 	// its initial reading order rather than creating an unpublishable gallery.
-	if len(out.Pages) > 0 && !slices.ContainsFunc(out.Pages, func(p PageReviewEntry) bool { return p.Included }) {
+	if len(out.Pages) > 0 && !slices.ContainsFunc(out.Pages, func(p selectedPage) bool { return p.Included }) {
 		for i := range out.Pages {
 			if out.Pages[i].Mode == "auto" {
 				out.Pages[i].Included = true
-				out.Pages[i].Decision = PageDecision{Reason: "empty_selection_fallback", Confidence: "possible"}
-				out.Pages[i].Flags = append(out.Pages[i].Flags, "review_empty_selection")
+				out.Pages[i].Decision = pageDecision{Reason: "empty_selection_fallback", Confidence: "possible"}
 				break
 			}
 		}
@@ -326,7 +326,7 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 		p := &out.Pages[i]
 		if guard := pageMeta(files[i]).SelectionGuard; guard != nil {
 			if p.Included != *guard {
-				p.Decision = PageDecision{Reason: "segmented_selection_preserved", Confidence: "exact"}
+				p.Decision = pageDecision{Reason: "segmented_selection_preserved", Confidence: "exact"}
 			}
 			p.Included = *guard
 			p.Flags = append(p.Flags, "segmented_selection_preserved")
@@ -336,64 +336,13 @@ func reviewOf(k *media.Kind, m *media.Manifest) PageReview {
 		if p.Included {
 			out.Selected++
 		}
-		if len(p.Flags) > 0 || !p.Included {
-			out.Flagged++
-		}
 	}
-	b, _ := json.Marshal(out.Pages)
-	sum := sha256.Sum256(b)
-	out.Revision = hex.EncodeToString(sum[:])
 	return out
 }
 
-func (r PageReview) Summary() *PageReviewSummary {
-	return &PageReviewSummary{Sources: len(r.Pages), Selected: r.Selected, Excluded: len(r.Pages) - r.Selected, Flagged: r.Flagged}
-}
-
-// PageReview returns all sources only to an editor, never via public plans.
-func (s *Service) PageReview(ctx context.Context, actor access.Actor, t Target) (PageReview, error) {
-	k, m, ref, err := s.pageReviewAccess(ctx, actor, t)
-	if err != nil {
-		return PageReview{}, err
-	}
-	out := reviewOf(k, m)
-	if s.m.Reader != nil {
-		byPath := map[string]int{}
-		for i, p := range out.Pages {
-			byPath[p.Path] = i
-		}
-		for offset := 0; ; {
-			read, e := s.m.Reader.Read(ctx, ref, actor, media.ReadOptions{Editor: true, Offset: offset, Limit: 200})
-			if e != nil {
-				return PageReview{}, e
-			}
-			if read.Cookie != nil {
-				out.Cookie = read.Cookie
-			}
-			for _, f := range read.Files {
-				if i, ok := byPath[f.Path]; ok {
-					if f.URL != "" {
-						out.Pages[i].SourceURL = f.URL
-					}
-					if f.EditorURL != "" {
-						out.Pages[i].PreviewURL = f.EditorURL
-					}
-				}
-				if i, ok := byPath[f.From]; ok && strings.HasPrefix(f.Type, "image/") && out.Pages[i].PreviewURL == "" {
-					out.Pages[i].PreviewURL = f.URL
-				}
-			}
-			// Read includes all metadata; only its effective Limit gets URLs.
-			if read.Limit <= 0 || read.Limit >= read.Total-offset || len(read.Files) == 0 {
-				break
-			}
-			offset += read.Limit
-		}
-	}
-	return out, nil
-}
-
-func (s *Service) pageReviewAccess(ctx context.Context, actor access.Actor, t Target) (*media.Kind, *media.Manifest, contentref.ContentRef, error) {
+// pageEditorAccess opens a version's manifest for one of its editors, its
+// pages' selection frozen while explicit segments name them.
+func (s *Service) pageEditorAccess(ctx context.Context, actor access.Actor, t Target) (*media.Kind, *media.Manifest, contentref.ContentRef, error) {
 	v, err := s.one(ctx, t)
 	if err != nil {
 		return nil, nil, contentref.ContentRef{}, err
@@ -425,170 +374,202 @@ func (s *Service) pageReviewAccess(ctx context.Context, actor access.Actor, t Ta
 	return k, m, ref, err
 }
 
-// UpdatePageReview changes only manual selection/order, leaving source and
-// automatic evidence intact. A repeat with the old revision refuses cleanly.
-func (s *Service) UpdatePageReview(ctx context.Context, actor access.Actor, t Target, patch PageReviewPatch) (PageReview, error) {
-	k, _, ref, err := s.pageReviewAccess(ctx, actor, t)
+// noticePageReason names an automatic removal for editors.
+var noticePageReason = map[string]string{"blank": "blank", "duplicate": "duplicate", "covered_by_joined_page": "spread"}
+
+// noticesOf derives the version's notices from its current selection; a
+// changed selection is a new notice, so a dismissal never hides it.
+func noticesOf(k *media.Kind, m *media.Manifest) []PageNotice {
+	sel := selectionOf(k, m)
+	var out []PageNotice
+	var removed []NoticePage
+	for _, p := range sel.Pages {
+		if reason := noticePageReason[p.Decision.Reason]; reason != "" && !p.Included && p.Mode == "auto" {
+			removed = append(removed, NoticePage{ID: p.ID, SourceName: p.SourceName, Reason: reason})
+		}
+	}
+	if len(removed) > 0 {
+		out = append(out, PageNotice{ID: "removed-" + revisionOfInput(removed)[:16], Kind: "removed", Pages: removed})
+	}
+	archives := map[string][]NoticePage{}
+	var order []string
+	for _, p := range sel.Pages {
+		if p.ArchiveSHA == "" || p.UploadIndex == 0 || p.SourceIndex == 0 {
+			continue
+		}
+		if _, ok := archives[p.ArchiveSHA]; !ok {
+			order = append(order, p.ArchiveSHA)
+		}
+		archives[p.ArchiveSHA] = append(archives[p.ArchiveSHA], NoticePage{ID: p.ID, SourceName: p.SourceName, From: p.UploadIndex, To: p.SourceIndex})
+	}
+	for _, sha := range order {
+		pages := archives[sha]
+		if !slices.ContainsFunc(pages, func(p NoticePage) bool { return p.From != p.To }) {
+			continue
+		}
+		slices.SortFunc(pages, func(a, b NoticePage) int { return a.To - b.To })
+		out = append(out, PageNotice{ID: "reordered-" + revisionOfInput(pages)[:16], Kind: "reordered", Pages: pages})
+	}
+	return out
+}
+
+// PageNotices returns a version's undismissed notices to its editors only.
+func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t Target) (PageNotices, error) {
+	k, m, ref, err := s.pageEditorAccess(ctx, actor, t)
 	if err != nil {
-		return PageReview{}, err
+		return PageNotices{}, err
+	}
+	dismissed, err := s.dismissedNotices(ctx, t)
+	if err != nil {
+		return PageNotices{}, err
+	}
+	out := PageNotices{Notices: []PageNotice{}}
+	for _, n := range noticesOf(k, m) {
+		if !dismissed[n.ID] {
+			out.Notices = append(out.Notices, n)
+		}
+	}
+	if len(out.Notices) == 0 || s.m.Reader == nil {
+		return out, nil
+	}
+	byPath := map[string]string{}
+	for _, f := range sourcePages(k, m) {
+		byPath[f.Path] = pageID(k, f)
+	}
+	previews := map[string]string{}
+	for offset := 0; ; {
+		read, e := s.m.Reader.Read(ctx, ref, actor, media.ReadOptions{Editor: true, Offset: offset, Limit: 200})
+		if e != nil {
+			return PageNotices{}, e
+		}
+		if read.Cookie != nil {
+			out.Cookie = read.Cookie
+		}
+		for _, f := range read.Files {
+			if id, ok := byPath[f.Path]; ok && f.EditorURL != "" {
+				previews[id] = f.EditorURL
+			}
+			if id, ok := byPath[f.From]; ok && strings.HasPrefix(f.Type, "image/") && previews[id] == "" {
+				previews[id] = f.URL
+			}
+		}
+		// Read includes all metadata; only its effective Limit gets URLs.
+		if read.Limit <= 0 || read.Limit >= read.Total-offset || len(read.Files) == 0 {
+			break
+		}
+		offset += read.Limit
+	}
+	for i := range out.Notices {
+		for j := range out.Notices[i].Pages {
+			out.Notices[i].Pages[j].PreviewURL = previews[out.Notices[i].Pages[j].ID]
+		}
+	}
+	return out, nil
+}
+
+// DismissPageNotice hides a current notice; dismissing again is a no-op.
+func (s *Service) DismissPageNotice(ctx context.Context, actor access.Actor, t Target, id string) error {
+	k, m, _, err := s.pageEditorAccess(ctx, actor, t)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(noticesOf(k, m), func(n PageNotice) bool { return n.ID == id }) {
+		return ErrNotFound
+	}
+	return s.dismissNotice(ctx, t, id)
+}
+
+// RestorePageNotice puts a removed notice's pages back where they were (an
+// excluded source keeps its place) and clears the notice.
+func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t Target, id string) (PageNotices, error) {
+	k, current, ref, err := s.pageEditorAccess(ctx, actor, t)
+	if err != nil {
+		return PageNotices{}, err
+	}
+	notices := noticesOf(k, current)
+	i := slices.IndexFunc(notices, func(n PageNotice) bool { return n.ID == id })
+	if i < 0 {
+		return PageNotices{}, ErrNotFound
+	}
+	if notices[i].Kind != "removed" {
+		return PageNotices{}, fmt.Errorf("%w: only removed pages can be restored", ErrInvalid)
+	}
+	restore := map[string]bool{}
+	for _, p := range notices[i].Pages {
+		restore[p.ID] = true
 	}
 	unlock, err := s.lockSource(ctx, t)
 	if err != nil {
-		return PageReview{}, err
+		return PageNotices{}, err
 	}
 	defer unlock()
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
-		return PageReview{}, err
+		return PageNotices{}, err
 	}
 	segments, err := s.segments(ctx, s.o.Pool, []string{t.Version})
 	if err != nil {
-		return PageReview{}, err
+		return PageNotices{}, err
 	}
-	segmented := len(segments[t.Version]) > 0
 	m = m.Clone()
-	guardSegmentedPages(k, m, segmented)
-	candidate := m.Clone()
-	apply := func(m *media.Manifest) error {
-		r := reviewOf(k, m)
-		if patch.Revision == "" || patch.Revision != r.Revision {
-			return ErrPageReviewConflict
-		}
-		byID := map[string]int{}
-		for i, f := range m.Files {
-			if k.IsPageUpload(f) && !f.Unattached {
-				byID[pageID(k, f)] = i
-			}
-		}
-		seen := map[string]bool{}
-		for _, change := range patch.Pages {
-			i, ok := byID[change.ID]
-			if !ok || seen[change.ID] {
-				return fmt.Errorf("%w: unknown or repeated page %q", ErrInvalid, change.ID)
-			}
-			seen[change.ID] = true
-			if change.Mode != "auto" && change.Mode != "include" && change.Mode != "exclude" {
-				return fmt.Errorf("%w: page mode must be auto, include or exclude", ErrInvalid)
-			}
-			meta := pageMeta(m.Files[i])
-			if meta.SelectionGuard != nil {
-				if change.Mode == "include" && !*meta.SelectionGuard || change.Mode == "exclude" && *meta.SelectionGuard {
-					return fmt.Errorf("%w: explicit segments must be edited before changing page selection", ErrInvalid)
-				}
-				if change.Mode == "auto" {
-					unguarded := m.Clone()
-					guardSegmentedPages(k, unguarded, false)
-					automatic := pageMeta(unguarded.Files[i])
-					automatic.Mode = "auto"
-					writePageMeta(&unguarded.Files[i], automatic)
-					for _, p := range reviewOf(k, unguarded).Pages {
-						if p.ID == change.ID && p.Included != *meta.SelectionGuard {
-							return fmt.Errorf("%w: explicit segments must be edited before changing page selection", ErrInvalid)
-						}
-					}
-				}
-			}
-			meta.Mode = change.Mode
-			meta.OverrideActor = actor.ID
-			meta.OverrideAt = s.o.Now().UTC().Format(time.RFC3339Nano)
-			writePageMeta(&m.Files[i], meta)
-		}
-		if patch.Order != nil {
-			if segmented {
-				for i, id := range patch.Order {
-					if i >= len(r.Pages) || r.Pages[i].ID != id {
-						return fmt.Errorf("%w: explicit segments must be edited before reordering pages", ErrInvalid)
-					}
-				}
-			}
-			if len(patch.Order) != len(byID) {
-				return fmt.Errorf("%w: order must name all retained pages", ErrInvalid)
-			}
-			ordered := make([]media.File, 0, len(byID))
-			seen = map[string]bool{}
-			for _, id := range patch.Order {
-				i, ok := byID[id]
-				if !ok || seen[id] {
-					return fmt.Errorf("%w: unknown or repeated page in order", ErrInvalid)
-				}
-				seen[id] = true
-				f := m.Files[i]
-				meta := pageMeta(f)
-				meta.OverrideActor = actor.ID
-				meta.OverrideAt = s.o.Now().UTC().Format(time.RFC3339Nano)
-				writePageMeta(&f, meta)
-				ordered = append(ordered, f)
-			}
-			n := 0
-			for i, f := range m.Files {
-				if k.IsPageUpload(f) && !f.Unattached {
-					m.Files[i] = ordered[n]
-					n++
-				}
-			}
-		}
-		persistPageSelection(k, m)
-		if len(sourcePages(k, m)) > 0 && reviewOf(k, m).Selected == 0 {
-			return fmt.Errorf("%w: at least one source page must remain included", ErrInvalid)
-		}
-		k.Normalize(m)
-		return nil
-	}
-	if err = apply(candidate); err != nil {
-		return PageReview{}, err
-	}
-	var ops []media.Op
-	for _, f := range candidate.Files {
-		if !k.IsPageUpload(f) || f.Unattached {
+	guardSegmentedPages(k, m, len(segments[t.Version]) > 0)
+	for i, f := range m.Files {
+		if !k.IsPageUpload(f) || f.Unattached || !restore[pageID(k, f)] {
 			continue
 		}
-		before, ok := m.Get(f.Path)
-		if !ok {
-			return PageReview{}, ErrPageReviewConflict
+		meta := pageMeta(f)
+		if meta.SelectionGuard != nil && !*meta.SelectionGuard {
+			return PageNotices{}, fmt.Errorf("%w: edit the chapters before restoring pages", ErrInvalid)
 		}
-		if revisionOfInput(before.Meta) != revisionOfInput(f.Meta) {
-			blob := f.Blob
-			if f.Staged != "" {
-				blob = f.Staged
-			}
-			ops = append(ops, media.Op{Op: media.OpPut, Path: f.Path, Blob: blob, Edit: f.Edit, Meta: f.Meta, SourceName: pageMeta(f).SourceName})
-		}
+		meta.Mode = "include"
+		meta.OverrideActor = actor.ID
+		meta.OverrideAt = s.o.Now().UTC().Format(time.RFC3339Nano)
+		writePageMeta(&m.Files[i], meta)
 	}
-	if patch.Order != nil {
-		for index, id := range patch.Order {
-			for _, f := range candidate.Files {
-				if k.IsPageUpload(f) && !f.Unattached && pageID(k, f) == id {
-					at := index
-					ops = append(ops, media.Op{Op: media.OpMove, Path: f.Path, Index: &at})
-					break
-				}
-			}
+	persistPageSelection(k, m)
+	var ops []media.Op
+	for _, f := range m.Files {
+		if !k.IsPageUpload(f) || f.Unattached || !restore[pageID(k, f)] {
+			continue
 		}
+		blob := f.Blob
+		if f.Staged != "" {
+			blob = f.Staged
+		}
+		ops = append(ops, media.Op{Op: media.OpPut, Path: f.Path, Blob: blob, Edit: f.Edit, Meta: f.Meta, SourceName: pageMeta(f).SourceName})
 	}
 	if len(ops) > 0 {
-		_, err = s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), ops, func(current *media.Manifest) error {
-			guarded := current.Clone()
-			guardSegmentedPages(k, guarded, segmented)
-			if reviewOf(k, guarded).Revision != patch.Revision {
-				return ErrPageReviewConflict
-			}
-			return nil
-		})
-		if err != nil {
-			return PageReview{}, err
+		if _, err = s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), ops, nil); err != nil {
+			return PageNotices{}, err
 		}
 	}
-	if current, _, e := s.m.Manifests.Get(ctx, ref); e == nil {
-		if e = s.auditPages(ctx, k, t, current); e != nil {
-			return PageReview{}, e
-		}
+	if err = s.dismissNotice(ctx, t, id); err != nil {
+		return PageNotices{}, err
 	}
-	return s.PageReview(ctx, actor, t)
+	return s.PageNotices(ctx, actor, t)
+}
+
+func (s *Service) dismissedNotices(ctx context.Context, t Target) (map[string]bool, error) {
+	rows, err := s.o.Pool.Query(ctx, `SELECT notice_id FROM `+pgxIdent(s.o.Schema, "content_page_notice_dismissals")+` WHERE tenant_id=$1 AND version_id=$2`, s.o.Tenant, t.Version)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
+}
+
+func (s *Service) dismissNotice(ctx context.Context, t Target, id string) error {
+	_, err := s.o.Pool.Exec(ctx, `INSERT INTO `+pgxIdent(s.o.Schema, "content_page_notice_dismissals")+` (tenant_id,version_id,notice_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.o.Tenant, t.Version, id)
+	return err
 }
 
 func persistPageSelection(k *media.Kind, m *media.Manifest) {
-	r := reviewOf(k, m)
-	byPath := map[string]PageReviewEntry{}
+	r := selectionOf(k, m)
+	byPath := map[string]selectedPage{}
 	for _, p := range r.Pages {
 		byPath[p.Path] = p
 	}
@@ -662,9 +643,6 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		return nil
 	})
 	if err == nil {
-		if err = s.auditPages(ctx, k, t, m); err != nil {
-			return err
-		}
 		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.recordFacts(ctx, tx, k, t, m) }); err != nil {
 			return err
 		}
@@ -674,37 +652,6 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		return err
 	}
 	return err
-}
-
-// The manifest owns the current decision; this idempotent projection is its
-// durable history. A failed write is retried by the existing publication job.
-func (s *Service) auditPages(ctx context.Context, k *media.Kind, t Target, m *media.Manifest) error {
-	r := reviewOf(k, m)
-	batch := &pgx.Batch{}
-	for position, entry := range r.Pages {
-		f, ok := m.Get(entry.Path)
-		if !ok {
-			continue
-		}
-		meta := pageMeta(f)
-		actor := meta.OverrideActor
-		if actor == "" {
-			actor = "automatic"
-		}
-		body, err := json.Marshal(struct {
-			Page     PageReviewEntry `json:"page"`
-			Position int             `json:"position"`
-			At       string          `json:"override_at,omitempty"`
-		}{entry, position, meta.OverrideAt})
-		if err != nil {
-			return err
-		}
-		batch.Queue(`INSERT INTO `+pgxIdent(s.o.Schema, "content_page_review_events")+` (tenant_id,version_id,page_id,event_id,actor_id,decision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.o.Tenant, t.Version, entry.ID, revisionOfInput(json.RawMessage(body)), actor, body)
-	}
-	if batch.Len() == 0 {
-		return nil
-	}
-	return s.o.Pool.SendBatch(ctx, batch).Close()
 }
 
 // plannedPageName allocates canonical IDs before archive bytes are committed.

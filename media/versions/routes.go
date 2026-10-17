@@ -42,10 +42,12 @@ type errorReply struct {
 }
 
 var routes = []httpapi.Route[handler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/pages", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
-		Doc: "All retained page sources and their automatic or manual reader selection. Flags never block publication.", Responses: []httpapi.Reply{httpapi.OK(PageReview{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.pages)},
-	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{version}/pages", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
-		Doc: "Overrides page inclusion or reorders sources without renaming them. The current revision is required.", Request: PageReviewPatch{}, Responses: []httpapi.Reply{httpapi.OK(PageReview{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeInvalidRequest, httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.updatePages)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/page-notices", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
+		Doc: "Editors: the version's undismissed notes about automatic page changes: pages removed as blank, duplicate or covered by a two-page spread, and archives reordered into natural name order. They never block saving or publishing.", Responses: []httpapi.Reply{httpapi.OK(PageNotices{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.notices)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions/{version}/page-notices/{notice}/dismiss", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
+		Doc: "Editors: hides a current page notice; repeating it changes nothing.", Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.dismissNotice)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions/{version}/page-notices/{notice}/restore", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
+		Doc: "Editors: puts a removed-pages notice's pages back in their original positions and clears the notice.", Responses: []httpapi.Reply{httpapi.OK(PageNotices{})}, Errors: []string{httpapi.CodeInvalidRequest, httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.restoreNotice)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/reader", Resource: "reader", Auth: httpapi.Public,
 		Doc:       "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.",
 		Responses: []httpapi.Reply{httpapi.OK(ReaderPlan{}), httpapi.Accepted(Pending{})}},
@@ -127,26 +129,27 @@ func (h handler) setMeta(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h handler) pages(w http.ResponseWriter, r *http.Request) {
+func (h handler) notices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	out, err := h.s.PageReview(r.Context(), gate.Actor(r.Context()), target(r))
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	if out.Cookie != nil {
-		http.SetCookie(w, out.Cookie)
-	}
-	writeJSON(w, http.StatusOK, out)
+	out, err := h.s.PageNotices(r.Context(), gate.Actor(r.Context()), target(r))
+	h.replyNotices(w, r, out, err)
 }
 
-func (h handler) updatePages(w http.ResponseWriter, r *http.Request) {
-	var body PageReviewPatch
-	if err := decode(r, &body); err != nil {
+func (h handler) dismissNotice(w http.ResponseWriter, r *http.Request) {
+	if err := h.s.DismissPageNotice(r.Context(), gate.Actor(r.Context()), target(r), r.PathValue("notice")); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	out, err := h.s.UpdatePageReview(r.Context(), gate.Actor(r.Context()), target(r), body)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h handler) restoreNotice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	out, err := h.s.RestorePageNotice(r.Context(), gate.Actor(r.Context()), target(r), r.PathValue("notice"))
+	h.replyNotices(w, r, out, err)
+}
+
+func (h handler) replyNotices(w http.ResponseWriter, r *http.Request, out PageNotices, err error) {
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -211,8 +214,6 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var quota *QuotaError
 	var unavailable *UnavailableError
 	switch {
-	case errors.Is(err, ErrPageReviewConflict):
-		writeJSON(w, http.StatusConflict, errorReply{Error: err.Error(), Code: "conflict"})
 	case errors.Is(err, ErrNotReady):
 		writeJSON(w, http.StatusAccepted, Pending{Status: "pending"})
 	case errors.As(err, &quota):

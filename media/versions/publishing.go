@@ -38,10 +38,9 @@ type archiveReceipt struct {
 // ArchiveReadiness is the progress of the exact imported archive, not merely
 // any media that happens to occupy its version.
 type ArchiveReadiness struct {
-	Pages      int
-	Completed  int
-	Ready      bool
-	PageReview *PageReviewSummary
+	Pages     int
+	Completed int
+	Ready     bool
 	// PublicReady additionally waits for exposure and public cover renditions.
 	// A hidden draft prepares the source cover but has no public renditions yet.
 	PublicReady bool
@@ -144,9 +143,7 @@ func (s *Service) ArchiveStatus(ctx context.Context, t Target, operation, digest
 		return out, ErrArchiveChanged
 	}
 	current := archivePages(k, m)
-	review := reviewOf(k, m)
-	out.PageReview = review.Summary()
-	out.Pages = review.Selected
+	out.Pages = selectionOf(k, m).Selected
 	if len(current) != len(receipt.Pages) || len(current) == 0 {
 		return out, ErrArchiveChanged
 	}

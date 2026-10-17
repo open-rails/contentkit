@@ -577,7 +577,7 @@ func (s *Service) streamMarked(ctx context.Context, w io.Writer, a *Archive) err
 		if err != nil {
 			return err
 		}
-		name := fmt.Sprintf("%03d.webp", i+1)
+		name := media.PositionalName(i+1, len(a.keys), ".webp")
 		if slices.Contains(a.mark, i) {
 			marked, ext, err := s.o.Policy.Mark(ctx, a.who, a.v, i+1, body)
 			if err != nil {

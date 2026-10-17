@@ -89,6 +89,12 @@ func CanonicalPageName(name string) (string, int, int, bool) {
 	return fmt.Sprintf("%03d", from), from, to, true
 }
 
+// PositionalName names the page at position (1-based) of count by its place
+// alone: zero-padded to at least two digits, keeping ext.
+func PositionalName(position, count int, ext string) string {
+	return fmt.Sprintf("%0*d%s", max(2, len(strconv.Itoa(count))), position, ext)
+}
+
 // PageIncluded is the planner's persisted effective selection. An ordinary
 // upload or an older page without a decision remains included.
 func PageIncluded(f File) bool {

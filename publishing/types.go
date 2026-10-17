@@ -10,7 +10,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/versions"
 )
 
 // Mode is the result requested after the archive has been processed.
@@ -81,9 +80,8 @@ type Progress struct {
 }
 
 type OperationResult struct {
-	Path       string                      `json:"path"`
-	Pages      int                         `json:"pages"`
-	PageReview *versions.PageReviewSummary `json:"page_review,omitempty"`
+	Path  string `json:"path"`
+	Pages int    `json:"pages"`
 }
 
 // OperationError describes a refused request or a stopped asynchronous operation.
