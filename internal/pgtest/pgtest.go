@@ -75,6 +75,35 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public; CREATE EXTENSION IF NOT EX
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// PGroonga < 4.1.0 lets VACUUM/ANALYZE in another session delete the
+	// objects of an index created by a not-yet-committed transaction, so a
+	// migration racing autovacuum leaves indexes failing "object isn't found"
+	// (pgroonga GH-1013). The installed package's control file gives its version.
+	var version string
+	if err := pool.QueryRow(ctx, `SELECT default_version FROM pg_available_extensions WHERE name = 'pgroonga'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if !atLeast(version, 4, 1, 0) {
+		t.Fatalf("PGroonga %s is too old: 4.1.0 or later is required (GH-1013); use groonga/pgroonga:4.1.0-debian-18 or newer", version)
+	}
+}
+
+// atLeast reports whether a dotted version is at least major.minor.patch.
+func atLeast(version string, want ...int) bool {
+	parts := strings.SplitN(version, ".", len(want))
+	for i, w := range want {
+		if i >= len(parts) {
+			return false
+		}
+		var n int
+		if _, err := fmt.Sscanf(parts[i], "%d", &n); err != nil {
+			return false
+		}
+		if n != w {
+			return n > w
+		}
+	}
+	return true
 }
 
 // Schema creates a disposable schema, applies migrations.Postgres into it the
