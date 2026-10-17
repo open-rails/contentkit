@@ -76,8 +76,9 @@ func Prefix(languages []string, language string) string {
 }
 
 // Path is a content page's path, /{language}/{route}/{code}[/{slug}], under
-// Prefix(languages, language); slug is the caller's for that language. Every
-// path ContentKit answers is built here.
+// Prefix(languages, language); slug is the caller's decorative path for that
+// language (an entity and a title, "/"-joined). Every path ContentKit answers
+// is built here.
 func Path(languages []string, language, route string, code Code, slug string) string {
 	var b strings.Builder
 	if l := Prefix(languages, language); l != "" {
@@ -111,13 +112,13 @@ type Parsed struct {
 	Route    string
 	Code     Code   // canonical form
 	RawCode  string // as written
-	Slug     string // as written; "" when absent
+	Slug     string // decorative segments as written, "/"-joined; "" when absent
 }
 
-// ParsePath splits [/{language}]/{route}/{code}[/{slug}][/] where route is one
-// of routes' values and language one of languages; a path without the
-// language is still read, for its redirect. ok is false for any other path,
-// including an invalid code.
+// ParsePath splits [/{language}]/{route}/{code}[/{decorative...}][/] where
+// route is one of routes' values and language one of languages; a path without
+// the language, or with stale or extra decorative segments, is still read, for
+// its redirect. ok is false for any other path, including an invalid code.
 func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 	var p Parsed
 	rest, ok := strings.CutPrefix(path, "/")
@@ -139,7 +140,7 @@ func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 			}
 		}
 	}
-	if len(segs) < 2 || len(segs) > 3 || !routes.has(segs[0]) {
+	if len(segs) < 2 || !routes.has(segs[0]) {
 		return Parsed{}, false
 	}
 	code, err := ParseCode(segs[1])
@@ -147,9 +148,7 @@ func ParsePath(path string, routes Routes, languages []string) (Parsed, bool) {
 		return Parsed{}, false
 	}
 	p.Route, p.Code, p.RawCode = segs[0], code, segs[1]
-	if len(segs) == 3 {
-		p.Slug = segs[2]
-	}
+	p.Slug = strings.Join(segs[2:], "/")
 	return p, true
 }
 

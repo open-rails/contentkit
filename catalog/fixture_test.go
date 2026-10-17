@@ -37,7 +37,7 @@ func config() kinds.Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "blog": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}}, {Name: "moe", Hosts: []string{"moe.test"}, Filters: append([]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}}}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()})}}}, Kinds: map[string]kinds.Kind{
-			"gallery": {Route: "g", Presentation: "reader", Segments: true, Groups: []string{"tag", "channel"},
+			"gallery": {Route: "g", Presentation: "reader", Segments: true, Groups: []string{"tag", "channel", "series"}, PathEntity: "series",
 				Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
 				Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}},
 					"volume": {Type: "int"}, "complete": {Type: "bool"}, "released": {Type: "time"}, "note": {Type: "string"}}},
@@ -46,6 +46,7 @@ func config() kinds.Config {
 		GroupKinds: map[string]kinds.GroupKind{
 			"tag":     {Route: "tags", VersionLevel: true},
 			"channel": {Owner: "user", Sellable: true, AuthScope: true},
+			"series":  {Route: "series"},
 		},
 	}
 }

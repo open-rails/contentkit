@@ -155,12 +155,16 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 }
 
 // ContentChanged is groups.Options.ContentChanged: after the groups module
-// re-derived the items' group_ids in q's transaction, it queues their search
+// re-derived the items' group_ids in q's transaction, it re-derives their
+// decorative paths (a path entity may have changed), queues their search
 // documents (group names are keywords) and records the change.
 func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs []string) error {
 	ids := slices.Compact(slices.Sorted(slices.Values(contentIDs)))
 	if len(ids) == 0 {
 		return nil
+	}
+	if err := s.putCodes(ctx, q, ids); err != nil {
+		return err
 	}
 	if err := s.markDocuments(ctx, q, ids); err != nil {
 		return err

@@ -15799,6 +15799,9 @@
           "route": {
             "type": "string"
           },
+          "path_entity": {
+            "type": "string"
+          },
           "presentation": {
             "type": "string"
           },

@@ -109,6 +109,9 @@ func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.User
 type Kind struct {
 	// Route is the URL segment: /{lang}/{route}/{CODE}/{slug}.
 	Route string `json:"route" yaml:"route"`
+	// PathEntity names one of Groups whose slug prefixes the title in the
+	// decorative path, /{lang}/{route}/{CODE}/{entity}/{title}, for SEO.
+	PathEntity string `json:"path_entity,omitempty" yaml:"path_entity"`
 	// Presentation tells contentkit-ui how to show it: reader, player or post.
 	Presentation string       `json:"presentation" yaml:"presentation"`
 	Versions     VersionRules `json:"versions" yaml:"versions"`
@@ -413,6 +416,9 @@ func (c Config) Validate() error {
 			if _, ok := c.GroupKinds[g]; !ok {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
+		}
+		if e := k.PathEntity; e != "" && (!slices.Contains(k.Groups, e) || c.GroupKinds[e].VersionLevel) {
+			return fmt.Errorf("%w: kind %s path_entity %q must be one of its content-level groups", ErrInvalid, name, e)
 		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
 			return err

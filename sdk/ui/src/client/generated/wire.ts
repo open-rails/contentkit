@@ -1123,6 +1123,7 @@ export interface Item {
 
 export interface Kind {
   route: string;
+  path_entity?: string;
   presentation: string;
   versions: VersionRules;
   segments?: boolean;
