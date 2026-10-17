@@ -1283,6 +1283,15 @@ export interface Name {
   name: string;
 }
 
+export interface NoticePage {
+  id: string;
+  source_name: string;
+  reason?: string;
+  from?: number;
+  to?: number;
+  preview_url?: string;
+}
+
 export interface Offer {
   id: string;
   target: Target;
@@ -1352,7 +1361,6 @@ export interface OperationError {
 export interface OperationResult {
   path: string;
   pages: number;
-  page_review?: PageReviewSummary;
 }
 
 export interface Order {
@@ -1375,84 +1383,20 @@ export interface Page {
   next_cursor?: string;
 }
 
-export interface PageAnalysis {
-  recipe: string;
-  source_sha256: string;
-  status: string;
-  width?: number;
-  height?: number;
-  frames?: number;
-  pixel_sha256?: string;
-  pixel_format?: string;
-  profile_sha256?: string;
-  blank: string;
-  blank_reason?: string;
-  confidence: string;
-  metrics?: PageAnalysisMetrics;
-  flags?: string[];
-}
-
-export interface PageAnalysisMetrics {
-  pixels: number;
-  visible_pixels: number;
-  opaque_pixels: number;
-  foreground_pixels: number;
-  min_rgb: number[];
-  max_rgb: number[];
-}
-
-export interface PageDecision {
-  reason: string;
-  confidence: string;
-  related?: string[];
-}
-
 export interface PageEngagement {
   index: number;
   ranges: CoverageRange[];
   active_ms: number;
 }
 
-export interface PageReview {
-  revision: string;
-  pages: PageReviewEntry[];
-  selected: number;
-  flagged: number;
-}
-
-export interface PageReviewChange {
+export interface PageNotice {
   id: string;
-  mode: string;
+  kind: string;
+  pages: NoticePage[];
 }
 
-export interface PageReviewEntry {
-  id: string;
-  path: string;
-  source_name: string;
-  source_entry?: string;
-  archive_sha256?: string;
-  source_sha256: string;
-  span?: PageSpan;
-  included: boolean;
-  mode: string;
-  decision: PageDecision;
-  flags: string[];
-  analysis?: PageAnalysis;
-  preview_url?: string;
-  source_url?: string;
-}
-
-export interface PageReviewPatch {
-  revision: string;
-  pages?: PageReviewChange[];
-  order?: string[];
-}
-
-export interface PageReviewSummary {
-  sources: number;
-  selected: number;
-  excluded: number;
-  flagged: number;
+export interface PageNotices {
+  notices: PageNotice[];
 }
 
 export interface PageSpan {

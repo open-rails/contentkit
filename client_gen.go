@@ -1906,17 +1906,22 @@ func (c *Client) PostNotificationsPublish(ctx context.Context, body notification
 	return out, err
 }
 
-// GetContentVersionPages is GET /v1/contents/{id}/versions/{version}/pages (editor). All retained page sources and their automatic or manual reader selection. Flags never block publication.
-func (c *Client) GetContentVersionPages(ctx context.Context, id string, version string) (versions.PageReview, error) {
-	var out versions.PageReview
-	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil, &out)
+// GetContentVersionPageNotices is GET /v1/contents/{id}/versions/{version}/page-notices (editor). Editors: the version's undismissed notes about automatic page changes: pages removed as blank, duplicate or covered by a two-page spread, and archives reordered into natural name order. They never block saving or publishing.
+func (c *Client) GetContentVersionPageNotices(ctx context.Context, id string, version string) (versions.PageNotices, error) {
+	var out versions.PageNotices
+	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/page-notices", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil, &out)
 	return out, err
 }
 
-// PatchContentVersionPages is PATCH /v1/contents/{id}/versions/{version}/pages (editor). Overrides page inclusion or reorders sources without renaming them. The current revision is required.
-func (c *Client) PatchContentVersionPages(ctx context.Context, id string, version string, body versions.PageReviewPatch) (versions.PageReview, error) {
-	var out versions.PageReview
-	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{version}/pages", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, &out)
+// PostContentVersionPageNoticeDismiss is POST /v1/contents/{id}/versions/{version}/page-notices/{notice}/dismiss (editor). Editors: hides a current page notice; repeating it changes nothing.
+func (c *Client) PostContentVersionPageNoticeDismiss(ctx context.Context, id string, version string, notice string) error {
+	return c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismiss", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version), "{notice}", url.PathEscape(notice)), nil, nil, nil)
+}
+
+// PostContentVersionPageNoticeRestore is POST /v1/contents/{id}/versions/{version}/page-notices/{notice}/restore (editor). Editors: puts a removed-pages notice's pages back in their original positions and clears the notice.
+func (c *Client) PostContentVersionPageNoticeRestore(ctx context.Context, id string, version string, notice string) (versions.PageNotices, error) {
+	var out versions.PageNotices
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version), "{notice}", url.PathEscape(notice)), nil, nil, &out)
 	return out, err
 }
 

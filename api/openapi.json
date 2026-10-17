@@ -8151,12 +8151,12 @@
         ]
       }
     },
-    "/v1/contents/{id}/versions/{version}/pages": {
+    "/v1/contents/{id}/versions/{version}/page-notices": {
       "get": {
         "tags": [
           "reader"
         ],
-        "summary": "All retained page sources and their automatic or manual reader selection. Flags never block publication.",
+        "summary": "Editors: the version's undismissed notes about automatic page changes: pages removed as blank, duplicate or covered by a two-page spread, and archives reordered into natural name order. They never block saving or publishing.",
         "parameters": [
           {
             "name": "id",
@@ -8181,7 +8181,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageReview"
+                  "$ref": "#/components/schemas/PageNotices"
                 }
               }
             }
@@ -8207,12 +8207,14 @@
           "auth",
           "request"
         ]
-      },
-      "patch": {
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismiss": {
+      "post": {
         "tags": [
           "reader"
         ],
-        "summary": "Overrides page inclusion or reorders sources without renaming them. The current revision is required.",
+        "summary": "Editors: hides a current page notice; repeating it changes nothing.",
         "parameters": [
           {
             "name": "id",
@@ -8229,25 +8231,82 @@
             "schema": {
               "type": "string"
             }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PageReviewPatch"
-              }
+          },
+          {
+            "name": "notice",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
+        "x-contentkit-errors": [
+          "not_found",
+          "forbidden"
+        ],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore": {
+      "post": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Editors: puts a removed-pages notice's pages back in their original positions and clears the notice.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "notice",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageReview"
+                  "$ref": "#/components/schemas/PageNotices"
                 }
               }
             }
@@ -8265,7 +8324,6 @@
         "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
-          "conflict",
           "invalid_request",
           "not_found",
           "forbidden"
@@ -16334,6 +16392,33 @@
           "name"
         ]
       },
+      "NoticePage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "from": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer"
+          },
+          "preview_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_name"
+        ]
+      },
       "Offer": {
         "type": "object",
         "properties": {
@@ -16570,9 +16655,6 @@
           },
           "pages": {
             "type": "integer"
-          },
-          "page_review": {
-            "$ref": "#/components/schemas/PageReviewSummary"
           }
         },
         "required": [
@@ -16641,121 +16723,6 @@
           "items"
         ]
       },
-      "PageAnalysis": {
-        "type": "object",
-        "properties": {
-          "recipe": {
-            "type": "string"
-          },
-          "source_sha256": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          },
-          "frames": {
-            "type": "integer"
-          },
-          "pixel_sha256": {
-            "type": "string"
-          },
-          "pixel_format": {
-            "type": "string"
-          },
-          "profile_sha256": {
-            "type": "string"
-          },
-          "blank": {
-            "type": "string"
-          },
-          "blank_reason": {
-            "type": "string"
-          },
-          "confidence": {
-            "type": "string"
-          },
-          "metrics": {
-            "$ref": "#/components/schemas/PageAnalysisMetrics"
-          },
-          "flags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "recipe",
-          "source_sha256",
-          "status",
-          "blank",
-          "confidence"
-        ]
-      },
-      "PageAnalysisMetrics": {
-        "type": "object",
-        "properties": {
-          "pixels": {
-            "type": "integer"
-          },
-          "visible_pixels": {
-            "type": "integer"
-          },
-          "opaque_pixels": {
-            "type": "integer"
-          },
-          "foreground_pixels": {
-            "type": "integer"
-          },
-          "min_rgb": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            }
-          },
-          "max_rgb": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            }
-          }
-        },
-        "required": [
-          "pixels",
-          "visible_pixels",
-          "opaque_pixels",
-          "foreground_pixels",
-          "min_rgb",
-          "max_rgb"
-        ]
-      },
-      "PageDecision": {
-        "type": "object",
-        "properties": {
-          "reason": {
-            "type": "string"
-          },
-          "confidence": {
-            "type": "string"
-          },
-          "related": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "reason",
-          "confidence"
-        ]
-      },
       "PageEngagement": {
         "type": "object",
         "properties": {
@@ -16773,144 +16740,40 @@
           }
         }
       },
-      "PageReview": {
+      "PageNotice": {
         "type": "object",
         "properties": {
-          "revision": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           },
           "pages": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/PageReviewEntry"
+              "$ref": "#/components/schemas/NoticePage"
             }
-          },
-          "selected": {
-            "type": "integer"
-          },
-          "flagged": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "revision",
-          "pages",
-          "selected",
-          "flagged"
-        ]
-      },
-      "PageReviewChange": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "mode": {
-            "type": "string"
-          }
-        }
-      },
-      "PageReviewEntry": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "source_name": {
-            "type": "string"
-          },
-          "source_entry": {
-            "type": "string"
-          },
-          "archive_sha256": {
-            "type": "string"
-          },
-          "source_sha256": {
-            "type": "string"
-          },
-          "span": {
-            "$ref": "#/components/schemas/PageSpan"
-          },
-          "included": {
-            "type": "boolean"
-          },
-          "mode": {
-            "type": "string"
-          },
-          "decision": {
-            "$ref": "#/components/schemas/PageDecision"
-          },
-          "flags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "analysis": {
-            "$ref": "#/components/schemas/PageAnalysis"
-          },
-          "preview_url": {
-            "type": "string"
-          },
-          "source_url": {
-            "type": "string"
           }
         },
         "required": [
           "id",
-          "path",
-          "source_name",
-          "source_sha256",
-          "included",
-          "mode",
-          "decision",
-          "flags"
+          "kind",
+          "pages"
         ]
       },
-      "PageReviewPatch": {
+      "PageNotices": {
         "type": "object",
         "properties": {
-          "revision": {
-            "type": "string"
-          },
-          "pages": {
+          "notices": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/PageReviewChange"
+              "$ref": "#/components/schemas/PageNotice"
             }
-          },
-          "order": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "PageReviewSummary": {
-        "type": "object",
-        "properties": {
-          "sources": {
-            "type": "integer"
-          },
-          "selected": {
-            "type": "integer"
-          },
-          "excluded": {
-            "type": "integer"
-          },
-          "flagged": {
-            "type": "integer"
           }
         },
         "required": [
-          "sources",
-          "selected",
-          "excluded",
-          "flagged"
+          "notices"
         ]
       },
       "PageSpan": {
