@@ -171,7 +171,7 @@ test("content editor: comments open, closed or hidden", async ({ page }) => {
   const ck = contentKit(h, editor);
   const c = await ck.contents.create({ kind: "blog", text: { en: { title: `Comments ${run()}` } } });
   expect(c.comments).toBe("open");
-  await page.goto(admin(`/admin/posts/${c.id}`, editor, { mode: "alone" }));
+  await page.goto(admin(`/admin/posts/${c.code}`, editor, { mode: "alone" }));
   const details = page.locator("[data-ckui=content-details]");
   await details.getByRole("combobox", { name: "Comments" }).click({ timeout: 30_000 });
   await page.getByRole("option", { name: "Hidden" }).click();

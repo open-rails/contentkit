@@ -39,7 +39,12 @@ it("uploads, associates, chooses a stored cover and publishes the current galler
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
   await user.click(screen.getByRole("button", { name: "Reorder 01.png" }));
   await user.click(screen.getByRole("button", { name: "Set as thumbnail" }));
-  await screen.findByRole("dialog", {}, wait);
+  // Surface a failed copy or cover update instead of only a missing dialog.
+  await waitFor(() => {
+    const alert = screen.queryAllByRole("alert").map((a) => a.textContent).join("; ");
+    expect(alert).toBe("");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  }, wait);
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
   await user.click(screen.getByRole("button", { name: "Publish" }));

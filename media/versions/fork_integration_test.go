@@ -170,8 +170,9 @@ func TestDownload(t *testing.T) {
 		t.Fatalf("marked archive: %d %s", resp.StatusCode, b)
 	}
 	marked := entries(b)
-	if len(marked) != 3 || !bytes.HasSuffix(marked["002.png"], []byte("marked:"+s.fan.ID)) || marked["001.webp"] == nil ||
-		bytes.Contains(marked["003.webp"], []byte("marked:")) {
+	// Entries are named by position, padded to the page count.
+	if len(marked) != 3 || !bytes.HasSuffix(marked["02.png"], []byte("marked:"+s.fan.ID)) || marked["01.webp"] == nil ||
+		bytes.Contains(marked["03.webp"], []byte("marked:")) {
 		t.Fatalf("marked archive %v", keys(marked))
 	}
 	if resp, _ := s.call(access.Actor{}, "GET", strings.Replace(archive, "for="+s.fan.ID, "for="+s.stranger.ID, 1), nil); resp.StatusCode != 404 {
