@@ -162,7 +162,7 @@ func (e *Encoder) measure(ctx context.Context, item media.Item, v media.File, ur
 	if err != nil {
 		return v, &PermanentError{err}
 	}
-	if err := e.measured(ctx, item, v, pl, nil); err != nil {
+	if _, err := e.measured(ctx, item, v, pl, nil); err != nil {
 		return v, err
 	}
 	v.W, v.H, v.Dur = pl.width, pl.height, pl.duration

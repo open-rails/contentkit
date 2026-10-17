@@ -97,6 +97,9 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 	} else if err != nil {
 		return err
 	}
+	if testPlanSnapshot != nil {
+		testPlanSnapshot()
+	}
 	var errs []error
 	// settle records one upload's result; false once the item is Full (the
 	// rest would be produced only to be refused).
@@ -119,7 +122,7 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 				return errors.Join(errs...)
 			}
 		}
-		if len(encode) > 0 && !settle(f, c.planUpload(ctx, item, man, f, encode, args.Class)) {
+		if len(encode) > 0 && !settle(f, c.planUpload(ctx, item, f, encode, args.Class)) {
 			return errors.Join(errs...)
 		}
 	}
@@ -161,7 +164,7 @@ func (e *Encoder) force(ctx context.Context, item media.Item, preset string, fam
 // planUpload probes upload f and records the runs of its stale encode
 // presets. An MP4 at a rung an HLS run of this plan encodes in H.264 is
 // remuxed by that run.
-func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *media.Manifest, f media.File, presets []*media.Private, class media.VideoJobClass) error {
+func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, f media.File, presets []*media.Private, class media.VideoJobClass) error {
 	e := c.Encoder
 	key, _ := item.Blob(f.Blob)
 	obj, err := e.store.Head(ctx, key)
@@ -186,9 +189,13 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 	if err != nil {
 		return &PermanentError{err}
 	}
-	if err := e.measured(ctx, item, f, pl, presets); err != nil {
+	// Plan from the manifest measured returns, not the caller's snapshot: the
+	// item's encodes run outside the plan lock, so it can predate a publish.
+	fresh, err := e.measured(ctx, item, f, pl, presets)
+	if err != nil {
 		return err
 	}
+	f, _ = fresh.Get(f.Path)
 	if err := checkLimits(pl, k.PrivateFor(f.Path), e.c.Codecs, limits); err != nil {
 		return &PermanentError{err}
 	}
@@ -202,7 +209,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 			return &PermanentError{err}
 		}
 		fp := e.fp(p, f)
-		done := stagesDone(man.Outputs(f.Path, p.Name), k.OutputPath(p, f.Path), fp, st, e.c.Codecs)
+		done := stagesDone(fresh.Outputs(f.Path, p.Name), k.OutputPath(p, f.Path), fp, st, e.c.Codecs)
 		if done == len(st) {
 			if err := e.refreshSubs(ctx, item, f, p, pl, url.URL); err != nil {
 				return err
@@ -220,7 +227,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 		}
 	}
 	for _, p := range presets {
-		if p.MP4 == nil || remuxed[p.Name] {
+		if p.MP4 == nil || remuxed[p.Name] || !e.todo(fresh, f, p) {
 			continue
 		}
 		st, _ := stages(p, pl)
@@ -342,21 +349,25 @@ func (c WorkerConfig) planRuns(ctx context.Context, item media.Item, f media.Fil
 }
 
 // measured records the upload's display size and duration, and marks the
-// presets it produces pending (a deploy's recipe change makes outputs stale
-// with nothing pending).
-func (e *Encoder) measured(ctx context.Context, item media.Item, f media.File, pl plan, presets []*media.Private) error {
-	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
+// presets it produces pending while their outputs are stale (a deploy's
+// recipe change makes outputs stale with nothing pending). Current outputs
+// are never re-marked: a plan's snapshot can predate the publish that
+// settled them, and nothing would clear the mark again. It returns the
+// manifest it wrote.
+func (e *Encoder) measured(ctx context.Context, item media.Item, f media.File, pl plan, presets []*media.Private) (*media.Manifest, error) {
+	return e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
 		if _, err := current(m, f.Path, f.Blob); err != nil {
 			return err
 		}
 		g := &m.Files[m.Find(f.Path)]
 		g.W, g.H, g.Dur = pl.width, pl.height, math.Round(pl.duration*1000)/1000
 		for _, p := range presets {
-			m.AddPending(f.Path, p.Name)
+			if e.todo(m, *g, p) {
+				m.AddPending(f.Path, p.Name)
+			}
 		}
 		return nil
 	})
-	return err
 }
 
 // noOutput records that preset p has no output from upload f (an MP4 rung
