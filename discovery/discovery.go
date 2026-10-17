@@ -89,10 +89,11 @@ type Service struct {
 	o          Options
 	t          tables
 	historical *popularity.Ranker
+	summaries  summaryCache
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, searches, searchMarks, erased, creators, comments string
+	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, searches, searchMarks, erased, creators, comments, events string
 }
 
 // New validates o.
@@ -123,7 +124,7 @@ func New(o Options) (*Service, error) {
 		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
 		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
-		comments: q("content_comments")}}
+		comments: q("content_comments"), events: q("content_events")}}
 	var err error
 	s.historical, err = popularity.New(popularity.Config{Source: o.Hub, Policy: o.Policy, Availability: s,
 		Cache: popularity.NewMemoryCache(0), MaxDepth: PopularityDepth})

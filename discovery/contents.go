@@ -124,7 +124,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	}
 	out := ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}
 	if err == nil && o.Summary && o.Cursor == "" {
-		out.Summary, err = s.listingSummary(ctx, o.Filter, q, srt, nil)
+		out.Summary, err = s.cachedListingSummary(ctx, o.Filter, q, srt)
 	}
 	return out, err
 }
