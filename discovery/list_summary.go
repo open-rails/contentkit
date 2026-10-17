@@ -19,6 +19,8 @@ type ListingSummary struct {
 	FilteredCount    int                     `json:"filtered_count"`
 	FilteredEntities []ReleaseFilteredEntity `json:"filtered_entities"`
 	LockedCount      int                     `json:"locked_count"`
+	// Total is the contents the list pages through under its access mode.
+	Total int `json:"total"`
 	// Truncated makes counts lower bounds for bounded keyword or recommendation
 	// candidate windows. Ordinary lists have exact selection counts.
 	Truncated bool `json:"truncated,omitempty"`
@@ -60,6 +62,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 	if err != nil {
 		return nil, err
 	}
+	out.Total = len(visibleIDs)
 	hidden := visible.viewer.HiddenContentFilters()
 	var ids []groups.GroupID
 	for kind, entries := range hidden {

@@ -169,7 +169,7 @@ func (s *Service) newest(q *sel) Backfill {
 			return nil, err
 		}
 		picks, _, err := s.page(ctx, q.with("f.kind = @b_kind AND f.content_id <> ALL(@b_exclude::text[])",
-			pgx.NamedArgs{"b_kind": kind, "b_exclude": nonNil(exclude)}), o, "", limit)
+			pgx.NamedArgs{"b_kind": kind, "b_exclude": nonNil(exclude)}), o, "", limit, 0)
 		if err != nil {
 			return nil, err
 		}

@@ -586,12 +586,12 @@ type pick struct {
 var preference = edition.Order("f", "@d_display::text")
 
 // page lists one sorted page of contents and the cursor after it.
-func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit int) ([]pick, string, error) {
+func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit, offset int) ([]pick, string, error) {
 	cur, err := decodeCursor(after, o.raw)
 	if err != nil {
 		return nil, "", err
 	}
-	args := pgx.NamedArgs{"d_limit": limit + 1}
+	args := pgx.NamedArgs{"d_limit": limit + 1, "d_offset": offset}
 	for k, v := range q.args {
 		args[k] = v
 	}
@@ -616,7 +616,7 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	}
 	sql := fmt.Sprintf(`SELECT c.content_id, c.version_id, c.sk::text FROM (
  SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, (%s) AS sk FROM %s f %s WHERE %s ORDER BY f.content_id, %s) c
-WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit`, o.expr, s.t.facets, o.join, q.predicate(), preference, after, dir, dir)
+WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, o.join, q.predicate(), preference, after, dir, dir)
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", err

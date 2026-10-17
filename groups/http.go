@@ -59,6 +59,7 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Text("letter", "only sort names starting with this letter (a-z), or with anything else (#)"), language,
 			httpapi.Text("content_kind", "count contents of this kind; every kind by default"),
 			httpapi.Text("sort", "name (the default), count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"),
+			httpapi.Int("page", "a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000"),
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(GroupPage{})}}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
@@ -247,14 +248,22 @@ func (h handler) manageList(w http.ResponseWriter, r *http.Request) {
 func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management bool) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	page := 0
+	if v := q.Get("page"); v != "" {
+		var err error
+		if page, err = strconv.Atoi(v); err != nil || page < 1 {
+			reply(w, http.StatusOK, GroupPage{}, fmt.Errorf("%w: page", ErrInvalid))
+			return
+		}
+	}
 	opts := ListOptions{Kind: q.Get("kind"), Parent: GroupID(q.Get("parent")), Scope: GroupID(q.Get("scope")),
 		Slug: q.Get("slug"), Letter: q.Get("letter"), Language: q.Get("language"), ContentKind: q.Get("content_kind"),
-		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Limit: limit, IncludeInternal: management}
+		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Page: page, Limit: limit, IncludeInternal: management}
 	if management {
 		opts.Query = q.Get("q")
 	}
-	page, err := h.as(r).List(r.Context(), opts)
-	reply(w, http.StatusOK, page, err)
+	out, err := h.as(r).List(r.Context(), opts)
+	reply(w, http.StatusOK, out, err)
 }
 
 func (h handler) mine(w http.ResponseWriter, r *http.Request) {

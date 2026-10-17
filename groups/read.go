@@ -52,9 +52,14 @@ type ListOptions struct {
 	Sort        Sort
 	// Cursor is the previous page's NextCursor under the same Sort.
 	Cursor string
+	// Page numbers pages from 1 instead of Cursor; the page then carries Total.
+	Page int
 	// Limit defaults to 50 and is capped at 200.
 	Limit int
 }
+
+// maxPageOffset bounds numbered pages; deeper reading pages by cursor.
+const maxPageOffset = 10_000
 
 // GroupCard is a listed group: what a directory page or a chip needs.
 type GroupCard struct {
@@ -84,6 +89,8 @@ type GroupPage struct {
 	Groups []GroupCard `json:"entities"`
 	// NextCursor pages on; empty on the last page.
 	NextCursor string `json:"next_cursor,omitempty"`
+	// Total is every matching group, on numbered pages only.
+	Total *int `json:"total,omitempty"`
 }
 
 // GroupDetail is one group with everything its page shows.
@@ -119,6 +126,7 @@ var letterRE = regexp.MustCompile(`^([a-z]|#)$`)
 // cardQuery is a compiled listing.
 type cardQuery struct {
 	sql      string
+	count    string
 	args     pgx.NamedArgs
 	sort     Sort
 	limit    int
@@ -140,6 +148,17 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		c.limit = 50
 	}
 	c.limit = min(c.limit, 200)
+	c.args["offset"] = 0
+	switch {
+	case opts.Page < 0:
+		return c, fmt.Errorf("%w: page", ErrInvalid)
+	case opts.Page > 0 && opts.Cursor != "":
+		return c, fmt.Errorf("%w: page and cursor are exclusive", ErrInvalid)
+	case opts.Page*c.limit > maxPageOffset:
+		return c, fmt.Errorf("%w: page × limit is at most %d", ErrInvalid, maxPageOffset)
+	case opts.Page > 0:
+		c.args["offset"] = (opts.Page - 1) * c.limit
+	}
 	lang := s.cfg.Languages[0]
 	if l := strings.TrimSpace(opts.Language); l != "" {
 		var err error
@@ -220,7 +239,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
-	c.sql = fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[10]s, %[11]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
+	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
  coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s g
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
@@ -231,9 +250,13 @@ LEFT JOIN %[3]s t ON t.tenant_id = g.tenant_id AND t.group_id = g.id AND t.langu
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %[5]s gc
   WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%[7]s) cc ON true
-WHERE %[8]s ORDER BY %[9]s LIMIT @limit`,
+WHERE %[8]s`,
 		s.table("content_groups"), s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		s.table("content_group_counts"), sortName, countKind, strings.Join(where, " AND "), order, scope, parent)
+		s.table("content_group_counts"), sortName, countKind, strings.Join(where, " AND "), scope, parent)
+	c.sql = base + " ORDER BY " + order + " LIMIT @limit OFFSET @offset"
+	if opts.Page > 0 {
+		c.count = "SELECT count(*) FROM (" + base + ") counted"
+	}
 	return c, nil
 }
 
@@ -304,8 +327,15 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 	}
 	var page GroupPage
 	err = s.read(ctx, func(q Querier) error {
-		page, err = s.cards(ctx, q, c)
-		return err
+		if page, err = s.cards(ctx, q, c); err != nil || c.count == "" {
+			return err
+		}
+		var total int
+		if err := q.QueryRow(ctx, c.count, c.args).Scan(&total); err != nil {
+			return err
+		}
+		page.Total = &total
+		return nil
 	})
 	if err != nil {
 		return page, err

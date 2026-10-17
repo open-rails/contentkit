@@ -76,6 +76,7 @@ var (
 	}
 	cardGroups     = httpapi.List("card_entities", "the group kinds cards name; every kind with a page by default")
 	pageParams     = []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}
+	numberedPage   = httpapi.Int("page", "a numbered page from 1 instead of cursor; summary then comes with every page; page × limit is at most 10,000")
 	sortParam      = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
 	activityParams = []httpapi.Param{
 		httpapi.Text("activity_from", "custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter"),
@@ -115,13 +116,13 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.OK(DailyReleases{})}}, Serve: httpapi.H(handler.releases)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents", Resource: "discovery", Auth: httpapi.Public,
 		Doc:   "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
-		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only")}, activityParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
+		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page")}, activityParams, pageParams, []httpapi.Param{numberedPage}), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
 		Errors: signals}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
-			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only"),
-				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
+			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
+				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
@@ -246,6 +247,11 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	pageNumber, err := intParam(r, "page")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
 	q := r.URL.Query()
 	for _, name := range []string{"activity_from", "activity_until"} {
 		if len(q[name]) > 1 || len(q[name]) == 1 && q.Get(name) == "" {
@@ -255,7 +261,7 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
 		ActivityFrom: q.Get("activity_from"), ActivityUntil: q.Get("activity_until"),
-		Cursor: q.Get("cursor"), Limit: limit, Summary: summary})
+		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
@@ -270,9 +276,14 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	pageNumber, err := intParam(r, "page")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
 	q := r.URL.Query()
 	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
-		Cursor: q.Get("cursor"), Limit: limit, Summary: summary}
+		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
 		if err != nil {

@@ -965,6 +965,7 @@ export interface GroupKind {
 export interface GroupPage {
   entities: GroupCard[];
   next_cursor?: string;
+  total?: number;
 }
 
 export interface GroupRecord {
@@ -1178,6 +1179,7 @@ export interface ListingSummary {
   filtered_count: number;
   filtered_entities: ReleaseFilteredEntity[];
   locked_count: number;
+  total: number;
   truncated?: boolean;
 }
 

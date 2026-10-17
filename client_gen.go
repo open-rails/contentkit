@@ -1493,6 +1493,8 @@ type GetEntitiesQuery struct {
 	Sort string
 	// the previous page's next_cursor
 	Cursor string
+	// a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000
+	Page int
 	// page size: 50 by default, at most 200
 	Limit int
 }
@@ -1525,6 +1527,9 @@ func (q GetEntitiesQuery) values() url.Values {
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
+	}
+	if q.Page != 0 {
+		v.Set("page", fmt.Sprint(q.Page))
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
@@ -2277,7 +2282,7 @@ type GetContentsQuery struct {
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
-	// selection-wide filtered and locked counts on the first page only
+	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
 	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
 	ActivityFrom string
@@ -2287,6 +2292,8 @@ type GetContentsQuery struct {
 	Cursor string
 	// page size: 24 by default, at most 100
 	Limit int
+	// a numbered page from 1 instead of cursor; summary then comes with every page; page × limit is at most 10,000
+	Page int
 }
 
 func (q GetContentsQuery) values() url.Values {
@@ -2363,6 +2370,9 @@ func (q GetContentsQuery) values() url.Values {
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
 	}
+	if q.Page != 0 {
+		v.Set("page", fmt.Sprint(q.Page))
+	}
 	return v
 }
 
@@ -2415,7 +2425,7 @@ type GetSearchQuery struct {
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
-	// selection-wide filtered and locked counts on the first page only
+	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
 	// false ranks a signed-in reader's results as anyone's
 	Personalize *bool
@@ -2425,6 +2435,8 @@ type GetSearchQuery struct {
 	Cursor string
 	// page size: 24 by default, at most 100
 	Limit int
+	// a numbered page from 1 instead of cursor; summary then comes with every page; page × limit is at most 10,000
+	Page int
 }
 
 func (q GetSearchQuery) values() url.Values {
@@ -2503,6 +2515,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Page != 0 {
+		v.Set("page", fmt.Sprint(q.Page))
 	}
 	return v
 }

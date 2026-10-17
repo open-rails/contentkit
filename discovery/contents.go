@@ -28,9 +28,12 @@ type ListOptions struct {
 	// default.
 	CardGroups []string
 	Cursor     string
+	// Page numbers pages from 1 instead of Cursor.
+	Page int
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
-	// Summary adds selection-wide filtered and locked counts on the first page.
+	// Summary adds selection-wide counts on the first page, or on every
+	// numbered page.
 	Summary bool
 }
 
@@ -39,6 +42,26 @@ func pageLimit(n, def int) int {
 		return def
 	}
 	return min(n, 100)
+}
+
+// maxPageOffset bounds numbered pages; deeper reading pages by cursor.
+const maxPageOffset = 10_000
+
+// pageOffset is a numbered page's offset; zero without one.
+func pageOffset(page, limit int, cursor, sort string) (int, error) {
+	switch {
+	case page == 0:
+		return 0, nil
+	case page < 0:
+		return 0, fmt.Errorf("%w: page", ErrInvalid)
+	case cursor != "":
+		return 0, fmt.Errorf("%w: page and cursor are exclusive", ErrInvalid)
+	case sort == SortRandom:
+		return 0, fmt.Errorf("%w: random lists page by cursor", ErrInvalid)
+	case page*limit > maxPageOffset:
+		return 0, fmt.Errorf("%w: page × limit is at most %d", ErrInvalid, maxPageOffset)
+	}
+	return (page - 1) * limit, nil
 }
 
 // List pages cards: one per content item the reader's listing shows that
@@ -84,7 +107,12 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}
-	picks, next, err := s.page(ctx, q, srt, o.Cursor, pageLimit(o.Limit, 24))
+	limit := pageLimit(o.Limit, 24)
+	offset, err := pageOffset(o.Page, limit, o.Cursor, sort)
+	if err != nil {
+		return ContentPage{Contents: []Card{}}, err
+	}
+	picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}

@@ -34,11 +34,14 @@ type SearchOptions struct {
 	Sort       string
 	CardGroups []string
 	Cursor     string
+	// Page numbers pages from 1 instead of Cursor.
+	Page int
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
 	// Unpersonalized ranks a signed-in reader's results as anyone's.
 	Unpersonalized bool
-	// Summary adds contextual filtered and locked counts on the first page.
+	// Summary adds contextual counts on the first page, or on every numbered
+	// page.
 	Summary bool
 }
 
@@ -96,6 +99,10 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 		}
 	}()
 	limit := pageLimit(o.Limit, 24)
+	offset, err := pageOffset(o.Page, limit, o.Cursor, sortName)
+	if err != nil {
+		return empty, err
+	}
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
 		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
@@ -124,7 +131,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 			ids = append(ids, h.ContentID)
 		}
 		q.and("f.content_id = ANY(@d_matches::text[])", pgx.NamedArgs{"d_matches": ids})
-		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit)
+		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 		if err != nil {
 			return empty, err
 		}
@@ -140,7 +147,6 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 	if err != nil {
 		return empty, err
 	}
-	offset := 0
 	if cur.ID != "" {
 		if offset, err = strconv.Atoi(cur.Value); err != nil || offset < 0 {
 			return empty, fmt.Errorf("%w: cursor", ErrInvalid)

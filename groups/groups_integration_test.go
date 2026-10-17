@@ -539,7 +539,28 @@ func TestList(t *testing.T) {
 	if page, _ = f.s.List(f.ctx, ListOptions{Kind: "tag", Slug: "t0", Language: "en"}); page.Groups[0].Path != "/en/tags/"+page.Groups[0].Code+"/delta" {
 		t.Fatalf("the default language is prefixed too: %+v", page.Groups[0])
 	}
-	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"}} {
+	// Numbered pages read the same order and carry the total; a cursor page carries none.
+	var numbered []string
+	for n := 1; n <= 3; n++ {
+		page, err := f.s.List(f.ctx, ListOptions{Kind: "tag", Language: "en", Limit: 3, Page: n})
+		if err != nil || page.Total == nil || *page.Total != 8 {
+			t.Fatalf("page %d: %+v %v", n, page.Total, err)
+		}
+		for _, g := range page.Groups {
+			numbered = append(numbered, g.Name)
+		}
+	}
+	if !slices.Equal(numbered, []string{"9lives", "Zeta", "Alpha", "bravo", "charlie", "delta", "echo", "Écho2"}) {
+		t.Fatalf("numbered by name %v", numbered)
+	}
+	if page, _ := f.s.List(f.ctx, ListOptions{Kind: "tag", Language: "en", Letter: "e", Page: 1}); page.Total == nil || *page.Total != 2 {
+		t.Fatalf("letter e total %+v", page.Total)
+	}
+	if page, _ := f.s.List(f.ctx, ListOptions{Kind: "tag", Limit: 3}); page.Total != nil {
+		t.Fatalf("cursor page total %+v", page.Total)
+	}
+	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"},
+		"page": {Page: -1}, "page and cursor": {Page: 2, Cursor: "x"}, "deep page": {Page: 51, Limit: 200}} {
 		if _, err := f.s.List(f.ctx, opts); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
