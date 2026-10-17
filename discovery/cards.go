@@ -197,6 +197,9 @@ func (s *Service) lock(rows []cardRow) {
 	}
 }
 
+// standingTimeout bounds a card list's progress read.
+const standingTimeout = 500 * time.Millisecond
+
 // excerptChars bounds a card excerpt; clients trim further.
 const excerptChars = 300
 
@@ -611,7 +614,10 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
-	states, err := s.o.Hub.States(ctx, signal.Subject{UserID: actor.AccountID()}, refs)
+	// Progress is optional on a card: a slow signal plane drops it, not the page.
+	readCtx, cancel := context.WithTimeout(ctx, standingTimeout)
+	defer cancel()
+	states, err := s.o.Hub.States(readCtx, signal.Subject{UserID: actor.AccountID()}, refs)
 	if err != nil {
 		s.o.Logger.WarnContext(ctx, "discovery: viewer progress unavailable", "err", err)
 		return out, nil
