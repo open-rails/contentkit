@@ -21,8 +21,8 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Textarea } from "#ckui/ui/textarea";
 import { AttributeFields, formOf } from "../groups/fields.js";
-import { MembershipRow } from "../groups/memberships.js";
-import { GroupPicker, labelOf } from "../groups/parts.js";
+import { EntityChips } from "../groups/entity-chips.js";
+import { labelOf } from "../groups/parts.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionsEditor, versionLabel } from "../content/editors.js";
@@ -48,7 +48,6 @@ const fileTitle = (name: string) =>
 const textOf = (text: CatalogText): CatalogText => ({
   ...text,
   title: text.title.trim(),
-  slug: text.slug?.trim() || undefined,
   description: text.description?.trim(),
 });
 class ValidationError extends Error {}
@@ -421,15 +420,6 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               <details className="grid gap-3">
                 <summary className="cursor-pointer text-sm text-muted-foreground">{t("readerEditor.additionalText")}</summary>
                 <div className="mt-3 grid gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor={`${ids}-slug`}>{t("contentManager.slug")}</Label>
-                    <Input
-                      id={`${ids}-slug`}
-                      value={text.slug ?? ""}
-                      placeholder={t("contentManager.slugAuto")}
-                      onChange={(e) => editText({ slug: e.target.value })}
-                    />
-                  </div>
                   <Label htmlFor={`${ids}-body`}>{t("contentManager.body")}</Label>
                   {p.renderEditor ? (
                     p.renderEditor({
@@ -523,39 +513,29 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               {groupKinds.map((kind) => {
                 const rows = associations.value.memberships.map((a, index) => ({ a, index })).filter(({ a }) => cards.get(a.group_id ?? "")?.kind === kind);
                 return (
-                  <fieldset key={kind} disabled={!!item && membership.loading} className="grid min-w-0 gap-2">
-                    <legend className="mb-2 font-semibold">{labelOf(p.labels, kind)}</legend>
-                    {rows.map(({ a, index }) => (
-                      <MembershipRow
-                        key={`${a.group_id}:${index}`}
-                        m={a}
-                        card={cards.get(a.group_id ?? "")}
-                        spec={model.entity_kinds[kind] ?? {}}
-                        labels={p.labels}
-                        versions={versionChoices}
-                        versionLabel={(id) => versionChoices.find((v) => v.id === id)?.label ?? id}
-                        onChange={(patch) => associations.edit((d) => ({ memberships: d.memberships.map((x, i) => (i === index ? { ...x, ...patch } : x)) }))}
-                        onRemove={() => associations.edit((d) => ({ memberships: d.memberships.filter((_, i) => i !== index) }))}
-                      />
-                    ))}
-                    <GroupPicker
-                      kind={kind}
-                      management={p.management}
-                      language={language}
-                      exclude={rows.filter(({ a }) => !a.version_id && !a.role).map(({ a }) => a.group_id!)}
-                      label={t("memberships.add", { kind: labelOf(p.labels, kind) })}
-                      client={client}
-                      onPick={(card) => {
-                        setPicked((all) => new Map(all).set(card.id, card));
-                        associations.edit((d) => ({
-                          memberships: [
-                            ...d.memberships,
-                            { group_id: card.id, ...(model.entity_kinds[kind]?.version_level && version ? { version_id: version.id } : {}) },
-                          ],
-                        }));
-                      }}
-                    />
-                  </fieldset>
+                  <EntityChips
+                    key={kind}
+                    kind={kind}
+                    label={labelOf(p.labels, kind)}
+                    memberships={rows.map(({ a }) => a)}
+                    cards={cards}
+                    spec={model.entity_kinds[kind] ?? {}}
+                    labels={p.labels}
+                    versions={versionChoices}
+                    versionLabel={(id) => versionChoices.find((v) => v.id === id)?.label ?? id}
+                    language={language}
+                    management={p.management}
+                    client={client}
+                    disabled={!!item && membership.loading}
+                    onChange={(i, patch) => associations.edit((d) => ({ memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
+                    onRemove={(i) => associations.edit((d) => ({ memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}
+                    onAdd={(card) => {
+                      setPicked((all) => new Map(all).set(card.id, card));
+                      associations.edit((d) => ({
+                        memberships: [...d.memberships, { group_id: card.id, ...(model.entity_kinds[kind]?.version_level && version ? { version_id: version.id } : {}) }],
+                      }));
+                    }}
+                  />
                 );
               })}
             </Panel>

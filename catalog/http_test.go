@@ -37,8 +37,9 @@ func TestRoutesIntegration(t *testing.T) {
 	f.want(http.StatusOK, "alice", "GET", "/v1/contents/"+id, nil, nil)
 
 	// Text per language, with the viewer's language and fallback.
-	f.want(http.StatusOK, "alice", "PUT", "/v1/contents/"+id+"/text/ja", Text{Title: "こんにちは", Description: "説明", Slug: "Konnichiwa"}, &c)
-	if c.Text["ja"].Slug != "konnichiwa" || c.Text["en"].Title != "Hello World" {
+	f.want(http.StatusOK, "alice", "PUT", "/v1/contents/"+id+"/text/ja", Text{Title: "こんにちは", Description: "説明", Slug: "ignored"}, &c)
+	// Slugs follow the title: a sent slug is ignored and a title without Latin letters or digits has none.
+	if c.Text["ja"].Slug != "" || c.Text["en"].Title != "Hello World" {
 		t.Fatalf("text %+v", c.Text)
 	}
 	f.want(http.StatusBadRequest, "alice", "PUT", "/v1/contents/"+id+"/text/de", Text{Title: "Hallo"}, nil)

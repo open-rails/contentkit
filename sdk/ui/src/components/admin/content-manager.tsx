@@ -78,7 +78,7 @@ const states = ["draft", "scheduled", "published"] as const;
 /**
  * Content items of one kind for their creators and staff: every one the
  * caller manages, by state and text, deleted ones on their own to restore;
- * create and edit title, slug, description, schedule, cover and body with
+ * create and edit title, description, schedule, cover and body with
  * inline images per language, publish or keep a draft, and delete; then its
  * listing and attributes, access rule and price, versions (order, languages,
  * traits, schedule, access override, price, segments, media) and groups. The
@@ -294,13 +294,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
 
 interface Form {
   title: string;
-  slug: string;
   description: string;
   publishAt: string;
   body: string;
 }
 
-const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
+const empty: Form = { title: "", description: "", publishAt: "", body: "" };
 
 export interface ContentEditorProps {
   /** Staff entity lookup, including internal classifications. */
@@ -325,7 +324,7 @@ export interface ContentEditorProps {
 }
 
 /**
- * One content item for its creators and staff: title, slug, description,
+ * One content item for its creators and staff: title, description,
  * schedule, cover and body per language, publish, unpublish and delete;
  * then listing and attributes, access rule and price, versions and groups.
  */
@@ -367,7 +366,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   useEffect(() => {
     if (!item) return;
     const stored = item.text?.[language];
-    setForm((f) => f ?? { title: stored?.title ?? "", slug: stored?.slug ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
+    setForm((f) => f ?? { title: stored?.title ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
       publishAt: item.publish_at && !item.live ? localInput(new Date(item.publish_at)) : "" });
   }, [item, language]);
   const { imageSrc } = ed;
@@ -394,7 +393,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     setError(err);
     report(err, "content.save");
   };
-  const text = () => ({ title: f.title.trim(), slug: f.slug.trim() || undefined, description: f.description.trim(), body: f.body });
+  const text = () => ({ title: f.title.trim(), description: f.description.trim(), body: f.body });
   const save = async () => {
     setError(null);
     setNotice(null);
@@ -405,9 +404,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         onCreated?.(created);
         return;
       }
-      const saved = await ed.putText(text());
+      await ed.putText(text());
       setNotice(t("pollEditor.saved"));
-      setForm((cur) => ({ ...cur!, slug: saved.text?.[language]?.slug ?? cur!.slug }));
     } catch (e) {
       fail(e);
     }
@@ -498,10 +496,6 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         <Input id={`${ids}-title`} value={f.title} required maxLength={300} onChange={(e) => set({ title: e.target.value })} />
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${ids}-slug`}>{t("contentManager.slug")}</Label>
-          <Input id={`${ids}-slug`} value={f.slug} placeholder={t("contentManager.slugAuto")} onChange={(e) => set({ slug: e.target.value })} />
-        </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`${ids}-publish`}>{t("contentManager.publishAt")}</Label>
           <Input id={`${ids}-publish`} type="datetime-local" value={f.publishAt} onChange={(e) => set({ publishAt: e.target.value })} />

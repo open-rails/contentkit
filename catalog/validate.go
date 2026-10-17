@@ -61,12 +61,8 @@ func (s *Store) cleanText(ctx context.Context, language string, t Text) (Text, e
 	}
 	t.Body = body
 	t.Description = strings.TrimSpace(t.Description)
-	t.Slug = strings.TrimSpace(t.Slug)
-	if t.Slug == "" {
-		t.Slug = codes.Slugify(t.Title)
-	} else if t.Slug = codes.Slugify(t.Slug); t.Slug == "" {
-		return t, invalid("text %s: slug has no letters or digits", language)
-	}
+	// Slugs are decorative and always follow the title; URLs resolve by code.
+	t.Slug = codes.Slugify(t.Title)
 	aliases := make([]string, 0, len(t.Aliases))
 	for _, a := range t.Aliases {
 		if a = strings.TrimSpace(a); a != "" && utf8.RuneCountInString(a) <= maxTitle && !slices.Contains(aliases, a) {
