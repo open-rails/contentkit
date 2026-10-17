@@ -657,6 +657,30 @@ func TestMembershipRules(t *testing.T) {
 	if held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2), cid(3)}); len(held[cid(2)]) != 1 || len(held[cid(3)]) != 1 {
 		t.Fatalf("after remove %+v", held)
 	}
+
+	// An import naming one membership twice is still a change: the duplicate
+	// collapses as a write keeps it, so the stored artist membership goes.
+	f.add(Membership{GroupID: tag.ID, ContentID: cid(2)}, Membership{GroupID: artist.ID, ContentID: cid(2)})
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if err := f.s.ImportMemberships(f.ctx, tx, []ContentGroups{{ContentID: cid(2), Kinds: []string{"artist", "tag"},
+		Memberships: []Membership{{GroupID: tag.ID}, {GroupID: tag.ID}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2)})
+	kept := map[GroupID]bool{}
+	for _, m := range held[cid(2)] {
+		kept[m.GroupID] = true
+	}
+	if !kept[tag.ID] || kept[artist.ID] {
+		t.Fatalf("after importing a duplicated set %+v", held[cid(2)])
+	}
 }
 
 // Merging moves memberships (an accepted one wins over a proposed duplicate),
