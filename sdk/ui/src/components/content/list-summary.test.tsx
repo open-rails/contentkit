@@ -328,7 +328,7 @@ it("keeps filter controls inside a native reader dialog instead of its inert bac
   const filters = await screen.findByRole("dialog", { name: "Content filters" });
   expect(reader).toContainElement(filters);
   expect(await within(filters).findByRole("switch", { name: "FUTA: 5" })).toBeVisible();
-  await userEvent.setup().click(within(filters).getByRole("button", { name: "Close", exact: true }));
+  await userEvent.setup().click(within(filters).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Content filters" })).toBeNull());
   expect(reader).toHaveAttribute("open");
 });
@@ -350,7 +350,7 @@ it("retains the native portal while preferences remove its opening tile", async 
     button.remove();
     view.rerender(content());
     expect(reader).toContainElement(filters);
-    await userEvent.setup().click(within(filters).getByRole("button", { name: "Close", exact: true }));
+    await userEvent.setup().click(within(filters).getByRole("button", { name: "Close" }));
     expect(close).toHaveBeenCalledWith(false);
   } finally {
     view.unmount();
