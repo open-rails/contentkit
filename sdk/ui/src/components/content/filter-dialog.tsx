@@ -18,7 +18,11 @@ export function ContentFilterDialog({ open, onOpenChange, description, returnFoc
   const inheritedAppearance = useContext(AppearanceContext);
   return <AppearanceContext.Provider value={settings.appearance ?? inheritedAppearance}>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent finalFocus={returnFocus} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogContent
+        finalFocus={returnFocus}
+        portalContainer={returnFocus?.()?.closest<HTMLDialogElement>("dialog[open]") ?? undefined}
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>{t("readerSettings.filterTitle")}</DialogTitle>
           <DialogDescription>{description ?? t("readerSettings.filterDescription")}</DialogDescription>
