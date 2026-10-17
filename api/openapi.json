@@ -4523,6 +4523,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "groups",
             "in": "query",
             "description": "group ids every listed version is in; a position sort orders by the first",
@@ -4701,6 +4714,14 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page only",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -9181,6 +9202,49 @@
         ]
       }
     },
+    "/v1/engagement": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EngagementBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/activity-contexts": {
       "post": {
         "tags": [
@@ -9243,6 +9307,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -9492,6 +9569,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "groups",
             "in": "query",
             "description": "group ids every listed version is in; a position sort orders by the first",
@@ -9670,6 +9760,14 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "selection-wide filtered and locked counts on the first page only",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -9879,6 +9977,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -10123,6 +10234,19 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "groups",
             "in": "query",
             "description": "group ids every listed version is in; a position sort orders by the first",
@@ -10357,6 +10481,19 @@
             "description": "only this content kind",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -13476,6 +13613,9 @@
               "$ref": "#/components/schemas/Card"
             }
           },
+          "summary": {
+            "$ref": "#/components/schemas/ListingSummary"
+          },
           "next_cursor": {
             "type": "string"
           },
@@ -13739,6 +13879,17 @@
           }
         }
       },
+      "CoverageRange": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer"
+          }
+        }
+      },
       "Creator": {
         "type": "object",
         "properties": {
@@ -13988,6 +14139,61 @@
           "percent",
           "at"
         ]
+      },
+      "EngagementBatch": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EngagementSnapshot"
+            }
+          }
+        }
+      },
+      "EngagementSnapshot": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "visit_id": {
+            "type": "string"
+          },
+          "segment_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "activity_token": {
+            "type": "string"
+          },
+          "active_ms": {
+            "type": "integer"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageEngagement"
+            }
+          },
+          "watched": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchedRange"
+            }
+          }
+        }
       },
       "EntityReference": {
         "type": "object",
@@ -15633,6 +15839,31 @@
           "complete"
         ]
       },
+      "ListingSummary": {
+        "type": "object",
+        "properties": {
+          "filtered_count": {
+            "type": "integer"
+          },
+          "filtered_entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFilteredEntity"
+            }
+          },
+          "locked_count": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filtered_count",
+          "filtered_entities",
+          "locked_count"
+        ]
+      },
       "Locked": {
         "type": "object",
         "properties": {
@@ -16401,6 +16632,23 @@
           "reason",
           "confidence"
         ]
+      },
+      "PageEngagement": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRange"
+            }
+          },
+          "active_ms": {
+            "type": "integer"
+          }
+        }
       },
       "PageReview": {
         "type": "object",
@@ -18825,6 +19073,17 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WatchedRange": {
+        "type": "object",
+        "properties": {
+          "from_ms": {
+            "type": "integer"
+          },
+          "to_ms": {
+            "type": "integer"
           }
         }
       },

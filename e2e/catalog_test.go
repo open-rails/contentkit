@@ -468,6 +468,7 @@ func discoveryScenario(t *testing.T, f *server, gallery, accountID, user, anon s
 	f.want(http.StatusOK, user, "POST", "/me/content-filters/initialize", discovery.ContentFiltersInitialization{AccountID: accountID}, nil)
 	f.want(http.StatusOK, user, "PATCH", "/me/content-filters", discovery.ContentFiltersUpdate{}, nil)
 	unconfigured := http.StatusNotImplemented
+	f.want(unconfigured, user, "POST", "/engagement", discovery.EngagementBatch{Snapshots: []discovery.EngagementSnapshot{}}, nil)
 	f.want(unconfigured, user, "POST", "/activity-contexts", discovery.ActivityContextsInput{Targets: []discovery.ActivityTarget{{ContentID: gallery}}}, nil)
 	f.want(unconfigured, anon, "GET", "/contents/"+gallery+"/similar", nil, nil)
 	f.want(unconfigured, user, "GET", "/recommendations", nil, nil)

@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -229,6 +230,10 @@ func plantResidue(t *testing.T, conn Conn, f barrierFixture, ingested time.Time)
 	t.Helper()
 	ctx := context.Background()
 	kind, key := f.gone.Kind(), f.gone.Key()
+	accessJSON, err := json.Marshal(AccessContext{ObservedAt: f.at, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, q := range []struct {
 		sql  string
 		args []any
@@ -243,6 +248,18 @@ VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB
 VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, ingested}},
 		{fmt.Sprintf(`INSERT INTO %s.population_observations (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
 VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{f.tenant, kind, key, f.at}},
+		{fmt.Sprintf(`INSERT INTO %s.engagement_segments
+ (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,ingested_at)
+ VALUES (?,?,?,'residue-version',?,?,'residue',1,'residue-visit','residue-segment',?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,'p:2',?,'{}',?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, string(accessJSON), ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.engagement_state
+ (tenant,subject_kind,subject,content_kind,content_id,content_version_id,source_version,first_engaged_at,last_engaged_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,qualified,coverage,quality,completed,resume,version)
+ VALUES (?,?,?,?,?,'','residue-version',?,?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,true,1,1,true,'p:2',?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
+		{fmt.Sprintf(`INSERT INTO %s.engagement_daily
+ (tenant,content_kind,content_id,content_version_id,subject_kind,subject,day,present,active_ms,covered_units,unit_attention,unit_total,unit_scale,version)
+ VALUES (?,?,?,'residue-version',?,?,toDate(?),true,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, uint64(ingested.UnixMicro())}},
+		{fmt.Sprintf(`INSERT INTO %s.legacy_reading_state
+ (tenant,subject_kind,subject,content_kind,content_id,content_version_id,first_seen_at,last_seen_at,progress,progress_max,completed,resume,version)
+ VALUES (?,?,?,?,?,'',?,?,2,2,true,'p:2',?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
 	} {
 		if err := conn.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("plant residue: %v\n%s", err, q.sql)

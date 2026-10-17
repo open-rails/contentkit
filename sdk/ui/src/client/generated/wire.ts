@@ -467,6 +467,7 @@ export interface ContentModel {
 
 export interface ContentPage {
   contents: Card[];
+  summary?: ListingSummary;
   next_cursor?: string;
   ranking?: RankingInfo;
 }
@@ -552,6 +553,11 @@ export interface Counts {
   views?: number;
 }
 
+export interface CoverageRange {
+  from: number;
+  to: number;
+}
+
 export interface Creator {
   user_id: string;
   role?: string;
@@ -635,6 +641,24 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
+}
+
+export interface EngagementBatch {
+  session?: string;
+  snapshots: EngagementSnapshot[];
+}
+
+export interface EngagementSnapshot {
+  content_id: string;
+  version_id?: string;
+  visit_id: string;
+  segment_id: string;
+  revision: number;
+  activity_token: string;
+  active_ms: number;
+  resume?: string;
+  pages?: PageEngagement[];
+  watched?: WatchedRange[];
 }
 
 export interface EntityReference {
@@ -1130,6 +1154,13 @@ export interface LibraryPage {
   complete: boolean;
 }
 
+export interface ListingSummary {
+  filtered_count: number;
+  filtered_entities: ReleaseFilteredEntity[];
+  locked_count: number;
+  truncated?: boolean;
+}
+
 export interface Locked {
   show: string[];
   preview?: Preview;
@@ -1357,6 +1388,12 @@ export interface PageDecision {
   reason: string;
   confidence: string;
   related?: string[];
+}
+
+export interface PageEngagement {
+  index: number;
+  ranges: CoverageRange[];
+  active_ms: number;
 }
 
 export interface PageReview {
@@ -2091,6 +2128,11 @@ export interface VoteRecord {
   user_id?: string;
   ip?: string;
   created_at?: string;
+}
+
+export interface WatchedRange {
+  from_ms: number;
+  to_ms: number;
 }
 
 export interface Written {

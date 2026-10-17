@@ -2089,6 +2089,11 @@ func (c *Client) GetOffers(ctx context.Context, q GetOffersQuery) (offers.OfferP
 	return out, err
 }
 
+// PostEngagement is POST /v1/engagement (public). Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.
+func (c *Client) PostEngagement(ctx context.Context, body discovery.EngagementBatch) error {
+	return c.call(ctx, http.MethodPost, "/v1/engagement", nil, body, nil)
+}
+
 // PostActivityContexts is POST /v1/activity-contexts (public). Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.
 func (c *Client) PostActivityContexts(ctx context.Context, body discovery.ActivityContextsInput) (discovery.ActivityContexts, error) {
 	var out discovery.ActivityContexts
@@ -2100,6 +2105,8 @@ func (c *Client) PostActivityContexts(ctx context.Context, body discovery.Activi
 type GetReleasesQuery struct {
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2140,6 +2147,9 @@ func (q GetReleasesQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))
@@ -2206,6 +2216,8 @@ func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery
 type GetContentsQuery struct {
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2240,6 +2252,8 @@ type GetContentsQuery struct {
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
+	// selection-wide filtered and locked counts on the first page only
+	Summary *bool
 	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
 	ActivityFrom string
 	// custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular
@@ -2254,6 +2268,9 @@ func (q GetContentsQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))
@@ -2306,6 +2323,9 @@ func (q GetContentsQuery) values() url.Values {
 	if len(q.CardEntities) > 0 {
 		v.Set("card_entities", strings.Join(q.CardEntities, ","))
 	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
+	}
 	if q.ActivityFrom != "" {
 		v.Set("activity_from", q.ActivityFrom)
 	}
@@ -2334,6 +2354,8 @@ type GetSearchQuery struct {
 	Q string
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2368,6 +2390,8 @@ type GetSearchQuery struct {
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
+	// selection-wide filtered and locked counts on the first page only
+	Summary *bool
 	// false ranks a signed-in reader's results as anyone's
 	Personalize *bool
 	// a signed-out reader's session, which keeps its recent searches
@@ -2385,6 +2409,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))
@@ -2436,6 +2463,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if len(q.CardEntities) > 0 {
 		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
 	if q.Personalize != nil {
 		v.Set("personalize", fmt.Sprint(*q.Personalize))
@@ -2514,6 +2544,8 @@ func (c *Client) GetTypeahead(ctx context.Context, q GetTypeaheadQuery) (discove
 type GetContentSimilarQuery struct {
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2554,6 +2586,9 @@ func (q GetContentSimilarQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))
@@ -2620,6 +2655,8 @@ func (c *Client) GetContentSimilar(ctx context.Context, id string, q GetContentS
 type GetRecommendationsQuery struct {
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2660,6 +2697,9 @@ func (q GetRecommendationsQuery) values() url.Values {
 	v := url.Values{}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))
@@ -2728,6 +2768,8 @@ type GetReleaseDatesQuery struct {
 	By string
 	// only this content kind
 	Kind string
+	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
+	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Groups []string
 	// group ids no listed version is in
@@ -2771,6 +2813,9 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
 	}
 	if len(q.Groups) > 0 {
 		v.Set("groups", strings.Join(q.Groups, ","))

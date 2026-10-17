@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"testing"
@@ -23,10 +24,14 @@ func TestListingSummaryCountsSelectionNotPage(t *testing.T) {
 		item{n: 4, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, titles: map[string]string{"en": "Both"}, versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}}}},
 		item{n: 5, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, titles: map[string]string{"en": "Premium"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"tier","tiers":["premium"]}`, titles: map[string]string{"en": "Filtered premium"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 7, age: time.Hour, groups: []string{"big-breasts"}, deleted: true, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 8, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}, future: true}}},
+		item{n: 7, titles: map[string]string{"en": "Gallery 7"}, age: time.Hour, groups: []string{"big-breasts"}, deleted: true, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 8, titles: map[string]string{"en": "Gallery 8"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}, future: true}}},
 	)
-	guest := `{"filters":{"entity:` + f.ids["yaoi"] + `":false}}`
+	preferences, err := json.Marshal(ContentFiltersUpdate{Filters: filterChoices(FilterSetting{EntityID: f.ids["yaoi"], Visible: false})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest := string(preferences)
 	var out ContentPage
 	w := f.guestCall(http.MethodGet, "main.test", "", q("/contents", "kind", "gallery", "summary", "true", "limit", "1"), guest, nil, &out)
 	if w.Code != http.StatusOK || out.Summary == nil {
@@ -47,9 +52,9 @@ func TestListingSummaryHonorsRequiredAndHardDomainRules(t *testing.T) {
 	f := newFixture(t, nil, "")
 	f.group("tag", "big-breasts", "yaoi", "restricted")
 	f.seed(
-		item{n: 1, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, age: time.Hour, groups: []string{"big-breasts", "restricted"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Gallery 3"}, age: time.Hour, groups: []string{"big-breasts", "restricted"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	for _, tc := range []struct {
 		host string
@@ -67,9 +72,9 @@ func TestListingSummaryKeepsPopularitySelection(t *testing.T) {
 	f := newFixture(t, nil, "")
 	f.group("tag", "big-breasts")
 	f.seed(
-		item{n: 1, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Gallery 3"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	selected, err := f.svc.compile(f.ctx, Reader{Host: "main.test"}, Filter{Kind: "gallery"})
 	if err != nil {
@@ -109,8 +114,8 @@ func TestListingSummarySettlesIncompleteEntitlements(t *testing.T) {
 	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
 	f.group("tag", "big-breasts")
 	f.seed(
-		item{n: 1, age: time.Hour, listing: "members", groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, listing: "members", groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	out, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Host: "main.test", Actor: access.Actor{ID: "reader"}}, Filter: Filter{Kind: "gallery"}, Summary: true})
 	if err != nil || out.Summary == nil || out.Summary.FilteredCount != 0 || out.Summary.LockedCount != 1 {
@@ -121,7 +126,7 @@ func TestListingSummarySettlesIncompleteEntitlements(t *testing.T) {
 func TestListingSummaryWorksWithOnePoolConnection(t *testing.T) {
 	f := newFixture(t, nil, "")
 	f.group("tag", "big-breasts")
-	f.seed(item{n: 1, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}})
+	f.seed(item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}})
 	cfg := f.pool.Config()
 	cfg.MaxConns, cfg.MinConns = 1, 0
 	pool, err := pgxpool.NewWithConfig(f.ctx, cfg)
