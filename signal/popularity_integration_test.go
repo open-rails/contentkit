@@ -22,7 +22,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 		id  string
 		day int
 	}{{earlyID, 2}, {lateID, 28}} {
-		for i, seconds := range []uint32{80, 40} {
+		for i, seconds := range []int{80, 40} {
 			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, seconds, 10, 10, 0, true)
 			s.EventID = fmt.Sprintf("%s-%d", cohort.id, i)
 			if err := recordFixtureSignals(st, ctx, "t", []readingFixture{s, s}); err != nil {

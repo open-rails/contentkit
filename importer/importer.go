@@ -322,7 +322,7 @@ type SignalRecord struct {
 	// UserID or, signed out, an opaque AnonKey.
 	UserID  string `json:"user_id,omitempty"`
 	AnonKey string `json:"anon_key,omitempty"`
-	// Type is view or click.
+	// Type is click; imported raw opens are rejected.
 	Type string `json:"type"`
 	// EventID is the event's stable identity: re-sending it adds nothing.
 	EventID    string    `json:"event_id"`
