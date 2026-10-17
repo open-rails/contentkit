@@ -207,13 +207,15 @@ startup or migrations:
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 defer cancel()
-err := search.RetireLegacyIndexes(ctx, operatorPool, "doujins_contentkit", true)
+report, err := search.RetireLegacyIndexes(ctx, operatorPool, "doujins_contentkit", true)
 ```
 
 The final flag confirms the old cohort has stopped. The operation verifies all
 replacement indexes are ready and checks tracked SQL helper dependencies before
 dropping the four old indexes concurrently, then the two old keyword wrappers
-with `RESTRICT`. Interrupted passes are safe to retry. Include external/dynamic
+with `RESTRICT`. Interrupted passes are safe to retry; the report lists the
+validated indexes and which old objects were dropped or already absent. Hosts
+expose this as `tools retire-search-indexes --legacy-readers-stopped`. Include external/dynamic
 SQL callers in the cohort review; PostgreSQL cannot track those call sites.
 `contentkit_keyword_normalize`, generated entity identity and canonical alias
 uniqueness remain intact, along with all current search/management indexes.

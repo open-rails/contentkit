@@ -28,6 +28,14 @@ var currentSearchIndexes = []struct{ name, table string }{
 	{"content_group_names_management_substring", "content_group_names"},
 }
 
+// IndexRetirement reports one retirement pass: the replacement indexes it
+// validated and the superseded objects it dropped or found already gone.
+type IndexRetirement struct {
+	Validated []string
+	Dropped   []string
+	Absent    []string
+}
+
 // RetireLegacyIndexes removes four superseded search indexes and their two
 // wrappers after every legacy reader/writer has stopped. This is an explicit
 // operator action, never a migration/startup step. Replacement indexes must be
@@ -36,31 +44,32 @@ var currentSearchIndexes = []struct{ name, table string }{
 //
 // Drops are concurrent and individually committed, so a canceled/failed pass
 // is safe to retry. Use an operator pool with DDL authority and a bounded ctx.
-func RetireLegacyIndexes(ctx context.Context, pool *pgxpool.Pool, schema string, legacyWritersStopped bool) error {
+func RetireLegacyIndexes(ctx context.Context, pool *pgxpool.Pool, schema string, legacyWritersStopped bool) (IndexRetirement, error) {
+	var report IndexRetirement
 	if !legacyWritersStopped {
-		return fmt.Errorf("search: stop legacy readers/writers before retiring search indexes")
+		return report, fmt.Errorf("search: stop legacy readers/writers before retiring search indexes")
 	}
 	if pool == nil {
-		return fmt.Errorf("search: database is required")
+		return report, fmt.Errorf("search: database is required")
 	}
 	schema = strings.TrimSpace(schema)
 	qs, err := QuoteSchema(schema)
 	if err != nil {
-		return err
+		return report, err
 	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return err
+		return report, err
 	}
 	defer conn.Release()
 	// One connection also avoids deadlocking one-connection operator pools.
 	var locked bool
 	lock := "contentkit:retire-search:" + schema
 	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, lock).Scan(&locked); err != nil {
-		return err
+		return report, err
 	}
 	if !locked {
-		return fmt.Errorf("search: index retirement is already running for %s", schema)
+		return report, fmt.Errorf("search: index retirement is already running for %s", schema)
 	}
 	defer func() {
 		unlock, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -75,11 +84,12 @@ func RetireLegacyIndexes(ctx context.Context, pool *pgxpool.Pool, schema string,
 		if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_index
  WHERE indexrelid=to_regclass($1) AND indrelid=to_regclass($2) AND indisvalid AND indisready AND indislive)`,
 			pgx.Identifier{schema, index.name}.Sanitize(), pgx.Identifier{schema, index.table}.Sanitize()).Scan(&healthy); err != nil {
-			return err
+			return report, err
 		}
 		if !healthy {
-			return fmt.Errorf("search: replacement index %s.%s is missing or not ready", schema, index.name)
+			return report, fmt.Errorf("search: replacement index %s.%s is missing or not ready", schema, index.name)
 		}
+		report.Validated = append(report.Validated, index.name)
 	}
 	oldNames := make([]string, len(legacySearchIndexes))
 	for i, name := range legacySearchIndexes {
@@ -96,21 +106,38 @@ func RetireLegacyIndexes(ctx context.Context, pool *pgxpool.Pool, schema string,
  AND NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS indexes(name)
  WHERE d.classid='pg_class'::regclass AND d.objid=to_regclass(indexes.name)) LIMIT 1`, signature, oldNames).Scan(&dependency)
 		if err != nil && err != pgx.ErrNoRows {
-			return err
+			return report, err
 		}
 		if dependency != "" {
-			return fmt.Errorf("search: %s has an unexpected SQL dependency: %s", signature, dependency)
+			return report, fmt.Errorf("search: %s has an unexpected SQL dependency: %s", signature, dependency)
 		}
 	}
-	for _, name := range oldNames {
-		if _, err := conn.Exec(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+name); err != nil {
-			return fmt.Errorf("search: retire %s: %w", name, err)
+	// The advisory lock serializes passes, so existence checked here is what each drop removes.
+	drop := func(object, exists, ref, ddl string) error {
+		var present bool
+		if err := conn.QueryRow(ctx, exists, ref).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			report.Absent = append(report.Absent, object)
+			return nil
+		}
+		if _, err := conn.Exec(ctx, ddl); err != nil {
+			return fmt.Errorf("search: retire %s: %w", object, err)
+		}
+		report.Dropped = append(report.Dropped, object)
+		return nil
+	}
+	for i, name := range oldNames {
+		if err := drop(legacySearchIndexes[i], "SELECT to_regclass($1) IS NOT NULL", name, "DROP INDEX CONCURRENTLY IF EXISTS "+name); err != nil {
+			return report, err
 		}
 	}
 	for _, name := range wrappers {
-		if _, err := conn.Exec(ctx, "DROP FUNCTION IF EXISTS "+qs+"."+name+"(text,text[],text[],text) RESTRICT"); err != nil {
-			return fmt.Errorf("search: retire %s: %w", name, err)
+		signature := qs + "." + name + "(text,text[],text[],text)"
+		if err := drop(name+"(text,text[],text[],text)", "SELECT to_regprocedure($1) IS NOT NULL", signature, "DROP FUNCTION IF EXISTS "+signature+" RESTRICT"); err != nil {
+			return report, err
 		}
 	}
-	return nil
+	return report, nil
 }

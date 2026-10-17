@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,14 +77,14 @@ func TestRetireLegacySearchIndexes(t *testing.T) {
 		}
 		return n
 	}
-	if err := search.RetireLegacyIndexes(ctx, operator, schema, false); err == nil || oldCount() != 4 {
+	if _, err := search.RetireLegacyIndexes(ctx, operator, schema, false); err == nil || oldCount() != 4 {
 		t.Fatalf("retired without the explicit cohort flag: %v", err)
 	}
 	// Missing replacement coverage fails before deleting any legacy index.
 	if _, err := pool.Exec(ctx, "DROP INDEX "+qs+".content_search_documents_names_substring"); err != nil {
 		t.Fatal(err)
 	}
-	if err := search.RetireLegacyIndexes(ctx, operator, schema, true); err == nil || !strings.Contains(err.Error(), "replacement index") || oldCount() != 4 {
+	if _, err := search.RetireLegacyIndexes(ctx, operator, schema, true); err == nil || !strings.Contains(err.Error(), "replacement index") || oldCount() != 4 {
 		t.Fatalf("missing replacement was accepted: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `CREATE INDEX content_search_documents_names_substring ON `+qs+`.content_search_documents
@@ -99,16 +100,27 @@ func TestRetireLegacySearchIndexes(t *testing.T) {
  RETURN `+qs+`.contentkit_keyword_text(title,'{}'::text[],'{}'::text[],'')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := search.RetireLegacyIndexes(ctx, operator, schema, true); err == nil || !strings.Contains(err.Error(), "unexpected SQL dependency") || oldCount() != 3 {
+	if _, err := search.RetireLegacyIndexes(ctx, operator, schema, true); err == nil || !strings.Contains(err.Error(), "unexpected SQL dependency") || oldCount() != 3 {
 		t.Fatalf("tracked helper dependency was ignored: %v", err)
 	}
 	if _, err := pool.Exec(ctx, "DROP FUNCTION "+qs+".unexpected_consumer(text)"); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 { // finish an interrupted pass, then prove an idempotent retry
-		if err := search.RetireLegacyIndexes(ctx, operator, schema, true); err != nil {
-			t.Fatal(err)
-		}
+	// Finish an interrupted pass, then prove an idempotent retry; each reports what it removed.
+	finished, err := search.RetireLegacyIndexes(ctx, operator, schema, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappers := []string{"contentkit_keyword_terms(text,text[],text[],text)", "contentkit_keyword_text(text,text[],text[],text)"}
+	if len(finished.Validated) != 10 || !reflect.DeepEqual(finished.Dropped, append(slices.Clone(old[1:]), wrappers...)) || !reflect.DeepEqual(finished.Absent, old[:1]) {
+		t.Fatalf("interrupted pass report: %+v", finished)
+	}
+	retry, err := search.RetireLegacyIndexes(ctx, operator, schema, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retry.Validated) != 10 || len(retry.Dropped) != 0 || !reflect.DeepEqual(retry.Absent, append(slices.Clone(old), wrappers...)) {
+		t.Fatalf("idempotent retry report: %+v", retry)
 	}
 	if oldCount() != 0 {
 		t.Fatal("legacy indexes remain")
