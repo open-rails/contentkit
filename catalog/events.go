@@ -21,6 +21,7 @@ const (
 	EventVersionUpdated     = "version.updated"
 	EventVersionPublished   = "version.published"
 	EventVersionDeleted     = "version.deleted"
+	EventVersionPurged      = "version.purged"
 )
 
 // Event is one outbox entry: a change to a content item or one of its

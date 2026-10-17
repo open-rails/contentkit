@@ -73,7 +73,7 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	var ja Content
 	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+id+"?language=ja", nil, &ja)
-	if ja.Title != "こんにちは" || ja.Language != "ja" || ja.Path != "/ja/g/"+ja.Code+"/konnichiwa" || ja.Editor || ja.Text != nil || ja.Versions[0].Title != "日本語版" || ja.Versions[0].State != "" || ja.Versions[0].Text != nil {
+	if ja.Title != "こんにちは" || ja.Language != "ja" || ja.Path != "/ja/g/"+ja.Code+"/hello-world" || ja.Editor || ja.Text != nil || ja.Versions[0].Title != "日本語版" || ja.Versions[0].State != "" || ja.Versions[0].Text != nil {
 		t.Fatalf("anonymous read in Japanese %+v", ja)
 	}
 	var accept Content

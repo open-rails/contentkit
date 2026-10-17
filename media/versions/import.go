@@ -150,6 +150,10 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 	case expanded > maxImportExpanded:
 		return permanent{fmt.Errorf("the archive expands to %d bytes; at most %d", expanded, maxImportExpanded)}
 	}
+	uploaded := make(map[*zip.File]int, len(entries))
+	for i, e := range entries {
+		uploaded[e] = i + 1
+	}
 	slices.SortStableFunc(entries, func(a, b *zip.File) int {
 		if c := naturalCompare(a.Name, b.Name); c != 0 {
 			return c
@@ -207,7 +211,7 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			continue
 		}
 		name, span, flags := plannedPageName(path.Base(e.Name), names, &next)
-		pm := pageMetadata{SchemaVersion: 1, Name: name, SourceName: path.Base(e.Name), SourceEntry: e.Name, ArchiveSHA256: archiveHash, SourceIndex: index + 1, SourceSHA256: sum, Span: span, Flags: flags}
+		pm := pageMetadata{SchemaVersion: 1, Name: name, SourceName: path.Base(e.Name), SourceEntry: e.Name, ArchiveSHA256: archiveHash, SourceIndex: index + 1, UploadIndex: uploaded[e], SourceSHA256: sum, Span: span, Flags: flags}
 		metaFile := media.File{Meta: map[string]any{digestMeta: sum}}
 		writePageMeta(&metaFile, pm)
 		ext := strings.ToLower(path.Ext(e.Name))

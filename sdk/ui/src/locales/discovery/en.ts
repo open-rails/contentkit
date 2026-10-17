@@ -54,6 +54,7 @@ export const discovery = {
     pageProgress_other: "{progress} / {count} pages",
     minuteProgress_one: "{progress} / {count} min",
     minuteProgress_other: "{progress} / {count} min",
+    notInLanguage: "Not available in {language}, showing {shown}.",
     search: "Search",
     searchPlaceholder: "Search…",
     clearSearch: "Clear search",

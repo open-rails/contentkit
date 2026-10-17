@@ -82,7 +82,7 @@ func TestRouterCanonicalizes(t *testing.T) {
 		{"GET", "/watch/346791971", "", http.StatusTeapot, ""},                            // a legacy numeric id is never a code
 		{"GET", "/movie/" + string(video), "", http.StatusTeapot, ""},                     // not a content route
 		{"POST", "/watch/" + string(video), "", http.StatusTeapot, ""},                    // writes pass through
-		{"GET", canonical + "/comments", "", http.StatusTeapot, ""},                       // sub-path
+		{"GET", canonical + "/comments", "", http.StatusMovedPermanently, canonical},      // extra decorative segments redirect
 	} {
 		seen = contenturl.Decision{}
 		rec := httptest.NewRecorder()

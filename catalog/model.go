@@ -139,6 +139,8 @@ type Version struct {
 // version: their favorite and, with a signal plane, where they are in it.
 type ViewerState struct {
 	Favorited bool `json:"favorited"`
+	// Reaction is their like (1) or dislike (-1) of the item; absent for neither.
+	Reaction int `json:"reaction,omitempty"`
 	// Seen, Completed, Progress, ProgressMax and Resume (the client's own
 	// pointer, such as a page) come from the signal plane.
 	Seen        bool       `json:"seen"`

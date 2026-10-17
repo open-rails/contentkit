@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 // PublishDue promotes scheduled content items and versions whose time came:
@@ -162,12 +164,28 @@ func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-// PurgeDeleted erases content items deleted longer than the retention that
-// were never sold: their media folders and their rows. Sold ones stay for
-// their holders. It returns how many it erased.
+// purgeBatch bounds one erasing transaction; purgeBudget bounds one job run,
+// under River's default one-minute timeout, so a backlog drains run by run.
+const (
+	purgeBatch  = 200
+	purgeBudget = 45 * time.Second
+)
+
+// PurgeDeleted erases what was deleted longer than the retention ago and never
+// sold: content items with their media folders, rows and interactions, then
+// deleted versions of the remaining items. Sold items, and every version of
+// one, stay for their holders. It returns how many items and versions it erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
-	return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
- ORDER BY id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, s.now().Add(-s.retention))
+	cutoff := s.now().Add(-s.retention)
+	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
+		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
+ ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
+	})
+	if err != nil {
+		return items, err
+	}
+	erased, err := s.drain(ctx, func(ctx context.Context) (int, error) { return s.eraseVersions(ctx, cutoff) })
+	return items + erased, err
 }
 
 // ExpireDrafts erases the drafts of kinds with a DraftTTL that never went
@@ -184,13 +202,28 @@ func (s *Store) ExpireDrafts(ctx context.Context) (int, error) {
 	if len(names) == 0 {
 		return 0, nil
 	}
-	return s.erase(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c JOIN unnest($2::text[], $3::timestamptz[]) AS k(kind, cutoff) ON c.kind = k.kind
+	return s.drain(ctx, func(ctx context.Context) (int, error) {
+		return s.erase(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c JOIN unnest($2::text[], $3::timestamptz[]) AS k(kind, cutoff) ON c.kind = k.kind
  WHERE c.tenant_id = $1 AND c.state = 'draft' AND c.first_published_at IS NULL AND NOT c.ever_sold AND c.created_at < k.cutoff
- ORDER BY c.id LIMIT 200 FOR UPDATE OF c SKIP LOCKED`, s.tenant, names, cutoffs)
+ ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, names, cutoffs)
+	})
+}
+
+// drain repeats batch until one comes back short or the run's budget is spent.
+func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, error)) (int, error) {
+	deadline := time.Now().Add(purgeBudget)
+	total := 0
+	for {
+		n, err := batch(ctx)
+		total += n
+		if err != nil || n < purgeBatch || time.Now().After(deadline) || ctx.Err() != nil {
+			return total, err
+		}
+	}
 }
 
 // erase deletes the content items query selects (id, kind), locked, with
-// their media folders and documents.
+// their media folders, documents and interactions.
 func (s *Store) erase(ctx context.Context, query string, args ...any) (int, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -201,7 +234,7 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	var ids []string
+	var ids, kinds []string
 	var events []Event
 	for rows.Next() {
 		var id, kind string
@@ -209,7 +242,7 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 			rows.Close()
 			return 0, err
 		}
-		ids = append(ids, id)
+		ids, kinds = append(ids, id), append(kinds, kind)
 		events = append(events, Event{Type: EventContentPurged, Kind: kind, ContentID: id})
 	}
 	rows.Close()
@@ -225,6 +258,10 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if err := s.markDocuments(ctx, tx, ids); err != nil {
 		return 0, err
 	}
+	if err := s.eraseInteractions(ctx, tx, kinds, ids, nil); err != nil {
+		return 0, err
+	}
+	// Codes stay: a purged item's URL keeps answering 410.
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return 0, err
 	}
@@ -232,6 +269,88 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 		return 0, err
 	}
 	return len(ids), tx.Commit(ctx)
+}
+
+// eraseVersions deletes one batch of versions deleted before cutoff whose
+// item lives on and was never sold, with their media folders and interactions.
+func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT v.id, v.content_id, c.kind FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+ WHERE v.tenant_id = $1 AND v.state = 'deleted' AND v.deleted_at < $2 AND c.state <> 'deleted' AND NOT c.ever_sold
+ ORDER BY v.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var vids, contents, kinds []string
+	var targets []versions.Target
+	var events []Event
+	for rows.Next() {
+		var vid, content, kind string
+		if err := rows.Scan(&vid, &content, &kind); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		vids, contents, kinds = append(vids, vid), append(contents, content), append(kinds, kind)
+		targets = append(targets, versions.Target{Content: content, Version: vid})
+		events = append(events, Event{Type: EventVersionPurged, Kind: kind, ContentID: content, VersionID: vid})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(vids) == 0 {
+		return 0, err
+	}
+	if s.media != nil {
+		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
+			return 0, err
+		}
+	}
+	if err := s.markDocuments(ctx, tx, contents); err != nil {
+		return 0, err
+	}
+	if err := s.eraseInteractions(ctx, tx, kinds, contents, vids); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, vids); err != nil {
+		return 0, err
+	}
+	if err := s.emit(ctx, tx, events...); err != nil {
+		return 0, err
+	}
+	return len(vids), tx.Commit(ctx)
+}
+
+// eraseInteractions deletes purged content's comments (with their reactions
+// and counts), reactions, favorites, counts and access history: of whole items
+// when vids is nil, else of those versions (vids[i] of item ids[i]).
+func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vids []string) error {
+	target := `(content_kind, content_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`
+	args := []any{s.tenant, kinds, ids}
+	history, historyArgs := `content_id = ANY($2)`, []any{s.tenant, ids}
+	if vids != nil {
+		target = `(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))`
+		args = append(args, vids)
+		history, historyArgs = `version_id = ANY($2)`, []any{s.tenant, vids}
+	}
+	for _, q := range []string{
+		`DELETE FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND content_kind = '` + content.KindComment + `' AND content_version_id IS NULL
+ AND content_id IN (SELECT id::text FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND ` + target + `)`,
+		`DELETE FROM ` + s.t.counts + ` WHERE tenant_id = $1 AND content_kind = '` + content.KindComment + `' AND content_version_id IS NULL
+ AND content_id IN (SELECT id::text FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND ` + target + `)`,
+		`DELETE FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND ` + target,
+		`DELETE FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND ` + target,
+		`DELETE FROM ` + s.t.favorites + ` WHERE tenant_id = $1 AND ` + target,
+		`DELETE FROM ` + s.t.counts + ` WHERE tenant_id = $1 AND ` + target,
+	} {
+		if _, err := tx.Exec(ctx, q, args...); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.accessHistory+` WHERE tenant_id = $1 AND `+history, historyArgs...)
+	return err
 }
 
 // Queue is the River queue of the catalog's jobs.

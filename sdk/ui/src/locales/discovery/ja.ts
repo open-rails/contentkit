@@ -55,6 +55,7 @@ export const discovery: typeof en = {
     pageProgress_other: "{progress} / {count} ページ",
     minuteProgress_one: "{progress} / {count} 分",
     minuteProgress_other: "{progress} / {count} 分",
+    notInLanguage: "{language}では利用できません。{shown}で表示しています。",
     search: "検索",
     searchPlaceholder: "検索…",
     clearSearch: "検索をクリア",

@@ -340,6 +340,10 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", ids[0]) == 0 {
 		t.Fatalf("expired %d (%v), folder deletions queued %d", n, err, jobs("contentkit_media_delete_folder", ids[0]))
 	}
+	// The daily orphan sweep lists the catalog kinds' folders; nothing is past its grace yet.
+	if n, err := e.sweepOrphans(ctx); err != nil || n != 0 {
+		t.Fatalf("orphan sweep deleted %d (%v)", n, err)
+	}
 
 	passed := time.Now().Add(-time.Minute)
 	freed, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Freed"}},

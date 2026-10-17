@@ -54,6 +54,11 @@ type Card struct {
 	// Ranking is present for a population-normalized popular result. Raw
 	// participation is retained alongside its single reliability adjustment.
 	Ranking *ContentRanking `json:"ranking,omitempty"`
+	// UpdatedAt is when a newer version of the work was published after this
+	// card's version; absent until then.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// Deleted marks a deleted item or version for staff and its creators.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 type ContentRanking struct {
@@ -269,6 +274,9 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 			return nil, err
 		}
 		if err := s.viewerState(ctx, q.reader.Actor, got); err != nil {
+			return nil, err
+		}
+		if err := s.cardStatus(ctx, got, q.viewer.Staff()); err != nil {
 			return nil, err
 		}
 	}
@@ -547,6 +555,24 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	}
 	for _, n := range favorited {
 		out[n-1].Favorited = true
+	}
+	// A version's own reaction wins over one on the whole item.
+	reacted, err := s.o.Pool.Query(ctx, `SELECT r.n, x.value FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
+ JOIN LATERAL (SELECT a.value FROM `+s.t.reactions+` a WHERE a.tenant_id = $1 AND a.user_id = $2 AND a.content_kind = r.kind AND a.content_id = r.id
+  AND a.value <> 0 AND (a.content_version_id IS NULL OR a.content_version_id = nullif(r.version, ''))
+  ORDER BY a.content_version_id IS NULL, a.updated_at DESC LIMIT 1) x ON true`, s.o.Tenant, actor.AccountID(), kinds, ids, versions)
+	if err != nil {
+		return nil, err
+	}
+	reactions, err := pgx.CollectRows(reacted, func(row pgx.CollectableRow) (struct{ n, value int64 }, error) {
+		var v struct{ n, value int64 }
+		return v, row.Scan(&v.n, &v.value)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range reactions {
+		out[r.n-1].Reaction = int(r.value)
 	}
 	if !s.o.Hub.SignalPlane() {
 		return out, nil

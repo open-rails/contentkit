@@ -373,8 +373,11 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	if e.offers != nil {
 		co.Offers = e.offers
 	}
-	e.catalog, err = catalog.New(ctx, co)
-	return err
+	if e.catalog, err = catalog.New(ctx, co); err != nil {
+		return err
+	}
+	e.catalog.Subscribe(e.forgetPurged)
+	return nil
 }
 
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {

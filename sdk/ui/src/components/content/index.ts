@@ -8,7 +8,7 @@ export { ReaderSettings, type ReaderSettingsProps } from "./reader-settings.js";
 export { ContentFilterDialog, type ContentFilterDialogProps } from "./filter-dialog.js";
 export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ContentFilterCount, type ReleaseDateIndexProps } from "./filters.js";
 export { ContentListing, sortLabel, type ContentListingProps } from "./listing.js";
-export { Paywall, VersionPicker, priceLabel, useVersionMenuItems, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
+export { LanguageFallbackNotice, Paywall, VersionPicker, priceLabel, useVersionMenuItems, type LanguageFallbackNoticeProps, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
 export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, VersionCover, VersionsEditor, versionLabel } from "./editors.js";
 export { OfferFields } from "./offer-fields.js";
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
