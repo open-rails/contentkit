@@ -100,7 +100,7 @@ it("earlier unattached uploads count toward the folder's upload cap", async () =
   expect(record.presigns).toHaveLength(0);
 });
 
-it("staff statistics expose missing view collection and still rank comments; readers see their own totals", async () => {
+it("staff statistics expose unavailable measured engagement and still rank comments; readers see their own totals", async () => {
   const c = client(h, cfg, staff);
   const title = `QA statistics ${crypto.randomUUID()}`;
   const blog = await c.contents.create({ kind: "blog", text: { en: { title } } });
@@ -110,7 +110,7 @@ it("staff statistics expose missing view collection and still rank comments; rea
   await reader.comments.create({ type: "contents", id: blog.id }, { body: "A reader comment." });
   const user = userEvent.setup();
   const dashboard = render(<StatsDashboard client={c} kinds={["blog"]} />);
-  await waitFor(() => expect(screen.getAllByText("View statistics aren't available on this site.")).toHaveLength(2), wait);
+  await waitFor(() => expect(screen.getAllByText("Measured engagement is not available on this site.")).toHaveLength(2), wait);
   await user.click(screen.getByRole("combobox", { name: "Ranked by" }));
   await user.click(await screen.findByRole("option", { name: "Comments" }));
   expect(await screen.findByRole("link", { name: title }, wait)).toBeInTheDocument();
