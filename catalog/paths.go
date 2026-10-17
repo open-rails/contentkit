@@ -129,17 +129,36 @@ func (s *Store) RefreshPaths(ctx context.Context) (int, error) {
 	}
 }
 
-// RefreshPaths is the operator form of Store.RefreshPaths; it opens no
-// server, auth or billing runtime.
+// RefreshPaths is the operator form of Store.RefreshPaths for one tenant, or
+// every tenant in the schema when tenant is ""; it opens no server, auth or
+// billing runtime.
 func RefreshPaths(ctx context.Context, pool *pgxpool.Pool, schema, tenant string, model kinds.Config) (int, error) {
-	if pool == nil || strings.TrimSpace(schema) == "" || strings.TrimSpace(tenant) == "" {
-		return 0, fmt.Errorf("catalog: pool, schema and tenant are required")
+	if pool == nil || strings.TrimSpace(schema) == "" {
+		return 0, fmt.Errorf("catalog: pool and schema are required")
 	}
 	if err := model.Validate(); err != nil {
 		return 0, err
 	}
 	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
-	s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: tenant, cfg: model,
-		t: tables{items: q("content_items"), text: q("content_text"), groups: q("content_groups"), memberships: q("content_memberships")}}
-	return s.RefreshPaths(ctx)
+	tenants := []string{tenant}
+	if tenant == "" {
+		rows, err := pool.Query(ctx, `SELECT DISTINCT tenant_id FROM `+q("content_items")+` ORDER BY tenant_id`)
+		if err != nil {
+			return 0, err
+		}
+		if tenants, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return 0, err
+		}
+	}
+	visited := 0
+	for _, t := range tenants {
+		s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: t, cfg: model,
+			t: tables{items: q("content_items"), text: q("content_text"), groups: q("content_groups"), memberships: q("content_memberships")}}
+		n, err := s.RefreshPaths(ctx)
+		visited += n
+		if err != nil {
+			return visited, err
+		}
+	}
+	return visited, nil
 }

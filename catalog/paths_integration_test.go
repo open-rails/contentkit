@@ -81,7 +81,7 @@ func TestRefreshPathsBackfillsEntityPaths(t *testing.T) {
 	if got := f.read("staff", "main.test", id)[0].Path; !strings.HasSuffix(got, "/night-before") || strings.Contains(got, "saga") {
 		t.Fatalf("stale path %q", got)
 	}
-	if n, err := RefreshPaths(f.ctx, f.pool, f.schema, tenant, config()); err != nil || n != 1 {
+	if n, err := RefreshPaths(f.ctx, f.pool, f.schema, "", config()); err != nil || n != 1 {
 		t.Fatalf("RefreshPaths = %d, %v", n, err)
 	}
 	if got := f.read("staff", "main.test", id)[0].Path; !strings.HasSuffix(got, "/saga/night-before") {
