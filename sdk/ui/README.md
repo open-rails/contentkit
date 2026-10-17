@@ -746,6 +746,15 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
 
+- **`AdminQuickSearch`**: autocomplete navigation to content and entity editors,
+  including managed drafts and hidden content. Supply the permitted
+  `contentKinds` / `entityKinds` and mandatory `contentHref` / `entityHref`
+  callbacks. Suggestions without an editor URL are omitted; public paths are
+  never a fallback. It reuses `SearchBox` geometry and arrow/Enter/Escape
+  controls, with no recent-search history or free-text results submission.
+  Management authorization remains enforced by the server. Set
+  `presentation="header"` for the shared centered-header dropdown.
+
 - **`PageReview`**: retained page sources, original filenames, automatic cleanup
   reasons, previews, inclusion overrides and ordering. `ContentManager` includes
   it for reader versions; use `content` and `version` to embed it separately.

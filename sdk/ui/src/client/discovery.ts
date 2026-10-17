@@ -23,7 +23,7 @@ import { browserSearchHistory, type BrowserSearchHistory } from "./browser-searc
 /** A popularity period. */
 export type Period = "7d" | "30d" | "90d" | "365d" | "all";
 /** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${Period}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "most_viewed" | "position" | "random";
+export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${Period}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
@@ -123,7 +123,7 @@ export interface RecentSearchesQuery {
   /** 10 by default, at most 100. */
   limit?: number;
 }
-export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number };
+export type RailQuery = ContentFilterQuery & ReaderQuery & CardQuery & { limit?: number; summary?: boolean };
 export type ReleaseDatesQuery = ContentFilterQuery & ReaderQuery & PageQuery & { by?: "month" | "day" };
 /** Complete daily metadata for one calendar window, without pagination. */
 export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> & ReaderQuery & CardQuery & {
@@ -132,7 +132,7 @@ export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> 
   end_date?: string;
   time_zone?: string;
 };
-export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed" };
+export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed"; summary?: boolean };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
   /** Only contents of this kind. */
@@ -143,8 +143,20 @@ export interface TypeaheadQuery extends ReaderQuery {
   limit?: number;
 }
 
+/** Private editor navigation. Each requested section must be chosen explicitly. */
+export interface AdminSuggestionsQuery {
+  q: string;
+  display_language?: string;
+  content_kinds?: readonly string[];
+  entity_kinds?: readonly string[];
+  include_contents: boolean;
+  include_entities: boolean;
+  /** Per section: 8 by default, at most 20. */
+  limit?: number;
+}
+
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["ids", "groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds"]);
+const LISTS = new Set(["ids", "groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds", "content_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {
@@ -189,6 +201,10 @@ export class DiscoveryClient {
   /** Contents and groups while the reader types. */
   typeahead(q: TypeaheadQuery, signal?: AbortSignal): Promise<Typeahead> {
     return call(this.http, "GET", "/typeahead", { query: query(q) as never, signal });
+  }
+  /** Current names of authorized draft/hidden content and entities; no public search fallback. */
+  adminSuggestions(q: AdminSuggestionsQuery, signal?: AbortSignal): Promise<Typeahead> {
+    return call(this.http, "GET", "/manage/search-suggestions", { query: query(q) as never, signal });
   }
   /** Contents like one, of its kind unless q.kind names another. */
   similar(id: string, q: RailQuery = {}, signal?: AbortSignal): Promise<ContentPage> {

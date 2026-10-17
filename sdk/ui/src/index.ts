@@ -44,6 +44,7 @@ export * from "./components/social/index.js";
 export * from "./components/groups/index.js";
 export * from "./components/content/index.js";
 export { ContentAdmin, type ContentAdminProps, type ContentAdminSection } from "./components/admin/content-admin.js";
+export { AdminQuickSearch, type AdminQuickSearchProps } from "./components/admin/quick-search.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
 export { ContentEditor, ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
