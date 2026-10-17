@@ -22,10 +22,12 @@ export const EditorSaveContext = createContext<EditorTasks | null>(null);
 
 export function useEditorSaveTask(id: string, task: EditorTask) {
   const context = useContext(EditorSaveContext);
+  const register = context?.register;
+  const changed = context?.changed;
   const current = useRef(task);
   current.current = task;
-  useLayoutEffect(() => context?.register(id, current), [context?.register, id]);
-  useLayoutEffect(() => context?.changed(), [context?.changed, task.dirty, task.pending, task.valid]);
+  useLayoutEffect(() => register?.(id, current), [register, id]);
+  useLayoutEffect(() => changed?.(), [changed, task.dirty, task.pending, task.valid]);
 }
 
 /** Save only dirty tools, before publication; a refused save never publishes. */
@@ -70,10 +72,12 @@ export async function readerMediaReady(client: ContentKitClient, ref: RefBody): 
   const pages = await client.versions.pages(ref.id, ref.version);
   if (!pages.selected) return false;
   let offset = 0;
+  let total = 0;
   do {
     const read = await client.media.read(ref, { editor: true, offset, limit: 200 });
     if (read.files.some((file) => !!file.failed || isProcessing(file))) return false;
-    if (offset + (read.limit || 200) >= read.total) return read.total > 0;
+    total = read.total;
     offset += read.limit || 200;
-  } while (true);
+  } while (offset < total);
+  return total > 0;
 }

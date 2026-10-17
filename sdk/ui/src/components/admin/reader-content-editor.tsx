@@ -83,9 +83,10 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const owned = useRef({ item, scope, alive: true });
   owned.current.item = item;
   useEffect(() => {
-    owned.current.alive = true;
+    const owner = owned.current;
+    owner.alive = true;
     return () => {
-      owned.current.alive = false;
+      owner.alive = false;
     };
   }, []);
   const current = () => owned.current.alive && owned.current.scope === scope;
@@ -133,7 +134,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const latest = useRef({ texts, details, associations, language });
   latest.current = { texts, details, associations, language };
   const text = texts.value[language] ?? blank();
-  const shownBody = useMemo(() => (text.body ?? "").replace(imageRefs(), (ref, name: string) => ed.imageSrc(name) ?? ref), [text.body, ed.imageSrc]);
+  const shownBody = (text.body ?? "").replace(imageRefs(), (ref, name: string) => ed.imageSrc(name) ?? ref);
   const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
   const fail = (e: unknown) => {
     if (!current()) return;
@@ -315,7 +316,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const up = await client.media.uploadNamed(target, file, { path: await client.media.presetPath(p.kind, "cover", file) });
     if (current()) await client.contents.setCover(content.id, v.id, up.name);
   };
-  const useAsCover = async (file: FileInfo) => {
+  const selectCover = async (file: FileInfo) => {
     if (!ref || !item || !version) return;
     const path = await client.media.presetPath(p.kind, "cover", new File([], file.path.split("/").at(-1) ?? "cover", { type: file.type }));
     await client.media.commit(ref, [{ op: "copy", from: { id: item.id, version: version.id, path: file.path }, to: path }]);
@@ -466,7 +467,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                       title={t("readerEditor.useCover")}
                       aria-label={t("readerEditor.useCoverFor", { name: file.path.split("/").at(-1) ?? file.path })}
                       disabled={cover.pending || saving}
-                      onClick={() => void cover.run(() => useAsCover(file))}
+                      onClick={() => void cover.run(() => selectCover(file))}
                     >
                       <HugeiconsIcon icon={StarIcon} />
                     </Button>
