@@ -202,13 +202,13 @@ export class DiscoveryClient {
   /** Only the current domain's reader-toggleable entities, named in the requested language. */
   async contentFilters(language?: string, signal?: AbortSignal): Promise<ContentFilters> {
     const result = await this.http.request<ContentFilters>(routeURL(this.http, "GET", "/content-filters", { query: { language } }), { signal, guestPreferences: false });
-    this.http.acceptGuestFilters(result.kinds);
+    this.http.acceptGuestFilters(result.filters);
     return result;
   }
-  /** Replaces this domain's reader settings; other domains' choices remain intact. */
+  /** Atomically changes submitted shared choices; omitted settings remain intact. */
   async setContentFilters(update: ContentFiltersUpdate, language?: string): Promise<ContentFilters> {
     const emit = this.http.captureChanges();
-    const out: ContentFilters = await call(this.http, "PUT", "/me/content-filters", { query: { language }, body: update });
+    const out: ContentFilters = await call(this.http, "PATCH", "/me/content-filters", { query: { language }, body: update });
     emit({ type: "contentFilters.changed" });
     return out;
   }

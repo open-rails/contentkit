@@ -203,8 +203,8 @@ func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
 		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
 			t.Fatalf("%s: status %d", tc.language, status)
 		}
-		if len(result.Kinds["gallery"]) != 2 || result.Kinds["gallery"][0].Group.Name != tc.want {
-			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Kinds["gallery"])
+		if len(result.Filters) != 2 || result.Filters[0].Group.Name != tc.want {
+			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Filters)
 		}
 	}
 }
@@ -216,8 +216,8 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
-	if len(filters.Kinds["gallery"]) != 2 || filters.Kinds["gallery"][0].Group.Name != "Big breasts" || filters.Kinds["gallery"][0].Visible || filters.Kinds["gallery"][0].Overridden ||
-		filters.Kinds["gallery"][1].Group.Name != "Yaoi" || !filters.Kinds["gallery"][1].Visible || filters.IncludeDeleted {
+	if len(filters.Filters) != 2 || filters.Filters[0].Group.Name != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
+		filters.Filters[1].Group.Name != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {
@@ -241,20 +241,21 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 		}
 	}
 	for _, bad := range []ContentFiltersUpdate{
-		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["romance"], Visible: false}}}},
-		{Kinds: map[string][]FilterSetting{"gallery": {{EntityID: f.ids["yaoi"]}, {EntityID: f.ids["yaoi"], Visible: true}}}},
+		{Filters: filterChoices(FilterSetting{EntityID: f.ids["romance"], Visible: false})},
+		{Filters: filterChoices(FilterSetting{EntityID: f.ids["yaoi"], Visible: false}, FilterSetting{EntityID: f.ids["yaoi"], Visible: true})},
 	} {
-		if status, code := f.call(http.MethodPut, host, "plain", "/me/content-filters", bad, nil); status != http.StatusBadRequest {
-			t.Fatalf("PUT %+v: %d %s", bad, status, code)
+		if status, code := f.call(http.MethodPatch, host, "plain", "/me/content-filters", bad, nil); status != http.StatusBadRequest {
+			t.Fatalf("PATCH %+v: %d %s", bad, status, code)
 		}
 	}
-	show := ContentFiltersUpdate{Kinds: map[string][]FilterSetting{"gallery": []FilterSetting{{EntityID: f.ids["big-breasts"], Visible: true}, {EntityID: f.ids["yaoi"], Visible: false}}}}
+
+	show := ContentFiltersUpdate{Filters: filterChoices(FilterSetting{EntityID: f.ids["big-breasts"], Visible: true}, FilterSetting{EntityID: f.ids["yaoi"], Visible: false})}
 	for _, user := range []string{"plain", "fan"} {
-		if status, _ := f.call(http.MethodPut, host, user, "/me/content-filters", show, &filters); status != http.StatusOK {
+		if status, _ := f.call(http.MethodPatch, host, user, "/me/content-filters", show, &filters); status != http.StatusOK {
 			t.Fatalf("PUT: %d", status)
 		}
 	}
-	if !filters.Kinds["gallery"][0].Visible || !filters.Kinds["gallery"][0].Overridden || filters.Kinds["gallery"][1].Visible || !filters.Kinds["gallery"][1].Overridden {
+	if !filters.Filters[0].Visible || !filters.Filters[0].Overridden || filters.Filters[1].Visible || !filters.Filters[1].Overridden {
 		t.Fatalf("after PUT: %+v", filters)
 	}
 	got, page := f.list(host, "plain", q("/contents", "kind", "gallery"))

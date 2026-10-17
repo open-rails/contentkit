@@ -2847,20 +2847,20 @@ func (q GetContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// GetContentFilters is GET /v1/content-filters (public). The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.
+// GetContentFilters is GET /v1/content-filters (public). The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{entity_id,visible}]; one choice applies across applies_to kinds. Account settings take precedence when signed in.
 func (c *Client) GetContentFilters(ctx context.Context, q GetContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
 	err := c.call(ctx, http.MethodGet, "/v1/content-filters", q.values(), nil, &out)
 	return out, err
 }
 
-// PutMeContentFiltersQuery is the query of PutMeContentFilters.
-type PutMeContentFiltersQuery struct {
+// PatchMeContentFiltersQuery is the query of PatchMeContentFilters.
+type PatchMeContentFiltersQuery struct {
 	// the language of labels and group names
 	Language string
 }
 
-func (q PutMeContentFiltersQuery) values() url.Values {
+func (q PatchMeContentFiltersQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -2868,10 +2868,10 @@ func (q PutMeContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// PutMeContentFilters is PUT /v1/me/content-filters (user). Replaces the reader's content filter settings and whether lists include deleted content they hold.
-func (c *Client) PutMeContentFilters(ctx context.Context, body discovery.ContentFiltersUpdate, q PutMeContentFiltersQuery) (discovery.ContentFilters, error) {
+// PatchMeContentFilters is PATCH /v1/me/content-filters (user). Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.
+func (c *Client) PatchMeContentFilters(ctx context.Context, body discovery.ContentFiltersUpdate, q PatchMeContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
-	err := c.call(ctx, http.MethodPut, "/v1/me/content-filters", q.values(), body, &out)
+	err := c.call(ctx, http.MethodPatch, "/v1/me/content-filters", q.values(), body, &out)
 	return out, err
 }
 

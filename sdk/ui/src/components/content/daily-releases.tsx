@@ -76,10 +76,6 @@ export function DailyReleases({ query, initialVisible = 30, revealStep = 30, col
 
 type ReleaseCardProps = Omit<DailyReleasesProps, "query" | "initialVisible" | "revealStep" | "collapsePremium" | "summaryLabels">;
 const lockedPremium = (card: Card) => !card.access.allowed && card.access.level === "tier";
-const singleReleaseKind = (day: ReleaseDay): string | undefined => {
-  const kinds = new Set([...day.contents.map((card) => card.kind), ...(day.filtered_entities ?? []).map((entry) => entry.content_kind)]);
-  return kinds.size === 1 ? kinds.values().next().value : undefined;
-};
 
 function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapsePremium, summaryLabels, language, kinds }: {
   day: ReleaseDay; initial: number; step: number; pending: boolean; cardProps: ReleaseCardProps;
@@ -95,7 +91,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   const dayHeading = useRef<HTMLButtonElement>(null);
   const cards = useMemo(() => day.contents.slice(0, visible), [day.contents, visible]);
   const premiumCount = useMemo(() => day.contents.filter(lockedPremium).length, [day.contents]);
-  const summaryContentKind = kinds?.[0] ?? singleReleaseKind(day);
+  const summaryContentKind = kinds?.[0];
   const entries = useMemo(() => {
     let inserted = false;
     return cards.flatMap((card, i): { key: string; card: Card; summary: boolean; position: number }[] => {
@@ -138,7 +134,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
           {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="outline" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
         </div>
       </div>
-      <ContentFilterDialog returnFocus={() => !pending && filterTrigger.current?.isConnected ? filterTrigger.current : dayHeading.current} open={filtersOpen} onOpenChange={setFiltersOpen} client={p.client} kinds={kinds} labels={p.labels} language={language} counts={day.filtered_entities ?? []} description={m.t("releases.filterContext", { date: label })} appearance={p.appearance} />
+      <ContentFilterDialog returnFocus={() => !pending && filterTrigger.current?.isConnected ? filterTrigger.current : dayHeading.current} open={filtersOpen} onOpenChange={setFiltersOpen} client={p.client} kinds={kinds} language={language} counts={day.filtered_entities ?? []} description={m.t("releases.filterContext", { date: label })} appearance={p.appearance} />
     </section>
   );
 }

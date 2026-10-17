@@ -37,9 +37,8 @@ type ReleaseDay struct {
 }
 
 type ReleaseFilteredEntity struct {
-	ContentKind string           `json:"content_kind"`
-	Entity      groups.GroupCard `json:"entity"`
-	Count       int              `json:"count"`
+	Entity groups.GroupCard `json:"entity"`
+	Count  int              `json:"count"`
 }
 
 // DailyReleases contains every visible card in the requested window, without

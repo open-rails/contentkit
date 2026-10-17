@@ -416,20 +416,20 @@ export interface ContentFilterState {
 }
 
 export interface ContentFilters {
-  kinds: Record<string, ContentFilterState[]>;
+  applies_to: string[];
+  filters: ContentFilterState[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersInitialization {
   account_id: string;
-  kinds: Record<string, GuestFilterSetting[]>;
-  legacy_filters?: FilterSetting[];
+  filters: GuestFilterSetting[];
   include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
-  kinds: Record<string, FilterSetting[]>;
-  include_deleted: boolean;
+  filters?: GuestFilterSetting[];
+  include_deleted?: boolean;
 }
 
 export interface ContentGroups {
@@ -797,11 +797,6 @@ export interface FileInfo {
   failed?: Failure;
   editor_url?: string;
   progress?: EncodeProgress;
-}
-
-export interface FilterSetting {
-  entity_id: string;
-  visible: boolean;
 }
 
 export interface ForegroundCue {
@@ -1772,7 +1767,6 @@ export interface ReleaseDay {
 }
 
 export interface ReleaseFilteredEntity {
-  content_kind: string;
   entity: GroupCard;
   count: number;
 }

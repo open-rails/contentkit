@@ -216,19 +216,17 @@ export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {
 }
 
 export interface UseContentFilters {
-  /** null until the configured filters have loaded. */
   filters: ContentFilters | null;
   loading: boolean;
   error?: ContentKitError;
   saving: boolean;
-  /** Replaces offered settings for the supplied kinds; other kinds remain unchanged. */
+  /** Atomically changes submitted entity choices; other choices are preserved. */
   save: (update: ContentFiltersUpdate) => Promise<ContentFilters>;
-  /** Shows or hides one filter's group, keeping the other settings. */
-  setVisible: (kind: string, entityId: string, visible: boolean) => Promise<ContentFilters>;
+  setVisible: (entityId: string, visible: boolean) => Promise<ContentFilters>;
   setIncludeDeleted: (include: boolean) => Promise<ContentFilters>;
 }
 
-/** Current-domain toggles: browser choices for guests, server choices for accounts. */
+/** One current-domain control per entity, shared by all applies_to kinds. */
 export function useContentFilters(o: { language?: string; client?: ContentKitClient } = {}): UseContentFilters {
   const { client, store, scope, viewer, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
@@ -236,56 +234,91 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
   const browser = client.preferences.browser;
   const local = useSyncExternalStore(browser.subscribe, browser.snapshot, browser.snapshot);
   const key = keyOf("content-filters", scope, language);
-  const previous = useRef<{ client: ContentKitClient; language?: string; guest: boolean; data?: ContentFilters } | null>(null);
-  const initial = guest && previous.current?.guest && previous.current.client === client && previous.current.language === language ? previous.current.data : undefined;
-  const r = useResource<ContentFilters>(store, key, { type: "content-filters" }, (s) => client.discovery.contentFilters(language, s), { initial });
+  const previous = useRef<{
+    client: ContentKitClient;
+    language?: string;
+    guest: boolean;
+    data?: ContentFilters;
+  } | null>(null);
+  const initial =
+    guest && previous.current?.guest && previous.current.client === client && previous.current.language === language
+      ? previous.current.data
+      : undefined;
+  const r = useResource<ContentFilters>(
+    store,
+    key,
+    { type: "content-filters" },
+    (signal) => client.discovery.contentFilters(language, signal),
+    { initial },
+  );
   previous.current = { client, language, guest, data: r.data };
-  const applyGuest = useCallback((source: ContentFilters, choices = local): ContentFilters => {
-    const legacy = new Map(choices.legacy_filters.map((f) => [f.entity_id, f.visible]));
-    return { include_deleted: false, kinds: Object.fromEntries(Object.entries(source.kinds).map(([kind, rows]) => {
-      const values = new Map<string, boolean | undefined>(legacy);
-      for (const f of choices.kinds[kind] ?? []) values.set(f.entity_id, f.default ? undefined : f.visible);
-      return [kind, rows.map((f) => ({ ...f, visible: values.get(f.entity.id) ?? f.default_visible, overridden: values.get(f.entity.id) !== undefined }))];
-    })) };
-  }, [local]);
-  const displayed = useMemo(() => r.data && guest ? applyGuest(r.data) : r.data, [r.data, guest, applyGuest]);
+  const applyGuest = useCallback(
+    (source: ContentFilters, choices = local): ContentFilters => {
+      const values = new Map(choices.filters.map((row) => [row.entity_id, row]));
+      return {
+        ...source,
+        include_deleted: false,
+        filters: source.filters.map((row) => {
+          const choice = values.get(row.entity.id);
+          return { ...row, visible: choice?.visible ?? row.default_visible, overridden: choice?.visible !== undefined };
+        }),
+      };
+    },
+    [local],
+  );
+  const displayed = useMemo(() => (r.data && guest ? applyGuest(r.data) : r.data), [r.data, guest, applyGuest]);
   const guarded = useGuarded();
   const isCurrent = useCurrentDiscoveryScope(client, scope);
   const [inflight, setInflight] = useState(0);
   const current = useRef(displayed);
   current.current = displayed;
-  useEffect(() => { setInflight(0); }, [client, scope]);
+  useEffect(() => {
+    setInflight(0);
+  }, [client, scope]);
   const save = useCallback(
     async (update: ContentFiltersUpdate) => {
       if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
       if (guest) {
         const source = current.current;
         if (!source) throw new ContentKitError("invalid_request", "Content filters have not loaded.");
-        const snapshot = browser.snapshot();
-        const merged = { ...snapshot.kinds };
-        const legacy = new Set(snapshot.legacy_filters.map((row) => row.entity_id));
-        for (const [kind, updates] of Object.entries(update.kinds)) {
-          const offered = source.kinds[kind];
-          if (!offered) throw new ContentKitError("invalid_request", "This content kind has no configurable filters.");
-          const allowed = new Set(offered.map((f) => f.entity.id));
-          if (updates.some((f) => !allowed.has(f.entity_id))) throw new ContentKitError("invalid_request", "This content filter is not configured.");
-          const explicit = new Set(updates.map((f) => f.entity_id));
-          // Resets follow whichever domain default is current, while suppressing
-          // an old unscoped preference for only this kind/entity pair.
-          const defaults = offered.filter((f) => legacy.has(f.entity.id) && !explicit.has(f.entity.id))
-            .map((f) => ({ entity_id: f.entity.id, default: true as const }));
-          merged[kind] = [...(snapshot.kinds[kind] ?? []).filter((f) => !allowed.has(f.entity_id)), ...updates, ...defaults];
+        const allowed = new Set(source.filters.map((row) => row.entity.id));
+        const updates: import("../client/browser-reader-preferences.js").ReaderFilterChoice[] = [];
+        const seen = new Set<string>();
+        for (const row of update.filters ?? []) {
+          if (!allowed.has(row.entity_id) || seen.has(row.entity_id))
+            throw new ContentKitError("invalid_request", "This content filter is not configured or is set twice.");
+          seen.add(row.entity_id);
+          if (row.default === true && row.visible === undefined)
+            updates.push({ entity_id: row.entity_id, default: true });
+          else if (row.default === undefined && typeof row.visible === "boolean")
+            updates.push({ entity_id: row.entity_id, visible: row.visible });
+          else throw new ContentKitError("invalid_request", "A content filter needs visible or default:true.");
         }
-        client.preferences.setGuestFilters(merged);
-        return applyGuest(source, { ...snapshot, kinds: merged });
+        client.preferences.setGuestFilters(updates);
+        return applyGuest(source, browser.snapshot());
       }
+      const submitted = new Set((update.filters ?? []).map((row) => row.entity_id));
+      const changesDeleted = typeof update.include_deleted === "boolean";
       setInflight((n) => n + 1);
       try {
         const out = await guarded(() => {
           if (!isCurrent()) throw new ContentKitError("aborted", "The account changed.");
           return client.discovery.setContentFilters(update, language);
         });
-        if (isCurrent()) store.set(key, out);
+        if (isCurrent()) {
+          const rows = new Map(out.filters.map((row) => [row.entity.id, row]));
+          // Another control may already have applied a newer response. Merge
+          // only this request's choices, never its stale unrelated snapshot.
+          store.set<ContentFilters>(key, (previous) => previous ? {
+            ...previous,
+            filters: previous.filters.flatMap((row) => {
+              if (!submitted.has(row.entity.id)) return [row];
+              const next = rows.get(row.entity.id);
+              return next ? [next] : [];
+            }),
+            include_deleted: changesDeleted ? out.include_deleted : previous.include_deleted,
+          } : out);
+        }
         return out;
       } finally {
         setInflight((n) => Math.max(0, n - 1));
@@ -293,34 +326,20 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
     },
     [client, guarded, language, key, store, isCurrent, guest, browser, applyGuest],
   );
-  const settings = (f: ContentFilters) => Object.fromEntries(Object.entries(f.kinds).map(([kind, rows]) =>
-    [kind, rows.filter((x) => x.overridden).map((x) => ({ entity_id: x.entity.id, visible: x.visible }))]));
   const setVisible = useCallback(
-    async (kind: string, entityId: string, visible: boolean) => {
-      const f = current.current;
-      if (!f) return Promise.reject(new Error("contentkit-ui: the content filters have not loaded"));
-      if (guest) {
-        if (!isCurrent()) return Promise.reject(new ContentKitError("aborted", "The account changed."));
-        if (!f.kinds[kind]?.some((row) => row.entity.id === entityId)) return Promise.reject(new ContentKitError("invalid_request", "This content filter is not configured."));
-        const snapshot = browser.snapshot();
-        const kinds = { ...snapshot.kinds, [kind]: [...(snapshot.kinds[kind] ?? []).filter((row) => row.entity_id !== entityId), { entity_id: entityId, visible }] };
-        client.preferences.setGuestFilters(kinds);
-        return Promise.resolve(applyGuest(f, { ...snapshot, kinds }));
-      }
-      const rows = settings(f)[kind] ?? [];
-      return save({ kinds: { [kind]: [...rows.filter((x) => x.entity_id !== entityId), { entity_id: entityId, visible }] }, include_deleted: f.include_deleted });
-    },
-    [save, guest, isCurrent, browser, applyGuest, client],
-  );
-  const setIncludeDeleted = useCallback(
-    (include: boolean) => {
-      const f = current.current;
-      if (!f) return Promise.reject(new Error("contentkit-ui: the content filters have not loaded"));
-      return save({ kinds: {}, include_deleted: include });
-    },
+    (entityId: string, visible: boolean) => save({ filters: [{ entity_id: entityId, visible }] }),
     [save],
   );
-  return { filters: displayed ?? null, loading: r.loading || !r.loaded, error: r.error, saving: inflight > 0, save, setVisible, setIncludeDeleted };
+  const setIncludeDeleted = useCallback((include: boolean) => save({ include_deleted: include }), [save]);
+  return {
+    filters: displayed ?? null,
+    loading: r.loading || !r.loaded,
+    error: r.error,
+    saving: inflight > 0,
+    save,
+    setVisible,
+    setIncludeDeleted,
+  };
 }
 
 export interface UseTypeahead {

@@ -55,7 +55,7 @@ export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, pars
 export { CodesClient } from "./codes.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
 export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
-export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilterKinds, type ReaderFilterChoice } from "./browser-reader-preferences.js";
+export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilters, type ReaderFilterChoice } from "./browser-reader-preferences.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";
 export {

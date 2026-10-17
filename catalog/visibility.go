@@ -91,15 +91,14 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		return nil, err
 	}
 	v.filter = f
-	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, v.domain)
+	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, v.domain, s.cfg.ContentFilters.AppliesTo)
 	if err != nil {
 		return nil, err
 	}
-	allowed := map[string]map[string]bool{}
-	for kind, p := range v.policies {
-		allowed[kind] = map[string]bool{}
+	allowed := map[string]bool{}
+	for _, p := range v.policies {
 		for id := range p.Toggles {
-			allowed[kind][id] = true
+			allowed[id] = true
 		}
 	}
 	values := map[string]string{}
@@ -126,7 +125,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	v.hidden = map[string][]string{}
 	for kind, p := range v.policies {
 		for id, defaultVisible := range p.Toggles {
-			visible, overridden := readerprefs.Stored(values, kind, id)
+			visible, overridden := readerprefs.Stored(values, id)
 			if !overridden {
 				visible = defaultVisible
 			}
@@ -260,7 +259,10 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		args[k] = a
 	}
 	if v.staff {
-		return scope, args
+		if v.management {
+			return scope, args
+		}
+		return "(" + scope + " AND " + soft + ")", args
 	}
 	listed := "(" + f("listing") + " = 'listed' OR (" + f("listing") + " = 'members' AND " + opens + "))"
 	if v.mode == access.Hide {

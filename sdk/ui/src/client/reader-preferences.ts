@@ -1,4 +1,4 @@
-import type { ReaderFilterKinds } from "./browser-reader-preferences.js";
+import type { ReaderFilters } from "./browser-reader-preferences.js";
 import { ContentKitError, toContentKitError } from "./errors.js";
 import type { ContentFilters } from "./generated/wire.js";
 import type { Http } from "./http.js";
@@ -81,10 +81,9 @@ export class ReaderPreferencesClient {
   }
 
   /** Save an anonymous edit atomically after checking the current domain's wire limits. */
-  setGuestFilters(kinds: ReaderFilterKinds): void {
+  setGuestFilters(filters: ReaderFilters): void {
     if (this.viewer !== null) throw new ContentKitError("invalid_request", "Guest preferences are only available while signed out.");
-    this.http.validateGuestPreferences({ ...this.browser.snapshot(), kinds });
-    this.browser.setFilters(kinds);
+    this.browser.setFilters(filters,next=>this.http.validateGuestPreferences(next));
   }
 
   async setLanguage(language: string): Promise<void> {
@@ -182,7 +181,7 @@ export class ReaderPreferencesClient {
         // Registration initializes account-wide choices. Only the server knows
         // which saved entities are toggleable on another domain or now stale.
         await call<"POST", "/me/content-filters/initialize", ContentFilters>(this.http, "POST", "/me/content-filters/initialize", {
-          body: { account_id: account, kinds: pending.kinds, legacy_filters: [...pending.legacy_filters], include_deleted: false },
+          body: { account_id: account, filters: [...pending.filters], include_deleted: false },
         });
         if (generation !== this.generation) return;
         this.browser.complete(account, "filters");

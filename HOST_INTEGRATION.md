@@ -716,15 +716,17 @@ that fits the reader (`display_language` first, then position).
   ordering uses the shared ContentKit quality score, not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
-  `PUT /me/content-filters` saves account settings and `include_deleted`.
+  `PATCH /me/content-filters` atomically merges submitted shared entity choices
+  and optional `include_deleted`, preserving omitted values. One entity choice
+  applies across the configured `content_filters.applies_to` content kinds.
   `POST /me/content-filters/initialize` adopts a new account's guest choices
   only when no saved settings exist; its `account_id` must match the signed-in
   account. Trigger initialization on registration, never ordinary sign-in.
   Guest browsers persist choices locally and send
-  `ContentKit-Reader-Preferences: {"filters":[{"group_id":"configured-entity-id","visible":false}]}`.
+  `ContentKit-Reader-Preferences: {"filters":[{"entity_id":"configured-entity-id","visible":false}]}`.
   The header is ignored for authenticated accounts, grants no access, and
-  accepts at most 8 KiB and 128 configured filters. Unknown or duplicate IDs
-  and malformed values return `400 invalid_request`. Allow the header in the
+  accepts at most 8 KiB and 128 configured filters. Duplicate IDs and malformed values return `400 invalid_request`; unknown or
+  fixed guest IDs are ignored and cannot override policy. Allow the header in the
   host's CORS policy, and prune stale browser choices against a public
   `GET /content-filters` without the header before attaching them to reads.
   Account language remains the host's existing profile preference.

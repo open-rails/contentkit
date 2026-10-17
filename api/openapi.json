@@ -10584,7 +10584,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{group_id,visible}]; account settings take precedence when signed in.",
+        "summary": "The current reader's configured content filters and settings. Anonymous requests may supply ContentKit-Reader-Preferences JSON with filters [{entity_id,visible}]; one choice applies across applies_to kinds. Account settings take precedence when signed in.",
         "parameters": [
           {
             "name": "language",
@@ -10637,11 +10637,11 @@
       }
     },
     "/v1/me/content-filters": {
-      "put": {
+      "patch": {
         "tags": [
           "discovery"
         ],
-        "summary": "Replaces the reader's content filter settings and whether lists include deleted content they hold.",
+        "summary": "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
         "parameters": [
           {
             "name": "language",
@@ -13282,13 +13282,16 @@
       "ContentFilters": {
         "type": "object",
         "properties": {
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/ContentFilterState"
-              }
+          "applies_to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentFilterState"
             }
           },
           "include_deleted": {
@@ -13296,7 +13299,8 @@
           }
         },
         "required": [
-          "kinds",
+          "applies_to",
+          "filters",
           "include_deleted"
         ]
       },
@@ -13306,19 +13310,10 @@
           "account_id": {
             "type": "string"
           },
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/GuestFilterSetting"
-              }
-            }
-          },
-          "legacy_filters": {
+          "filters": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/FilterSetting"
+              "$ref": "#/components/schemas/GuestFilterSetting"
             }
           },
           "include_deleted": {
@@ -13329,13 +13324,10 @@
       "ContentFiltersUpdate": {
         "type": "object",
         "properties": {
-          "kinds": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/FilterSetting"
-              }
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestFilterSetting"
             }
           },
           "include_deleted": {
@@ -14505,17 +14497,6 @@
           "path",
           "type"
         ]
-      },
-      "FilterSetting": {
-        "type": "object",
-        "properties": {
-          "entity_id": {
-            "type": "string"
-          },
-          "visible": {
-            "type": "boolean"
-          }
-        }
       },
       "ForegroundCue": {
         "type": "object",
@@ -17767,9 +17748,6 @@
       "ReleaseFilteredEntity": {
         "type": "object",
         "properties": {
-          "content_kind": {
-            "type": "string"
-          },
           "entity": {
             "$ref": "#/components/schemas/GroupCard"
           },
@@ -17778,7 +17756,6 @@
           }
         },
         "required": [
-          "content_kind",
           "entity",
           "count"
         ]

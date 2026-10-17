@@ -481,10 +481,13 @@ shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 language; a sibling deployment reads it with
 `catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
 
-[Content filters](docs/content-filters.md) have app defaults and optional
-site-entrypoint defaults. Saved reader choices override both; resetting restores
-the current site defaults. These affect discovery listings, while direct links
-retain their existing access and site restrictions.
+[Content filters](docs/content-filters.md) form one app-scoped entity layer across
+explicit `applies_to` content kinds. Domains define their offered toggles and
+defaults; `require_entities` independently scopes hard requirements by kind.
+One saved entity choice affects galleries and posts together. Public browsing,
+including staff browsing, honors optional choices; authorized management keeps
+its visibility. Fixed and required domain rules also constrain direct access.
+`kinds.DecodeContentFilters` strictly reads an embedded app's policy block.
 
 ## Signal plane and discovery
 

@@ -3,27 +3,26 @@ package kinds
 import (
 	"encoding/json"
 	"errors"
-	"strings"
-	"testing"
-
 	"github.com/goccy/go-yaml"
+	"reflect"
+	"testing"
 )
 
 func TestConfigYAMLRejectsRetiredPolicyFields(t *testing.T) {
 	for _, raw := range []string{
-		"sites: [{name: main, hosts: [localhost]}]",
-		"content_filters: [{entity: {kind: tag, slug: gore}}]",
-		"domains: [{name: main, content_filter_defaults: []}]",
-		"domains: [{name: main, require_groups: []}]",
-		"domains: [{name: main, filters: [{entity: {kind: tag, slug: gore}, default_visible: false}]}]",
-		"domains: [{name: main, filters: [{entity: {kind: tag, slug: gore}, visible: false, labels: {en: Gore}}]}]",
-		"domains: [{name: main, kinds: {gallery: {filters: []}}}]",
-		"domains: [{name: main, gallery: {filter: []}}]",
-		"domains: [{name: main, gallery: {filters: [{entity: {kind: tag, slug: gore}, visible: false, user_togle: false}]}}]",
+		`sites: [{name: main, hosts: [localhost]}]`,
+		`domains: [{name: main, gallery: {filters: []}}]`,
+		`content_filters: [{entity: {kind: tag, slug: gore}}]`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, gallery: {filters: []}}]}`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, kinds: {gallery: {filters: []}}}]}`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, require_entities: [{kind: tag, slug: yaoi}]}]}`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, filters: [{entity: {kind: tag, slug: gore}, labels: {en: Gore}}]}]}`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, filters: [{entity: {kind: tag, slug: gore}, default_visible: false}]}]}`,
+		`content_filters: {applies_to: [gallery], domains: [{name: main, filters: [{entity: {kind: tag, slug: gore}, visible: false, user_togle: false}]}]}`,
 	} {
 		var c Config
 		if err := yaml.Unmarshal([]byte(raw), &c); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("retired policy accepted: %s: %v", raw, err)
+			t.Fatalf("retired or misspelled policy accepted %s: %v", raw, err)
 		}
 	}
 }
@@ -31,56 +30,75 @@ func TestConfigYAMLRejectsRetiredPolicyFields(t *testing.T) {
 func TestConfigYAMLDomainPolicy(t *testing.T) {
 	var c Config
 	raw := `languages: [en]
-domains:
-  - name: main
-    hosts: [localhost]
-    gallery:
-      require_entities: [{kind: tag, slug: yaoi}]
+content_filters:
+  applies_to: [gallery, blog]
+  domains:
+    - name: gay
+      hosts: [doujins.gay]
+      require_entities:
+        gallery: [{kind: tag, slug: yaoi}]
       filters:
-        - entity: {kind: tag, slug: gore}
-          visible: false
-          user_toggle: false
+        - {entity: {kind: tag, slug: furry}, visible: true}
+        - {entity: {kind: tag, slug: restricted}, visible: false, user_toggle: false}
 `
 	if err := yaml.Unmarshal([]byte(raw), &c); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Domains) != 1 || c.Domains[0].Kinds["gallery"].Filters[0].Toggleable() || !c.Domains[0].Kinds["gallery"].Requires(GroupRef{Kind: "tag", Slug: "yaoi"}) {
-		t.Fatalf("domain policy: %+v", c)
+	if !reflect.DeepEqual(c.ContentFilters.AppliesTo, []string{"gallery", "blog"}) || len(c.ContentFilters.Domains) != 1 {
+		t.Fatalf("policy %+v", c)
+	}
+	d := c.ContentFilters.Domains[0]
+	if d.Filters[1].Toggleable() || !d.Requires(GroupRef{Kind: "tag", Slug: "yaoi"}) || len(d.RequireEntities["blog"]) != 0 {
+		t.Fatalf("flat domain %+v", d)
 	}
 	encoded, err := yaml.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "content_filters:") || strings.Contains(string(encoded), "sites:") {
-		t.Fatalf("retired policy emitted: %s", encoded)
-	}
-	var roundTrip Config
-	if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+	var next Config
+	if err := yaml.Unmarshal(encoded, &next); err != nil {
 		t.Fatal(err)
 	}
-	if len(roundTrip.Domains[0].Kinds["gallery"].Filters) != 1 {
-		t.Fatalf("lost inline policy: %s", encoded)
+	if !reflect.DeepEqual(c.ContentFilters, next.ContentFilters) || !reflect.DeepEqual(c.Languages, next.Languages) {
+		t.Fatalf("roundtrip changed %s", encoded)
 	}
 }
 
 func TestDomainYAMLAndJSONShapes(t *testing.T) {
-	domain := doujins().Domains[0]
-	encoded, err := yaml.Marshal(domain)
+	d := doujins().ContentFilters.Domains[0]
+	encoded, err := yaml.Marshal(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "kinds:") || !strings.Contains(string(encoded), "gallery:") {
-		t.Fatalf("YAML kind policies must be direct domain keys: %s", encoded)
+	var fromYAML map[string]any
+	if err := yaml.Unmarshal(encoded, &fromYAML); err != nil {
+		t.Fatal(err)
 	}
-	jsonData, err := json.Marshal(domain)
+	encoded, err = json.Marshal(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded map[string]json.RawMessage
-	if err := json.Unmarshal(jsonData, &decoded); err != nil {
+	var fromJSON map[string]any
+	if err := json.Unmarshal(encoded, &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := decoded["kinds"]; !ok || decoded["gallery"] != nil {
-		t.Fatalf("JSON keeps its explicit kinds object: %s", jsonData)
+	for _, data := range []map[string]any{fromYAML, fromJSON} {
+		if data["kinds"] != nil || data["gallery"] != nil || data["filters"] == nil {
+			t.Fatalf("domain must have one flat filter list: %+v", data)
+		}
+	}
+}
+
+func TestDecodeIsolatedContentFilterBlockStrictly(t *testing.T) {
+	raw := []byte(`{"applies_to":["gallery","blog"],"domains":[{"name":"main","hosts":["example.test"],"require_entities":{"gallery":[{"kind":"tag","slug":"yaoi"}]},"filters":[{"entity":{"kind":"tag","slug":"furry"},"visible":true}]}]}`)
+	policy, err := DecodeContentFilters(raw)
+	if err != nil || len(policy.Domains) != 1 || len(policy.AppliesTo) != 2 {
+		t.Fatalf("isolated JSONblock: %+v %v", policy, err)
+	}
+	for _, bad := range []string{`domains: [{name: main, gallery: {filters: []}}]`, `{"applies_to":["gallery"],"domains":[{"name":"main","gallery":{"filters":[]}}]}`, `applies_to: [gallery]
+domains: [{name: main, filters: [{entity: {kind: tag, slug: furry}, user_togle: false}]}]`} {
+		if _, err := DecodeContentFilters([]byte(bad)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("unsafe isolated block accepted %s: %v", bad, err)
+		}
 	}
 }

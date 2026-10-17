@@ -12,12 +12,12 @@ import (
 
 func TestDomainRequiredEntitiesCanBeLimitedToContentKinds(t *testing.T) {
 	cfg := siteConfig()
-	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}
+	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Groups: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one"}}
 	required := []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}
 	locked := false
-	cfg.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}}, {Name: "scoped", Hosts: []string{"scoped.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: required}}}, {Name: "all", Hosts: []string{"all.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: required}, "video": {RequireGroups: required}, "blog": {RequireGroups: required}}}, {Name: "missing", Hosts: []string{"missing.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {RequireGroups: []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, {Name: "missing-hard", Hosts: []string{"missing-hard.test"}, Kinds: map[string]kinds.KindPolicy{"gallery": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}, RequireGroups: required}, "video": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}, "blog": {Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}}}},
-	}
+	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{
+		{Name: "main", Hosts: []string{"main.test"}}, {Name: "scoped", Hosts: []string{"scoped.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required}}, {Name: "all", Hosts: []string{"all.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required, "video": required, "blog": required}}, {Name: "missing", Hosts: []string{"missing.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}, {Name: "missing-hard", Hosts: []string{"missing-hard.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}},
+	}, []string{"gallery", "video", "blog"}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.group("tag", "yaoi")
 	f.seed(item{n: 1, titles: map[string]string{"en": "Other gallery"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},

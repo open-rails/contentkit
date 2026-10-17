@@ -272,9 +272,9 @@ func TestEngineCommentsSettingAndDomainScope(t *testing.T) {
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
 	locked := false
-	cfg.Content.Domains = []kinds.Domain{
-		{Name: "main", Hosts: []string{"example.com"}},{Name:"safe",Hosts:[]string{"safe.example"},Kinds:map[string]kinds.KindPolicy{"gallery":{Filters:[]kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}}},
-	}
+	cfg.Content.ContentFilters.Domains, cfg.Content.ContentFilters.AppliesTo = []kinds.Domain{
+		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}},
+	}, []string{"gallery"}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
 	if err != nil {
 		t.Fatal(err)

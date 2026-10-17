@@ -919,24 +919,28 @@ account languages use the provider's `languagePreference` adapter. Each domain
 only offers its configured, user-toggleable entities; internal classifications
 and required or locked rules never appear in reader settings. Labels use the
 entities' localized names. Saving this domain's settings preserves choices for
-entities offered by other domains and other content kinds. `kinds` limits the
-controls shown by either `ReaderSettings` or `ContentFilterSettings`; omit it to
-show all configured kinds. Multiple kinds get separate headings; `labels` can
-supply their display names. The same entity can have independent gallery and
-blog preferences. Resets follow the current domain default, including after it
-changes. Old unscoped browser choices remain a fallback until replaced
-by a choice for that content kind.
+entities offered by other domains. The configured `applies_to` content kinds
+share one preference per entity, so a tag toggle can affect galleries and blog
+posts together. `kinds` selects a listing context and displays controls when it
+intersects `applies_to`; it never creates a second per-kind preference. Rows use
+entity names and have no duplicate type headings.
 
-The HTTP shape groups preferences by kind:
+The HTTP shape is flat and updates only the submitted entities:
 
 ```json
-{"kinds":{"gallery":[{"entity_id":"tag-id","visible":false}]},"include_deleted":false}
+{"filters":[{"entity_id":"tag-id","visible":false}]}
 ```
 
-`PUT /me/content-filters` replaces only the submitted kinds. An empty gallery
-list resets that kind to its domain defaults without changing blog preferences.
-The registration initializer also accepts `legacy_filters` so old browser
-choices can be transferred without dropping preferences for another domain.
+`PATCH /me/content-filters` preserves omitted entities and `include_deleted`.
+`setVisible(entityId, visible)` performs that one-entity update. Reset a choice
+with `{entity_id, default: true}`; the reset follows current domain defaults and
+suppresses old legacy choices. Independent account updates merge atomically.
+
+Guest storage migrates v1 choices and pending registration snapshots into v2,
+keeping the original v1 bytes. Conflicting old per-kind choices resolve to
+hidden; explicit scoped resets suppress the older unscoped fallback. New shared
+choices override all old values. Registration initialization uses the flat
+`filters` array and never overwrites an existing account's settings.
 
 ```tsx
 <ContentKitProvider
