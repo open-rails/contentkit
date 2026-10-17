@@ -367,13 +367,15 @@ the listing's time zone. The same bounded window ends on that date; it does
 not load intervening years. Omit it for the latest releases, or combine it
 with `days: 1` for one exact day. Future and invalid dates return HTTP 400.
 Current visibility and access rules still apply to historical windows.
-`ReleaseDatePicker` supplies the native calendar, editable year and **Latest**
-reset. Keep its controlled value in your router to support shared URLs and
-back/forward navigation:
+`ReleaseDatePicker` opens a themed calendar popover with month/year dropdowns,
+so older dates need no month-by-month paging. It selects one day, disables
+future dates, and closes after selection; there is no typed input or reset
+button. Keep its controlled value in your router for shared URLs and
+back/forward navigation. The app chooses placement and the listing window:
 
 ```tsx
 <ReleaseDatePicker value={date} onValueChange={setDate} />
-<DailyReleases query={{ kind: "gallery", days: 10, end_date: date || undefined }} />
+<DailyReleases query={{ kind: "gallery", days: date ? 1 : 10, end_date: date || undefined }} />
 ```
 
 `isReleaseDate(date)` validates URL input before rendering the feed; the picker

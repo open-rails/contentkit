@@ -24,6 +24,7 @@ const EXTERNAL = [
   "class-variance-authority",
   "cn",
   "hls.js",
+  "react-day-picker",
   "react-easy-crop",
   "@tiptap",
 ];

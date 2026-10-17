@@ -10,8 +10,7 @@ export const discovery = {
     filters: "Show Content:",
   },
   releases: {
-    throughDate: "Through date",
-    latest: "Latest",
+    goToDay: "Go to day",
     invalidDate: "Choose a valid date on or before today.",
     premiumMore_one: "{count} more item",
     premiumMore_other: "{count} more items",

@@ -11,8 +11,7 @@ export const discovery: typeof en = {
     filters: "표시할 콘텐츠:",
   },
   releases: {
-    throughDate: "이 날짜까지",
-    latest: "최신",
+    goToDay: "날짜 선택",
     invalidDate: "오늘 또는 그 이전의 올바른 날짜를 선택하세요.",
     premiumMore_one: "{count}개 더 보기",
     premiumMore_other: "{count}개 더 보기",

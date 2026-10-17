@@ -11,8 +11,7 @@ export const discovery: typeof en = {
     filters: "Inhalte anzeigen:",
   },
   releases: {
-    throughDate: "Bis einschließlich",
-    latest: "Neueste",
+    goToDay: "Zum Tag",
     invalidDate: "Wähle ein gültiges Datum, das nicht in der Zukunft liegt.",
     premiumMore_one: "{count} weiterer Eintrag",
     premiumMore_other: "{count} weitere Einträge",
