@@ -140,7 +140,7 @@ test("content page: version picker, paywall checkout with the tier, the player's
   await expect(page.locator("[data-demo=player-menu] li")).toHaveText(["Language: English | Japanese"]);
 });
 
-test("search page: prefix suggestions while typing, broader results on Enter", async ({ page }) => {
+test("search page: own title substrings while typing, with prefixes first", async ({ page }) => {
   const ck = await staffClient();
   const r = run();
   const word = `qz${r}`;
@@ -153,7 +153,7 @@ test("search page: prefix suggestions while typing, broader results on Enter", a
   await page.goto(demo("content.html", null, { view: "search" }));
   const box = page.locator("[data-ckui=search-box]");
   await box.getByRole("combobox").fill(word);
-  await expect(box.locator("[data-ckui=suggestion]")).toHaveText([title], { timeout: 30_000 });
+  await expect(box.locator("[data-ckui=suggestion]")).toHaveText([title, `Pear ${word}`], { timeout: 30_000 });
   await box.getByRole("combobox").press("Enter");
   await expect(page).toHaveURL(new RegExp(`q=${word}`));
   await expect.poll(async () => (await page.locator("[data-ckui=content-grid] [data-ckui=card-title]").allTextContents()).sort()).toEqual([title, `Pear ${word}`].sort());
