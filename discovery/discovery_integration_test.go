@@ -360,11 +360,11 @@ func TestSearchAndTypeahead(t *testing.T) {
 	for _, c := range ta.Contents {
 		contents = append(contents, c.ID)
 	}
-	if len(contents) != 0 || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
+	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
-	// Gallery titles still complete directly, while interior title words only
-	// appear in the broader full-search assertions above.
+	// Own title substrings also complete directly, while ordinary language,
+	// domain, hidden/unlisted and access eligibility remain enforced.
 	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "alp", "kind", "gallery"), nil, &ta); status != http.StatusOK || len(ta.Contents) != 1 || ta.Contents[0].ID != f.cid(1) {
 		t.Fatalf("title prefix typeahead: %+v", ta)
 	}

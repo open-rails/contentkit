@@ -82,7 +82,7 @@ func TestClientSearch_Integration_Keyword(t *testing.T) {
 	}
 }
 
-func TestTypeaheadOnlyMatchesNamePrefixes(t *testing.T) {
+func TestTypeaheadOnlyMatchesOwnNameSubstrings(t *testing.T) {
 	pool := testPG(t)
 	ctx := t.Context()
 	schema := keywordSchema(t, ctx, pool)
@@ -103,15 +103,16 @@ func TestTypeaheadOnlyMatchesNamePrefixes(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{"  INAZUMA  ", []string{grp(1), cid(2), cid(4), cid(5)}},
+		{"  INAZUMA  ", []string{grp(1), cid(2), cid(3), cid(4), cid(5)}},
 		{"稲", []string{grp(1)}},
 		{"light", []string{grp(1)}},
 		{"inazmua", nil}, // Full search can tolerate typos; autocomplete cannot.
-		{"question", nil},
+		{"question", []string{cid(1), cid(6)}},
 		{"inazuma%", []string{cid(4)}},
 		{"inazuma_", []string{cid(5)}},
 		{" CAFE   qu", []string{cid(6)}},
-		{"business a", []string{cid(6)}},
+		{"business a", []string{cid(1), cid(6)}},
+		{"the a an", nil},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			hits, err := client.Typeahead(ctx, tc.query, TypeaheadOptions{ContentKinds: []string{"artist", "gallery"}})
@@ -135,6 +136,6 @@ func TestTypeaheadOnlyMatchesNamePrefixes(t *testing.T) {
 	only := &Eligibility{SQL: "SELECT 0 AS priority WHERE sd.content_id=@allowed", Args: map[string]any{"allowed": cid(5)}}
 	hits, err := client.Typeahead(ctx, "inazuma", TypeaheadOptions{ContentKinds: []string{"gallery"}, Limit: 1, Eligibility: only})
 	if err != nil || len(hits) != 1 || hits[0].ContentID != cid(5) {
-		t.Fatalf("eligible prefix with limit=1: %+v %v", hits, err)
+		t.Fatalf("eligible name match with limit=1: %+v %v", hits, err)
 	}
 }
