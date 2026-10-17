@@ -1,8 +1,10 @@
+import { cn } from "cn";
 import { useContext, useMemo } from "react";
 import type { MineQuery } from "../../client/content/favorites.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useMyFavorites } from "../../react/discovery.js";
+import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { CardGrid, cardListMode, type CardListProps } from "./grid.js";
 
@@ -18,14 +20,14 @@ export function ContentFavorites({ query = {}, ...p }: CardListProps & { query?:
   const { t } = useMessages();
   if (ctx?.viewer === null) {
     return (
-      <div className="grid justify-items-start gap-3 text-sm text-muted-foreground" data-ckui="favorites-signed-out">
+      <ContentKitUiRoot appearance={p.appearance} className={cn("grid justify-items-start gap-3 text-sm text-muted-foreground", p.className)} data-ckui="favorites-signed-out">
         <p>{t("favorites.signIn")}</p>
         {ctx.onSignIn && (
           <Button size="sm" onClick={ctx.onSignIn}>
             {t("paywall.signIn")}
           </Button>
         )}
-      </div>
+      </ContentKitUiRoot>
     );
   }
   return (
