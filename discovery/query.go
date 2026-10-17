@@ -598,8 +598,9 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	for k, v := range o.args {
 		args[k] = v
 	}
+	ordered := q
 	if name, _, _ := strings.Cut(o.raw, ":"); name == SortPopular {
-		q = q.with("("+o.expr+") > 0", nil)
+		ordered = q.with("("+o.expr+") > 0", nil)
 	}
 	if o.raw == SortRandom && cur.Seed == "" {
 		cur.Seed = newSeed()
@@ -609,38 +610,42 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	if o.desc {
 		dir, cmp = "DESC", "<"
 	}
-	after = "true"
 	if cur.ID != "" {
-		after = fmt.Sprintf("(c.sk, c.content_id) %s (@d_cv::%s, @d_cid::text)", cmp, o.cast)
+		ordered = ordered.with(fmt.Sprintf("((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast), nil)
 		args["d_cv"], args["d_cid"] = cur.Value, cur.ID
 	}
-	sql := fmt.Sprintf(`SELECT c.content_id, c.version_id, c.sk::text FROM (
- SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, (%s) AS sk FROM %s f %s WHERE %s ORDER BY f.content_id, %s) c
-WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, o.join, q.predicate(), preference, after, dir, dir)
+	// Every sort key is the content's, shared by all its versions: order the
+	// contents first, grouped in the sort's order so an index can end the scan
+	// at the page, then pick each one's version.
+	sql := fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM %[2]s f %[3]s WHERE %[4]s
+ GROUP BY (%[1]s), f.content_id ORDER BY (%[1]s) %[5]s, f.content_id %[5]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, o.join, ordered.predicate(), dir)
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", err
 	}
 	type row struct {
-		pick
-		sk string
+		content, sk string
 	}
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		return x, r.Scan(&x.content, &x.version, &x.sk)
+		return x, r.Scan(&x.content, &x.sk)
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	out := make([]pick, 0, min(len(got), limit))
 	next := ""
+	if len(got) > limit {
+		last := got[limit-1]
+		next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed, AsOf: q.asOf}.encode()
+		got = got[:limit]
+	}
+	ids := make([]string, len(got))
 	for i, x := range got {
-		if i == limit {
-			last := got[limit-1]
-			next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed, AsOf: q.asOf}.encode()
-			break
-		}
-		out = append(out, x.pick)
+		ids[i] = x.content
+	}
+	out, err := s.pickAmong(ctx, q, ids)
+	if err != nil {
+		return nil, "", err
 	}
 	return out, next, nil
 }
