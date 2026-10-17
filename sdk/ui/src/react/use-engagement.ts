@@ -81,7 +81,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     const intersections = new WeakMap<Element, boolean>();
     let observer: IntersectionObserver | undefined;
     let active = false, hidden = false, buffering = false, video: HTMLVideoElement | null = null, resume: string | undefined;
-    const owns = () => current.current.permitted && current.current.owner === owner && client.preferences.identity() === owner;
+    const owns = () => permitted && current.current.permitted && current.current.owner === owner && client.preferences.identity() === owner;
     let session: string | undefined;
     const getSession = () => owner === null ? (session ??= readerSession()) : undefined;
     const tracker = new EngagementTracker({

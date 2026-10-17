@@ -142,8 +142,9 @@ export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKit
   const guest = viewer === null;
   const isCurrent = useCurrentDiscoveryScope(client, scope);
   const browser = client.guestHistory;
-  const subscribe = useCallback((listener: () => void) => guest && query ? browser.subscribe(listener) : () => {}, [browser, guest, !!query]);
-  const snapshot = useCallback(() => guest && query ? browser.snapshot() : NO_READING, [browser, guest, !!query]);
+  const enabled = query !== null;
+  const subscribe = useCallback((listener: () => void) => guest && enabled ? browser.subscribe(listener) : () => {}, [browser, guest, enabled]);
+  const snapshot = useCallback(() => guest && enabled ? browser.snapshot() : NO_READING, [browser, guest, enabled]);
   const local = useSyncExternalStore(subscribe, snapshot, () => NO_READING);
   const selected = useMemo(() => local.filter(row => !query?.kind || row.kind === query.kind), [local, query?.kind]);
   const localRevision = guest ? selected.map(row => [row.id, row.at, row.checkpoints.map(checkpoint => [checkpoint.visit_id, checkpoint.segment_id, checkpoint.revision])]) : undefined;
