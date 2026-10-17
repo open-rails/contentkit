@@ -102,4 +102,9 @@ func TestZipPagesCanUseOriginalFormats(t *testing.T) {
 	if _, err := zipPages(k, z, m); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("missing original must wait: %v", err)
 	}
+	m.Files[0].Blob = "original-png"
+	m.Files[0].Failed = &media.Failure{Of: m.Files[0].Key(), Message: "not an image"}
+	if _, err := zipPages(k, z, m); !errors.Is(err, ErrNoDownload) {
+		t.Fatalf("a failed page has nothing to wait for: %v", err)
+	}
 }
