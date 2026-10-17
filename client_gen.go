@@ -3036,7 +3036,7 @@ func (c *Client) DeleteMeHistory(ctx context.Context, q DeleteMeHistoryQuery) er
 	return c.call(ctx, http.MethodDelete, "/v1/me/history", q.values(), nil, nil)
 }
 
-// PostSignals is POST /v1/signals (public). Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version.
+// PostSignals is POST /v1/signals (public). Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.
 func (c *Client) PostSignals(ctx context.Context, body discovery.Signals) error {
 	return c.call(ctx, http.MethodPost, "/v1/signals", nil, body, nil)
 }
