@@ -31,7 +31,7 @@ func TestSubject(t *testing.T) {
 }
 
 func TestAttributionRoundTrip(t *testing.T) {
-	base := Signal{
+	base := readingFixture{
 		ContentRef: contentref.New("t", "gallery", cid(1)),
 		Subject:    Subject{UserID: "u1"},
 		Type:       "click",
@@ -50,13 +50,13 @@ func TestAttributionRoundTrip(t *testing.T) {
 	}
 
 	// Tolerant of the float64 a JSON round-trip produces.
-	viaJSON := Signal{Payload: map[string]any{PayloadKeyRenderID: "q2", PayloadKeyPosition: float64(5)}}
+	viaJSON := readingFixture{Payload: map[string]any{PayloadKeyRenderID: "q2", PayloadKeyPosition: float64(5)}}
 	if a := viaJSON.Attribution(); a.Position != 5 || a.RenderID != "q2" {
 		t.Fatalf("attribution must tolerate float64 position: %+v", a)
 	}
 
 	// Zero-valued attribution adds no keys.
-	if empty := (Signal{}).WithAttribution(Attribution{}); len(empty.Payload) != 0 {
+	if empty := (readingFixture{}).WithAttribution(Attribution{}); len(empty.Payload) != 0 {
 		t.Fatalf("zero attribution must add no keys, got %v", empty.Payload)
 	}
 }
@@ -104,26 +104,26 @@ func TestRecordSignalsValidation(t *testing.T) {
 	fc := &fakeConn{}
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
-	valid := Signal{
+	valid := readingFixture{
 		ContentRef: contentref.New("t", "a", cid(1)), Subject: Subject{UserID: "u"},
-		Type: TypeView, EventID: "e1", OccurredAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Type: "click", EventID: "e1", OccurredAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
-	if err := st.RecordSignals(ctx, "", []Signal{valid}); err == nil {
+	if err := recordFixtureSignals(st, ctx, "", []readingFixture{valid}); err == nil {
 		t.Fatal("missing tenant must error")
 	}
-	for name, mutate := range map[string]func(*Signal){
-		"content id":     func(s *Signal) { s.ContentID = "" },
-		"content kind":   func(s *Signal) { s.ContentKind = "" },
-		"foreign tenant": func(s *Signal) { s.TenantID = "other" },
-		"empty version":  func(s *Signal) { s.ContentVersionID = new(string) },
-		"subject":        func(s *Signal) { s.Subject = Subject{} },
-		"type":           func(s *Signal) { s.Type = "" },
-		"event id":       func(s *Signal) { s.EventID = " " },
-		"occurred at":    func(s *Signal) { s.OccurredAt = time.Time{} },
+	for name, mutate := range map[string]func(*readingFixture){
+		"content id":     func(s *readingFixture) { s.ContentID = "" },
+		"content kind":   func(s *readingFixture) { s.ContentKind = "" },
+		"foreign tenant": func(s *readingFixture) { s.TenantID = "other" },
+		"empty version":  func(s *readingFixture) { s.ContentVersionID = new(string) },
+		"subject":        func(s *readingFixture) { s.Subject = Subject{} },
+		"type":           func(s *readingFixture) { s.Type = "" },
+		"event id":       func(s *readingFixture) { s.EventID = " " },
+		"occurred at":    func(s *readingFixture) { s.OccurredAt = time.Time{} },
 	} {
 		bad := valid
 		mutate(&bad)
-		if err := st.RecordSignals(ctx, "t", []Signal{valid, bad}); err == nil {
+		if err := recordFixtureSignals(st, ctx, "t", []readingFixture{valid, bad}); err == nil {
 			t.Fatalf("%s must error", name)
 		}
 	}
@@ -203,28 +203,28 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	at := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	valid := Signal{ContentRef: contentref.New("t", "a", cid(1)), Subject: Subject{UserID: "u"}, Type: TypeView, EventID: "e", OccurredAt: at}
+	valid := readingFixture{ContentRef: contentref.New("t", "a", cid(1)), Subject: Subject{UserID: "u"}, Type: "click", EventID: "e", OccurredAt: at}
 	var limit *LimitError
 	long := strings.Repeat("x", MaxIdentifierBytes+1)
-	for name, mutate := range map[string]func(*Signal){
-		"version":  func(s *Signal) { s.ContentRef = s.WithVersion(long) },
-		"event id": func(s *Signal) { s.EventID = long },
-		"subject":  func(s *Signal) { s.Subject = Subject{AnonKey: long} },
-		"resume":   func(s *Signal) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
-		"payload":  func(s *Signal) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
+	for name, mutate := range map[string]func(*readingFixture){
+		"version":  func(s *readingFixture) { s.ContentRef = s.WithVersion(long) },
+		"event id": func(s *readingFixture) { s.EventID = long },
+		"subject":  func(s *readingFixture) { s.Subject = Subject{AnonKey: long} },
+		"resume":   func(s *readingFixture) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
+		"payload":  func(s *readingFixture) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
 	} {
 		bad := valid
 		mutate(&bad)
-		if err := st.RecordSignals(ctx, "t", []Signal{bad}); !errors.As(err, &limit) {
+		if err := recordFixtureSignals(st, ctx, "t", []readingFixture{bad}); !errors.As(err, &limit) {
 			t.Fatalf("%s: want LimitError, got %v", name, err)
 		}
 	}
 	badID := valid
 	badID.ContentID = long
-	if err := st.RecordSignals(ctx, "t", []Signal{badID}); !errors.Is(err, contentref.ErrInvalidID) {
+	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{badID}); !errors.Is(err, contentref.ErrInvalidID) {
 		t.Fatalf("content id: want ErrInvalidID, got %v", err)
 	}
-	if err := st.RecordSignals(ctx, "t", make([]Signal, MaxSignalsPerBatch+1)); !errors.As(err, &limit) || limit.Got != MaxSignalsPerBatch+1 {
+	if err := recordFixtureSignals(st, ctx, "t", make([]readingFixture, MaxSignalsPerBatch+1)); !errors.As(err, &limit) || limit.Got != MaxSignalsPerBatch+1 {
 		t.Fatalf("batch: %v", err)
 	}
 	shown := make([]Placement, MaxShownPerExposure+1)

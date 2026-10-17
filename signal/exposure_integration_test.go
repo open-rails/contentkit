@@ -20,8 +20,8 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	g := func(id string, pos uint32) Placement {
 		return Placement{ContentRef: gallery(tenant, lid(id)), Position: pos}
 	}
-	click := func(renderID, id string, pos uint32, eventID string, when time.Time) Signal {
-		return Signal{ContentRef: gallery(tenant, lid(id)), Subject: user, Type: "click",
+	click := func(renderID, id string, pos uint32, eventID string, when time.Time) readingFixture {
+		return readingFixture{ContentRef: gallery(tenant, lid(id)), Subject: user, Type: "click",
 			EventID: eventID, OccurredAt: when}.WithAttribution(Attribution{RenderID: renderID, Surface: SurfaceSearch, Position: pos})
 	}
 	// Keep superseded rows physically present.
@@ -71,7 +71,7 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	}
 	fClick := click("r2", "f", 12, "c3", at.Add(70*time.Second))
 	fClick.ContentRef = fClick.WithVersion("v1")
-	clicks := []Signal{
+	clicks := []readingFixture{
 		click("r1", "a", 2, "c1", at.Add(10*time.Second)),
 		click("r1", "a", 2, "c1", at.Add(15*time.Second)), // retry, re-stamped
 		click("r1", "c", 3, "c2", at.Add(20*time.Second)), // rendered but not visible
@@ -81,12 +81,12 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 		click("r4", "s2", 2, "c6", at.Add(190*time.Second)),   // other surface
 		click("r1", "a", 2, "c1-dup", at.Add(30*time.Second)), // repeated distinct click
 	}
-	if err := st.RecordSignals(ctx, tenant, append(append([]Signal{}, clicks...), clicks...)); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, append(append([]readingFixture{}, clicks...), clicks...)); err != nil {
 		t.Fatal(err)
 	}
 	other := click("r1", "a", 2, "c1", at)
 	other.TenantID = "other"
-	if err := st.RecordSignals(ctx, "other", []Signal{other}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "other", []readingFixture{other}); err != nil {
 		t.Fatal(err)
 	}
 

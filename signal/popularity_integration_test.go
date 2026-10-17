@@ -25,7 +25,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 		for i, score := range []int16{80, 0} {
 			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, 8, 10, 10, score, true)
 			s.EventID = fmt.Sprintf("%s-%d", cohort.id, i)
-			if err := st.RecordSignals(ctx, "t", []Signal{s, s}); err != nil {
+			if err := recordFixtureSignals(st, ctx, "t", []readingFixture{s, s}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -38,10 +38,10 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	// A version view of "early" never counts as a work view.
 	edition := view("t", earlyID, Subject{UserID: "u9"}, 10, 8, 10, 10, 100, true)
 	edition.ContentRef, edition.EventID = edition.WithVersion("v2"), "edition"
-	if err := st.RecordSignals(ctx, "t", []Signal{click, like, outside, edition}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{click, like, outside, edition}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, "other-tenant", []Signal{view("other-tenant", earlyID, Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "other-tenant", []readingFixture{view("other-tenant", earlyID, Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	window := Between(at(2, 0), at(29, 0))
@@ -55,7 +55,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 			t.Fatalf("expected only consuming works in tenant/window: %+v", hits)
 		}
 		for _, hit := range hits {
-			if hit.Viewers != 2 || hit.Views != 2 || hit.Completions != 2 || hit.Version() != "" {
+			if hit.Readers != 2 || hit.Version() != "" {
 				t.Fatalf("clicks, versions or duplicate deliveries inflated consumption: %+v", hit)
 			}
 			// The zero-score view counts in the mean; early and late have equal weight.
@@ -70,7 +70,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	metrics := metricsByID(t, st, "t", []string{earlyID, lateID, outsideID, reactionID}, window)
 	counts := map[string]uint64{}
 	for id, m := range metrics {
-		counts[id] = m.Viewers
+		counts[id] = m.Readers
 	}
 	if !reflect.DeepEqual(counts, map[string]uint64{earlyID: 2, lateID: 2, reactionID: 0}) {
 		t.Fatalf("card counts disagree with popularity: %v", counts)

@@ -49,16 +49,16 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	}
 	gone, kept, anonGone := Subject{UserID: "gone"}, Subject{UserID: "kept"}, Subject{AnonKey: "gone"}
 	at := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
-	view := func(tenant string, sub Subject, id string, day int) Signal {
-		return Signal{ContentRef: gallery(tenant, id), Subject: sub, Type: TypeView,
+	view := func(tenant string, sub Subject, id string, day int) readingFixture {
+		return readingFixture{ContentRef: gallery(tenant, id), Subject: sub, Type: TypeView,
 			EventID: sub.Kind() + sub.Key() + id, OccurredAt: at.AddDate(0, 0, day), Progress: 2, ProgressMax: 2, Score: 50, Completed: true}
 	}
 	for _, tenant := range []string{"doujins", "hentai0"} {
-		batch := []Signal{view(tenant, gone, c1, 0), view(tenant, gone, c2, 1), view(tenant, kept, c1, 0), view(tenant, kept, c2, 0), view(tenant, anonGone, c2, 0)}
+		batch := []readingFixture{view(tenant, gone, c1, 0), view(tenant, gone, c2, 1), view(tenant, kept, c1, 0), view(tenant, kept, c2, 0), view(tenant, anonGone, c2, 0)}
 		like := view(tenant, gone, c1, 0)
 		like.Type, like.EventID, like.Value = "reaction", "pref", 1
 		batch = append(batch, like)
-		if err := st.RecordSignals(ctx, tenant, batch); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, batch); err != nil {
 			t.Fatal(err)
 		}
 		shown := []Placement{{ContentRef: gallery(tenant, c1), Position: 1}}
@@ -77,7 +77,7 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := metricsByID(t, st, "doujins", []string{c1, c2}, AllTime())
-	if before[c1].Viewers != 2 || before[c2].Viewers != 3 || before[c1].PositiveSubjects != 1 {
+	if before[c1].Readers != 2 || before[c2].Readers != 3 || before[c1].PositiveSubjects != 1 {
 		t.Fatalf("precondition metrics: %+v", before)
 	}
 
@@ -120,7 +120,7 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	}
 	after := metricsByID(t, st, "doujins", []string{c1, c2}, AllTime())
 	// kept retains both distinct sessions on gallery 1.
-	if after[c1].Viewers != 1 || after[c2].Viewers != 2 || after[c1].PositiveSubjects != 0 || after[c1].Views != 2 {
+	if after[c1].Readers != 1 || after[c2].Readers != 2 || after[c1].PositiveSubjects != 0 {
 		t.Fatalf("aggregates must exclude exactly the erased subject: %+v", after)
 	}
 	if n := countWhere(t, conn, "exposures", "tenant = 'doujins'"); n != 2 {
@@ -139,7 +139,7 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 
 	// Ingestion fence: later writes and impressions for the subject vanish;
 	// repair never resurrects.
-	if err := st.RecordSignals(ctx, "doujins", []Signal{view("doujins", gone, c3, 2), view("doujins", kept, c3, 2)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "doujins", []readingFixture{view("doujins", gone, c3, 2), view("doujins", kept, c3, 2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RecordExposures(ctx, "doujins", []Exposure{{RenderID: "late", Stage: StageServed, Subject: gone, Shown: []Placement{{ContentRef: gallery("doujins", c3), Position: 1}}, OccurredAt: at}}); err != nil {
@@ -153,7 +153,7 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 			t.Fatalf("fence leaked into %s: %d", table, n)
 		}
 	}
-	if m3 := metricsByID(t, st, "doujins", []string{c3}, AllTime()); m3[c3].Viewers != 1 {
+	if m3 := metricsByID(t, st, "doujins", []string{c3}, AllTime()); m3[c3].Readers != 1 {
 		t.Fatalf("kept subject's write in the same batch must land: %+v", m3)
 	}
 
@@ -203,11 +203,11 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	c1, c2, c3 := cid(1), cid(2), cid(3)
 	access := &AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true, PolicyRevision: "at-read"}
-	view := func(subject Subject, id string) Signal {
-		return Signal{ContentRef: gallery(tenant, id), Subject: subject, Type: TypeView,
+	view := func(subject Subject, id string) readingFixture {
+		return readingFixture{ContentRef: gallery(tenant, id), Subject: subject, Type: TypeView,
 			EventID: "view-" + id, OccurredAt: at, Progress: 1, ProgressMax: 2, Access: access}
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c1), view(next, c2)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(old, c1), view(next, c2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RecordExposures(ctx, tenant, []Exposure{{RenderID: "old-render", Stage: StageRendered,
@@ -243,7 +243,7 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject = ? AND JSONExtractString(access_contexts[1],'policy_revision')='at-read'", tenant, next.Key()); n != 1 {
 		t.Fatalf("rekey changed exposure access: %d", n)
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c3)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(old, c3)}); err != nil {
 		t.Fatal(err)
 	}
 	if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, old.Key()); n != 0 {

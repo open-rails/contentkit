@@ -41,7 +41,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 	ctx := context.Background()
 	rng := rand.New(rand.NewSource(879))
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	type request struct{ signals []Signal }
+	type request struct{ signals []readingFixture }
 	var requests []request
 	identities := map[string]struct{}{}
 	for s := 0; s < w.Sessions; s++ {
@@ -55,13 +55,13 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 		at := start.Add(time.Duration(rng.Intn(w.Days*24*60)) * time.Minute)
 		id := fmt.Sprintf("session-%d", s)
 		for c := 1; c <= w.Checkpoints; c++ {
-			view := Signal{ContentRef: gallery(tenant, work), Subject: subject, Type: TypeView,
+			view := readingFixture{ContentRef: gallery(tenant, work), Subject: subject, Type: TypeView,
 				EventID: id, Revision: uint64(c), OccurredAt: at, DurationS: uint32(60 * c), Progress: uint32(3 * c),
 				ProgressMax: uint32(3 * w.Checkpoints), Score: int16(10 * c), Completed: c == w.Checkpoints,
 				Resume: "p:" + strconv.Itoa(3*c), Payload: map[string]any{"language": "en", "entry_source": "search"}}
 			edition := view
 			edition.ContentRef = view.WithVersion(version)
-			sigs := []Signal{view, edition}
+			sigs := []readingFixture{view, edition}
 			for p := 0; p < w.Parents; p++ {
 				parent := view
 				parent.ContentRef = contentref.New(tenant, "tag", cid((len(workN)*7+int(workN[0])+p)%50))
@@ -70,11 +70,11 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 				sigs = append(sigs, parent)
 			}
 			if c == w.Checkpoints && w.ReactionEvery > 0 && s%w.ReactionEvery == 0 {
-				sigs = append(sigs, Signal{ContentRef: view.ContentRef, Subject: subject, Type: "reaction", EventID: "pref",
+				sigs = append(sigs, readingFixture{ContentRef: view.ContentRef, Subject: subject, Type: "reaction", EventID: "pref",
 					Revision: uint64(s), OccurredAt: at.Add(time.Minute), Value: 1})
 			}
 			if c == 1 && w.ClickEvery > 0 && s%w.ClickEvery == 0 {
-				sigs = append(sigs, Signal{ContentRef: view.ContentRef, Subject: subject, Type: "click",
+				sigs = append(sigs, readingFixture{ContentRef: view.ContentRef, Subject: subject, Type: "click",
 					EventID: "click:" + id, OccurredAt: at}.WithAttribution(Attribution{RenderID: "r" + id, Surface: SurfaceSearch, Position: 3}))
 			}
 			for _, sig := range sigs {
@@ -96,7 +96,7 @@ func runWorkload(t *testing.T, st *Store, conn Conn, tenant string, w workload) 
 			defer wg.Done()
 			for i := range next {
 				began := time.Now()
-				if err := st.RecordSignals(ctx, tenant, requests[i].signals); err != nil {
+				if err := recordFixtureSignals(st, ctx, tenant, requests[i].signals); err != nil {
 					fail <- err
 					return
 				}
@@ -214,8 +214,8 @@ func TestIntegrationSyntheticWorkload(t *testing.T) {
 	}
 	var views, completions uint64
 	for _, h := range all {
-		views += h.Views
-		completions += h.Completions
+		views += h.Readers
+		completions += h.Completers
 	}
 	if views != uint64(w.Sessions) || completions != uint64(w.Sessions) {
 		t.Fatalf("checkpoints must count as one completed work view per session, versions apart: views=%d completions=%d", views, completions)
@@ -304,7 +304,7 @@ func TestIntegrationUnavailableClickHouseFailsFast(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	began := time.Now()
-	err = st.RecordSignals(ctx, "t", []Signal{{ContentRef: gallery("t", cid(1)), Subject: Subject{UserID: "u"},
+	err = recordFixtureSignals(st, ctx, "t", []readingFixture{{ContentRef: gallery("t", cid(1)), Subject: Subject{UserID: "u"},
 		Type: TypeView, EventID: "e", OccurredAt: time.Now()}})
 	if err == nil || time.Since(began) > 3*time.Second {
 		t.Fatalf("unavailable analytics must fail within the deadline: err=%v after %s", err, time.Since(began))
@@ -313,7 +313,7 @@ func TestIntegrationUnavailableClickHouseFailsFast(t *testing.T) {
 		t.Fatal("reads must fail too")
 	}
 	var limit *LimitError
-	if err := st.RecordSignals(ctx, "t", make([]Signal, MaxSignalsPerBatch+1)); !errors.As(err, &limit) {
+	if err := recordFixtureSignals(st, ctx, "t", make([]readingFixture, MaxSignalsPerBatch+1)); !errors.As(err, &limit) {
 		t.Fatalf("oversize batches are rejected before any network call: %v", err)
 	}
 }

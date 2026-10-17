@@ -20,7 +20,7 @@ type reviewPausedInsert struct {
 }
 
 func (c *reviewPausedInsert) Exec(ctx context.Context, query string, args ...any) error {
-	if strings.HasPrefix(query, "INSERT INTO "+testDB+".signals") {
+	if strings.HasPrefix(query, "INSERT INTO "+testDB+".engagement_segments") {
 		c.once.Do(func() {
 			close(c.entered)
 			select {
@@ -45,7 +45,7 @@ func TestReviewErasureMustFenceInFlightWriter(t *testing.T) {
 	subject := Subject{UserID: "review-erased"}
 	ref := contentref.New("review", "gallery", cid(1))
 	go func() {
-		done <- writer.RecordSignals(ctx, "review", []Signal{{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "pending", OccurredAt: time.Now(), Progress: 1}})
+		done <- recordFixtureSignals(writer, ctx, "review", []readingFixture{{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "pending", OccurredAt: time.Now(), Progress: 1}})
 	}()
 	select {
 	case <-gate.entered:

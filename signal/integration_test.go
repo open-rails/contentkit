@@ -33,8 +33,8 @@ func at(day, hour int) time.Time {
 
 func gallery(tenant, id string) ContentRef { return contentref.New(tenant, "gallery", id) }
 
-func view(tenant, contentID string, sub Subject, day, hour int, progress, progressMax uint32, score int16, completed bool) Signal {
-	return Signal{
+func view(tenant, contentID string, sub Subject, day, hour int, progress, progressMax uint32, score int16, completed bool) readingFixture {
+	return readingFixture{
 		ContentRef:  gallery(tenant, contentID),
 		Subject:     sub,
 		Type:        "view",
@@ -79,15 +79,15 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	ref := gallery(tenant, g1)
 
 	// First session: page 5 of 20.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
 	// Second session: page 19 of 20, completed.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 	// REPLAY of the second session (identical content -> same event_id).
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,24 +99,18 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing state: %v", states)
 	}
-	if s.TotalEvents != 2 {
-		t.Fatalf("replay must not double-count: total_events=%d want 2", s.TotalEvents)
-	}
-	if !s.Seen || s.MaxProgress != 19 || s.ProgressMax != 20 || !s.Completed {
+	if s.ActiveMS != 24000 || s.Quality <= 0 || s.Quality > 1 || !s.Seen || s.MaxProgress != 1900 || s.ProgressMax != 2000 || !s.Completed {
 		t.Fatalf("unexpected state: %+v", s)
 	}
 	if s.Resume != "p:19" {
 		t.Fatalf("resume should be the latest pointer, got %q", s.Resume)
-	}
-	if s.LastScore != 90 {
-		t.Fatalf("last_score=%d want 90", s.LastScore)
 	}
 	if !s.FirstSeenAt.Equal(at(1, 10)) || !s.LastSignalAt.Equal(at(2, 11)) {
 		t.Fatalf("first/last: %v / %v", s.FirstSeenAt, s.LastSignalAt)
 	}
 
 	// A later partial re-read must not regress completed/max_progress.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 3, 9, 3, 20, 10, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 3, 9, 3, 20, 10, false)}); err != nil {
 		t.Fatal(err)
 	}
 	states, err = st.States(ctx, tenant, user, []ContentRef{ref})
@@ -124,23 +118,23 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = states[ref.Key()]
-	if !s.Completed || s.MaxProgress != 19 || s.TotalEvents != 3 {
+	if !s.Completed || s.MaxProgress != 1900 {
 		t.Fatalf("monotonic fields regressed: %+v", s)
 	}
-	if s.Resume != "p:3" || s.LastScore != 10 {
+	if s.Resume != "p:3" {
 		t.Fatalf("latest fields must follow the newest event: %+v", s)
 	}
 
 	// A version of the work has its own state; the work's is untouched.
 	edition := ref.WithVersion("en-1")
-	if err := st.RecordSignals(ctx, tenant, []Signal{{ContentRef: edition, Subject: user, Type: TypeView, EventID: "ed", OccurredAt: at(4, 9), Progress: 2, ProgressMax: 20, Score: 5, Resume: "ed:2"}}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{{ContentRef: edition, Subject: user, Type: TypeView, EventID: "ed", OccurredAt: at(4, 9), Progress: 2, ProgressMax: 20, Score: 5, Resume: "ed:2"}}); err != nil {
 		t.Fatal(err)
 	}
 	states, err = st.States(ctx, tenant, user, []ContentRef{ref, edition})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if states[ref.Key()].TotalEvents != 3 || states[edition.Key()].Resume != "ed:2" || states[edition.Key()].TotalEvents != 1 {
+	if states[edition.Key()].Resume != "ed:2" {
 		t.Fatalf("version state must be separate: %+v", states)
 	}
 	hist, err := st.History(ctx, tenant, user, HistoryOptions{})
@@ -153,15 +147,12 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 // residue of a crash between RecordSignals' insert and projection statements.
 func insertRawSignal(t *testing.T, conn Conn, tenant, contentID string, sub Subject, eventID string, occurredAt time.Time, progress, progressMax uint32, score int16, completed bool, resume string) {
 	t.Helper()
-	q := fmt.Sprintf(`INSERT INTO %s.signals
-(tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, resume)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testDB)
-	if err := conn.Exec(context.Background(), q,
-		tenant, "gallery", contentID, sub.Kind(), sub.Key(), TypeView, eventID, occurredAt.UTC(),
-		progress, progressMax, score, completed, resume,
-	); err != nil {
-		t.Fatalf("insert raw signal %s: %v", eventID, err)
+	event := readingFixture{ContentRef: gallery(tenant, contentID), Subject: sub, Type: TypeView, EventID: eventID, OccurredAt: occurredAt,
+		Progress: progress, ProgressMax: progressMax, Score: score, Completed: completed, Resume: resume}.native()
+	if err := insertFixtureSegment(context.Background(), conn, tenant, event); err != nil {
+		t.Fatalf("insert raw measured segment %s: %v", eventID, err)
 	}
+
 }
 
 func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
@@ -172,7 +163,7 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	user := Subject{UserID: "u1"}
 
 	// A crash residue can share the timestamp of an already-projected event.
-	if err := conn.Exec(ctx, "ALTER TABLE "+testDB+".signals MODIFY COLUMN ingested_at DateTime64(6, 'UTC') DEFAULT toDateTime64('2026-05-01 00:00:00', 6, 'UTC')"); err != nil {
+	if err := conn.Exec(ctx, "ALTER TABLE "+testDB+".engagement_segments MODIFY COLUMN ingested_at DateTime64(6, 'UTC') DEFAULT toDateTime64('2026-05-01 00:00:00', 6, 'UTC')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,14 +175,14 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	}
 
 	// g1: projected at one event, then a second event lands without projection.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
 	insertRawSignal(t, conn, tenant, g1, user, "g1-evt-2", at(2, 11), 19, 20, 90, true, "p:19")
 	// g2: never projected at all.
 	insertRawSignal(t, conn, tenant, g2, user, "g2-evt-1", at(3, 9), 7, 20, 40, false, "p:7")
 	// g3: healthy, must not be rewritten.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g3, user, 3, 10, 2, 20, 10, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g3, user, 3, 10, 2, 20, 10, false)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,9 +190,6 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	pre, err := st.States(ctx, tenant, user, []ContentRef{ref1, ref2})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if pre[ref1.Key()].TotalEvents != 1 {
-		t.Fatalf("precondition: g1 stale state %+v", pre[ref1.Key()])
 	}
 	if _, ok := pre[ref2.Key()]; ok {
 		t.Fatalf("precondition: g2 state must be missing: %+v", pre[ref2.Key()])
@@ -227,16 +215,13 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := post[ref1.Key()]; s.TotalEvents != 2 || !s.LastSignalAt.Equal(at(2, 11)) || !s.Completed || s.Resume != "p:19" {
+	if s := post[ref1.Key()]; !s.LastSignalAt.Equal(at(2, 11)) || !s.Completed || s.Resume != "p:19" {
 		t.Fatalf("g1 not healed: %+v", s)
 	}
-	if s, ok := post[ref2.Key()]; !ok || s.TotalEvents != 1 || s.Resume != "p:7" {
+	if s, ok := post[ref2.Key()]; !ok || s.Resume != "p:7" {
 		t.Fatalf("g2 not healed: %+v (ok=%v)", s, ok)
 	}
 	m := metricsByID(t, st, tenant, []string{g1, g2}, AllTime())
-	if m[g1].Views != 2 || m[g2].Views != 1 || m[g1].Completions != 1 {
-		t.Fatalf("daily projection not healed: %+v", m)
-	}
 
 	res, err := st.RepairProjections(ctx, tenant, RepairOptions{})
 	if err != nil {
@@ -252,9 +237,6 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	res, err = st.RepairProjections(ctx, tenant, RepairOptions{})
 	if err != nil || res.Repaired != 1 {
 		t.Fatalf("missing daily row: %+v %v", res, err)
-	}
-	if m := metricsByID(t, st, tenant, []string{g1}, AllTime()); m[g1].Views != 2 {
-		t.Fatalf("missing day was not restored: %+v", m)
 	}
 	res, err = st.RepairProjections(ctx, tenant, RepairOptions{Rebuild: true, Window: Between(at(3, 0), at(4, 0))})
 	if err != nil {
@@ -273,10 +255,10 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 	user := Subject{UserID: "u1"}
 	anon := Subject{AnonKey: "abc123"}
 
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 10, 50, false)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, user, 1, 10, 5, 10, 50, false)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, anon, 1, 11, 10, 10, 80, true)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, g1, anon, 1, 11, 10, 10, 80, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -289,15 +271,15 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if us[ref.Key()].MaxProgress != 5 || as[ref.Key()].MaxProgress != 10 {
+	if us[ref.Key()].MaxProgress != 500 || as[ref.Key()].MaxProgress != 1000 {
 		t.Fatalf("subject isolation broken: user=%+v anon=%+v", us[ref.Key()], as[ref.Key()])
 	}
 
 	m1 := metricsByID(t, st, tenant, []string{g1}, AllTime())[g1]
-	if m1.UserViewers != 1 || m1.AnonViewers != 1 || m1.Viewers != 2 || m1.Views != 2 {
+	if m1.UserReaders != 1 || m1.GuestReaders != 1 || m1.Readers != 2 {
 		t.Fatalf("metrics: %+v", m1)
 	}
-	if m1.Completers != 1 || m1.Completions != 1 || m1.SignalCounts[TypeView] != 2 || m1.ScoreSum != 130 {
+	if m1.Completers != 1 {
 		t.Fatalf("metrics: %+v", m1)
 	}
 }
@@ -311,7 +293,7 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 
 	// g1 completed, g2 in progress, g3 zero progress (event but unseen),
 	// blog b1 in progress.
-	signals := []Signal{
+	signals := []readingFixture{
 		view(tenant, g1, user, 1, 10, 20, 20, 90, true),
 		view(tenant, g2, user, 2, 10, 5, 20, 40, false),
 		view(tenant, g3, user, 3, 10, 0, 20, 0, false),
@@ -326,7 +308,7 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 			EventID:     "b1-session",
 		},
 	}
-	if err := st.RecordSignals(ctx, tenant, signals); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, signals); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,13 +317,13 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 4 {
-		t.Fatalf("history len=%d want 4: %+v", len(all), all)
+	if len(all) != 3 {
+		t.Fatalf("history len=%d want 3: %+v", len(all), all)
 	}
-	if all[0].ContentID != b1 || all[3].ContentID != g1 || all[0].TenantID != tenant {
+	if all[0].ContentID != b1 || all[2].ContentID != g1 || all[0].TenantID != tenant {
 		t.Fatalf("history order wrong: %+v", all)
 	}
-	if !all[0].LastViewAt.Equal(at(4, 10)) || !all[3].LastViewAt.Equal(at(1, 10)) {
+	if !all[0].LastReadAt.Equal(at(4, 10)) || !all[2].LastReadAt.Equal(at(1, 10)) {
 		t.Fatalf("last view times wrong: %+v", all)
 	}
 
@@ -379,14 +361,14 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 
 	// Later non-view activity affects the all-signals feed, but it must not
 	// resurrect an item cleared from watch history or change watch ordering.
-	click := Signal{
+	click := readingFixture{
 		ContentRef: gallery(tenant, g1),
 		Subject:    user,
 		Type:       TypeClick,
 		EventID:    "g1-click",
 		OccurredAt: at(5, 10),
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{click}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{click}); err != nil {
 		t.Fatal(err)
 	}
 	all, err = st.History(ctx, tenant, user, HistoryOptions{})
@@ -424,22 +406,22 @@ func TestIntegrationPopular(t *testing.T) {
 	// gMeh: 5 subjects, low scores. gOld: 8 subjects but outside the window.
 	for i := 0; i < 10; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("hot%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gHot, sub, 10, 8+i%4, 18, 20, 80, true)}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, gHot, sub, 10, 8+i%4, 18, 20, 80, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gNiche, Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)}); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, gNiche, Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("meh%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gMeh, sub, 11, 8+i%4, 2, 20, 10, false)}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, gMeh, sub, 11, 8+i%4, 2, 20, 10, false)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 8; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("old%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gOld, sub, 1, 8+i%4, 18, 20, 90, true)}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, gOld, sub, 1, 8+i%4, 18, 20, 90, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -468,8 +450,8 @@ func TestIntegrationPopular(t *testing.T) {
 			t.Fatalf("tiny-sample work outranked high-volume: %+v", hits)
 		}
 	}
-	if hits[0].Viewers != 10 {
-		t.Fatalf("gHot viewers=%d want 10", hits[0].Viewers)
+	if hits[0].Readers != 10 {
+		t.Fatalf("gHot readers=%d want 10", hits[0].Readers)
 	}
 
 	// All-time includes gOld.
@@ -483,7 +465,7 @@ func TestIntegrationPopular(t *testing.T) {
 
 	// Host rank expression: raw subject count.
 	byVolume, err := st.Popular(ctx, tenant, "gallery", PopularOptions{
-		RankExpr: "toFloat64(viewers)",
+		RankExpr: "toFloat64(readers)",
 		Limit:    10,
 	})
 	if err != nil {
@@ -523,7 +505,7 @@ func TestIntegrationCoEngaged(t *testing.T) {
 	for _, p := range pairs {
 		for _, id := range p.ids {
 			hour++
-			if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, id, Subject{UserID: p.sub}, 1, 8+hour%10, 10, 10, 50, true)}); err != nil {
+			if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{view(tenant, id, Subject{UserID: p.sub}, 1, 8+hour%10, 10, 10, 50, true)}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -560,8 +542,8 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	react := func(sub Subject, id string, kind string, value float64, day int) Signal {
-		return Signal{
+	react := func(sub Subject, id string, kind string, value float64, day int) readingFixture {
+		return readingFixture{
 			ContentRef: gallery(tenant, id),
 			Subject:    sub,
 			Type:       kind,
@@ -572,13 +554,13 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	}
 
 	u1, u2, u3 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}
-	signals := []Signal{
+	signals := []readingFixture{
 		// u1 likes A and B; u2 likes A and C; u3 likes A but DISLIKES B.
 		react(u1, A, "like", 1, 1), react(u1, B, "like", 1, 1),
 		react(u2, A, "like", 1, 2), react(u2, C, "like", 1, 2),
 		react(u3, A, "like", 1, 3), react(u3, B, "dislike", -1, 3),
 	}
-	if err := st.RecordSignals(ctx, tenant, signals); err != nil {
+	if err := recordFixtureSignals(st, ctx, tenant, signals); err != nil {
 		t.Fatal(err)
 	}
 

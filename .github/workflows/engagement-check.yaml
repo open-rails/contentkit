@@ -1,0 +1,58 @@
+name: engagement-check
+'on':
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact source commit to validate
+        required: true
+        type: string
+      package:
+        description: Native engagement package
+        required: true
+        type: choice
+        options: [signal, popularity]
+        default: signal
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CONTENTKIT_TEST_CH_ADDR: localhost:9000
+      CONTENTKIT_TEST_CH_USER: contentkit
+      CONTENTKIT_TEST_CH_PASSWORD: contentkit
+      TEST_PACKAGE: ${{ inputs.package }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Start real ClickHouse and Keeper
+      run: |
+        docker run -d --name clickhouse -p 9000:9000 \
+          -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+          -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
+          clickhouse/clickhouse-server:25.8
+        for i in $(seq 1 60); do
+          if docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'"; then exit 0; fi
+          sleep 2
+        done
+        docker logs clickhouse
+        exit 1
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Run native source and concurrency tests
+      run: |
+        case "$TEST_PACKAGE" in signal|popularity) ;; *) exit 2 ;; esac
+        git rev-parse HEAD > engagement-check-head.txt
+        set -o pipefail
+        go test "./$TEST_PACKAGE" -count=1 -race -timeout=20m 2>&1 | tee engagement-check.log
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: engagement-check-${{ inputs.package }}-${{ github.run_id }}
+        path: |
+          engagement-check-head.txt
+          engagement-check.log

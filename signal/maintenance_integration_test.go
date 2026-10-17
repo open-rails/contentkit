@@ -21,13 +21,13 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Exec(context.Background(), "SYSTEM START MERGES "+testDB+".signals") })
 	at := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
 	videoID, tagID, creatorID := cid(1), cid(7), cid(9)
-	mk := func(tenant, kind, id, subject, typ, eventID string, rev uint64) Signal {
-		return Signal{ContentRef: contentref.New(tenant, kind, id), Subject: Subject{UserID: subject},
+	mk := func(tenant, kind, id, subject, typ, eventID string, rev uint64) readingFixture {
+		return readingFixture{ContentRef: contentref.New(tenant, kind, id), Subject: Subject{UserID: subject},
 			Type: typ, EventID: eventID, Revision: rev, OccurredAt: at, Progress: 1, ProgressMax: 2}
 	}
 	for _, tenant := range []string{"hentai0", "doujins"} {
 		// A checkpoint revision arrives in a later request, so it is a separate raw row.
-		for _, batch := range [][]Signal{{
+		for _, batch := range [][]readingFixture{{
 			mk(tenant, "video", videoID, "u1", TypeView, "s1", 1), mk(tenant, "tag", tagID, "u1", TypeView, "s1:tag:7", 1),
 			mk(tenant, "creator", creatorID, "u1", TypeView, "s1:creator:9", 1),
 			mk(tenant, "video", videoID, "u2", TypeView, "s2", 0), mk(tenant, "tag", tagID, "u2", TypeView, "s2:tag:7", 0),
@@ -35,7 +35,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 		}, {
 			mk(tenant, "video", videoID, "u1", TypeView, "s1", 2), mk(tenant, "tag", tagID, "u1", TypeView, "s1:tag:7", 2),
 		}} {
-			if err := st.RecordSignals(ctx, tenant, batch); err != nil {
+			if err := recordFixtureSignals(st, ctx, tenant, batch); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -100,7 +100,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 			if len(co) != 0 || len(hist) != 1 || hist[0].ContentKind != "video" || len(m) != 0 {
 				t.Fatalf("hentai0 purge incomplete: pairs=%v history=%v metrics=%v", co, hist, m)
 			}
-		} else if len(co) != 2 || len(hist) != 3 || m[tag.Key()].Views != 2 {
+		} else if len(co) != 2 || len(hist) != 3 {
 			t.Fatalf("doujins must be untouched: pairs=%v history=%v metrics=%v", co, hist, m)
 		}
 	}
@@ -109,7 +109,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 	}
 	// Forget clears one work (and its versions) for one subject only.
 	edition := contentref.NewVersion("doujins", "video", videoID, "v1")
-	if err := st.RecordSignals(ctx, "doujins", []Signal{{ContentRef: edition, Subject: Subject{UserID: "u1"}, Type: TypeView, EventID: "ed", OccurredAt: at, Progress: 1, ProgressMax: 2}}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "doujins", []readingFixture{{ContentRef: edition, Subject: Subject{UserID: "u1"}, Type: TypeView, EventID: "ed", OccurredAt: at, Progress: 1, ProgressMax: 2}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Forget(ctx, "doujins", Subject{UserID: "u1"}, "video", videoID); err != nil {

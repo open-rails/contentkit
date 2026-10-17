@@ -106,10 +106,10 @@ FROM %s.subject_content_daily FINAL WHERE tenant = 'repair'`, st.db, st.db)
 	assertDaily(1)
 	// Moving the first event into a new month must clear its old day without
 	// reducing any batch's generation to just that batch's events.
-	moved := Signal{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "0", Revision: 2,
+	moved := readingFixture{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "0", Revision: 2,
 		OccurredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	for i := 0; i < 2; i++ {
-		if err := st.RecordSignals(ctx, "repair", []Signal{moved}); err != nil {
+		if err := recordFixtureSignals(st, ctx, "repair", []readingFixture{moved}); err != nil {
 			t.Fatal(err)
 		}
 		assertDaily(2)
@@ -162,8 +162,8 @@ FROM numbers(1001)`, st.db)
 				t.Fatalf("repaired metrics count=%d, want %d: %v", len(metrics), len(refs), err)
 			}
 			for _, ref := range refs {
-				if metrics[ref.Key()].Views != 1 {
-					t.Fatalf("missing or cross-tenant projection for %s: %+v", ref, metrics[ref.Key()])
+				if metrics[ref.Key()].Readers != 1 {
+					t.Fatalf("measured reader missing for repaired reference: %+v", ref)
 				}
 			}
 		})

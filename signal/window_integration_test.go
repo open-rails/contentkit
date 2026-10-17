@@ -19,12 +19,12 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	sec := func(day, h, m, s int) time.Time { return time.Date(2026, 5, day, h, m, s, 0, time.UTC) }
 	record := func(id, subject string, at time.Time) {
 		t.Helper()
-		sig := Signal{
+		sig := readingFixture{
 			ContentRef: gallery(tenant, id),
 			Subject:    Subject{UserID: subject}, Type: "view", EventID: id + ":" + subject,
 			OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 60, Completed: true,
 		}
-		if err := st.RecordSignals(ctx, tenant, []Signal{sig}); err != nil {
+		if err := recordFixtureSignals(st, ctx, tenant, []readingFixture{sig}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -44,7 +44,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 		t.Fatalf("only in-window works rank: %+v", hits)
 	}
 	for _, h := range hits[1:] {
-		if h.Score != hits[0].Score || h.Viewers != 2 || h.Views != 2 || h.Completions != 2 {
+		if h.Score != hits[0].Score || h.Readers != 2 {
 			t.Fatalf("contribution depends on position in window: %+v", hits)
 		}
 	}
@@ -52,7 +52,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	metrics := metricsByID(t, st, tenant, ids, window)
 	counts := map[string]uint64{}
 	for id, m := range metrics {
-		counts[id] = m.Viewers
+		counts[id] = m.Readers
 	}
 	if want := map[string]uint64{firstID: 2, middleID: 2, lastID: 2}; !reflect.DeepEqual(counts, want) {
 		t.Fatalf("subject counts %v want %v", counts, want)

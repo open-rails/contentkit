@@ -66,12 +66,12 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 	if err := st.RecordExposures(ctx, "o", []Exposure{ex("R01", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("o", "g1"))}); err != nil {
 		t.Fatal(err)
 	}
-	click := func(tenant string, sub Subject, render, id string, pos uint32, event string, at time.Time) Signal {
-		return Signal{ContentRef: gallery(tenant, lid(id)), Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
+	click := func(tenant string, sub Subject, render, id string, pos uint32, event string, at time.Time) readingFixture {
+		return readingFixture{ContentRef: gallery(tenant, lid(id)), Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
 			WithAttribution(Attribution{RenderID: render, Surface: SurfaceSearch, Position: pos})
 	}
 	s := func(n int) time.Time { return f.day1.Add(time.Duration(n) * time.Second) }
-	clicks := []Signal{
+	clicks := []readingFixture{
 		click("t", f.u1, "R02", "g1", 1, "c02-1", s(1)),
 		click("t", f.u1, "R02", "g2", 2, "c02-2", s(2)),
 		click("t", f.u1, "R02", "g3", 3, "c02-3", s(3)),
@@ -96,14 +96,14 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 		{ContentRef: gallery("t", lid("g1")), Subject: f.u1, Type: TypeClick, EventID: "organic", OccurredAt: s(19)},
 	}
 	// Deliver twice, the second time reversed.
-	reversed := make([]Signal, len(clicks))
+	reversed := make([]readingFixture, len(clicks))
 	for i := range clicks {
 		reversed[len(clicks)-1-i] = clicks[i]
 	}
-	if err := st.RecordSignals(ctx, f.tenant, append(clicks, reversed...)); err != nil {
+	if err := recordFixtureSignals(st, ctx, f.tenant, append(clicks, reversed...)); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, "o", []Signal{click("o", f.u1, "R01", "g1", 1, "o-1", s(1)), click("o", f.u1, "N01", "g1", 1, "o-2", s(2))}); err != nil {
+	if err := recordFixtureSignals(st, ctx, "o", []readingFixture{click("o", f.u1, "R01", "g1", 1, "o-1", s(1)), click("o", f.u1, "N01", "g1", 1, "o-2", s(2))}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := st.EraseSubjects(ctx, []string{f.tenant}, []Subject{f.u3})
