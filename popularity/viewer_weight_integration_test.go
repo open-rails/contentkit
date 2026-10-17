@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -21,10 +22,12 @@ func TestIntegrationViewerWeightedQuality(t *testing.T) {
 	hub := newHub(t, conn, db, fxTenant, nil)
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	window := signal.Between(start, start.AddDate(0, 0, 30))
-	base, heavy, heavyLate, audience, legacy := cid(201), cid(202), cid(203), cid(204), cid(205)
-	var events []signal.Signal
-	add := func(work string, viewer, session int, score int16, day int) {
-		events = append(events, signal.Signal{ContentRef: ref(work), Subject: signal.Subject{UserID: fmt.Sprintf("u%d", viewer)}, Type: signal.TypeView, EventID: fmt.Sprintf("s%d", session), OccurredAt: start.AddDate(0, 0, day), Score: score})
+	base, heavy, heavyLate, audience, feedbackOnly := cid(201), cid(202), cid(203), cid(204), cid(205)
+	var events []engagementtest.Observation
+	add := func(work string, viewer, visit, day int) {
+		events = append(events, engagementtest.Observation{ContentRef: ref(work), Subject: signal.Subject{UserID: fmt.Sprintf("u%d", viewer)},
+			Type: engagementtest.TypeReading, EventID: fmt.Sprintf("s%d", visit), OccurredAt: start.AddDate(0, 0, day),
+			Progress: 1, ProgressMax: 1, DurationS: 1})
 	}
 	for _, work := range []string{base, heavy, heavyLate, audience} {
 		shift := 0
@@ -32,39 +35,38 @@ func TestIntegrationViewerWeightedQuality(t *testing.T) {
 			shift = 20
 		}
 		for viewer := 0; viewer < 100; viewer++ {
-			add(work, viewer, 0, 0, 1+shift)
+			add(work, viewer, 0, 1+shift)
 		}
 		if work == heavy || work == heavyLate {
-			for session := 1; session < 1000; session++ {
-				add(work, 0, session, 100, 2+shift)
+			for visit := 1; visit < 1000; visit++ {
+				add(work, 0, visit, 2+shift)
 			}
 		}
 		if work == audience {
 			for viewer := 0; viewer < 100; viewer++ {
-				add(work, viewer, 1, 100, 2)
+				add(work, viewer, 1, 2)
 			}
 		}
 	}
-	// Legacy negative means clamp per subject; feedback-only subjects do not
-	// contribute an engagement observation or divide by zero.
-	add(legacy, 0, 0, -30, 1)
-	events = append(events, signal.Signal{ContentRef: ref(legacy), Subject: signal.Subject{UserID: "voter-only"}, Type: "reaction", EventID: "current", OccurredAt: start.AddDate(0, 0, 1), Value: 1})
+	// Explicit feedback alone supplies neither measured attention nor reach.
+	events = append(events, engagementtest.Observation{ContentRef: ref(feedbackOnly), Subject: signal.Subject{UserID: "voter-only"},
+		Type: "reaction", EventID: "current", OccurredAt: start.AddDate(0, 0, 1), Value: 1})
 	recordBatched(t, hub, events)
-	metrics := metricsByID(t, hub, []string{base, heavy, heavyLate, audience, legacy}, window)
+	metrics := metricsByID(t, hub, []string{base, heavy, heavyLate, audience, feedbackOnly}, window)
 	for id, want := range map[string]struct {
-		views, returning uint64
-		engagement       float64
-		score            int64
+		returning uint64
+		quality   float64
+		activeMS  uint64
 	}{
-		base: {100, 0, 0, 0}, heavy: {1099, 1, .999, 99900}, heavyLate: {1099, 1, .999, 99900}, audience: {200, 100, 50, 10000},
+		base: {0, 12.5, 100_000}, heavy: {1, 13.375, 1_099_000}, heavyLate: {1, 13.375, 1_099_000}, audience: {100, 25, 200_000},
 	} {
 		m := metrics[id]
-		if m.Viewers != 100 || m.Views != want.views || m.ReturningViewers != want.returning || math.Abs(m.ViewerEngagementSum-want.engagement) > 1e-12 || m.ScoreSum != want.score {
+		if m.Readers != 100 || m.ReturningReaders != want.returning || math.Abs(m.ReaderQualitySum-want.quality) > 1e-12 || m.ActiveMS != want.activeMS {
 			t.Fatalf("%s metrics: %+v, want %+v", id, m, want)
 		}
 	}
-	if m := metrics[legacy]; m.Viewers != 1 || m.ViewerEngagementSum != 0 || m.ReturningViewers != 0 || m.ScoreSum != -30 {
-		t.Fatalf("legacy/feedback-only metric: %+v", m)
+	if m := metrics[feedbackOnly]; m.Readers != 0 || m.ReaderQualitySum != 0 || m.ReturningReaders != 0 || m.ActiveMS != 0 {
+		t.Fatalf("feedback-only activity became measured consumption: %+v", m)
 	}
 	p := popularity.PolicyV1
 	bound := math.Log10(101) * (p.Weights.Engagement/(100+p.Priors.EngagementWeight) + p.Weights.Revisit/(100+p.Priors.RevisitWeight))
@@ -93,10 +95,10 @@ func TestIntegrationViewerWeightedQuality(t *testing.T) {
 	if scores[heavy] != scores[heavyLate] {
 		t.Fatalf("time decay leaked: %v", scores)
 	}
-	// The first day alone includes only initial sessions, not future repeats.
+	// The first day alone includes only initial one-second page exposures, not future repeats.
 	first := metricsByID(t, hub, []string{heavy, audience}, signal.Between(start, start.AddDate(0, 0, 2)))
 	for id, m := range first {
-		if m.Viewers != 100 || m.Views != 100 || m.ReturningViewers != 0 || m.ViewerEngagementSum != 0 {
+		if m.Readers != 100 || m.ActiveMS != 100_000 || m.ReturningReaders != 0 || m.ReaderQualitySum != 12.5 {
 			t.Fatalf("%s first-day metrics: %+v", id, m)
 		}
 	}

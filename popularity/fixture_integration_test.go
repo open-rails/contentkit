@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	ckhub "github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
@@ -19,11 +19,10 @@ import (
 )
 
 const (
-	fxTenant   = "doujins"
-	fxKind     = "gallery"
-	fxDB       = "contentkit_popularity_test"
-	fxLegacyDB = "contentkit_popularity_legacy_test"
-	typeReact  = "reaction"
+	fxTenant  = "doujins"
+	fxKind    = "gallery"
+	fxDB      = "contentkit_popularity_test"
+	typeReact = "reaction"
 )
 
 // Fixture galleries (docs/popularity-policy.md lists them with the judgments);
@@ -35,7 +34,7 @@ const (
 	fxMixed        = "01920000-0000-7000-8000-000000000104"
 	fxLiked        = "01920000-0000-7000-8000-000000000105"
 	fxDisliked     = "01920000-0000-7000-8000-000000000106"
-	fxMoreViewers  = "01920000-0000-7000-8000-000000000107"
+	fxMoreReaders  = "01920000-0000-7000-8000-000000000107"
 	fxBigDisliked  = "01920000-0000-7000-8000-000000000108"
 	fxCrowdDislike = "01920000-0000-7000-8000-000000000109"
 	fxTenLikes     = "01920000-0000-7000-8000-000000000110"
@@ -57,26 +56,10 @@ const (
 
 var fxNames = map[string]string{
 	fxNoVotes: "no_votes", fxOneLike: "one_like", fxOneDislike: "one_dislike", fxMixed: "mixed", fxLiked: "liked",
-	fxDisliked: "disliked", fxMoreViewers: "more_viewers", fxBigDisliked: "big_disliked", fxCrowdDislike: "crowd_disliked",
+	fxDisliked: "disliked", fxMoreReaders: "more_readers", fxBigDisliked: "big_disliked", fxCrowdDislike: "crowd_disliked",
 	fxTenLikes: "ten_likes", fxRepeat: "repeat_reader", fxFive: "five_readers", fxReturn: "return_readers", fxOnce: "once_readers",
 	fxShort: "short_full", fxLongSkim: "long_skimmed", fxLongFull: "long_full", fxMulti: "two_versions", fxDup: "duplicate_delivery",
 	fxSingle: "single_delivery", fxEarly: "window_start", fxLate: "window_end", fxOutside: "before_window", fxVoteChanges: "vote_changes",
-}
-
-// expectedOrder is the viewer-weighted v1 ranking of the fixture; a
-// tier holds works with identical metrics that must score exactly equal.
-var expectedOrder = [][]string{
-	{fxCrowdDislike}, {fxShort, fxLongFull}, {fxMoreViewers}, {fxLiked}, {fxBigDisliked}, {fxOneLike}, {fxNoVotes},
-	{fxVoteChanges}, {fxOneDislike}, {fxMixed}, {fxMulti}, {fxLongSkim}, {fxReturn}, {fxDisliked},
-	{fxEarly, fxLate, fxOnce}, {fxTenLikes}, {fxDup, fxSingle}, {fxFive}, {fxRepeat},
-}
-
-// expectedScores are the viewer-weighted v1 scores, two decimals.
-var expectedScores = map[string]float64{
-	fxCrowdDislike: 2.70, fxShort: 2.34, fxLongFull: 2.34, fxMoreViewers: 2.21, fxLiked: 2.14, fxBigDisliked: 2.11,
-	fxOneLike: 2.08, fxNoVotes: 2.06, fxOneDislike: 1.99, fxMixed: 1.95, fxMulti: 1.95, fxLongSkim: 1.86, fxReturn: 1.83,
-	fxDisliked: 1.82, fxEarly: 1.78, fxLate: 1.78, fxOnce: 1.78, fxTenLikes: 1.68, fxDup: 1.66, fxSingle: 1.66,
-	fxFive: 1.28, fxRepeat: 0.47,
 }
 
 type fxCheckpoint struct {
@@ -151,7 +134,7 @@ func buildFixture(now time.Time) popularityFixture {
 	votes(fxMixed, 10, 20, -1)
 	votes(fxLiked, 0, 8, 1)
 	votes(fxDisliked, 0, 8, -1)
-	readers(fxMoreViewers, 25, 10, 8, 80, mid)
+	readers(fxMoreReaders, 25, 10, 8, 80, mid)
 	readers(fxBigDisliked, 40, 10, 8, 80, mid)
 	votes(fxBigDisliked, 0, 30, -1)
 	readers(fxCrowdDislike, 120, 10, 8, 80, mid)
@@ -251,27 +234,26 @@ const (
 	fxArtist4 = contentref.GroupID("01930000-0000-7000-8000-000000000004")
 )
 
-// record drives every delivery through the hub the way a host recorder does:
-// the work view and the selected version's view with one event id. Delivery
-// rounds keep each session's checkpoints in their listed order, so a batch
-// never carries two checkpoints of one session.
+// record delivers explicit per-page observations through the real hub.
+// Edition measurements project to the work without another recorded event.
+// Delivery rounds retain their listed order and stable segment identities.
 func (fx popularityFixture) record(t *testing.T, hub *scoringHub) {
 	t.Helper()
 	for round := 0; ; round++ {
-		var batch []signal.Signal
+		var batch []engagementtest.Observation
 		for _, s := range fx.sessions {
 			if round >= len(s.deliveries) {
 				continue
 			}
 			d := s.deliveries[round]
-			work := signal.Signal{
-				ContentRef: ref(s.work), Subject: s.subject, Type: signal.TypeView, EventID: s.viewID, Revision: d.revision, OccurredAt: s.at,
+			work := engagementtest.Observation{
+				ContentRef: ref(s.work), Subject: s.subject, Type: engagementtest.TypeReading, EventID: s.viewID, Revision: d.revision, OccurredAt: s.at,
 				DurationS: d.seconds, Progress: d.pages, ProgressMax: s.pageCount,
 				Payload: map[string]any{"unique_pages_viewed": d.pages, "version_id": s.version},
 			}
 			version := work
 			version.ContentRef = work.WithVersion(s.version)
-			batch = append(batch, work, version)
+			batch = append(batch, version)
 		}
 		if len(batch) == 0 {
 			break
@@ -281,53 +263,23 @@ func (fx popularityFixture) record(t *testing.T, hub *scoringHub) {
 	// Votes are one replaceable event per subject × work × axis whose
 	// revision is the mutation time; a mutation delivered twice is the same
 	// signal twice.
-	var prefs []signal.Signal
+	var prefs []engagementtest.Observation
 	for _, v := range fx.votes {
 		for i := 0; i < v.deliveries; i++ {
-			prefs = append(prefs, signal.Signal{ContentRef: ref(v.work), Subject: v.subject, Type: typeReact, EventID: "current",
+			prefs = append(prefs, engagementtest.Observation{ContentRef: ref(v.work), Subject: v.subject, Type: typeReact, EventID: "current",
 				Revision: uint64(v.at.UTC().UnixMicro()), OccurredAt: v.at.UTC(), Value: v.value})
 		}
 	}
 	recordBatched(t, hub, prefs)
 }
 
-func recordBatched(t *testing.T, hub *scoringHub, signals []signal.Signal) {
+func recordBatched(t *testing.T, hub *scoringHub, signals []engagementtest.Observation) {
 	t.Helper()
 	for start := 0; start < len(signals); start += signal.MaxSignalsPerBatch {
 		if err := hub.RecordSignals(context.Background(), signals[start:min(start+signal.MaxSignalsPerBatch, len(signals))]); err != nil {
 			t.Fatal(err)
 		}
 	}
-}
-
-// legacyScorer is the pre-#888 engagement formula the corrected baseline
-// ranks over: -30 + unique_pages×5 + seconds/8, clamped to [-30, 100].
-type legacyScorer struct{}
-
-func (legacyScorer) Score(_ context.Context, s signal.Signal) (signal.Scored, error) {
-	if s.Type != signal.TypeView {
-		return signal.Scored{}, nil
-	}
-	pages := float64(s.Progress)
-	if v, ok := s.Payload["unique_pages_viewed"].(uint32); ok {
-		pages = float64(v)
-	}
-	score := math.Max(-30, math.Min(100, math.Round(-30+pages*5+float64(s.DurationS)/8)))
-	return signal.Scored{Score: int16(score), Progress: s.Progress, ProgressMax: s.ProgressMax, Completed: s.ProgressMax > 0 && 10*pages >= 9*float64(s.ProgressMax)}, nil
-}
-
-// defaultRank is signal.RankWeights' default ranking, computed in Go.
-func defaultRank(m signal.ContentMetrics) float64 {
-	if m.Views == 0 {
-		return 0
-	}
-	return math.Log10(1+float64(m.Viewers)) * math.Max(1, float64(m.ScoreSum)/(float64(m.Views)+10))
-}
-
-type rankingVariant struct {
-	name   string
-	legacy bool // metrics from the legacy-scored database
-	score  func(signal.ContentMetrics) float64
 }
 
 type judgment struct {
@@ -347,15 +299,15 @@ func liftUnder(a, b string, ratio float64) func(map[string]float64) bool {
 
 var judgments = []judgment{
 	{"one like helps a little", gt(fxOneLike, fxNoVotes)},
-	{"one like cannot beat five more viewers", gt(fxMoreViewers, fxOneLike)},
+	{"one like cannot beat five more readers", gt(fxMoreReaders, fxOneLike)},
 	{"one dislike hurts a little", gt(fxNoVotes, fxOneDislike)},
 	{"one dislike hurts less than eight", gt(fxOneDislike, fxDisliked)},
 	{"liked > mixed > disliked", func(s map[string]float64) bool { return s[fxLiked] > s[fxMixed] && s[fxMixed] > s[fxDisliked] }},
 	{"one vote moves the score under 5%", func(s map[string]float64) bool {
 		return math.Abs(s[fxOneLike]-s[fxNoVotes]) < 0.05*s[fxNoVotes] && math.Abs(s[fxOneDislike]-s[fxNoVotes]) < 0.05*s[fxNoVotes]
 	}},
-	{"75% of viewers disliking outweighs double the reach", gt(fxLiked, fxBigDisliked)},
-	{"approval is bounded: 120 viewers half disliked beat 10 viewers all liking", gt(fxCrowdDislike, fxTenLikes)},
+	{"75% of readers disliking outweighs double the reach", gt(fxLiked, fxBigDisliked)},
+	{"approval is bounded: 120 readers half disliked beat 10 readers all liking", gt(fxCrowdDislike, fxTenLikes)},
 	{"five readers beat one reader's fifty sessions", gt(fxFive, fxRepeat)},
 	{"re-reads by the same readers help, under 15%", liftUnder(fxReturn, fxOnce, 1.15)},
 	{"short gallery read fully beats long gallery skimmed", gt(fxShort, fxLongSkim)},
@@ -376,35 +328,25 @@ func lazyPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// scoringHub scores the fixture kind's signals before recording them, as
-// the signals route scores views.
-type scoringHub struct {
-	*ckhub.Hub
-	scorer signal.Scorer
-}
+// scoringHub records explicit measured observations through the real hub.
+type scoringHub struct{ *ckhub.Hub }
 
-func (h *scoringHub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
-	out := make([]signal.Signal, len(signals))
-	for i, s := range signals {
-		if h.scorer != nil && s.ContentKind == fxKind {
-			scored, err := h.scorer.Score(ctx, s)
-			if err != nil {
-				return err
-			}
-			s.Score, s.Progress, s.ProgressMax, s.Completed = scored.Score, scored.Progress, scored.ProgressMax, scored.Completed
+func (h *scoringHub) RecordSignals(ctx context.Context, in []engagementtest.Observation) error {
+	rows := engagementtest.Native(in)
+	for start := 0; start < len(rows); start += signal.MaxSignalsPerBatch {
+		if err := h.Hub.RecordSignals(ctx, rows[start:min(start+signal.MaxSignalsPerBatch, len(rows))]); err != nil {
+			return err
 		}
-		out[i] = s
 	}
-	return h.Hub.RecordSignals(ctx, out)
+	return nil
 }
-
-func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal.Scorer) *scoringHub {
+func newHub(t *testing.T, ch signal.Conn, database, tenant string, _ ...any) *scoringHub {
 	t.Helper()
 	hub, err := ckhub.New(ckhub.Config{PG: lazyPool(t), PGSchema: "hub", CH: ch, CHDatabase: database, Tenant: tenant})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &scoringHub{Hub: hub, scorer: scorer}
+	return &scoringHub{Hub: hub}
 }
 
 // metricsByID reads work-level metrics keyed by content id.
@@ -434,8 +376,7 @@ func scoresByID(hits []popularity.Hit) map[string]float64 {
 }
 
 // TestIntegrationPolicyFixture records the judged fixture through the real
-// hub into two ClickHouse databases (v1 session scorer and the legacy
-// scorer), ranks it under the corrected baseline and the policy variants, and
+// hub into ClickHouse, ranks it under the measured baseline and policy variants, and
 // requires PolicyV1 to satisfy every judgment under viewer-weighted ranking.
 // The ClickHouse RankExpr and the Go formula must agree; public counts are
 // the raw metrics; windows are literal; a second tenant in the same database
@@ -449,37 +390,33 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	ids := fx.workIDs()
 
 	v1Conn := env.Fresh(t, fxDB)
-	v1Hub := newHub(t, v1Conn, fxDB, fxTenant, popularity.SessionScorer{SecondsPerUnit: 8, CoveredKey: "unique_pages_viewed"})
-	legacyConn := env.Fresh(t, fxLegacyDB)
-	legacyHub := newHub(t, legacyConn, fxLegacyDB, fxTenant, legacyScorer{})
-	otherHub := newHub(t, v1Conn, fxDB, "hentai0", popularity.SessionScorer{SecondsPerUnit: 8})
+	v1Hub := newHub(t, v1Conn, fxDB, fxTenant, nil)
+	otherHub := newHub(t, v1Conn, fxDB, "hentai0", nil)
 
 	started := time.Now()
 	fx.record(t, v1Hub)
-	fx.record(t, legacyHub)
-	t.Logf("recorded %d sessions and %d votes twice in %s", len(fx.sessions), len(fx.votes), time.Since(started).Round(time.Millisecond))
+	t.Logf("recorded %d measured visits and %d votes in %s", len(fx.sessions), len(fx.votes), time.Since(started).Round(time.Millisecond))
 	// Another tenant reuses the no_votes id in the same database.
-	var foreign []signal.Signal
+	var foreign []engagementtest.Observation
 	for i := 0; i < 3; i++ {
-		foreign = append(foreign, signal.Signal{ContentRef: contentref.New("hentai0", fxKind, fxNoVotes), Subject: signal.Subject{UserID: fmt.Sprintf("h-%d", i)},
-			Type: signal.TypeView, EventID: fmt.Sprintf("h-%d", i), OccurredAt: fx.window.From.AddDate(0, 0, 10), DurationS: 120, Progress: 10, ProgressMax: 10})
+		foreign = append(foreign, engagementtest.Observation{ContentRef: contentref.New("hentai0", fxKind, fxNoVotes), Subject: signal.Subject{UserID: fmt.Sprintf("h-%d", i)},
+			Type: engagementtest.TypeReading, EventID: fmt.Sprintf("h-%d", i), OccurredAt: fx.window.From.AddDate(0, 0, 10), DurationS: 120, Progress: 10, ProgressMax: 10})
 	}
 	recordBatched(t, otherHub, foreign)
 
 	v1Metrics := metricsByID(t, v1Hub, ids, fx.window)
-	legacyMetrics := metricsByID(t, legacyHub, ids, fx.window)
 
 	// Public counts are the metrics as recorded, whatever the ranking; work
 	// consumption counts once across versions.
-	counts := map[string][3]uint64{ // viewers, sessions, completers
-		fxNoVotes: {20, 20, 0}, fxBigDisliked: {40, 40, 0}, fxRepeat: {1, 50, 1}, fxFive: {5, 5, 5}, fxReturn: {10, 20, 10}, fxOnce: {10, 10, 10},
-		fxShort: {20, 20, 20}, fxLongSkim: {20, 20, 0}, fxLongFull: {20, 20, 20}, fxMulti: {13, 18, 10}, fxDup: {10, 10, 0}, fxSingle: {10, 10, 0},
-		fxEarly: {10, 10, 10}, fxLate: {10, 10, 10},
+	counts := map[string][2]uint64{ // distinct qualified readers, measured completers
+		fxNoVotes: {20, 0}, fxBigDisliked: {40, 0}, fxRepeat: {1, 1}, fxFive: {5, 5}, fxReturn: {10, 10}, fxOnce: {10, 10},
+		fxShort: {20, 20}, fxLongSkim: {20, 0}, fxLongFull: {20, 20}, fxMulti: {13, 10}, fxDup: {10, 0}, fxSingle: {10, 0},
+		fxEarly: {10, 10}, fxLate: {10, 10},
 	}
 	for id, want := range counts {
 		m := v1Metrics[id]
-		if m.Viewers != want[0] || m.Views != want[1] || m.Completers != want[2] {
-			t.Errorf("%s counts: viewers=%d views=%d completers=%d, want %v", fxNames[id], m.Viewers, m.Views, m.Completers, want)
+		if m.Readers != want[0] || m.Completers != want[1] {
+			t.Errorf("%s counts: readers=%d completers=%d, want %v", fxNames[id], m.Readers, m.Completers, want)
 		}
 	}
 	if _, ok := v1Metrics[fxOutside]; ok {
@@ -492,93 +429,46 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 			t.Errorf("%s feedback: +%d -%d, want %v", fxNames[id], m.PositiveSubjects, m.NegativeSubjects, want)
 		}
 	}
-	if a, b := v1Metrics[fxDup], v1Metrics[fxSingle]; a.ScoreSum != b.ScoreSum || a.ActiveS != b.ActiveS || a.Events != b.Events || a.ViewerEngagementSum != b.ViewerEngagementSum || a.ReturningViewers != b.ReturningViewers {
+	if a, b := v1Metrics[fxDup], v1Metrics[fxSingle]; a.ActiveMS != b.ActiveMS || a.ReaderQualitySum != b.ReaderQualitySum || a.ReturningReaders != b.ReturningReaders {
 		t.Errorf("duplicate delivery changed metrics: %+v vs %+v", a, b)
 	}
 	// Feedback is the current preference per subject on the day it last
 	// changed: unvotes drop out, changes count once at their final value, a
 	// vote cast before the window counts only in windows that include its day.
-	if m := v1Metrics[fxVoteChanges]; m.PositiveSubjects != 2 || m.NegativeSubjects != 1 || m.SignalCounts[typeReact] != 4 {
+	if m := v1Metrics[fxVoteChanges]; m.PositiveSubjects != 2 || m.NegativeSubjects != 1 {
 		t.Errorf("vote changes in window: %+v", m)
 	}
-	if m := metricsByID(t, v1Hub, []string{fxVoteChanges}, signal.AllTime())[fxVoteChanges]; m.PositiveSubjects != 3 || m.NegativeSubjects != 1 || m.SignalCounts[typeReact] != 5 {
+	if m := metricsByID(t, v1Hub, []string{fxVoteChanges}, signal.AllTime())[fxVoteChanges]; m.PositiveSubjects != 3 || m.NegativeSubjects != 1 {
 		t.Errorf("vote changes all time: %+v", m)
 	}
 	// Coverage is measured against the selected version: the es half-readers
-	// score 50 (6/12), never 60 (6/10); each version carries its own counts.
+	// contribute quality 0.5 (6/12), not 0.6 (6/10). Same-day edition
+	// changes do not turn a person into a returning reader.
 	versions, err := v1Hub.Metrics(ctx, []signal.ContentRef{ref(fxMulti).WithVersion("v-en"), ref(fxMulti).WithVersion("v-es")}, fx.window)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if en := versions[ref(fxMulti).WithVersion("v-en").Key()]; en.Viewers != 10 || en.Completers != 10 || en.ScoreSum != 1000 {
+	if en := versions[ref(fxMulti).WithVersion("v-en").Key()]; en.Readers != 10 || en.Completers != 10 {
 		t.Errorf("en version metrics: %+v", en)
 	}
-	if es := versions[ref(fxMulti).WithVersion("v-es").Key()]; es.Viewers != 8 || es.Completers != 5 || es.ScoreSum != 5*100+3*50 {
+	if es := versions[ref(fxMulti).WithVersion("v-es").Key()]; es.Readers != 8 || es.Completers != 5 {
 		t.Errorf("es version metrics: %+v", es)
 	}
-	if multi := v1Metrics[fxMulti]; multi.ScoreSum != 10*100+5*100+3*50 || multi.ViewerEngagementSum != 11.5 || multi.ReturningViewers != 5 {
+	if multi := v1Metrics[fxMulti]; multi.ReaderQualitySum != 11.5 || multi.ReturningReaders != 0 {
 		t.Errorf("work engagement across versions: %+v", multi)
 	}
 
-	variants := []rankingVariant{
-		{name: "baseline: default rank over legacy scorer", legacy: true, score: defaultRank},
-		{name: "default rank over v1 scorer", score: defaultRank},
-		{name: "v1 (additive, chosen)", score: popularity.PolicyV1.Score},
-		{name: "D: multiplicative approval", score: func(m signal.ContentMetrics) float64 {
-			p := popularity.PolicyV1
-			p.Weights.Approval = 0
-			if m.Viewers == 0 {
-				return 0
-			}
-			positive, negative := float64(m.PositiveSubjects), float64(m.NegativeSubjects)
-			approve := (positive + p.Priors.Approval*p.Priors.ApprovalWeight) / (positive + negative + p.Priors.ApprovalWeight)
-			return p.Score(m) * approve / p.Priors.Approval
-		}},
-		{name: "E: approval 0.6, no revisit", score: func(m signal.ContentMetrics) float64 {
-			p := popularity.PolicyV1
-			p.Weights.Approval, p.Weights.Revisit = 0.6, 0
-			return p.Score(m)
-		}},
-		{name: "F: flat priors (k=1)", score: func(m signal.ContentMetrics) float64 {
-			p := popularity.PolicyV1
-			p.Priors.ApprovalWeight, p.Priors.EngagementWeight, p.Priors.CompletionWeight = 1, 1, 1
-			return p.Score(m)
-		}},
-	}
-	var report strings.Builder
-	fmt.Fprintf(&report, "\n%-72s", "judgment")
-	for i := range variants {
-		fmt.Fprintf(&report, " | %s", string(rune('A'+i)))
-	}
-	report.WriteString("\n")
-	results := make([]map[string]float64, len(variants))
-	for i, v := range variants {
-		metrics := v1Metrics
-		if v.legacy {
-			metrics = legacyMetrics
-		}
-		results[i] = map[string]float64{}
-		for id, m := range metrics {
-			results[i][id] = v.score(m)
+	chosen := map[string]float64{}
+	for id, m := range v1Metrics {
+		if m.Readers > 0 {
+			chosen[id] = popularity.PolicyV1.Score(m)
 		}
 	}
-	failed := map[string][]string{}
-	for _, j := range judgments {
-		fmt.Fprintf(&report, "%-72s", j.name)
-		for i, v := range variants {
-			mark := "pass"
-			if !j.check(results[i]) {
-				mark = "FAIL"
-				failed[v.name] = append(failed[v.name], j.name)
-			}
-			fmt.Fprintf(&report, " | %s", mark)
+	for _, judgment := range judgments {
+		if !judgment.check(chosen) {
+			t.Errorf("measured policy judgment failed: %s", judgment.name)
 		}
-		report.WriteString("\n")
 	}
-	for i, v := range variants {
-		fmt.Fprintf(&report, "%s = %s (%d/%d)\n", string(rune('A'+i)), v.name, len(judgments)-len(failed[v.name]), len(judgments))
-	}
-	chosen := results[2]
 	ranked := make([]string, 0, len(chosen))
 	for id := range chosen {
 		ranked = append(ranked, id)
@@ -589,42 +479,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		}
 		return ranked[i] < ranked[j]
 	})
-	report.WriteString("\nv1 scores: ")
-	for _, id := range ranked {
-		fmt.Fprintf(&report, "%s=%.4f ", fxNames[id], chosen[id])
-	}
-	t.Log(report.String())
-	if f := failed["v1 (additive, chosen)"]; len(f) > 0 {
-		t.Fatalf("chosen policy fails judgments: %v", f)
-	}
-	if len(failed["baseline: default rank over legacy scorer"]) == 0 {
-		t.Fatal("the baseline passes every judgment; the fixture no longer discriminates")
-	}
 
-	// The ranking is checked tier by tier independently of the former host policy.
-	var wantOrder []string
-	for _, tier := range expectedOrder {
-		for _, id := range tier[1:] {
-			if chosen[id] != chosen[tier[0]] {
-				t.Errorf("%s and %s must score exactly equal: %v vs %v", fxNames[tier[0]], fxNames[id], chosen[tier[0]], chosen[id])
-			}
-		}
-		tied := append([]string{}, tier...)
-		sort.Strings(tied) // ties break on content id
-		wantOrder = append(wantOrder, tied...)
-	}
-	if got := strings.Join(ranked, ","); got != strings.Join(wantOrder, ",") {
-		t.Errorf("ranking differs from judged order:\n got %v\nwant %v", ranked, wantOrder)
-	}
-	for id, want := range expectedScores {
-		if math.Round(chosen[id]*100)/100 != want {
-			t.Errorf("%s scores %.4f, judged fixture expects %.2f", fxNames[id], chosen[id], want)
-		}
-	}
-
-	// The ranker ranks through the ClickHouse expression (global) and the Go
-	// formula (candidate sets); both must agree with the metrics, and public
-	// counts must be the raw metrics.
 	ranker, err := popularity.New(popularity.Config{Source: v1Hub, Policy: popularity.PolicyV1})
 	if err != nil {
 		t.Fatal(err)
@@ -644,7 +499,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		if h.ContentID != ranked[i] {
 			t.Errorf("global ranking position %d is %s, want %s", i, fxNames[h.ContentID], fxNames[ranked[i]])
 		}
-		if m := v1Metrics[h.ContentID]; h.Viewers != m.Viewers || h.Views != m.Views || h.MeanEngagement() != float64(m.ScoreSum)/(100*float64(m.Views)) {
+		if m := v1Metrics[h.ContentID]; h.Readers != m.Readers || h.MeanEngagement() != m.ReaderQualitySum/float64(m.Readers) {
 			t.Errorf("%s public counts %+v differ from metrics %+v", fxNames[h.ContentID], h, m)
 		}
 	}
@@ -693,7 +548,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 
 	// Tenant isolation: the other tenant's reuse of an id is invisible here
 	// and ranks alone there.
-	if m := v1Metrics[fxNoVotes]; m.Viewers != 20 {
+	if m := v1Metrics[fxNoVotes]; m.Readers != 20 {
 		t.Errorf("foreign tenant leaked into %s: %+v", fxNames[fxNoVotes], m)
 	}
 	otherRanker, err := popularity.New(popularity.Config{Source: otherHub, Policy: popularity.PolicyV1})
@@ -704,7 +559,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(other) != 1 || other[0].ContentID != fxNoVotes || other[0].Viewers != 3 {
+	if len(other) != 1 || other[0].ContentID != fxNoVotes || other[0].Readers != 3 {
 		t.Errorf("other tenant ranking: %+v", other)
 	}
 
@@ -727,9 +582,9 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantArtists := []popularity.GroupHit{
-		{GroupID: fxArtist2, GroupKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Viewers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
-		{GroupID: fxArtist1, GroupKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Viewers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
-		{GroupID: fxArtist4, GroupKind: "artist", Score: byID[fxShort], ContentCount: 1, Viewers: 20, MeanScore: byID[fxShort]},
+		{GroupID: fxArtist2, GroupKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Readers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
+		{GroupID: fxArtist1, GroupKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Readers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
+		{GroupID: fxArtist4, GroupKind: "artist", Score: byID[fxShort], ContentCount: 1, Readers: 20, MeanScore: byID[fxShort]},
 	}
 	if fmt.Sprint(artists) != fmt.Sprint(wantArtists) {
 		t.Errorf("artist ranking:\n got %+v\nwant %+v", artists, wantArtists)

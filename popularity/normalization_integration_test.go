@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -96,8 +97,8 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var views []signal.Signal
-	appendView := func(id string, user int, when time.Time, restricted, preview bool) {
+	var readings []engagementtest.Observation
+	appendReading := func(id string, user int, when time.Time, restricted, preview bool) {
 		access, audience, full := "public", "public", "full"
 		tiers := []string{}
 		if user < 100 {
@@ -109,27 +110,28 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 		if preview {
 			full = "preview"
 		}
-		views = append(views, signal.Signal{ContentRef: contentref.New(source.Tenant(), "gallery", id), Subject: signal.Subject{UserID: fmt.Sprintf("u%d", user)},
-			Type: signal.TypeView, EventID: fmt.Sprintf("%s-%d-%d", id, user, when.Unix()), OccurredAt: when, Score: 100, Completed: true,
+		readings = append(readings, engagementtest.Observation{ContentRef: contentref.New(source.Tenant(), "gallery", id), Subject: signal.Subject{UserID: fmt.Sprintf("u%d", user)},
+			Type: engagementtest.TypeReading, EventID: fmt.Sprintf("%s-%d-%d", id, user, when.Unix()), OccurredAt: when,
+			DurationS: 8, Progress: 1, ProgressMax: 1,
 			Access: &signal.AccessContext{ObservedAt: when, ContentAccess: access, ViewerAccess: full, Audience: audience,
 				Domain: "main", Language: "en", EligibleTiers: tiers, EligibilityKnown: true, PolicyRevision: "historical"}})
 	}
 	for user := range 100 {
-		appendView(free, user, start.Add(time.Hour), false, false)
-		appendView(switched, user, start.Add(time.Hour), false, false)
+		appendReading(free, user, start.Add(time.Hour), false, false)
+		appendReading(switched, user, start.Add(time.Hour), false, false)
 	}
 	for user := range 10 {
-		appendView(paid, user, start.Add(time.Hour), true, false)
-		appendView(switched, user, middle.Add(time.Hour), true, false)
+		appendReading(paid, user, start.Add(time.Hour), true, false)
+		appendReading(switched, user, middle.Add(time.Hour), true, false)
 	}
 	for user := 100; user < 120; user++ {
-		appendView(paid, user, start.Add(time.Hour), true, true)
+		appendReading(paid, user, start.Add(time.Hour), true, true)
 	}
 	// The real server reaction carries no browser access payload. Its author
 	// has a verified full read in this interval, so approval must still count.
-	views = append(views, signal.Signal{ContentRef: contentref.New(source.Tenant(), "gallery", free), Subject: signal.Subject{UserID: "u0"},
+	readings = append(readings, engagementtest.Observation{ContentRef: contentref.New(source.Tenant(), "gallery", free), Subject: signal.Subject{UserID: "u0"},
 		Type: "reaction", EventID: "liked", OccurredAt: start.Add(2 * time.Hour), Value: 1})
-	if err := store.RecordSignals(ctx, source.Tenant(), views); err != nil {
+	if err := engagementtest.Record(ctx, store, source.Tenant(), readings); err != nil {
 		t.Fatal(err)
 	}
 	result, err := ranker.WithScope(signal.ActivityScope{Domain: "main", Language: "en"}).PopularResult(ctx, "gallery", window, 10)
@@ -159,8 +161,8 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 	close("premium reliable rate", byID[paid].Normalization.Rate, 10./120)
 	close("switch reliable rate", byID[switched].Normalization.Rate, .5*(100./1020+10./120))
 	close("real approval", byID[free].Normalization.Approval/byID[free].Normalization.Rate, 4.75/6)
-	if byID[paid].Views != 10 {
-		t.Fatalf("previews inflated full views: %+v", byID[paid])
+	if byID[paid].Readers != 10 {
+		t.Fatalf("previews inflated qualified readers: %+v", byID[paid])
 	}
 	selected, err := ranker.WithScope(signal.ActivityScope{Domain: "main", Language: "en"}).Candidates(ctx, "gallery", []string{paid}, window)
 	if err != nil || len(selected) != 1 || math.Abs(selected[0].Score-byID[paid].Score) > 1e-10 {
@@ -178,7 +180,7 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 		t.Fatalf("renamed normalized policy reverted to legacy: %+v %v", tunedHits, err)
 	}
 	// A repeated delivery changes no numerator, denominator or quality term.
-	if err := store.RecordSignals(ctx, source.Tenant(), views); err != nil {
+	if err := engagementtest.Record(ctx, store, source.Tenant(), readings); err != nil {
 		t.Fatal(err)
 	}
 	again, err := ranker.WithScope(signal.ActivityScope{Domain: "main", Language: "en"}).PopularResult(ctx, "gallery", window, 10)
@@ -212,8 +214,8 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 		Subject: signal.Subject{UserID: "micro"}, ObservedAt: micro, Domain: "main", Language: "en", EligibilityKnown: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordSignals(ctx, source.Tenant(), []signal.Signal{{ContentRef: contentref.New(source.Tenant(), "micro", fxLate),
-		Subject: signal.Subject{UserID: "micro"}, Type: signal.TypeView, EventID: "micro", OccurredAt: micro, Score: 100,
+	if err := engagementtest.Record(ctx, store, source.Tenant(), []engagementtest.Observation{{ContentRef: contentref.New(source.Tenant(), "micro", fxLate),
+		Subject: signal.Subject{UserID: "micro"}, Type: engagementtest.TypeReading, EventID: "micro", OccurredAt: micro, DurationS: 8, Progress: 1, ProgressMax: 1,
 		Access: &signal.AccessContext{ObservedAt: micro, ContentAccess: "public", ViewerAccess: "full", Audience: "public",
 			EligibilityKnown: true, Domain: "main", Language: "en"}}}); err != nil {
 		t.Fatal(err)

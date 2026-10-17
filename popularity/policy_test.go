@@ -61,26 +61,26 @@ func TestPolicyScoreIsBoundedByReach(t *testing.T) {
 	t.Parallel()
 	p := PolicyV1
 	for _, m := range []signal.ContentMetrics{
-		{Viewers: 1, Views: 1},
-		{Viewers: 50, Views: 500, Completers: 50, ScoreSum: 50000, ViewerEngagementSum: 50, ReturningViewers: 50, PositiveSubjects: 50},
-		{Viewers: 1000, Views: 1000, NegativeSubjects: 1000},
-		{Viewers: 3, Views: 3, ScoreSum: -90}, // legacy negative scores clamp
+		{Readers: 1},
+		{Readers: 50, Completers: 50, ReaderQualitySum: 50, ReturningReaders: 50, PositiveSubjects: 50},
+		{Readers: 1000, NegativeSubjects: 1000},
+		{Readers: 3},
 	} {
 		score := p.Score(m)
-		reach := math.Log10(1 + float64(m.Viewers))
+		reach := math.Log10(1 + float64(m.Readers))
 		if score < reach || score > reach*p.MaxQuality() {
 			t.Errorf("%+v: score %g outside [%g, %g]", m, score, reach, reach*p.MaxQuality())
 		}
 	}
 	if p.Score(signal.ContentMetrics{PositiveSubjects: 9}) != 0 || p.Score(signal.ContentMetrics{}) != 0 {
-		t.Fatal("feedback without a view never ranks")
+		t.Fatal("feedback without a qualified reader never ranks")
 	}
 }
 
 func TestPolicyOneVoteCannotDominate(t *testing.T) {
 	t.Parallel()
 	p := PolicyV1
-	base := signal.ContentMetrics{Viewers: 20, Views: 20, Completers: 10, ScoreSum: 1600, ViewerEngagementSum: 16}
+	base := signal.ContentMetrics{Readers: 20, Completers: 10, ReaderQualitySum: 16}
 	liked, disliked := base, base
 	liked.PositiveSubjects = 1
 	disliked.NegativeSubjects = 1
@@ -94,16 +94,16 @@ func TestPolicyOneVoteCannotDominate(t *testing.T) {
 		}
 	}
 	more := base
-	more.Viewers, more.Views = 25, 25
+	more.Readers = 25
 	if !(p.Score(more) > p.Score(liked)) {
-		t.Fatal("25 unvoted viewers beat 20 viewers plus one like")
+		t.Fatal("25 unvoted readers beat 20 readers plus one like")
 	}
 }
 
 // The documented no_votes fixture gallery: 20 readers, 8/10 pages, 80 s.
 func TestPolicyScoreMatchesDocumentedFormula(t *testing.T) {
 	t.Parallel()
-	m := signal.ContentMetrics{Viewers: 20, Views: 20, ScoreSum: 1600, ViewerEngagementSum: 16}
+	m := signal.ContentMetrics{Readers: 20, ReaderQualitySum: 16}
 	engage := (0.8*20 + 0.40*10) / (20 + 10)
 	finish := (0 + 0.30*10) / (20 + 10)
 	approve := (0 + 0.75*5) / (0 + 0 + 5)
@@ -116,7 +116,7 @@ func TestPolicyScoreMatchesDocumentedFormula(t *testing.T) {
 func TestPolicyRankExprRendersLiterals(t *testing.T) {
 	t.Parallel()
 	expr := PolicyV1.RankExpr()
-	for _, col := range []string{"viewers", "completers", "viewer_engagement_sum", "returning_viewers", "positive_subjects", "negative_subjects"} {
+	for _, col := range []string{"readers", "completers", "reader_quality_sum", "returning_readers", "positive_subjects", "negative_subjects"} {
 		if !strings.Contains(expr, col) {
 			t.Errorf("expression lacks %s", col)
 		}
@@ -161,48 +161,13 @@ func TestWindowsAreLiteral(t *testing.T) {
 	}
 }
 
-func TestSessionScoreIsCoverageTimesDwell(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name                    string
-		covered, total, activeS uint32
-		score                   int16
-		completed               bool
-	}{
-		{"short read fully", 6, 6, 60, 100, true},
-		{"long read fully", 200, 200, 2000, 100, true},
-		{"long skimmed", 30, 200, 300, 15, false},
-		{"eight of ten pages", 8, 10, 80, 80, false},
-		{"nine of ten completes", 9, 10, 72, 90, true},
-		{"half of twelve", 6, 12, 48, 50, false},
-		{"flipped through", 10, 10, 0, 60, true},
-		{"half dwell", 10, 10, 40, 80, true},
-		{"nothing covered", 0, 10, 100, 0, false},
-		{"no total", 5, 0, 100, 0, false},
+func TestPolicyRequiresQualifiedPeople(t *testing.T) {
+	p := PolicyV1
+	if score := p.Score(signal.ContentMetrics{PositiveSubjects: 1000, ActiveMS: 1000}); score != 0 {
+		t.Fatalf("feedback or time without qualified people must not become reach: %g", score)
 	}
-	for _, c := range cases {
-		score, completed := SessionScore(c.covered, c.total, c.activeS, 8)
-		if score != c.score || completed != c.completed {
-			t.Errorf("%s: score %d completed %v, want %d %v", c.name, score, completed, c.score, c.completed)
-		}
-	}
-	if score, _ := SessionScore(30, 60, 30, 0); score != 50 {
-		t.Fatalf("seconds as units: dwell is 1, score %d", score)
-	}
-
-	scorer := SessionScorer{SecondsPerUnit: 8, CoveredKey: "unique_pages_viewed"}
-	view := signal.Signal{Type: signal.TypeView, Progress: 10, ProgressMax: 10, DurationS: 30, Payload: map[string]any{"unique_pages_viewed": uint32(3)}}
-	scored, err := scorer.Score(context.Background(), view)
-	if err != nil || scored.Score != 30 || scored.Completed || scored.Progress != 10 || scored.ProgressMax != 10 {
-		t.Fatalf("covered from payload, progress kept: %+v %v", scored, err)
-	}
-	view.Payload = nil
-	if scored, _ = scorer.Score(context.Background(), view); scored.Score != 75 || !scored.Completed {
-		t.Fatalf("covered from progress: %+v", scored)
-	}
-	reaction := signal.Signal{Type: "reaction", Value: 1, Score: 7, Completed: true}
-	if scored, _ = scorer.Score(context.Background(), reaction); scored.Score != 7 || !scored.Completed {
-		t.Fatalf("non-view signals pass through: %+v", scored)
+	if score := p.Score(signal.ContentMetrics{Readers: 1, ReaderQualitySum: 0.5}); score <= 0 {
+		t.Fatal("measured reader quality should rank")
 	}
 }
 
@@ -264,21 +229,21 @@ func (fakeSource) Metrics(context.Context, []signal.ContentRef, signal.Window) (
 	return nil, nil
 }
 
-// Session volume cannot turn one viewer into evidence about the whole audience.
+// Repeated measured attention cannot give one person more than one unit of quality.
 func TestPolicyOneRepeaterHasOneViewerInfluence(t *testing.T) {
 	p := PolicyV1
-	baseline := signal.ContentMetrics{Viewers: 100, Views: 100}
+	baseline := signal.ContentMetrics{Readers: 100, ReaderQualitySum: 12.5}
 	heavy := baseline
-	heavy.Views, heavy.ScoreSum = 1099, 99900
-	heavy.ViewerEngagementSum, heavy.ReturningViewers = .999, 1
+
+	heavy.ReaderQualitySum, heavy.ReturningReaders = 13.375, 1
 	delta := p.Score(heavy) - p.Score(baseline)
 	bound := math.Log10(101) * (p.Weights.Engagement/(100+p.Priors.EngagementWeight) + p.Weights.Revisit/(100+p.Priors.RevisitWeight))
 	if delta <= 0 || delta > bound {
 		t.Fatalf("one repeater shifted rank by %g; maximum one-viewer bound %g", delta, bound)
 	}
 	audience := baseline
-	audience.Views, audience.ScoreSum = 200, 10000
-	audience.ViewerEngagementSum, audience.ReturningViewers = 50, 100
+
+	audience.ReaderQualitySum, audience.ReturningReaders = 25, 100
 	if p.Score(audience) <= p.Score(heavy) {
 		t.Fatalf("audience-wide repeat use must outrank one heavy viewer: audience=%g heavy=%g", p.Score(audience), p.Score(heavy))
 	}
