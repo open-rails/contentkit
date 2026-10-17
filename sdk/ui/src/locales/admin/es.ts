@@ -10,6 +10,9 @@ export const admin: typeof en = {
     new: "Nueva galería",
     untitled: "Galería sin título",
     saveDraft: "Guardar borrador",
+    saveChanges: "Guardar cambios",
+    allSaved: "Todos los cambios guardados",
+    preview: "Vista previa",
     schedule: "Programar",
     details: "Detalles de la galería",
     files: "Archivos de la galería",
@@ -267,6 +270,13 @@ export const admin: typeof en = {
     restore: "Restaurar",
     dismiss: "Descartar",
     more: "+{count} más",
+  },
+  pagePicker: {
+    choose: "Elegir una página",
+    page: "Página {n}",
+    pageNamed: "Página {n}: {name}",
+    play: "Reproducir {name}",
+    pause: "Pausar {name}",
   },
   readerManifest: {
     title: "Manifiesto del lector",

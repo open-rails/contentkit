@@ -9,6 +9,9 @@ export const admin = {
     new: "New gallery",
     untitled: "Untitled gallery",
     saveDraft: "Save draft",
+    saveChanges: "Save changes",
+    allSaved: "All changes saved",
+    preview: "Preview",
     schedule: "Schedule",
     details: "Gallery details",
     files: "Gallery files",
@@ -266,6 +269,13 @@ export const admin = {
     restore: "Restore",
     dismiss: "Dismiss",
     more: "+{count} more",
+  },
+  pagePicker: {
+    choose: "Choose a page",
+    page: "Page {n}",
+    pageNamed: "Page {n}: {name}",
+    play: "Play {name}",
+    pause: "Pause {name}",
   },
   readerManifest: {
     title: "Reader manifest",

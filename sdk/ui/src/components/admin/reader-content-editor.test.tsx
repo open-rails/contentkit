@@ -137,7 +137,7 @@ it("opens a complete reader workspace without a create-draft step or writes on m
   render(<ContentEditor client={s.client} kind="gallery" id={null} />);
   expect(await screen.findByLabelText("Title")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Create draft" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save draft" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled(); // nothing to save yet
   expect(screen.getByLabelText("Gallery files")).toBeInTheDocument();
   expect(screen.getAllByRole("heading", { name: "Gallery files" })).toHaveLength(1);
   expect(screen.getByRole("combobox", { name: "Add: Artist" })).toBeVisible();
@@ -152,6 +152,9 @@ it("loads an editor response that supplies its localized fields without a text m
   const s = server({ noText: true });
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
   expect(await screen.findByLabelText("Title")).toHaveValue("Old title");
+  // An unedited existing gallery says so instead of offering a save.
+  expect(screen.getByText("All changes saved")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
 });
 
 it("allocates the technical draft only when saving and keeps the edited title", async () => {
@@ -167,6 +170,10 @@ it("allocates the technical draft only when saving and keeps the edited title", 
   expect(screen.getByLabelText("Title")).toHaveValue("New gallery");
   expect(s.item.text?.en?.title).toBe("New gallery");
   expect(writes(s).some((c) => c.path.endsWith("/publish"))).toBe(false);
+  expect(screen.getByText("All changes saved")).toBeVisible();
+  await user.type(screen.getByLabelText("Title"), "!");
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  expect(screen.queryByText("All changes saved")).not.toBeInTheDocument();
 });
 
 it("saves the visible text and current revision before publishing", async () => {

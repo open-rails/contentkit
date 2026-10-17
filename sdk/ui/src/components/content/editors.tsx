@@ -17,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
 import { PageNotices } from "../admin/page-notices.js";
+import { PagePicker, usePlanMedia } from "../admin/page-picker.js";
+import { useReaderPlan } from "../../react/versions.js";
 import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
@@ -689,6 +691,9 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
   const setRows=(next:SetStateAction<Row[]>)=>fields.edit((old)=>({rows:typeof next==="function"?next(old.rows):next}));
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
+  // Published pages pick ranges by thumbnail; before a publication, numbers.
+  const plan = useReaderPlan(content.id, version.id, { client });
+  const { pages } = usePlanMedia(plan.plan, client);
   const set = (i: number, patch: Partial<Row>) => {
     setSaved(false);
     setRows((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -710,9 +715,22 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
         <div key={i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
           <span className="w-6 text-xs text-muted-foreground tabular-nums">{i + 1}</span>
           <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={r.title} onChange={(e) => set(i, { title: e.target.value })} />
-          <Input className="h-8 w-20" type="number" min={0} aria-label={t("contentEditor.segmentStart", { n: i + 1 })} value={r.start} onChange={(e) => set(i, { start: e.target.value })} />
-          <span aria-hidden>–</span>
-          <Input className="h-8 w-20" type="number" min={1} aria-label={t("contentEditor.segmentEnd", { n: i + 1 })} value={r.end} onChange={(e) => set(i, { end: e.target.value })} />
+          {pages.length ? (
+            <>
+              <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={pages[Number(r.start)]?.name ?? ""}
+                onChange={(name) => set(i, { start: String(pages.findIndex((x) => x.name === name)) })} />
+              <span aria-hidden>–</span>
+              {/* end is exclusive: the picker names the segment's last page. */}
+              <PagePicker label={t("contentEditor.segmentEnd", { n: i + 1 })} pages={pages} value={pages[Number(r.end) - 1]?.name ?? ""}
+                onChange={(name) => set(i, { end: String(pages.findIndex((x) => x.name === name) + 1) })} />
+            </>
+          ) : (
+            <>
+              <Input className="h-8 w-20" type="number" min={0} aria-label={t("contentEditor.segmentStart", { n: i + 1 })} value={r.start} onChange={(e) => set(i, { start: e.target.value })} />
+              <span aria-hidden>–</span>
+              <Input className="h-8 w-20" type="number" min={1} aria-label={t("contentEditor.segmentEnd", { n: i + 1 })} value={r.end} onChange={(e) => set(i, { end: e.target.value })} />
+            </>
+          )}
           <Input className="h-8 w-48" type="datetime-local" aria-label={t("contentEditor.segmentRelease", { n: i + 1 })} value={r.release} onChange={(e) => set(i, { release: e.target.value })} />
           <Button type="button" size="xs" variant="ghost" onClick={() => setRows((x) => x.filter((_, j) => j !== i))}>
             {t("common.remove")}

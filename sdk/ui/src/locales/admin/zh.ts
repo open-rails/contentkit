@@ -10,6 +10,9 @@ export const admin: typeof en = {
     new: "新建画廊",
     untitled: "未命名画廊",
     saveDraft: "保存草稿",
+    saveChanges: "保存更改",
+    allSaved: "所有更改已保存",
+    preview: "预览",
     schedule: "定时发布",
     details: "画廊详情",
     files: "画廊文件",
@@ -267,6 +270,13 @@ export const admin: typeof en = {
     restore: "恢复",
     dismiss: "忽略",
     more: "另外 {count} 个",
+  },
+  pagePicker: {
+    choose: "选择页面",
+    page: "第 {n} 页",
+    pageNamed: "第 {n} 页：{name}",
+    play: "播放 {name}",
+    pause: "暂停 {name}",
   },
   readerManifest: {
     title: "阅读器清单",

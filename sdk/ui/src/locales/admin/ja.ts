@@ -10,6 +10,9 @@ export const admin: typeof en = {
     new: "新しいギャラリー",
     untitled: "無題のギャラリー",
     saveDraft: "下書きを保存",
+    saveChanges: "変更を保存",
+    allSaved: "すべての変更を保存しました",
+    preview: "プレビュー",
     schedule: "公開予約",
     details: "ギャラリーの詳細",
     files: "ギャラリーファイル",
@@ -267,6 +270,13 @@ export const admin: typeof en = {
     restore: "元に戻す",
     dismiss: "閉じる",
     more: "ほか {count} 件",
+  },
+  pagePicker: {
+    choose: "ページを選択",
+    page: "{n}ページ",
+    pageNamed: "{n}ページ: {name}",
+    play: "{name}を再生",
+    pause: "{name}を一時停止",
   },
   readerManifest: {
     title: "リーダーマニフェスト",

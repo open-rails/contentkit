@@ -227,6 +227,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     details.dirty.length > 0 ||
     associations.dirty.length > 0 ||
     coordinator.dirty;
+  // Queued files of a live edition count as edits until a save commits them.
+  const unsaved = dirty || folder.pending.length > 0 || folder.queue.items.some((q) => q.status === "uploaded");
   useEffect(() => {
     if (!dirty && !folder.busy) return;
     const ask = (event: BeforeUnloadEvent) => {
@@ -401,14 +403,20 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               {allocating && <span role="status">{t("common.saving")}</span>}
             </div>
           </div>
-          {item?.live && p.contentHref?.(item) && (
-            <a href={p.contentHref(item)} className="text-sm underline">
-              {t("contentManager.view")}
+          {item && p.contentHref?.(item) && (
+            <a href={p.contentHref(item)} className="text-sm underline" {...(item.live ? {} : { target: "_blank", rel: "noopener" })}>
+              {t(item.live ? "contentManager.view" : "readerEditor.preview")}
             </a>
           )}
-          <Button disabled={saving || allocating} onClick={() => void save(false)}>
-            {saving ? t("common.saving") : t(item?.live ? "common.save" : "readerEditor.saveDraft")}
-          </Button>
+          {item && !unsaved && !saving ? (
+            <span role="status" className="text-sm text-muted-foreground" data-ckui="editor-saved">
+              {t("readerEditor.allSaved")}
+            </span>
+          ) : (
+            <Button disabled={saving || allocating || !unsaved} onClick={() => void save(false)}>
+              {saving ? t("common.saving") : t(item?.live ? "readerEditor.saveChanges" : "readerEditor.saveDraft")}
+            </Button>
+          )}
           {!item?.live && (
             <Button variant="outline" disabled={saving || publishingBlocked} onClick={() => void save(true)}>
               {publishAt ? t("readerEditor.schedule") : t("contentManager.publish")}

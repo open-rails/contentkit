@@ -10,6 +10,9 @@ export const admin: typeof en = {
     new: "새 갤러리",
     untitled: "제목 없는 갤러리",
     saveDraft: "초안 저장",
+    saveChanges: "변경 사항 저장",
+    allSaved: "모든 변경 사항이 저장됨",
+    preview: "미리보기",
     schedule: "예약",
     details: "갤러리 정보",
     files: "갤러리 파일",
@@ -267,6 +270,13 @@ export const admin: typeof en = {
     restore: "복원",
     dismiss: "닫기",
     more: "외 {count}개",
+  },
+  pagePicker: {
+    choose: "페이지 선택",
+    page: "{n}페이지",
+    pageNamed: "{n}페이지: {name}",
+    play: "{name} 재생",
+    pause: "{name} 일시 정지",
   },
   readerManifest: {
     title: "리더 매니페스트",

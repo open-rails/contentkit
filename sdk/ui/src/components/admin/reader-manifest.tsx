@@ -16,6 +16,7 @@ import { Switch } from "#ckui/ui/switch";
 import { ErrorLine, useAction } from "../social/parts.js";
 import { useEditorSaveTask } from "../content/editor-save.js";
 import { LoadFailed, Rows } from "./shell.js";
+import { AudioPreview, PagePicker, usePlanMedia, type PlanMedia } from "./page-picker.js";
 
 export interface ReaderManifestEditorProps {
   content: string;
@@ -28,10 +29,9 @@ export interface ReaderManifestEditorProps {
 
 const NONE = "__none__";
 
-/** A page or an anchor as one select value. */
-const placeOf = (page?: string, anchor?: string) => (anchor !== undefined ? `anchor:${anchor}` : page !== undefined ? `page:${page}` : NONE);
-const fromPlace = (v: string): { page?: string; anchor?: string } =>
-  v.startsWith("anchor:") ? { anchor: v.slice(7) } : v.startsWith("page:") ? { page: v.slice(5) } : {};
+/** A page (its name) or an anchor ("anchor:id") as one picker value. */
+const placeOf = (page?: string, anchor?: string) => (anchor !== undefined ? `anchor:${anchor}` : page !== undefined ? page : NONE);
+const fromPlace = (v: string): { page?: string; anchor?: string } => (v.startsWith("anchor:") ? { anchor: v.slice(7) } : v === NONE ? {} : { page: v });
 
 /** Only what the server stores: no empty layers, defaults or lists. */
 function clean(meta: ReaderMeta): ReaderMeta {
@@ -62,6 +62,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
   const client = useContentKitClient(own);
   const plan = useReaderPlan(content, version, { client });
   const names = useMemo<ReaderNames>(() => (plan.plan ? readerNames(plan.plan) : { pages: [], files: [] }), [plan.plan]);
+  const media = usePlanMedia(plan.plan, client);
   const [basis, setBasis] = useState<ReaderPlan | null>(null);
   const [meta, setMeta] = useState<ReaderMeta | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -102,7 +103,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
         <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
           onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
-            <AnchorRow key={i} index={i} anchor={a} pages={names.pages} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
+            <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
         </Group>
@@ -119,14 +120,14 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
           }>
           {matched && <MatchReport match={matched} />}
           {(meta.foreground ?? []).map((c, i) => (
-            <ForegroundRow key={i} index={i} cue={c} names={names} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, foreground: replace(m.foreground, i, next) }))}
+            <ForegroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, foreground: replace(m.foreground, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, foreground: drop(m.foreground, i) }))} />
           ))}
         </Group>
         <Group title={t("readerManifest.background")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
           onAdd={() => edit((m) => ({ ...m, background: [...(m.background ?? []), { file: names.files[0]! }] }))}>
           {(meta.background ?? []).map((c, i) => (
-            <BackgroundRow key={i} index={i} cue={c} names={names} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
+            <BackgroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, background: drop(m.background, i) }))} />
           ))}
         </Group>
@@ -213,29 +214,10 @@ function NameSelect({ label, value, names, onChange }: { label: string; value: s
   );
 }
 
-function PlaceSelect({ label, value, pages, anchors, none, onChange }: { label: string; value: string; pages: readonly string[]; anchors: readonly string[]; none?: string; onChange: (v: string) => void }) {
+function Place({ label, value, media, anchors, none, onChange }: { label: string; value: string; media: PlanMedia; anchors: readonly string[]; none?: string; onChange: (v: string) => void }) {
   const { t } = useMessages();
-  const text = (v: string) => (v === NONE ? (none ?? "") : v.startsWith("anchor:") ? t("readerManifest.anchorNamed", { id: v.slice(7) }) : t("readerManifest.pageNamed", { name: v.slice(5) }));
-  return (
-    <Select value={value} onValueChange={(v) => onChange(String(v))}>
-      <SelectTrigger size="sm" aria-label={label}>
-        <SelectValue>{text}</SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {none !== undefined && <SelectItem value={NONE}>{none}</SelectItem>}
-        {anchors.map((a) => (
-          <SelectItem key={`a-${a}`} value={`anchor:${a}`}>
-            {text(`anchor:${a}`)}
-          </SelectItem>
-        ))}
-        {pages.map((p) => (
-          <SelectItem key={`p-${p}`} value={`page:${p}`}>
-            {text(`page:${p}`)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+  const extras = [...(none !== undefined ? [{ value: NONE, label: none }] : []), ...anchors.map((a) => ({ value: `anchor:${a}`, label: t("readerManifest.anchorNamed", { id: a }) }))];
+  return <PagePicker label={label} pages={media.pages} value={value} extras={extras} onChange={onChange} />;
 }
 
 function Remove({ label, onRemove }: { label: string; onRemove: () => void }) {
@@ -247,13 +229,13 @@ function Remove({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function AnchorRow({ index, anchor: a, pages, onChange, onRemove }: { index: number; anchor: Anchor; pages: readonly string[]; onChange: (a: Anchor) => void; onRemove: () => void }) {
+function AnchorRow({ index, anchor: a, media, onChange, onRemove }: { index: number; anchor: Anchor; media: PlanMedia; onChange: (a: Anchor) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   return (
     <div className="flex flex-wrap items-center gap-2" data-ckui="reader-anchor">
       <Input className="h-8 w-28" aria-label={t("readerManifest.anchorId", { n })} value={a.id} onChange={(e) => onChange({ ...a, id: e.target.value })} />
-      <NameSelect label={t("readerManifest.anchorPage", { n })} value={a.page} names={pages} onChange={(page) => onChange({ ...a, page })} />
+      <PagePicker label={t("readerManifest.anchorPage", { n })} pages={media.pages} value={a.page} onChange={(page) => onChange({ ...a, page })} />
       <Input className="h-8 w-24" type="number" min={0} max={100} step="any" aria-label={t("readerManifest.offset", { n })} value={shown(a.offset_percent)}
         onChange={(e) => onChange({ ...a, offset_percent: num(e.target.value) })} />
       <Input className="h-8 w-28" type="number" min={0} step="any" aria-label={t("readerManifest.duration", { n })} placeholder={t("readerManifest.durationPlaceholder")}
@@ -263,19 +245,20 @@ function AnchorRow({ index, anchor: a, pages, onChange, onRemove }: { index: num
   );
 }
 
-function ForegroundRow({ index, cue: c, names, anchors, onChange, onRemove }: { index: number; cue: ForegroundCue; names: ReaderNames; anchors: readonly string[]; onChange: (c: ForegroundCue) => void; onRemove: () => void }) {
+function ForegroundRow({ index, cue: c, names, media, anchors, onChange, onRemove }: { index: number; cue: ForegroundCue; names: ReaderNames; media: PlanMedia; anchors: readonly string[]; onChange: (c: ForegroundCue) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   return (
     <div className="flex flex-wrap items-center gap-2" data-ckui="reader-foreground">
       <NameSelect label={t("readerManifest.cueFile", { n })} value={c.file} names={names.files} onChange={(file) => onChange({ ...c, file })} />
-      <PlaceSelect label={t("readerManifest.cueAt", { n })} value={placeOf(c.page, c.anchor)} pages={names.pages} anchors={anchors} onChange={(v) => onChange({ file: c.file, ...fromPlace(v) })} />
+      <AudioPreview url={media.audio.get(c.file)} label={c.file} />
+      <Place label={t("readerManifest.cueAt", { n })} value={placeOf(c.page, c.anchor)} media={media} anchors={anchors} onChange={(v) => onChange({ file: c.file, ...fromPlace(v) })} />
       <Remove label={t("readerManifest.removeCue", { n })} onRemove={onRemove} />
     </div>
   );
 }
 
-function BackgroundRow({ index, cue: c, names, anchors, onChange, onRemove }: { index: number; cue: BackgroundCue; names: ReaderNames; anchors: readonly string[]; onChange: (c: BackgroundCue) => void; onRemove: () => void }) {
+function BackgroundRow({ index, cue: c, names, media, anchors, onChange, onRemove }: { index: number; cue: BackgroundCue; names: ReaderNames; media: PlanMedia; anchors: readonly string[]; onChange: (c: BackgroundCue) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   const from = fromPlace(placeOf(c.from_page, c.from_anchor));
@@ -284,9 +267,10 @@ function BackgroundRow({ index, cue: c, names, anchors, onChange, onRemove }: { 
   return (
     <div className="flex flex-wrap items-center gap-2" data-ckui="reader-background">
       <NameSelect label={t("readerManifest.trackFile", { n })} value={c.file} names={names.files} onChange={(file) => onChange({ ...c, file })} />
-      <PlaceSelect label={t("readerManifest.trackFrom", { n })} none={t("readerManifest.start")} value={placeOf(c.from_page, c.from_anchor)} pages={names.pages} anchors={anchors}
+      <AudioPreview url={media.audio.get(c.file)} label={c.file} />
+      <Place label={t("readerManifest.trackFrom", { n })} none={t("readerManifest.start")} value={placeOf(c.from_page, c.from_anchor)} media={media} anchors={anchors}
         onChange={(v) => set(fromPlace(v), to)} />
-      <PlaceSelect label={t("readerManifest.trackTo", { n })} none={t("readerManifest.end")} value={placeOf(c.to_page, c.to_anchor)} pages={names.pages} anchors={anchors}
+      <Place label={t("readerManifest.trackTo", { n })} none={t("readerManifest.end")} value={placeOf(c.to_page, c.to_anchor)} media={media} anchors={anchors}
         onChange={(v) => set(from, fromPlace(v))} />
       <label className="flex items-center gap-1.5">
         <Switch size="sm" checked={!!c.loop} onCheckedChange={(on) => onChange({ ...c, loop: on || undefined })} aria-label={t("readerManifest.loopN", { n })} />
