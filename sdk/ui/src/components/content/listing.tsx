@@ -13,17 +13,47 @@ import { ContentGrid, type CardListProps, type LockedCards } from "./grid.js";
 const SORTS: readonly ListSort[] = ["newest", "popular:7d", "popular:30d", "popular", "top_rated", "most_favorited", "title", "oldest"];
 const ANY = "*";
 
-/** A sort's name: "Newest", "Popular, this week". */
-export function sortLabel(m: Translator, sort: ListSort): string {
+/** A sort's name: "Newest", "Popular, this week", "Best match". */
+export function sortLabel(m: Translator, sort: ListSort | "relevance"): string {
   const [base, period] = sort.split(":");
   const name = m.t(`listing.sort_${base}` as MessageKey);
   return period ? m.t("listing.sortPeriod", { sort: name, period: m.t(`listing.period_${period}` as MessageKey) }) : name;
 }
 
+export interface SortMenuProps<S extends string> {
+  value: S;
+  /** The sorts offered, in menu order. */
+  sorts: readonly S[];
+  onChange: (sort: S) => void;
+  /** A sort's name; default the list sorts' names. */
+  label?: (sort: S) => string;
+  className?: string;
+}
+
+/** A list's sort control; hosts keep the choice (URL, remembered per page type). */
+export function SortMenu<S extends string>({ value, sorts, onChange, label, className }: SortMenuProps<S>) {
+  const m = useMessages();
+  const name = label ?? ((s: S) => sortLabel(m, s as ListSort));
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as S)}>
+      <SelectTrigger size="sm" aria-label={m.t("listing.sort")} className={className} data-ckui="listing-sort">
+        <SelectValue>{(v: string) => name(v as S)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {sorts.map((s) => (
+          <SelectItem key={s} value={s}>
+            {name(s)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export interface ContentListingProps extends CardListProps {
   /** The listed kind: its version traits and filterable attributes become filters, its sort the default. */
   kind?: string;
-  /** The sort and filters; with onQueryChange the host keeps them (e.g. in the URL). Other fields (groups, a tag page's) pass through. */
+  /** The sort and filters; with onQueryChange the host keeps them (e.g. in the URL). Other fields (groups, a tag page's) pass through. A changed query starts again at page 1: a host keeping the page drops it with the query. */
   query?: ContentQuery;
   onQueryChange?: (query: ContentQuery) => void;
   /** The sorts offered; default newest, popular (week, month, all time), top rated, most favorited, title, oldest. */
@@ -52,7 +82,7 @@ export function ContentListing({ kind, query: controlled, onQueryChange, sorts =
     [controlled, onQueryChange],
   );
   const spec = kind ? model?.kinds[kind] : undefined;
-  const sort = query.sort ?? (spec?.sort as ListSort | undefined) ?? sorts[0];
+  const sort: ListSort = query.sort ?? (spec?.sort as ListSort | undefined) ?? sorts[0] ?? "newest";
   const offered = (name: string) => !filters || filters.includes(name);
   const traits = (spec?.versions.traits ?? []).filter(offered);
   const attributes = Object.entries(spec?.attributes ?? {}).filter(([n, a]) => a.filterable && (a.values?.length || a.type === "bool") && offered(n));
@@ -69,18 +99,7 @@ export function ContentListing({ kind, query: controlled, onQueryChange, sorts =
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-listing">
       <div role="toolbar" aria-label={t("listing.filters")} className="flex flex-wrap items-center gap-2">
-        <Select value={sort} onValueChange={(v) => set({ ...query, sort: v as ListSort })}>
-          <SelectTrigger size="sm" aria-label={t("listing.sort")} data-ckui="listing-sort">
-            <SelectValue>{(v: string) => sortLabel(m, v as ListSort)}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {sorts.map((s) => (
-              <SelectItem key={s} value={s}>
-                {sortLabel(m, s)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SortMenu<ListSort> value={sort} sorts={sorts} onChange={(s) => set({ ...query, sort: s })} />
         {languageFilter && (
           <Select value={query.language ?? ANY} onValueChange={(v) => set({ ...query, language: v === ANY ? undefined : (v as string) })}>
             <SelectTrigger size="sm" aria-label={t("listing.language")} data-ckui="listing-language">

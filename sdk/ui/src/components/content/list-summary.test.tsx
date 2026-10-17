@@ -33,6 +33,7 @@ const summary = (overrides: Partial<ListingSummary> = {}): ListingSummary => ({
     { entity: entity("yaoi"), count: 3 },
   ],
   locked_count: 50,
+  total: 50,
   ...overrides,
 });
 function server(items: Card[] | ((request: URL) => Card[]) = [], metadata: ListingSummary = summary()) {

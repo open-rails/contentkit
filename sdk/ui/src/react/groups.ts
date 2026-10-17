@@ -10,6 +10,7 @@ import type {
   GroupCard,
   GroupDetail,
   GroupInput,
+  GroupPage,
   GroupUpdate,
   MemberRef,
   Membership,
@@ -57,6 +58,29 @@ export interface GroupFilter {
   sort?: GroupSort;
   /** Default 50, at most 200. */
   pageSize?: number;
+}
+
+/** One numbered page of groups and every matching group's total. */
+export interface UseGroupsPage {
+  items: GroupCard[];
+  total?: number;
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+}
+
+const NO_GROUPS: GroupCard[] = [];
+
+/** Page `page` (from 1) of active groups with the total. */
+export function useGroupsPage(f: GroupFilter, page: number, o: { client?: ContentKitClient } = {}): UseGroupsPage {
+  const { client, store, scope, language: provided } = useContentScope(o.client);
+  const language = f.language ?? provided;
+  const size = f.pageSize ?? 50;
+  const n = Math.max(1, Math.floor(page));
+  const r = useResource<GroupPage>(store, keyOf("groups", scope, "page", f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, n), { type: "groups" }, (signal) =>
+    client.entities.list({ kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, page: n, limit: size }, signal),
+  );
+  return { items: r.data?.entities ?? NO_GROUPS, total: r.data?.total, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
 }
 
 /** Active groups with name, path, cover and count, a cursor page at a time. */

@@ -42,6 +42,48 @@ export function useContents(q: ContentQuery | null, o: { client?: ContentKitClie
   return { ...list, summary: list.metadata };
 }
 
+/** One numbered page of a list or search: its cards and the selection's summary (total included). */
+export interface UseContentsPage {
+  items: Card[];
+  summary?: ContentPage["summary"];
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+}
+
+const NO_CARDS: Card[] = [];
+
+function useNumbered(key: string | null, fetch: (signal: AbortSignal) => Promise<ContentPage>, o: { client?: ContentKitClient }): UseContentsPage {
+  const { store } = useContentScope(o.client);
+  const r = useResource<ContentPage>(store, key, { type: "cards" }, fetch);
+  return { items: r.data?.contents ?? NO_CARDS, summary: r.data?.summary, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
+}
+
+/** Page `page` (from 1) of a list, with its summary; null reads nothing. */
+export function useContentsPage(q: ContentQuery | null, page: number, o: { client?: ContentKitClient } = {}): UseContentsPage {
+  const { client, scope } = useContentScope(o.client);
+  const query = useDisplay(q);
+  const n = Math.max(1, Math.floor(page));
+  return useNumbered(query ? keyOf("cards", scope, "list-page", query, n) : null, (signal) => client.discovery.list({ ...query!, cursor: undefined, page: n, summary: query!.summary ?? true }, signal), o);
+}
+
+/** Page `page` (from 1) of a search, with its summary; nothing until the query has text. */
+export function useSearchPage(q: SearchQuery | null, page: number, o: { client?: ContentKitClient } = {}): UseContentsPage {
+  const { client, scope, viewer } = useContentScope(o.client);
+  const query = useDisplay(q?.q.trim() ? q : null);
+  const n = Math.max(1, Math.floor(page));
+  const isCurrent = useCurrentDiscoveryScope(client, scope);
+  return useNumbered(
+    query ? keyOf("cards", scope, "search-page", query, n) : null,
+    async (signal) => {
+      const out = await client.discovery.search({ ...query!, cursor: undefined, page: n, summary: query!.summary ?? true }, signal);
+      if (n === 1 && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
+      return out;
+    },
+    o,
+  );
+}
+
 /** Locked contents in the same full selection, including its activity window. */
 export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitClient } = {}): { count?: number; loading: boolean } {
   const { client, store, scope } = useContentScope(o.client);

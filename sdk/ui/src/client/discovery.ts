@@ -77,7 +77,12 @@ export interface PageQuery {
   limit?: number;
 }
 
-export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & {
+/** A numbered page from 1 instead of cursor; its summary then comes with every page. */
+export interface NumberedPageQuery {
+  page?: number;
+}
+
+export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQuery & NumberedPageQuery & {
   /** Selection-wide metadata; requested only on the first page. */
   summary?: boolean;
   sort?: ListSort;
@@ -109,7 +114,8 @@ export function popularBetween(from: string, until: string, filters: PopularQuer
 export type SearchQuery = ContentFilterQuery &
   ReaderQuery &
   CardQuery &
-  PageQuery & {
+  PageQuery &
+  NumberedPageQuery & {
     q: string;
     sort?: "relevance" | ListSort;
     personalize?: boolean;
@@ -183,7 +189,7 @@ export class DiscoveryClient {
   }
   /** A first page is kept among the reader's recent searches. */
   async search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {
-    const emit = q.cursor ? null : this.http.captureChanges();
+    const emit = q.cursor || (q.page ?? 1) > 1 ? null : this.http.captureChanges();
     const out: ContentPage = await call(this.http, "GET", "/search", { query: query(q) as never, signal });
     emit?.({ type: "searches.changed" });
     return out;

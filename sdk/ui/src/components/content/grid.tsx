@@ -19,6 +19,7 @@ import { ContentFilterDialog } from "./filter-dialog.js";
 import { useReleaseReveal } from "./release-reveal.js";
 import { ContentSummaryTile } from "./summary-tile.js";
 import { ContentCard, type ContentCardProps } from "./card.js";
+import { PagedContentGrid, PagedSearchResults } from "./paged-grid.js";
 
 export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className"> {
   /** Where the list is, for exposures and click attribution: "home", "search", "similar". */
@@ -47,6 +48,13 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
   summaryLabels?: { premium?: (count: number) => string; filtered?: (count: number) => string };
   /** Opt into a fluid grid, optionally with a desktop column ceiling. */
   grid?: CardGridLayout;
+  /** Numbered pages with a shown range instead of load more or infinite scroll. */
+  pagination?: "pages";
+  /** The numbered page, from 1; with onPageChange the host keeps it (in its URL). */
+  page?: number;
+  onPageChange?: (page: number) => void;
+  /** Each numbered page's link, for crawlers and opening in a new tab. */
+  pageHref?: (page: number) => string;
 }
 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-x-4 gap-y-6";
@@ -292,8 +300,12 @@ export function cardListMode(locked: LockedCards | undefined, mode?: AccessMode)
 const LOCKED_LEVELS: readonly string[] = ["tier", "group", "ppv", "group_ppv"];
 const isLockedCard = (card: Card) => !card.access.allowed && !card.access.unknown && LOCKED_LEVELS.includes(card.access.level);
 
-/** Contents as cards (GET /v1/contents): any sort and filter, paged. */
-export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery }) {
+/** Contents as cards (GET /v1/contents): any sort and filter, paged by load more, infinite scroll or numbered pages. */
+export function ContentGrid(p: CardListProps & { query: ContentQuery }) {
+  return p.pagination === "pages" ? <PagedContentGrid {...p} /> : <CursorContentGrid {...p} />;
+}
+
+function CursorContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery }) {
   const q = useMemo<ContentQuery>(
     () => ({
       ...query,
@@ -317,7 +329,11 @@ export function ContentGrid({ query, locked = "show", ...p }: CardListProps & { 
 }
 
 /** Search results as cards; nothing until the query has text. */
-export function SearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
+export function SearchResults(p: CardListProps & { query: SearchQuery }) {
+  return p.pagination === "pages" ? <PagedSearchResults {...p} /> : <CursorSearchResults {...p} />;
+}
+
+function CursorSearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
   const { t } = useMessages();
   const q = useMemo(
     () => ({ ...query, mode: cardListMode(p.locked, query.mode), summary: query.summary ?? true, limit: query.limit ?? p.pageSize }),
