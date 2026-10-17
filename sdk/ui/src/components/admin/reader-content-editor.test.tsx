@@ -137,10 +137,10 @@ it("opens a complete reader workspace without a create-draft step or writes on m
   expect(screen.queryByRole("button", { name: "Create draft" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save draft" })).toBeVisible();
   expect(screen.getByLabelText("Gallery files")).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Add Artist" })).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Add Series" })).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Add Character" })).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Add Tag" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Add: Artist" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Add: Series" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Add: Character" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Add: Tag" })).toBeVisible();
   expect(writes(s)).toEqual([]);
   expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
 });
@@ -158,7 +158,7 @@ it("allocates the technical draft only when saving and keeps the edited title", 
   render(<ContentEditor client={s.client} kind="gallery" id={null} onCreated={onCreated} />);
   await user.type(await screen.findByLabelText("Title"), "New gallery");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
+  expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
   expect(writes(s).filter((c) => c.path === "/contents")).toHaveLength(1);
   expect(onCreated).toHaveBeenCalledOnce();
   expect(screen.getByLabelText("Title")).toHaveValue("New gallery");
@@ -222,9 +222,9 @@ it("does not expose entity edits until existing associations finish loading", as
   });
   const s = server({ memberships });
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
-  expect(await screen.findByRole("combobox", { name: "Add Artist" })).toBeDisabled();
+  expect(await screen.findByRole("combobox", { name: "Add: Artist" })).toBeDisabled();
   resolve(links);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add Artist" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add: Artist" })).toBeEnabled());
 });
 
 it("prevents publishing a processing or failed page", async () => {
@@ -322,7 +322,8 @@ it("allocates one hidden draft on file selection and carries pending uploads thr
   render(<Route />);
   const input = await screen.findByLabelText("Gallery files");
   fireEvent.change(input, { target: { files: [new File(["page one"], "first.png", { type: "image/png" })] } });
-  fireEvent.change(input, { target: { files: [new File(["page two"], "second.png", { type: "image/png" })] } });
+  // Adding the first file replaces the empty drop-zone input with the toolbar input.
+  fireEvent.change(screen.getByLabelText("Gallery files"), { target: { files: [new File(["page two"], "second.png", { type: "image/png" })] } });
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
   expect(writes(s).filter((c) => c.path === "/contents")).toHaveLength(1);
   expect(screen.getByLabelText("Title")).toHaveValue("first");
