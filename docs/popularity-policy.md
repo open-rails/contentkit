@@ -138,6 +138,11 @@ serves its separate standing order (`standing_wilson`/`standing`): one vote per
 person from current reactions and favorites changed in the window. It is not a
 measured popularity score and cannot recover votes later removed. Explicitly
 selecting `v1` remains supported and reports mode `viewer_reach`.
+With trusted lineage, discovery's popular lists report mode `measured_then_standing`:
+works with measured readers rank first by the normalized score; works with
+explicit standing in the window but no measured readers follow by the standing
+order. Recent instrumentation or sparse reading therefore never empties a list
+that has real votes, and per-work participation is reported only for measured works.
 A broken population query is an error, not permission to invent a denominator or
 silently reclassify receipts.
 

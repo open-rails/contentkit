@@ -34,7 +34,7 @@ func TestSignaledPopularPeriodHTTPValidation(t *testing.T) {
 		t.Run("valid/"+period, func(t *testing.T) {
 			path := q("/contents", "kind", "gallery", "sort", "popular:"+period, "groups", f.ids["romance"])
 			got, page := f.list("main.test", "", path)
-			if want := []string{f.cid(1)}; !reflect.DeepEqual(got, want) || page.Ranking == nil || page.Ranking.Mode != "population_normalized" {
+			if want := []string{f.cid(1)}; !reflect.DeepEqual(got, want) || page.Ranking == nil || page.Ranking.Mode != "measured_then_standing" {
 				t.Errorf("valid popular:%s got %v %+v, want %v", period, got, page.Ranking, want)
 			}
 		})

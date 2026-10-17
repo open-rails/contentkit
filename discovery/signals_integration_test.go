@@ -93,7 +93,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	}
 
 	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) ||
-		page.Ranking == nil || page.Ranking.Mode != "population_normalized" {
+		page.Ranking == nil || page.Ranking.Mode != "measured_then_standing" {
 		t.Fatalf("popular:all = %v %+v", got, page.Ranking)
 	}
 
