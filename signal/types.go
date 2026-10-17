@@ -376,8 +376,8 @@ type HistoryOptions struct {
 
 // ContentMetrics are named, separately defined statistics for one content
 // reference over a window, computed from canonical events. Each subject counts
-// once per metric that says "subjects"; sessions and feedback are never
-// relabeled as views.
+// once per metric that says "subjects". Measured consumption and explicit
+// feedback remain separate; neither exposes a route-open counter.
 type ContentMetrics struct {
 	Readers          uint64
 	UserReaders      uint64
@@ -483,19 +483,18 @@ func utcDay(t time.Time) time.Time {
 // RankWeights tunes the default popularity ranking:
 //
 //	volume  = log10(1 + readers)
-//	quality = (score_sum + PriorScore·PriorWeight) / (views + PriorWeight)
+//	quality = (100·reader_quality_sum + PriorScore·PriorWeight) / (readers + PriorWeight)
 //	rank    = volume × max(QualityFloor, quality)
 //
-// Qualifying views have equal time weight inside the selected window. A score
-// of zero is a valid observation and participates in the mean.
+// Qualified people have equal time weight inside the selected window. This
+// low-level default is separate from the named popularity.Policy formulas.
 type RankWeights struct {
-	// PriorWeight is the strength of the Bayesian prior in pseudo-views.
+	// PriorWeight is the strength of the prior in pseudo-readers.
 	// Defaults to 10.
 	PriorWeight float64
-	// PriorScore is the prior mean engagement score. Defaults to 0.
+	// PriorScore is the prior mean quality on a 0–100 scale. Defaults to 0.
 	PriorScore float64
-	// QualityFloor keeps pure-volume ranking meaningful when hosts record no
-	// scores. Defaults to 1.
+	// QualityFloor bounds the low-level quality multiplier below. Defaults to 1.
 	QualityFloor float64
 }
 
@@ -519,9 +518,8 @@ type PopularOptions struct {
 
 	// RankExpr, when set, REPLACES the default ranking with a host-supplied
 	// ClickHouse expression (trusted SQL). It may reference the window metric
-	// columns: readers, user_readers, guest_readers, views, completions,
-	// completers, active_s, score_sum, reader_quality_sum, returning_readers,
-	// events, value_sum, positive_subjects,
+	// columns: readers, user_readers, guest_readers, completers, active_ms,
+	// reader_quality_sum, returning_readers, value_sum, positive_subjects,
 	// negative_subjects.
 	RankExpr string
 	// Normalization adds trusted event-time eligible-population observations
@@ -530,7 +528,7 @@ type PopularOptions struct {
 }
 
 // PopularHit is one ranked work from Popular. Only works with at least one
-// view in the window rank; version rows never rank.
+// qualified reader in the window rank; version rows never rank.
 type PopularHit struct {
 	ContentRef
 	ContentMetrics

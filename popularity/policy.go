@@ -1,5 +1,6 @@
 // Package popularity ranks host content by a named, bounded policy over the
 // signal plane's canonical window metrics (docs/popularity-policy.md).
+// The viewer-reach policy uses:
 //
 //	reach   = log10(1 + readers)
 //	engage  = (reader_quality_sum + e0·ke) / (readers + ke)
@@ -9,13 +10,15 @@
 //	rank    = reach × (1 + we·engage + wf·finish + wa·approve + wr·revisit)
 //
 // Every quality term lies in [0, 1], so reach (distinct subjects) dominates
-// and the multiplier is bounded by MaxQuality. Engagement averages sessions
-// within each viewer first; each viewer contributes at most one engagement
-// unit and one returning-viewer observation. Priors are pseudo-observations: one vote
+// and the multiplier is bounded by MaxQuality. Each person's best measured
+// edition quality contributes at most one unit; activity on multiple UTC days
+// contributes at most one returning-reader observation. Priors smooth feedback: one vote
 // moves approve by at most 1/(ka+1). Time only selects the window; no term
 // depends on when an observation happened inside it. The same formula runs in
 // ClickHouse (RankExpr, global top-N) and in Go (Score, candidate sets), and
-// public counts are the raw metrics, never derived from a rank.
+// public metrics come from measured evidence, never from a rank. PolicyV2
+// instead weights bounded quality by eligible-population participation over
+// immutable event-time access intervals.
 package popularity
 
 import (
@@ -89,7 +92,7 @@ var PolicyV2 = func() Policy {
 	return p
 }()
 
-// DefaultName is the policy a host gets when it configures none.
+// DefaultName is the ByName helper default; discovery separately defaults to v2.
 const DefaultName = "v1"
 
 var policies = map[string]Policy{PolicyV1.Name: PolicyV1, PolicyV2.Name: PolicyV2}
@@ -152,7 +155,7 @@ func (p Policy) MaxQuality() float64 {
 	return 1 + p.Weights.Engagement + p.Weights.Completion + p.Weights.Approval + p.Weights.Revisit
 }
 
-// Score ranks one work's window metrics. Works without a view score 0.
+// Score ranks one work's window metrics. No qualified readers means no v1 rank.
 func (p Policy) Score(m signal.ContentMetrics) float64 {
 	if p.Normalized() {
 		n := m.Normalization

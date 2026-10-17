@@ -289,9 +289,8 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 const metricColumns = `readers,user_readers,guest_readers,completers,active_ms,reader_quality_sum,
  returning_readers,value_sum,positive_subjects,negative_subjects`
 
-// windowMetrics aggregates subject_content_daily rows matching filter over a
-// window: first per subject (so each subject counts once), then per content
-// reference.
+// windowMetrics aggregates canonical measurements and feedback in a window:
+// first per subject (so each person counts once), then per content reference.
 func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Window) (string, []any) {
 	// Work filters also admit their version source rows. Filtering again after
 	// aggregation preserves exact work/version requests without scanning other IDs.
@@ -382,15 +381,15 @@ func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, 
 	return out, rows.Err()
 }
 
-// Popular ranks works of one kind with at least one view in a literal window.
-// Every view in the window has equal time weight.
+// Popular ranks works of one kind with qualified readers in a literal window.
+// Measured observations have equal time weight inside that window.
 func (st *Store) Popular(ctx context.Context, tenant string, contentKind string, opts PopularOptions) ([]PopularHit, error) {
 	return st.popular(ctx, tenant, contentKind, nil, opts)
 }
 
 // PopularityFor scores a fixed candidate set of works by the popularity
-// ranking and returns content_id -> score. Candidates without views in the
-// window are absent.
+// ranking and returns content_id -> score. Candidates without qualified
+// readers in the window are absent.
 func (st *Store) PopularityFor(ctx context.Context, tenant string, contentKind string, ids []string, window Window) (map[string]float64, error) {
 	ids = trimAll(ids)
 	if len(ids) == 0 {

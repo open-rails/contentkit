@@ -142,13 +142,13 @@ type GroupHit struct {
 	GroupKind    string
 	Score        float64 // summed member scores
 	ContentCount uint64  // ranked members inside the candidate bound
-	Readers      uint64  // summed member readers (a subject viewing two members counts twice)
+	Readers      uint64  // summed member readers (a person engaging with two members counts twice)
 	MeanScore    float64 // Score / ContentCount
 }
 
 // Popular returns the top limit works of one kind in a window, ranked by the
-// policy inside ClickHouse (RankExpr). Only works with a view in the window
-// rank; ties break on content id. limit is clamped to MaxDepth. The ranking is
+// policy inside ClickHouse (RankExpr). Only works with qualified readers rank;
+// ties break on content id. limit is clamped to MaxDepth. The ranking is
 // global and read in power-of-two prefixes, so a few cache entries per window
 // serve every reader; hosts page by asking for offset+limit and slicing.
 func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
@@ -199,8 +199,8 @@ func (r *Ranker) readDepth(limit int) int {
 
 // Candidates scores a host-selected set of works (an artist's galleries, a
 // search page, a tag) in Go over one Metrics read: score descending, content
-// id ascending. Candidates without a view in the window are absent, exactly
-// as in Popular.
+// id ascending. Candidates without qualified readers in the window are absent,
+// exactly as in Popular.
 func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []string, window signal.Window) ([]Hit, error) {
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
