@@ -64,9 +64,20 @@ func TestNumberedPagesCarryTheSelectionTotal(t *testing.T) {
 		q("/contents", "kind", "gallery", "sort", "random", "page", "1"),
 		q("/contents", "kind", "gallery", "limit", "100", "page", "101"),
 		q("/search", "q", "numbered", "page", "-1"),
+		q("/contents", "kind", "gallery", "limit", "100", "page", "92233720368547759"), // page × limit overflows int64
+		q("/search", "q", "numbered", "limit", "100", "page", "92233720368547759"),
+		q("/search", "q", "numbered", "limit", "100", "page", "101"),
 	} {
 		if status, _ := f.call(http.MethodGet, host, "", bad, nil, nil); status != http.StatusBadRequest {
 			t.Errorf("GET %s: %d, want 400", bad, status)
+		}
+	}
+	for _, last := range []string{
+		q("/contents", "kind", "gallery", "limit", "100", "page", "100"),
+		q("/search", "q", "numbered", "limit", "100", "page", "100"),
+	} {
+		if status, _ := f.call(http.MethodGet, host, "", last, nil, nil); status != http.StatusOK {
+			t.Errorf("GET %s: %d, want 200 at offset 9900", last, status)
 		}
 	}
 }
