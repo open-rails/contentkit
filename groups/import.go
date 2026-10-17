@@ -64,6 +64,11 @@ func (s *Store) ImportGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, pr
 	if len(in) == 0 {
 		return nil
 	}
+	if s.references != nil {
+		if err := checkReferenceTransaction(ctx, q); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	ids := make([]string, 0, len(in))
 	rows := make([]importRow, 0, len(in))
@@ -189,6 +194,28 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 	changedIDs, err := collectStrings(got)
 	if err != nil {
 		return err
+	}
+	// Check after the upsert: a concurrent creator may have inserted an
+	// initially absent group and bound host references before ON CONFLICT
+	// acquires its lock. The callback sees those committed links and can roll
+	// this state change back in the caller's transaction.
+	if s.references != nil {
+		persisted, err := s.byIDs(ctx, q, ids)
+		if err != nil {
+			return err
+		}
+		var unavailable []Ref
+		for _, id := range ids {
+			g := persisted[GroupID(id)]
+			if g.State == StateDeleted || g.Internal {
+				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
+			}
+		}
+		if len(unavailable) > 0 {
+			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
+				return err
+			}
+		}
 	}
 	changed := map[string]bool{}
 	for _, id := range changedIDs {
