@@ -23,7 +23,7 @@ for (const mode of ["alone", "router"] as const) {
       const tag = Math.random().toString(36).slice(2, 8);
       await page.goto(admin("/admin/posts", editor, { mode, theme, params: { q: tag } }));
       const flow = page.locator("[data-ckui=content-manager]");
-      await expect(flow.getByText("Nothing matches.")).toBeVisible({ timeout: 30_000 });
+      await expect(flow.getByText("No items match these filters.")).toBeVisible({ timeout: 30_000 });
       expect(await inheritsHostTheme(page, "content-manager")).toBe(true);
 
       // A draft: title and body first, then images once it exists.

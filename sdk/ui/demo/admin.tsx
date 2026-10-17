@@ -3,7 +3,7 @@ import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import type { Membership, RefBody } from "@openrails/contentkit-ui/client";
+import type { RefBody } from "@openrails/contentkit-ui/client";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
@@ -50,8 +50,6 @@ function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
 }
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
-const member = (m: Membership) => <span data-demo="member">{m.content_id}</span>;
-
 function Page({ children }: { children: ReactNode }) {
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 16, display: "grid", gap: 16 }}>
@@ -81,7 +79,7 @@ function Alone() {
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
       ) : at.startsWith("/admin/groups") ? (
-        <GroupManager {...common} basePath="/admin/groups" renderContent={member} />
+        <GroupManager {...common} basePath="/admin/groups" />
       ) : at.startsWith("/admin/posts") ? (
         <ContentManager {...common} kind="blog" basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} contentHref={contentHref} />
       ) : (
@@ -125,7 +123,7 @@ function Hosted() {
         />
         <Route
           path="/admin/groups/*"
-          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} renderContent={member} pageSize={size} language={lang} />}
+          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} pageSize={size} language={lang} />}
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
