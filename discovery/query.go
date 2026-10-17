@@ -506,7 +506,8 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 			return o, fmt.Errorf("%w: sort position needs an ordered group first; %s groups have no order", ErrInvalid, kind)
 		}
 		o.expr = fmt.Sprintf(`coalesce((SELECT min(m.position) FROM %s m WHERE m.tenant_id = f.tenant_id AND m.group_id = @d_pgroup
- AND m.content_id = f.content_id AND m.state = 'active'), 2147483647)::bigint`, s.t.memberships)
+ AND m.content_id = f.content_id AND (m.version_id IS NULL OR m.version_id = f.version_id) AND m.state = 'active'
+ AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())), 2147483647)::bigint`, s.t.memberships)
 		o.cast, o.desc, o.args["d_pgroup"] = "bigint", false, group
 	case SortRandom:
 		o.expr, o.cast, o.desc = "md5(f.content_id || @d_seed::text)", "text", false

@@ -166,8 +166,15 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 				t.Errorf("sort %s = %v, want %v", sort, got, want)
 			}
 		}
-		if got, _ := f.list(host, "", q("/contents", "kind", "gallery", "sort", "position", "groups", f.ids["saga"])); !reflect.DeepEqual(got, []string{f.cid(3), f.cid(1)}) {
-			t.Errorf("position = %v", got)
+		// Alpha's Japanese edition leads the saga, and an expired and a future
+		// membership would too; none of them place Alpha's English card.
+		f.exec(`INSERT INTO {s}.content_memberships (tenant_id, group_id, content_id, version_id, role, position, active_from, active_until) VALUES
+ ($1, $2, $3, $4, '', 0, NULL, NULL), ($1, $2, $3, NULL, 'expired', 0, NULL, $5), ($1, $2, $3, NULL, 'future', 0, $6, NULL)`,
+			tenant, f.ids["saga"], f.cid(1), f.vid(1, 1), f.now.Add(-time.Hour), f.now.Add(time.Hour))
+		for lang, want := range map[string][]string{"en": {f.cid(3), f.cid(1)}, "ja": {f.cid(1), f.cid(3)}} {
+			if got, _ := f.list(host, "", q("/contents", "kind", "gallery", "sort", "position", "groups", f.ids["saga"], "display_language", lang)); !reflect.DeepEqual(got, want) {
+				t.Errorf("position for %s cards = %v, want %v", lang, got, want)
+			}
 		}
 	})
 	t.Run("cursor pages every sort exactly once", func(t *testing.T) {
