@@ -97,6 +97,9 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 	} else if err != nil {
 		return err
 	}
+	if testPlanSnapshot != nil {
+		testPlanSnapshot()
+	}
 	var errs []error
 	// settle records one upload's result; false once the item is Full (the
 	// rest would be produced only to be refused).
