@@ -100,6 +100,7 @@ export const groups = {
     untilOf: "{name}: until",
     remove: "Remove {name}",
     members: "Members",
+    newContent: "New {kind} in {name}",
     noMembers: "No members yet.",
     version: "One version",
     window: "{from} – {until}",

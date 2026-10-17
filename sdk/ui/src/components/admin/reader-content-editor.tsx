@@ -34,18 +34,13 @@ import { ReaderManifestEditor } from "./reader-manifest.js";
 import { PageNotices } from "./page-notices.js";
 import { LoadFailed, Rows, useConfirm } from "./shell.js";
 import { contentStatus, type ContentEditorProps } from "./content-manager.js";
+import { fileTitle } from "./bulk-drafts.js";
 
 const NO_REF: RefBody = { kind: "", id: "" };
 const blank = (): CatalogText => ({ title: "", slug: "", description: "", body: "" });
 const editableText = (item: Content | null, language: string): CatalogText =>
   item?.text?.[language] ??
   (item?.language === language ? { title: item.title, slug: item.slug, description: item.description, body: item.body } : blank());
-const fileTitle = (name: string) =>
-  name
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .slice(0, 300);
 const textOf = (text: CatalogText): CatalogText => ({
   ...text,
   title: text.title.trim(),
@@ -146,6 +141,19 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const coordinator = useEditorSaveCoordinator();
   const latest = useRef({ texts, details, associations, language });
   latest.current = { texts, details, associations, language };
+  // Starting entities (e.g. a series' "new gallery") join a new item's draft once, when they resolve.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || p.id || !p.entities?.length) return;
+    started.current = true;
+    const usable = p.entities.filter((g) => groupKinds.includes(g.kind));
+    if (!usable.length) return;
+    setPicked((all) => new Map([...all, ...usable.map((g) => [g.id, g] as const)]));
+    latest.current.associations.edit((d) => ({
+      ...d,
+      memberships: [...d.memberships, ...usable.filter((g) => !d.memberships.some((a) => a.group_id === g.id)).map((g) => ({ group_id: g.id }))],
+    }));
+  }, [p.id, p.entities, groupKinds]);
   const text = texts.value[language] ?? blank();
   const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
   const fail = (e: unknown) => {

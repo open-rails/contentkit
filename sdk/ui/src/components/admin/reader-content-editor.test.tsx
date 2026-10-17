@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
-import type { Content, ContentModel, ContentMemberships, FileInfo, ReadResult, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, ContentMemberships, FileInfo, GroupCard, ReadResult, Version } from "../../client/generated/wire.js";
 import { ContentEditor, ContentManager } from "./content-manager.js";
 import { readerMediaReady } from "../content/editor-save.js";
 
@@ -174,6 +174,18 @@ it("allocates the technical draft only when saving and keeps the edited title", 
   await user.type(screen.getByLabelText("Title"), "!");
   expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
   expect(screen.queryByText("All changes saved")).not.toBeInTheDocument();
+});
+
+it("starts a new gallery linked to the entity it was created from", async () => {
+  const s = server(),
+    user = userEvent.setup();
+  const series = { id: "s1", kind: "series", slug: "saga", name: "Saga", internal: false, count: 0, attributes: {}, created_at: at } as GroupCard;
+  render(<ContentEditor client={s.client} kind="gallery" id={null} entities={[series]} />);
+  expect(await screen.findByText("Saga")).toBeVisible();
+  await user.type(await screen.findByLabelText("Title"), "First chapter");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
+  expect(writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities")?.body.memberships).toEqual([{ group_id: "s1" }]);
 });
 
 it("saves the visible text and current revision before publishing", async () => {

@@ -12,7 +12,7 @@ import { Input } from "#ckui/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
-import { GroupMembers } from "../groups/group-members.js";
+import { GroupMembers, type GroupMembersProps } from "../groups/group-members.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { ScopedGroups } from "../groups/scoped.js";
 import { contentError, useAction } from "../social/parts.js";
@@ -27,6 +27,8 @@ export interface GroupManagerProps extends AdminFlowProps, AdminRouteProps {
   contentKind?: string;
   /** Where a member's card links, e.g. the host's editor; none: not a link. */
   contentHref?: (content: Content) => string | undefined;
+  /** Where a new item of a content kind starts already in the group being edited; none: no action. */
+  newContentHref?: GroupMembersProps["newContentHref"];
   /** Replaces a member's card body; default its cover and title. */
   renderContent?: (member: Membership, content?: Content) => ReactNode;
   pageSize?: number;
@@ -266,7 +268,7 @@ function Create({ loc, kind, client, labels, onError }: Ctx) {
   );
 }
 
-function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, id }: Ctx & { id: string }) {
+function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, newContentHref, id }: Ctx & { id: string }) {
   return (
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
@@ -289,6 +291,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, 
               onError={onError}
               renderContent={renderContent}
               contentHref={contentHref}
+              newContentHref={newContentHref}
               onUseCover={(content) => client.entities.update(group.id, { cover: { content_id: content } })}
             />
           </>

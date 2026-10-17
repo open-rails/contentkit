@@ -101,6 +101,7 @@ export const groups: typeof en = {
     untilOf: "{name}: hasta",
     remove: "Quitar {name}",
     members: "Miembros",
+    newContent: "Nuevo: {kind} en {name}",
     noMembers: "Aún no hay miembros.",
     version: "Una versión",
     window: "{from} – {until}",

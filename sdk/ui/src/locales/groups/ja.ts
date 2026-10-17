@@ -101,6 +101,7 @@ export const groups: typeof en = {
     untilOf: "{name}: 終了",
     remove: "{name}を外す",
     members: "メンバー",
+    newContent: "{name}に新しい{kind}",
     noMembers: "メンバーはまだいません。",
     version: "1 つのバージョン",
     window: "{from} – {until}",

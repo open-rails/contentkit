@@ -13,7 +13,7 @@ const model: ContentModel = {
   languages: ["en"],
   tiers: ["premium"],
   signals: false,
-  kinds: { gallery: { route: "g", presentation: "reader", versions: { languages: "one" } }, blog: { route: "blog", presentation: "post", versions: { languages: "one" } } },
+  kinds: { gallery: { route: "g", presentation: "reader", versions: { languages: "one" }, entities: ["series"] }, blog: { route: "blog", presentation: "post", versions: { languages: "one" } } },
   entity_kinds: { series: { route: "series" } },
 };
 const content = (id: string, title: string, kind: string, extra: Partial<Content> = {}): Content =>
@@ -28,7 +28,7 @@ const stored: Record<string, Content> = {
 };
 const suggestion = { id: "c4", kind: "gallery", code: "C4", title: "Gamma", cover: [{ url: "https://img.test/c4.webp", w: 1, h: 1 }] } as unknown as Card;
 
-function setup() {
+function setup(newContentHref?: (kind: string, group: { code?: string }) => string | undefined) {
   const added: unknown[] = [];
   const manageIds: string[][] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,7 +51,12 @@ function setup() {
   const client = createContentKitClient({ baseUrl: "https://ck.test", fetch: fetch as typeof globalThis.fetch });
   render(
     <ContentKitProvider client={client} viewer="staff">
-      <GroupMembers group={{ id: "g1", kind: "series", name: "Saga", slug: "saga" }} contentHref={(c) => `/admin/galleries/${c.code}`} labels={{ gallery: "Galleries", blog: "Posts" }} />
+      <GroupMembers
+        group={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
+        contentHref={(c) => `/admin/galleries/${c.code}`}
+        newContentHref={newContentHref}
+        labels={{ gallery: "Galleries", blog: "Posts" }}
+      />
     </ContentKitProvider>,
   );
   return { added, manageIds };
@@ -78,4 +83,11 @@ it("adds a member by searching its title, without typing ids", async () => {
   await user.type(screen.getByRole("combobox", { name: "Search titles to add" }), "Gam");
   await user.click(await screen.findByRole("option", { name: /Gamma/ }));
   await waitFor(() => expect(added).toEqual([[{ content_id: "c4" }]]));
+});
+
+it("starts a new item already in the group, only for content kinds that join it", async () => {
+  setup((kind, group) => `/admin/${kind}/new?with=${group.code}`);
+  const start = await screen.findByRole("link", { name: "New Galleries in Saga" });
+  expect(start).toHaveAttribute("href", "/admin/gallery/new?with=SAGA1");
+  expect(screen.queryByRole("link", { name: /^New Posts/ })).toBeNull();
 });

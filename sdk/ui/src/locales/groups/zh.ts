@@ -101,6 +101,7 @@ export const groups: typeof en = {
     untilOf: "{name}：结束",
     remove: "移除{name}",
     members: "成员",
+    newContent: "在{name}中新建{kind}",
     noMembers: "还没有成员。",
     version: "单个版本",
     window: "{from} – {until}",

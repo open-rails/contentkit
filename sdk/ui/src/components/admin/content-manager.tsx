@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
-import type { Content, ManageCount, Rule } from "../../client/generated/wire.js";
+import type { Content, GroupCard, GroupDetail, ManageCount, Rule } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
@@ -113,6 +113,7 @@ function Contents({ basePath, navigation, ...p }: Inner) {
     loc.go(c.code, undefined, replace ? { replace: true } : undefined);
   };
   const target = useCodeTarget(p.client, p.kind, loc.view && loc.view !== "new" ? loc.view : null, known);
+  const entities = useStartingEntities(p.client, loc.view === "new" ? (loc.query.get("with") ?? "") : "");
   if (access.loading) return <Rows />;
   if (!access.allowed.contents) return <NoAccess>{t("contentManager.noAccess")}</NoAccess>;
   if (!loc.view) return <List {...p} loc={loc} open={open} />;
@@ -129,6 +130,7 @@ function Contents({ basePath, navigation, ...p }: Inner) {
         management
         {...p}
         id={loc.view === "new" ? null : target.id}
+        entities={entities}
         onCreated={(c) => open(c, true)}
         onDeleted={() => loc.go("", undefined, { replace: true })}
       />
@@ -161,6 +163,27 @@ function useCodeTarget(client: ContentKitClient, kind: string, code: string | nu
   if (cached) return { id: cached, retry };
   if (found?.code !== code) return { id: null, retry };
   return { id: found.id, error: found.error, missing: !found.id && !found.error, retry };
+}
+
+const asCard = (g: GroupDetail): GroupCard => ({ ...g, count: 0 });
+
+/** A new item's starting entities from `?with=CODE[,CODE]`, each with its scope (a character's series); unresolvable codes are skipped. */
+function useStartingEntities(client: ContentKitClient, codes: string): readonly GroupCard[] | undefined {
+  const [found, setFound] = useState<{ codes: string; entities: GroupCard[] } | null>(null);
+  useEffect(() => {
+    if (!codes) return;
+    const ctl = new AbortController();
+    const one = async (code: string) => {
+      const r = await client.codes.resolve(code, { signal: ctl.signal });
+      const g = await client.entities.getForManagement(r.content_id, undefined, ctl.signal);
+      return g.scope ? [asCard(g), g.scope] : [asCard(g)];
+    };
+    void Promise.all(codes.split(",").filter(Boolean).map((c) => one(c).catch(() => [] as GroupCard[]))).then((all) => {
+      if (!ctl.signal.aborted) setFound({ codes, entities: all.flat() });
+    });
+    return () => ctl.abort();
+  }, [client, codes]);
+  return codes && found?.codes === codes ? found.entities : undefined;
 }
 
 const PAGE_SIZES = [20, 50, 100] as const;
@@ -567,6 +590,8 @@ export interface ContentEditorProps {
   labels?: Labels;
   /** A new item's owner group: a channel its editors write for. */
   ownerGroup?: string;
+  /** Entities a new item starts linked to, e.g. the series it was created from; ignored for an existing item. */
+  entities?: readonly GroupCard[];
   /** After create: show the new item (the editor goes on editing it). */
   onCreated?: (content: Content) => void;
   onDeleted?: (content: Content) => void;
@@ -597,7 +622,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, entities, onCreated, onDeleted, onError, management }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -606,7 +631,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
   const ed = useContent(id, kind, language, { client });
   // A hidden version's cover is edited here; a visible version's in its own form.
-  const hidden = !!useKinds({ client }).kinds?.kinds[kind]?.versions.hidden;
+  const model = useKinds({ client }).kinds;
+  const hidden = !!model?.kinds[kind]?.versions.hidden;
   const report = useErrorReporter(onError);
   // The body is kept as stored (image references); the editor shows it with URLs.
   const [form, setForm] = useState<Form | null>(id ? null : empty);
@@ -652,6 +678,13 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     try {
       if (!item) {
         const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerGroup });
+        // Starting entities link once the item exists; version-level kinds need a version first.
+        const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && !model.entity_kinds[g.kind]?.version_level);
+        if (linked.length) {
+          await client.entities
+            .setOfContent(created.id, { kinds: [...new Set(linked.map((g) => g.kind))], memberships: linked.map((g) => ({ group_id: g.id })) }, language)
+            .catch(fail);
+        }
         onCreated?.(created);
         return;
       }

@@ -12,7 +12,7 @@ import { useTypeahead } from "../../react/discovery.js";
 import { useGroupMembers, useKinds, type Member } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
-import { Button } from "#ckui/ui/button";
+import { Button, buttonVariants } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { accessLabel, contentStatus } from "../admin/content-manager.js";
@@ -26,10 +26,12 @@ const NONE = "__none__";
 const BATCH = 100;
 
 export interface GroupMembersProps {
-  group: Pick<GroupDetail, "id" | "kind" | "name" | "slug" | "cover">;
+  group: Pick<GroupDetail, "id" | "kind" | "name" | "slug" | "cover" | "code">;
   labels?: Labels;
   /** Where a member's card links, e.g. its admin editor; none: not a link. */
   contentHref?: (content: Content) => string | undefined;
+  /** Where a new item of a content kind starts already in this group, e.g. the host's editor with `?with=<code>`; none: no action. */
+  newContentHref?: (contentKind: string, group: GroupMembersProps["group"]) => string | undefined;
   /** Replaces a member's card body; default its cover and title. */
   renderContent?: (member: Membership, content?: Content) => ReactNode;
   /** Select a member's cover as the group's. */
@@ -205,9 +207,25 @@ export function GroupMembers(p: GroupMembersProps) {
     }
     return [...out].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
   }, [members.items, contents]);
+  // Version-level kinds link a version, which a new item does not have yet.
+  const starts = spec.version_level
+    ? []
+    : Object.entries(kinds?.kinds ?? {}).flatMap(([kind, k]) => {
+        const href = k.entities?.includes(p.group.kind) ? p.newContentHref?.(kind, p.group) : undefined;
+        return href ? [{ kind, href }] : [];
+      });
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="group-members">
       <h3 className="font-medium">{t("memberships.members")}</h3>
+      {starts.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {starts.map((x) => (
+            <a key={x.kind} href={x.href} className={buttonVariants({ variant: "outline", size: "sm" })} data-ckui="group-member-new">
+              {t("memberships.newContent", { kind: labelOf(p.labels, x.kind), name: p.group.name })}
+            </a>
+          ))}
+        </div>
+      )}
       <AddContent spec={spec} labels={p.labels} client={client} onAdd={(x) => save.run(() => members.add([x]))} />
       {members.loading && !members.items.length ? (
         <Skeleton className="h-40 w-full" />

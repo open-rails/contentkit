@@ -101,6 +101,7 @@ export const groups: typeof en = {
     untilOf: "{name}: 종료",
     remove: "{name} 제거",
     members: "구성원",
+    newContent: "{name}에 새 {kind}",
     noMembers: "아직 구성원이 없습니다.",
     version: "한 버전",
     window: "{from} – {until}",
