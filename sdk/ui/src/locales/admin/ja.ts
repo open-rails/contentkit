@@ -10,7 +10,7 @@ export const admin: typeof en = {
     files: "ギャラリーファイル",
     fileHelp: "ZIPまたは画像を追加します。ページをドラッグして並べ替え、星で表紙を選びます。",
     entities: "作者・シリーズ・タグ",
-    additionalText: "追加テキストとURL",
+    headerText: "ヘッダーテキスト",
     useCover: "表紙に使用",
     useCoverFor: "{name}を表紙に使用",
     firstPageCover: "別の画像を指定しない場合、最初のページが表紙になります。",

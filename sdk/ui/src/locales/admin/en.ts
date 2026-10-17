@@ -9,7 +9,7 @@ export const admin = {
     files: "Gallery files",
     fileHelp: "Drop a ZIP or individual images. Drag pages to reorder them; use the star to choose a cover.",
     entities: "Artists, series and tags",
-    additionalText: "Additional text and URL",
+    headerText: "Header text",
     useCover: "Use as cover",
     useCoverFor: "Use {name} as cover",
     firstPageCover: "The first page is the cover unless you choose another page or upload a cover.",

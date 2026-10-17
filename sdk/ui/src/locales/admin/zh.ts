@@ -10,7 +10,7 @@ export const admin: typeof en = {
     files: "画廊文件",
     fileHelp: "添加 ZIP 或单独的图片。拖动页面调整顺序，点击星标选择封面。",
     entities: "作者、系列和标签",
-    additionalText: "其他文本与网址",
+    headerText: "页眉文字",
     useCover: "设为封面",
     useCoverFor: "将 {name} 设为封面",
     firstPageCover: "未另行选择或上传封面时，将使用第一页。",

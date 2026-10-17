@@ -10,7 +10,7 @@ export const admin: typeof en = {
     files: "Galeriedateien",
     fileHelp: "ZIP oder einzelne Bilder hinzufügen. Seiten zum Sortieren ziehen; mit dem Stern das Cover wählen.",
     entities: "Künstler, Serien und Tags",
-    additionalText: "Weitere Texte und URL",
+    headerText: "Kopftext",
     useCover: "Als Cover verwenden",
     useCoverFor: "{name} als Cover verwenden",
     firstPageCover: "Ohne eigene Auswahl wird die erste Seite als Cover verwendet.",

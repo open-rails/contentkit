@@ -2,7 +2,6 @@ import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
-import { imageRefs } from "../../client/contents.js";
 import { toContentKitError } from "../../client/errors.js";
 import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Rule } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
@@ -134,7 +133,6 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const latest = useRef({ texts, details, associations, language });
   latest.current = { texts, details, associations, language };
   const text = texts.value[language] ?? blank();
-  const shownBody = (text.body ?? "").replace(imageRefs(), (ref, name: string) => ed.imageSrc(name) ?? ref);
   const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
   const fail = (e: unknown) => {
     if (!current()) return;
@@ -408,7 +406,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor={`${ids}-description`}>{t("contentManager.description")}</Label>
+                <Label htmlFor={`${ids}-description`}>{t("readerEditor.headerText")}</Label>
                 <Textarea id={`${ids}-description`} rows={3} value={text.description ?? ""} onChange={(e) => editText({ description: e.target.value })} />
               </div>
               <AttributeFields
@@ -417,23 +415,6 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 onChange={(name, value) => changeDetails({ attributes: { ...details.value.attributes, [name]: value } })}
                 labels={p.labels}
               />
-              <details className="grid gap-3">
-                <summary className="cursor-pointer text-sm text-muted-foreground">{t("readerEditor.additionalText")}</summary>
-                <div className="mt-3 grid gap-3">
-                  <Label htmlFor={`${ids}-body`}>{t("contentManager.body")}</Label>
-                  {p.renderEditor ? (
-                    p.renderEditor({
-                      value: shownBody,
-                      onChange: (html) => editText({ body: ed.storedBody(html) }),
-                      uploadImage: item ? (file) => ed.uploadImage(file) : undefined,
-                      disabled: saving,
-                      "aria-label": t("contentManager.body"),
-                    })
-                  ) : (
-                    <Textarea id={`${ids}-body`} value={text.body ?? ""} onChange={(e) => editText({ body: e.target.value })} />
-                  )}
-                </div>
-              </details>
             </Panel>
             <Panel title={t("readerEditor.files")}>
               {versions.length > 1 && (

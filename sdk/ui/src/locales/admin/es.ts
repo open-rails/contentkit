@@ -10,7 +10,7 @@ export const admin: typeof en = {
     files: "Archivos de la galería",
     fileHelp: "Añade un ZIP o imágenes individuales. Arrastra las páginas para ordenarlas; usa la estrella para elegir la portada.",
     entities: "Artistas, series y etiquetas",
-    additionalText: "Texto adicional y URL",
+    headerText: "Texto de cabecera",
     useCover: "Usar como portada",
     useCoverFor: "Usar {name} como portada",
     firstPageCover: "La primera página será la portada si no eliges otra o subes una portada.",

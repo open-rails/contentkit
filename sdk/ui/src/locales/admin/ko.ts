@@ -10,7 +10,7 @@ export const admin: typeof en = {
     files: "갤러리 파일",
     fileHelp: "ZIP 또는 개별 이미지를 추가하세요. 페이지를 드래그해 정렬하고 별표로 표지를 선택하세요.",
     entities: "작가, 시리즈 및 태그",
-    additionalText: "추가 텍스트와 URL",
+    headerText: "머리글 텍스트",
     useCover: "표지로 사용",
     useCoverFor: "{name}을(를) 표지로 사용",
     firstPageCover: "다른 페이지나 표지를 선택하지 않으면 첫 페이지가 표지가 됩니다.",
