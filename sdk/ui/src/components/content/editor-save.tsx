@@ -72,7 +72,7 @@ export async function readerMediaReady(client: ContentKitClient, ref: RefBody): 
   const pages = await client.versions.pages(ref.id, ref.version);
   if (!pages.selected) return false;
   let offset = 0;
-  let total = 0;
+  let total: number;
   do {
     const read = await client.media.read(ref, { editor: true, offset, limit: 200 });
     if (read.files.some((file) => !!file.failed || isProcessing(file))) return false;
