@@ -13,6 +13,10 @@ run-name: Engagement ${{ inputs.package }} @ ${{ inputs.ref }}
         type: choice
         options: [signal, popularity]
         default: signal
+      test_filter:
+        description: Go test name expression (default runs every test)
+        type: string
+        default: .
 permissions:
   contents: read
 jobs:
@@ -24,6 +28,7 @@ jobs:
       CONTENTKIT_TEST_CH_USER: contentkit
       CONTENTKIT_TEST_CH_PASSWORD: contentkit
       TEST_PACKAGE: ${{ inputs.package }}
+      TEST_FILTER: ${{ inputs.test_filter }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -49,7 +54,7 @@ jobs:
         case "$TEST_PACKAGE" in signal|popularity) ;; *) exit 2 ;; esac
         git rev-parse HEAD > engagement-check-head.txt
         set -o pipefail
-        go test "./$TEST_PACKAGE" -count=1 -race -timeout=20m 2>&1 | tee engagement-check.log
+        go test "./$TEST_PACKAGE" -count=1 -race -run "$TEST_FILTER" -timeout=20m 2>&1 | tee engagement-check.log
     - uses: actions/upload-artifact@v4
       if: always()
       with:

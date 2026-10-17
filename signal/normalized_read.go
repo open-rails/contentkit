@@ -116,7 +116,7 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  interval_measurements AS (%s),
  %s,
  qualified_versions AS (SELECT content_kind AS interval_id,content_id,subject_kind,subject,qualified,completed,attention_quality,days FROM scored),
- readers AS (SELECT interval_id,content_id,subject_kind,subject,max(completed) AS completed,max(attention_quality) AS quality,
+ qualified_people AS (SELECT interval_id,content_id,subject_kind,subject,max(completed) AS completed,max(attention_quality) AS quality,
  groupUniqArrayArray(days) AS days FROM qualified_versions WHERE qualified GROUP BY interval_id,content_id,subject_kind,subject),
  feedback_source AS (SELECT content_id,subject_kind,subject,signal_type,event_id,argMax(tuple(occurred_at,value),version) AS c
  FROM %s.signals WHERE tenant=? AND content_kind=? AND content_version_id='' AND signal_type NOT IN ('view','preview') AND %s
@@ -126,7 +126,7 @@ func (st *Store) normalizedPopular(ctx context.Context, tenant, kind string, can
  WHERE c.c.1>=i.start_at AND c.c.1<i.end_at AND c.c.2!=0 GROUP BY i.interval_id,c.subject_kind,c.subject),
  interval_metrics AS (SELECT r.interval_id,count() AS readers,countIf(r.completed) AS completers,sum(r.quality) AS engagement,
  countIf(length(r.days)>1) AS returning,countIf(f.value>0) AS positive,countIf(f.value<0) AS negative
- FROM readers r LEFT JOIN feedback f ON r.interval_id=f.interval_id AND r.subject_kind=f.subject_kind AND r.subject=f.subject GROUP BY r.interval_id),
+ FROM qualified_people r LEFT JOIN feedback f ON r.interval_id=f.interval_id AND r.subject_kind=f.subject_kind AND r.subject=f.subject GROUP BY r.interval_id),
  segments AS (
  SELECT i.content_id,toFloat64(dateDiff('microsecond',i.start_at,i.end_at)) AS duration,
   coalesce(p.eligible,0) AS eligible,coalesce(m.readers,0) AS readers,
