@@ -22,7 +22,7 @@ type Activity struct {
 	Days []ActivityDay `json:"days"`
 }
 
-// ActivityDay is one day: view sessions, the distinct readers and the
+// ActivityDay is one day: distinct measured readers and the
 // signed-in ones among them.
 type ActivityDay struct {
 	Date     string `json:"date"`

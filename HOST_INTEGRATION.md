@@ -683,7 +683,6 @@ that fits the reader (`display_language` first, then position).
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
   `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
-  `most_viewed` (all-time viewers plus an imported `view_baseline`),
   `position` in the first of `groups`, which must be of an ordered group
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   a group's content from a list requiring that group: a hidden tag's page
@@ -730,7 +729,7 @@ that fits the reader (`display_language` first, then position).
   host's CORS policy, and prune stale browser choices against a public
   `GET /content-filters` without the header before attaching them to reads.
   Account language remains the host's existing profile preference.
-- `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
+- `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
   liked and disliked, contents as cards or groups, most recent first.
@@ -1475,17 +1474,18 @@ The engine's `contentkit_popularity` job (hourly, with ClickHouse) copies
 `popularity.PolicyV1` scores per period (`7d`, `30d`, `90d`, `365d`, `all`),
 each window's rating (Wilson lower bound of the subjects whose feedback is
 positive) and all-time viewers into `content_facets.popularity`, so a filtered
-`popular` or `top_rated` sort is one Postgres query. A view is scored by
-`popularity.SessionScore` against its version: pages (reader kinds, 8 s of
-dwell a page), seconds (player kinds) or scroll percent (post kinds). See
+`popular` ranks measured people and bounded quality in the selected activity
+window, normalizing trusted free/premium populations. Missing population lineage
+uses current catalog reactions/favorites as an explicit standing fallback; it
+never reads retired open-derived scores. See
 [docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
 
 ## Migration checklist
 
 - Import legacy data through `POST /v1/import` ([docs/import.md](docs/import.md)), never into ContentKit's tables.
 - Create and reuse one `contentkit.Engine` per tenant.
-- Read lists, search and recommendations through the discovery routes; send views as `POST /signals`.
-- `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.
+- Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
+- Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.

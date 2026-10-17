@@ -164,7 +164,7 @@ var routes = []httpapi.Route[handler]{
 		Query:     []httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("content_id", "only this content item")},
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.forget)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/signals", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version.",
+		Doc:     "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
 		Request: Signals{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
 		Serve: httpapi.H(handler.signals)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/exposures", Resource: "discovery", Auth: httpapi.Public,
