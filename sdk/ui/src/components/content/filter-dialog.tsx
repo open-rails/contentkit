@@ -25,7 +25,7 @@ export function ContentFilterDialog({ open, onOpenChange, description, returnFoc
     setPortal(placement);
   }
   return <AppearanceContext.Provider value={settings.appearance ?? inheritedAppearance}>
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => onOpenChange(next)}>
       <DialogContent
         finalFocus={returnFocus}
         portalContainer={placement.container}
