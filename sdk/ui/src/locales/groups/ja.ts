@@ -3,6 +3,10 @@ import type { groups as en } from "./en.js";
 export const groups: typeof en = {
   groups: {
     byLetter: "頭文字で絞り込む",
+    directorySort: "並び替え",
+    directorySort_name: "名前順",
+    directorySort_count: "作品数順",
+    directorySort_newest: "新着順",
     all: "すべて",
     otherLetters: "その他の文字",
     empty: "まだ何もありません。",
@@ -12,6 +16,7 @@ export const groups: typeof en = {
     items_other: "{count} 件",
     alsoKnownAs: "別名",
     children: "サブグループ",
+    showMore: "もっと見る",
     yes: "はい",
     no: "いいえ",
     searchPlaceholder: "名前で検索",
@@ -110,6 +115,7 @@ export const groups: typeof en = {
     chipDetails: "{name} を編集",
     newHint: "新しい名前（強調表示）は保存時に作成されます。",
     newChip: "{name}: 新規、保存時に作成",
+    needsScope: "作成するには{scope}を1つだけ関連付けてください。それまでは保存されません。",
   },
   membership: {
     unknown: "現在メンバーシップを確認できません。",

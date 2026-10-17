@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, NewEntity, RefBody, Rule } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Membership, NewEntity, RefBody, Rule } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { ruleFor } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
@@ -136,6 +136,13 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
       [membership.memberships, membership.entities, groupKinds],
     ),
   );
+  // A scoped kind's new names wait for exactly one linked or new scope entity.
+  const scopeMissing = (kind: string, memberships: readonly Membership[], create: readonly NewEntity[]) => {
+    const by = model.entity_kinds[kind]?.scoped_by;
+    if (!by) return undefined;
+    const linked = new Set(memberships.filter((a) => cards.get(a.group_id ?? "")?.kind === by).map((a) => a.group_id));
+    return linked.size + create.filter((c) => c.kind === by).length === 1 ? undefined : labelOf(p.labels, by);
+  };
   const coordinator = useEditorSaveCoordinator();
   const latest = useRef({ texts, details, associations, language });
   latest.current = { texts, details, associations, language };
@@ -256,6 +263,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const snapshotDetails = state.details.get();
     const snapshotAssociations = state.associations.get().memberships.slice();
     const snapshotCreate = state.associations.get().create.slice();
+    const waiting = (c: NewEntity) => !!scopeMissing(c.kind, snapshotAssociations, snapshotCreate);
     let cleanAssociations = true;
     try {
       let content = await ensure();
@@ -287,11 +295,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             const kind = cards.get(a.group_id ?? "")?.kind;
             return kind && model.entity_kinds[kind]?.version_level && !a.version_id ? { ...a, version_id: targetVersion?.id } : a;
           });
-          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships, create: snapshotCreate }, language);
+          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships, create: snapshotCreate.filter((c) => !waiting(c)) }, language);
           setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
           cleanAssociations = settleAssociations({
             memberships: saved.memberships.filter((a) => groupKinds.includes(saved.entities.find((g) => g.id === a.group_id)?.kind ?? "")),
-            create: [],
+            create: snapshotCreate.filter(waiting),
           });
         }
       });
@@ -533,6 +541,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                     client={client}
                     disabled={!!item && membership.loading}
                     created={associations.value.create.filter((c) => c.kind === kind).map((c) => c.name)}
+                    needsScope={scopeMissing(kind, associations.value.memberships, associations.value.create)}
                     onCreatedChange={(names) => associations.edit((d) => ({ ...d, create: [...d.create.filter((c) => c.kind !== kind), ...names.map((name) => ({ kind, name, language }))] }))}
                     onChange={(i, patch) => associations.edit((d) => ({ ...d, memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
                     onRemove={(i) => associations.edit((d) => ({ ...d, memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}

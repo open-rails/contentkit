@@ -35,6 +35,8 @@ export interface EntityChipsProps {
   /** Names no entity carries yet, created on save (kinds with spec.creatable). */
   created?: readonly string[];
   onCreatedChange?: (names: string[]) => void;
+  /** A scoped kind's new names wait for exactly one entity of this scope (its label). */
+  needsScope?: string;
   onAdd: (card: GroupCard) => void;
   onChange: (index: number, patch: Partial<Membership>) => void;
   onRemove: (index: number) => void;
@@ -188,7 +190,12 @@ export function EntityChips(p: EntityChipsProps) {
             </li>
           ))}
           {created.map((token, i) => (
-            <li key={`new:${token}`} className="inline-flex items-center gap-1 rounded-md bg-destructive/15 py-0.5 ps-2 pe-1 text-sm text-destructive" data-ckui="entity-chip-new">
+            <li
+              key={`new:${token}`}
+              className={cn("inline-flex items-center gap-1 rounded-md py-0.5 ps-2 pe-1 text-sm", p.needsScope ? "border border-dashed border-destructive text-muted-foreground" : "bg-destructive/15 text-destructive")}
+              data-ckui="entity-chip-new"
+              data-needs-scope={p.needsScope ? "" : undefined}
+            >
               <span className="min-w-0 truncate" title={t("memberships.newChip", { name: token })}>
                 {token}
               </span>
@@ -267,7 +274,7 @@ export function EntityChips(p: EntityChipsProps) {
           </ul>
         )}
       </div>
-      {created.length > 0 && <p className="text-xs text-muted-foreground">{t("memberships.newHint")}</p>}
+      {created.length > 0 && <p className="text-xs text-muted-foreground">{p.needsScope ? t("memberships.needsScope", { scope: p.needsScope }) : t("memberships.newHint")}</p>}
       {missing.length > 0 && (
         <p className="text-xs text-destructive" role="status">
           {t("memberships.notFound", { names: missing.join(", ") })}

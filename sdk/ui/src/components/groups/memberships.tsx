@@ -69,7 +69,14 @@ export function MembershipEditor(p: MembershipEditorProps) {
   );
   const [draft, setDraft] = useState<Draft[]>([]);
   const [created, setCreated] = useState<Record<string, string[]>>({});
-  const newNames = Object.entries(created).flatMap(([kind, names]) => names.map((name) => ({ kind, name, language: p.language })));
+  // A scoped kind's new names wait for exactly one linked or new scope entity.
+  const scopeMissing = (kind: string) => {
+    const by = kinds?.entity_kinds?.[kind]?.scoped_by;
+    if (!by) return undefined;
+    const linked = new Set(draft.filter((x) => cards.get(x.group_id ?? "")?.kind === by).map((x) => x.group_id));
+    return linked.size + (created[by]?.length ?? 0) === 1 ? undefined : labelOf(p.labels, by);
+  };
+  const newNames = Object.entries(created).flatMap(([kind, names]) => (scopeMissing(kind) ? [] : names.map((name) => ({ kind, name, language: p.language }))));
   const dirty = !same(draft.map(strip), initial) || newNames.length > 0;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -109,7 +116,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
         void save.run(() => cg.set(draft.map(strip), [...groupKinds], newNames)).then((out) => {
           if (!out) return;
           setSaved(true);
-          setCreated({});
+          setCreated((all) => Object.fromEntries(Object.entries(all).filter(([kind]) => scopeMissing(kind))));
           setDraft(out.memberships.filter((x) => groupKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
           p.onSaved?.(out);
         });
@@ -134,6 +141,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
               management={p.management}
               client={p.client}
               created={created[kind] ?? []}
+              needsScope={scopeMissing(kind)}
               onCreatedChange={(names) => {
                 setSaved(false);
                 setCreated((all) => ({ ...all, [kind]: names }));

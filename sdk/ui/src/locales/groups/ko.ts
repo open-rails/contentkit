@@ -3,6 +3,10 @@ import type { groups as en } from "./en.js";
 export const groups: typeof en = {
   groups: {
     byLetter: "첫 글자별",
+    directorySort: "정렬",
+    directorySort_name: "가나다순",
+    directorySort_count: "작품 많은 순",
+    directorySort_newest: "최신순",
     all: "전체",
     otherLetters: "기타 문자",
     empty: "아직 아무것도 없습니다.",
@@ -12,6 +16,7 @@ export const groups: typeof en = {
     items_other: "{count}개",
     alsoKnownAs: "다른 이름",
     children: "하위 그룹",
+    showMore: "더 보기",
     yes: "예",
     no: "아니요",
     searchPlaceholder: "이름으로 검색",
@@ -110,6 +115,7 @@ export const groups: typeof en = {
     chipDetails: "{name} 편집",
     newHint: "새 이름(강조 표시)은 저장할 때 생성됩니다.",
     newChip: "{name}: 새 항목, 저장 시 생성",
+    needsScope: "만들려면 {scope}을(를) 정확히 하나 연결하세요. 그전까지는 저장되지 않습니다.",
   },
   membership: {
     unknown: "지금은 멤버십을 확인할 수 없습니다.",

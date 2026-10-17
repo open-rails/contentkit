@@ -2,6 +2,10 @@
 export const groups = {
   groups: {
     byLetter: "By letter",
+    directorySort: "Sort",
+    directorySort_name: "A–Z",
+    directorySort_count: "Most titles",
+    directorySort_newest: "Newest",
     all: "All",
     otherLetters: "Other characters",
     empty: "Nothing here yet.",
@@ -11,6 +15,7 @@ export const groups = {
     items_other: "{count} items",
     alsoKnownAs: "Also known as",
     children: "Sub-groups",
+    showMore: "Show more",
     yes: "Yes",
     no: "No",
     searchPlaceholder: "Search by name",
@@ -109,6 +114,7 @@ export const groups = {
     chipDetails: "Edit {name}",
     newHint: "New names (highlighted) are created when you save.",
     newChip: "{name}: new, created on save",
+    needsScope: "Link exactly one {scope} to create these; they are not saved until then.",
   },
   membership: {
     unknown: "We can't check your membership right now.",

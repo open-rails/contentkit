@@ -108,3 +108,24 @@ it("keeps new names of a creatable kind as chips created on save", async () => {
   expect(document.querySelectorAll('[data-ckui="entity-chip-new"]')).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Remove Brand New" })).toBeVisible();
 });
+
+it("holds a scoped kind's new names until exactly one scope is linked", async () => {
+  const user = userEvent.setup();
+  const fetch = vi.fn(async () => Response.json({ contents: [], entities: [] }));
+  const client = createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch });
+  function Scoped() {
+    const [created, setCreated] = useState<string[]>([]);
+    return (
+      <EntityChips kind="character" label="Characters" memberships={[]} cards={new Map()} spec={{ creatable: true, scoped_by: "series" }} versionLabel={(id) => id} created={created} onCreatedChange={setCreated} needsScope="series" onAdd={() => {}} onChange={() => {}} onRemove={() => {}} />
+    );
+  }
+  render(
+    <ContentKitProvider client={client} viewer="admin">
+      <Scoped />
+    </ContentKitProvider>,
+  );
+  await user.click(screen.getByRole("combobox", { name: "Add: Characters" }));
+  await user.paste("Saber,");
+  await waitFor(() => expect(document.querySelector('[data-ckui="entity-chip-new"][data-needs-scope]')).not.toBeNull());
+  expect(screen.getByText("Link exactly one series to create these; they are not saved until then.")).toBeVisible();
+});

@@ -3,6 +3,10 @@ import type { groups as en } from "./en.js";
 export const groups: typeof en = {
   groups: {
     byLetter: "按首字母",
+    directorySort: "排序",
+    directorySort_name: "按名称",
+    directorySort_count: "作品最多",
+    directorySort_newest: "最新",
     all: "全部",
     otherLetters: "其他字符",
     empty: "这里还没有内容。",
@@ -12,6 +16,7 @@ export const groups: typeof en = {
     items_other: "{count} 项",
     alsoKnownAs: "又名",
     children: "子分组",
+    showMore: "显示更多",
     yes: "是",
     no: "否",
     searchPlaceholder: "按名称搜索",
@@ -110,6 +115,7 @@ export const groups: typeof en = {
     chipDetails: "编辑 {name}",
     newHint: "新名称（高亮显示）会在保存时创建。",
     newChip: "{name}：新建，保存时创建",
+    needsScope: "请只关联一个{scope}后再创建；在此之前不会保存。",
   },
   membership: {
     unknown: "暂时无法确认你的会员身份。",

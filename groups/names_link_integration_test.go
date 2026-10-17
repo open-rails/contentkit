@@ -162,3 +162,50 @@ func TestConcurrentContentSetsCreateOneEntity(t *testing.T) {
 		t.Fatalf("every content links the one tag: %v", ids)
 	}
 }
+
+func TestContentSetScopesNewCharacters(t *testing.T) {
+	f := creatableFixture(t)
+	for i := range 4 {
+		f.content("gallery", i+1, live("en"))
+	}
+	g := f.create(GroupInput{Kind: "series", Slug: "fate", Names: []Name{canonical("en", "Fate")}}, GroupInput{Kind: "series", Slug: "zero", Names: []Name{canonical("en", "Zero")}})
+	fate, zero := g[0], g[1]
+	saber := f.create(GroupInput{Kind: "character", Slug: "saber", ScopeID: fate.ID, Names: []Name{canonical("en", "Saber")}})[0]
+	set := func(content int, series []GroupID, names ...string) error {
+		ms := []Membership{}
+		for _, id := range series {
+			ms = append(ms, Membership{GroupID: id})
+		}
+		create := []NewEntity{}
+		for _, n := range names {
+			create = append(create, NewEntity{Kind: "character", Name: n})
+		}
+		return f.s.SetContentGroups(f.ctx, []ContentGroups{{ContentID: cid(content), Memberships: ms, Create: create}})
+	}
+
+	// The gallery's one series scopes the match: Fate's Saber links.
+	if err := set(1, []GroupID{fate.ID}, "saber"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.groupsOf(1, "character"); got["saber"] != string(saber.ID) {
+		t.Fatalf("Fate's existing Saber: %v", got)
+	}
+	// The same name in another series is another character.
+	if err := set(2, []GroupID{zero.ID}, "Saber"); err != nil {
+		t.Fatal(err)
+	}
+	other := f.groupsOf(2, "character")
+	if len(other) != 1 || other["saber"] == "" || other["saber"] == string(saber.ID) || f.countKind("character") != 2 {
+		t.Fatalf("Zero's Saber must be a new character: %v (%d characters)", other, f.countKind("character"))
+	}
+	// Zero or several series never guess a scope, even for an existing name.
+	if err := set(3, nil, "Saber"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("no series: %v, want ErrInvalid", err)
+	}
+	if err := set(4, []GroupID{fate.ID, zero.ID}, "Saber"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("two series: %v, want ErrInvalid", err)
+	}
+	if f.countKind("character") != 2 {
+		t.Errorf("refused saves created characters: %d", f.countKind("character"))
+	}
+}

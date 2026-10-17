@@ -3,6 +3,10 @@ import type { groups as en } from "./en.js";
 export const groups: typeof en = {
   groups: {
     byLetter: "Por letra",
+    directorySort: "Ordenar",
+    directorySort_name: "A–Z",
+    directorySort_count: "Más títulos",
+    directorySort_newest: "Más recientes",
     all: "Todos",
     otherLetters: "Otros caracteres",
     empty: "Aún no hay nada aquí.",
@@ -12,6 +16,7 @@ export const groups: typeof en = {
     items_other: "{count} elementos",
     alsoKnownAs: "También conocido como",
     children: "Subgrupos",
+    showMore: "Mostrar más",
     yes: "Sí",
     no: "No",
     searchPlaceholder: "Buscar por nombre",
@@ -110,6 +115,7 @@ export const groups: typeof en = {
     chipDetails: "Editar {name}",
     newHint: "Los nombres nuevos (resaltados) se crean al guardar.",
     newChip: "{name}: nuevo, se crea al guardar",
+    needsScope: "Vincula exactamente un(a) {scope} para crearlos; hasta entonces no se guardan.",
   },
   membership: {
     unknown: "Ahora no podemos comprobar tu membresía.",
