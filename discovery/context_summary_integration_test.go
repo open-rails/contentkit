@@ -27,6 +27,11 @@ func TestFavoritesSummaryBelongsToCallerBeforePagination(t *testing.T) {
 	if status != http.StatusOK || out.Summary == nil || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 1 || len(out.Items) != 1 || out.NextCursor == "" {
 		t.Fatalf("caller-scoped summary: %d %s", status, body)
 	}
+	var freeOnly InteractionPage
+	status, body = f.call(http.MethodGet, "clean.test", "reader", "/me/favorites?kind=gallery&summary=true&limit=1&mode=hide", nil, &freeOnly)
+	if status != http.StatusOK || len(freeOnly.Items) != 1 || freeOnly.Items[0].Content == nil || freeOnly.Items[0].Content.ID != f.cid(1) || freeOnly.Summary == nil || freeOnly.Summary.LockedCount != 0 {
+		t.Fatalf("hide mode must apply before the page limit: %d %s", status, body)
+	}
 	var next InteractionPage
 	status, body = f.call(http.MethodGet, "clean.test", "reader", q("/me/favorites", "kind", "gallery", "summary", "true", "cursor", out.NextCursor), nil, &next)
 	if status != http.StatusOK || next.Summary != nil {
