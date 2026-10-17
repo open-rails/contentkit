@@ -50,6 +50,11 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 		return nil, err
 	}
 	err = s.run(ctx, func(q Querier) error {
+		if s.references != nil {
+			if err := checkReferenceTransaction(ctx, q); err != nil {
+				return err
+			}
+		}
 		locked, err := s.lock(ctx, q, list)
 		if err != nil {
 			return err
@@ -66,6 +71,11 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 			}
 			if reports[i], err = s.merge(ctx, q, src, dst); err != nil {
 				return err
+			}
+			if s.references != nil {
+				if err := s.references.Merge(ctx, q, s.tenant, Ref{Kind: src.Kind, ID: src.ID}, Ref{Kind: dst.Kind, ID: dst.ID}); err != nil {
+					return err
+				}
 			}
 			src.State, src.MergedInto = StateMerged, dst.ID
 			byID[src.ID] = src

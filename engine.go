@@ -347,7 +347,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // and renames offers' products after titles.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
+	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.GroupReferences,
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
