@@ -5,6 +5,7 @@ import type {
   ContentPatch,
   Creator,
   InlineImage,
+  ManageCount,
   Segment,
   Version,
   VersionInput,
@@ -28,6 +29,9 @@ export const imageRefs = () => /contentkit:(i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4
 /** Management filters; kind selects /manage/{kind}, otherwise /manage. */
 export type ManageQuery = RouteQuery<"GET", "/manage"> & { kind?: string };
 
+/** The /manage/{kind} filters a count takes. */
+export type ManageCountQuery = RouteQuery<"GET", "/manage/{kind}/count"> & { kind: string };
+
 /**
  * Content items: a viewer's reads, and the writes of their creators, their
  * owner group's editors and root:content:write holders.
@@ -48,6 +52,11 @@ export class ContentsClient {
     return kind
       ? call(this.http, "GET", "/manage/{kind}", { params: { kind }, query, signal })
       : call(this.http, "GET", "/manage", { query, signal });
+  }
+  /** How many items of a kind the caller manages under these filters: exact up to 10,000, then truncated. */
+  manageCount(q: ManageCountQuery, signal?: AbortSignal): Promise<ManageCount> {
+    const { kind, ...query } = q;
+    return call(this.http, "GET", "/manage/{kind}/count", { params: { kind }, query, signal });
   }
   /** Creates a draft. */
   create(input: ContentInput): Promise<Content> {

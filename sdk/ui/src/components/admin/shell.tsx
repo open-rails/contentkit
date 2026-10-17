@@ -10,6 +10,7 @@ import type { AdminNavigation, ContentKitAuth } from "../../react/admin.js";
 import { GuardContext, useGuarded, type ContentKitErrorHandler, type ContentKitGuard } from "../../react/context.js";
 import { AppearanceContext, ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { ConfirmDialog } from "../social/parts.js";
 
@@ -122,20 +123,81 @@ export function LoadFailed({ error, message, retry }: { error?: ContentKitError;
 }
 
 /** Previous and next around the current page number, announced as it changes. */
-export function Pager({ page, hasNext, onPage, disabled }: { page: number; hasNext: boolean; onPage: (page: number) => void; disabled?: boolean }) {
+export interface PagerProps {
+  page: number;
+  hasNext: boolean;
+  onPage: (page: number) => void;
+  disabled?: boolean;
+  /** Matching items; with truncated, a lower bound. Adds the range, page count and first/last. */
+  total?: number;
+  truncated?: boolean;
+  pageSize?: number;
+  /** Offers these page sizes when set. */
+  onPageSize?: (size: number) => void;
+  pageSizes?: readonly number[];
+}
+
+export function Pager({ page, hasNext, onPage, disabled, total, truncated, pageSize = 20, onPageSize, pageSizes = [20, 50, 100] }: PagerProps) {
   const { t } = useMessages();
-  if (page <= 1 && !hasNext) return null;
+  if (total === undefined) {
+    if (page <= 1 && !hasNext) return null;
+    return (
+      <nav className="flex items-center justify-center gap-3" aria-label={t("admin.pages")} data-ckui="pager">
+        <Button size="sm" variant="outline" disabled={disabled || page <= 1} onClick={() => onPage(page - 1)}>
+          {t("admin.previous")}
+        </Button>
+        <span className="text-muted-foreground" aria-live="polite">
+          {t("admin.page", { page })}
+        </span>
+        <Button size="sm" variant="outline" disabled={disabled || !hasNext} onClick={() => onPage(page + 1)}>
+          {t("admin.next")}
+        </Button>
+      </nav>
+    );
+  }
+  if (!total) return null;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
   return (
-    <nav className="flex items-center justify-center gap-3" aria-label={t("admin.pages")} data-ckui="pager">
-      <Button size="sm" variant="outline" disabled={disabled || page <= 1} onClick={() => onPage(page - 1)}>
-        {t("admin.previous")}
-      </Button>
+    <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label={t("admin.pages")} data-ckui="pager">
       <span className="text-muted-foreground" aria-live="polite">
-        {t("admin.page", { page })}
+        {from <= to && t(truncated ? "admin.showingMore" : "admin.showing", { from, to, total })}
       </span>
-      <Button size="sm" variant="outline" disabled={disabled || !hasNext} onClick={() => onPage(page + 1)}>
-        {t("admin.next")}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {onPageSize && (
+          <Select value={String(pageSize)} disabled={disabled} onValueChange={(v) => v && onPageSize(Number(v))}>
+            <SelectTrigger size="sm" aria-label={t("admin.perPage")}>
+              <SelectValue>{(v: string) => `${t("admin.perPage")}: ${v}`}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {pageSizes.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {(pages > 1 || page > 1) && (
+          <>
+            <Button size="sm" variant="outline" disabled={disabled || page <= 1} onClick={() => onPage(1)}>
+              {t("admin.first")}
+            </Button>
+            <Button size="sm" variant="outline" disabled={disabled || page <= 1} onClick={() => onPage(page - 1)}>
+              {t("admin.previous")}
+            </Button>
+            <span className="text-muted-foreground">{t(truncated ? "admin.pageOfMore" : "admin.pageOf", { page, pages })}</span>
+            <Button size="sm" variant="outline" disabled={disabled || !hasNext} onClick={() => onPage(page + 1)}>
+              {t("admin.next")}
+            </Button>
+            {/* A truncated total has no known last page. */}
+            <Button size="sm" variant="outline" disabled={disabled || truncated || page >= pages} onClick={() => onPage(pages)}>
+              {t("admin.last")}
+            </Button>
+          </>
+        )}
+      </div>
     </nav>
   );
 }

@@ -324,3 +324,62 @@ type lateResolver struct{ s *Store }
 func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	return l.s.Resolver().Resolve(ctx, refs, a)
 }
+
+// Manage filters by access rule and counts what a numbered list pages through.
+func TestManageAccessAndCountIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	var free, paid, sold Content
+	f.want(http.StatusCreated, "staff", "POST", "/v1/contents", gallery("Free one", "en"), &free)
+	f.want(http.StatusCreated, "staff", "POST", "/v1/contents", gallery("Paid one", "en"), &paid)
+	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+paid.ID, ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}}, nil)
+	f.want(http.StatusCreated, "staff", "POST", "/v1/contents", gallery("Sold one", "en"), &sold)
+	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+sold.ID, ContentPatch{Access: &access.Rule{Level: access.PPV}}, nil)
+	ids := func(path string) string {
+		t.Helper()
+		var list []Content
+		f.want(http.StatusOK, "staff", "GET", path, nil, &list)
+		got := []string{}
+		for _, c := range list {
+			got = append(got, c.ID)
+		}
+		return strings.Join(got, ",")
+	}
+	for path, want := range map[string]string{
+		"/v1/manage/gallery?access=public":        free.ID,
+		"/v1/manage/gallery?access=tier":          paid.ID,
+		"/v1/manage/gallery?tier=premium":         paid.ID,
+		"/v1/manage?access=tier&tier=premium":     paid.ID,
+		"/v1/manage/gallery?access=ppv":           sold.ID,
+		"/v1/manage/gallery?access=group":         "",
+		"/v1/manage/gallery?access=public&q=paid": "",
+	} {
+		if got := ids(path); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+	for _, path := range []string{"/v1/manage/gallery?access=gold", "/v1/manage/gallery?tier=gold", "/v1/manage/gallery?access=public&tier=premium"} {
+		f.want(http.StatusBadRequest, "staff", "GET", path, nil, nil)
+	}
+
+	var n ManageCount
+	for path, want := range map[string]ManageCount{
+		"/v1/manage/gallery/count":                 {Total: 3},
+		"/v1/manage/gallery/count?access=tier":     {Total: 1},
+		"/v1/manage/gallery/count?state=published": {Total: 0},
+		"/v1/manage/gallery/count?q=one":           {Total: 3},
+	} {
+		n = ManageCount{}
+		f.want(http.StatusOK, "staff", "GET", path, nil, &n)
+		if n != want {
+			t.Errorf("%s = %+v, want %+v", path, n, want)
+		}
+	}
+	n = ManageCount{}
+	f.want(http.StatusOK, "bob", "GET", "/v1/manage/gallery/count", nil, &n)
+	if n != (ManageCount{}) {
+		t.Errorf("count outside the caller's rights %+v", n)
+	}
+	f.want(http.StatusNotFound, "staff", "GET", "/v1/manage/unknown/count", nil, nil)
+	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage/gallery/count?access=gold", nil, nil)
+	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage/gallery/count", nil, nil)
+}

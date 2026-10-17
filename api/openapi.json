@@ -4274,6 +4274,22 @@
             }
           },
           {
+            "name": "access",
+            "in": "query",
+            "description": "only items whose own rule has this level: public, tier, group, ppv or group_ppv",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "only items whose rule names this configured tier",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "description": "only items whose title, description or body contains this text, ignoring case",
@@ -4403,6 +4419,22 @@
             }
           },
           {
+            "name": "access",
+            "in": "query",
+            "description": "only items whose own rule has this level: public, tier, group, ppv or group_ppv",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "only items whose rule names this configured tier",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "description": "only items whose title, description or body contains this text, ignoring case",
@@ -4476,6 +4508,105 @@
                   "items": {
                     "$ref": "#/components/schemas/Content"
                   }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/manage/{kind}/count": {
+      "get": {
+        "tags": [
+          "contents"
+        ],
+        "summary": "How many items of one kind the caller manages under the /manage/{kind} filters: exact up to 10,000; beyond that, truncated marks a lower bound.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "draft, scheduled, published or deleted",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "owner_group",
+            "in": "query",
+            "description": "only this owner group's, which the caller edits",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "only items whose own rule has this level: public, tier, group, ppv or group_ppv",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "only items whose rule names this configured tier",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "only items whose title, description or body contains this text, ignoring case",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageCount"
                 }
               }
             }
@@ -16132,6 +16263,20 @@
         },
         "required": [
           "show"
+        ]
+      },
+      "ManageCount": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total"
         ]
       },
       "MemberPage": {

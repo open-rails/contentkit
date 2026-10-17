@@ -991,6 +991,10 @@ type GetManageQuery struct {
 	State string
 	// only this owner group's, which the caller edits
 	OwnerGroup string
+	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
+	Access string
+	// only items whose rule names this configured tier
+	Tier string
 	// only items whose title, description or body contains this text, ignoring case
 	Q string
 	// only the item with this content code (any spelling), in every state unless state narrows it
@@ -1012,6 +1016,12 @@ func (q GetManageQuery) values() url.Values {
 	}
 	if q.OwnerGroup != "" {
 		v.Set("owner_group", q.OwnerGroup)
+	}
+	if q.Access != "" {
+		v.Set("access", q.Access)
+	}
+	if q.Tier != "" {
+		v.Set("tier", q.Tier)
 	}
 	if q.Q != "" {
 		v.Set("q", q.Q)
@@ -1047,6 +1057,10 @@ type GetManageKindQuery struct {
 	State string
 	// only this owner group's, which the caller edits
 	OwnerGroup string
+	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
+	Access string
+	// only items whose rule names this configured tier
+	Tier string
 	// only items whose title, description or body contains this text, ignoring case
 	Q string
 	// only the item with this content code (any spelling), in every state unless state narrows it
@@ -1068,6 +1082,12 @@ func (q GetManageKindQuery) values() url.Values {
 	}
 	if q.OwnerGroup != "" {
 		v.Set("owner_group", q.OwnerGroup)
+	}
+	if q.Access != "" {
+		v.Set("access", q.Access)
+	}
+	if q.Tier != "" {
+		v.Set("tier", q.Tier)
 	}
 	if q.Q != "" {
 		v.Set("q", q.Q)
@@ -1094,6 +1114,47 @@ func (q GetManageKindQuery) values() url.Values {
 func (c *Client) GetManageKind(ctx context.Context, kind string, q GetManageKindQuery) ([]catalog.Content, error) {
 	var out []catalog.Content
 	err := c.call(ctx, http.MethodGet, expand("/v1/manage/{kind}", "{kind}", url.PathEscape(kind)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageCountQuery is the query of GetManageCount.
+type GetManageCountQuery struct {
+	// draft, scheduled, published or deleted
+	State string
+	// only this owner group's, which the caller edits
+	OwnerGroup string
+	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
+	Access string
+	// only items whose rule names this configured tier
+	Tier string
+	// only items whose title, description or body contains this text, ignoring case
+	Q string
+}
+
+func (q GetManageCountQuery) values() url.Values {
+	v := url.Values{}
+	if q.State != "" {
+		v.Set("state", q.State)
+	}
+	if q.OwnerGroup != "" {
+		v.Set("owner_group", q.OwnerGroup)
+	}
+	if q.Access != "" {
+		v.Set("access", q.Access)
+	}
+	if q.Tier != "" {
+		v.Set("tier", q.Tier)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	return v
+}
+
+// GetManageCount is GET /v1/manage/{kind}/count (public). How many items of one kind the caller manages under the /manage/{kind} filters: exact up to 10,000; beyond that, truncated marks a lower bound.
+func (c *Client) GetManageCount(ctx context.Context, kind string, q GetManageCountQuery) (catalog.ManageCount, error) {
+	var out catalog.ManageCount
+	err := c.call(ctx, http.MethodGet, expand("/v1/manage/{kind}/count", "{kind}", url.PathEscape(kind)), q.values(), nil, &out)
 	return out, err
 }
 

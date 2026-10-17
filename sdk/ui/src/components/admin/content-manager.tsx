@@ -1,14 +1,17 @@
+import { Image01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
-import type { Content } from "../../client/generated/wire.js";
+import type { Content, ManageCount, Rule } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
+import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/groups.js";
-import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
+import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
 import { Button, buttonVariants } from "#ckui/ui/button";
@@ -21,7 +24,7 @@ import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { ContentSections } from "../content/editors.js";
-import type { Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
@@ -52,7 +55,10 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   contentHref?: (content: Content) => string | undefined;
   /** Display names of kinds, traits, tiers, attributes and values by identifier. */
   labels?: Labels;
+  /** The list's default page size: 20, 50 or 100. */
   pageSize?: number;
+  /** Row checkboxes with bulk access, delete and restore (default true). */
+  selectable?: boolean;
 }
 
 /** Whether the caller manages content: root:content:write holders, creators and owner-group editors. */
@@ -157,31 +163,134 @@ function useCodeTarget(client: ContentKitClient, kind: string, code: string | nu
   return { id: found.id, error: found.error, missing: !found.id && !found.error, retry };
 }
 
-function List({ loc, open, client, kind, languages: offered, contentHref, pageSize = 20, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
+const PAGE_SIZES = [20, 50, 100] as const;
+// Bulk writes run a few at a time so one selection never floods the server.
+const BULK_CONCURRENCY = 4;
+
+/** A rule as a short label: free, its tiers, pay per view or members only. */
+export function accessLabel(t: Translator["t"], rule: Rule, labels?: Labels): string {
+  switch (rule.level) {
+    case "public":
+      return t("contentManager.free");
+    case "tier":
+      return (rule.tiers ?? []).map((x) => labelOf(labels, x)).join(", ") || t("contentManager.premium");
+    case "ppv":
+      return t("contentManager.ppv");
+    case "group":
+      return t("contentManager.members");
+    case "group_ppv":
+      return t("contentManager.membersPpv");
+  }
+}
+
+// Filter values: "" every rule, a level, or "tier:{name}" for one tier.
+const accessQuery = (v: string): { access?: string; tier?: string } =>
+  !v ? {} : v.startsWith("tier:") ? { access: "tier", tier: v.slice(5) } : { access: v };
+
+async function eachLimited<T>(items: readonly T[], fn: (item: T) => Promise<unknown>): Promise<number> {
+  let failed = 0;
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++]!;
+      try {
+        await fn(item);
+      } catch {
+        failed++;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, items.length) }, worker));
+  return failed;
+}
+
+function List({ loc, open, client, kind, languages: offered, contentHref, labels, pageSize: defaultSize = 20, selectable = true, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
   const m = useMessages();
   const { t } = m;
   const ids = useId();
   const language = choices(offered)[0]?.value;
   const query = loc.query.get("q") ?? "";
   const status = states.find((s) => s === loc.query.get("status")) ?? "";
+  const accessFilter = loc.query.get("access") ?? "";
   const deleted = loc.query.get("deleted") === "1";
   const page = pageOf(loc.query);
-  const filters = { q: query, status, deleted: deleted ? "1" : undefined };
+  const sizeParam = Number(loc.query.get("size"));
+  const size = PAGE_SIZES.find((n) => n === sizeParam) ?? defaultSize;
+  const filters = { q: query, status, access: accessFilter || undefined, deleted: deleted ? "1" : undefined, size: size !== defaultSize ? size : undefined };
   const filter = (next: Partial<typeof filters>) => loc.go("", { ...filters, ...next });
+  const filtered = !!(query || status || accessFilter);
   const [text, setText] = useState(query);
   useEffect(() => setText(query), [query]);
+  // Searches as the admin types; Enter applies at once.
+  useEffect(() => {
+    if (text.trim() === query) return;
+    const id = setTimeout(() => filter({ q: text.trim() }), 300);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+  const { kinds: model } = useKinds({ client });
+  const tiers = model?.tiers ?? [];
   const { store, scope } = useContentScope(client);
   const state = deleted ? "deleted" : status || undefined;
-  const list = usePaged(store, keyOf("contents-page", scope, kind, query, state, pageSize), { type: "contents", scope: deleted ? "deleted" : undefined }, page, pageSize, (q, signal) =>
-    client.contents.manage({ ...q, kind, q: query || undefined, state, language }, signal),
+  const tag = { type: "contents", scope: deleted ? "deleted" : undefined } as const;
+  const filterQuery = { q: query || undefined, state, ...accessQuery(accessFilter) };
+  const listing = usePaged(store, keyOf("contents-page", scope, kind, query, state, accessFilter, language, size), tag, page, size, (q, signal) =>
+    client.contents.manage({ ...q, ...filterQuery, kind, language }, signal),
   );
+  const counted = useResource<ManageCount>(store, keyOf("contents-count", scope, kind, query, state, accessFilter), tag, (signal) =>
+    client.contents.manageCount({ ...filterQuery, kind }, signal),
+  );
+  const items = listing.items;
+  const total = counted.data?.total;
+  const loading = listing.loading;
   const del = useAction("content.save", onError);
   const { confirm, dialog } = useConfirm();
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => setSelected(new Set()), [kind, query, state, accessFilter, page, size]);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [rowErrors, setRowErrors] = useState<Readonly<Record<string, ContentKitError>>>({});
+  const [bulk, setBulk] = useState<{ pending: boolean; summary?: string }>({ pending: false });
+  const premium = tiers[0];
+  const toggleable = (c: Content) => !!premium && (c.access.level === "public" || c.access.level === "tier");
+  const nextRule = (c: Content, toPremium: boolean): Rule => (toPremium ? { level: "tier", tiers: [premium!] } : { level: "public" });
+  const setAccess = async (c: Content, toPremium: boolean) => {
+    setBusy((b) => new Set(b).add(c.id));
+    setRowErrors(({ [c.id]: _, ...rest }) => rest);
+    try {
+      await client.contents.update(c.id, { access: nextRule(c, toPremium) });
+    } catch (e) {
+      const err = toContentKitError(e);
+      setRowErrors((r) => ({ ...r, [c.id]: err }));
+    } finally {
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(c.id);
+        return n;
+      });
+    }
+  };
   const remove = async (c: Content) => {
     if (await confirm({ title: t("contentManager.deleteTitle", { title: c.title }), description: t("contentManager.deleteBody"), confirm: t("contentManager.delete") })) {
       await del.run(() => client.contents.remove(c.id));
     }
   };
+  const chosen = items.filter((c) => selected.has(c.id));
+  const runBulk = async (targets: Content[], fn: (c: Content) => Promise<unknown>) => {
+    setBulk({ pending: true });
+    const failed = await eachLimited(targets, fn);
+    const done = targets.length - failed;
+    setSelected(new Set());
+    setBulk({
+      pending: false,
+      summary: failed ? t("contentManager.bulkPartial", { done, total: targets.length, failed }) : m.plural("contentManager.bulkDone", done),
+    });
+  };
+  const bulkDelete = async () => {
+    if (await confirm({ title: m.plural("contentManager.bulkDeleteTitle", chosen.length), description: t("contentManager.bulkDeleteBody"), confirm: t("contentManager.delete") })) {
+      await runBulk(chosen, (c) => client.contents.remove(c.id));
+    }
+  };
+  const allChosen = items.length > 0 && chosen.length === items.length;
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -198,9 +307,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
           {t("contentManager.deleted")}
         </Button>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="flex flex-wrap items-center gap-2">
         <form
-          className="flex gap-2"
+          className="min-w-48 flex-1"
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
@@ -211,9 +320,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
             {t("contentManager.search")}
           </Label>
           <Input id={`${ids}-q`} className="h-8" type="search" value={text} placeholder={t("contentManager.search")} onChange={(e) => setText(e.target.value)} />
-          <Button type="submit" size="sm" variant="outline">
-            {t("moderation.filter")}
-          </Button>
         </form>
         {!deleted && (
           <Select value={status} onValueChange={(v) => filter({ status: String(v ?? "") as typeof status })}>
@@ -230,24 +336,127 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
             </SelectContent>
           </Select>
         )}
+        <Select value={accessFilter} onValueChange={(v) => filter({ access: String(v ?? "") || undefined })}>
+          <SelectTrigger size="sm" aria-label={t("contentManager.access")}>
+            <SelectValue>
+              {(v: string) =>
+                !v
+                  ? t("contentManager.anyAccess")
+                  : v.startsWith("tier:")
+                    ? labelOf(labels, v.slice(5))
+                    : accessLabel(t, { level: v as Rule["level"] }, labels)
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">{t("contentManager.anyAccess")}</SelectItem>
+            <SelectItem value="public">{t("contentManager.free")}</SelectItem>
+            {tiers.length > 0 && <SelectItem value="tier">{t("contentManager.premium")}</SelectItem>}
+            {tiers.length > 1 &&
+              tiers.map((x) => (
+                <SelectItem key={x} value={`tier:${x}`}>
+                  {labelOf(labels, x)}
+                </SelectItem>
+              ))}
+            <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <ErrorLine error={del.error} />
-      {list.loading && !list.items.length ? (
+      {bulk.summary && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {bulk.summary}
+        </p>
+      )}
+      {selectable && chosen.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-2 text-sm" data-ckui="bulk-bar">
+          <span className="font-medium">{t("contentManager.selected", { count: chosen.length })}</span>
+          {deleted ? (
+            <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen, (c) => client.contents.restore(c.id))}>
+              {t("moderation.restore")}
+            </Button>
+          ) : (
+            <>
+              {premium && (
+                <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, true) }))}>
+                  {t("contentManager.makePremium")}
+                </Button>
+              )}
+              {premium && (
+                <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, false) }))}>
+                  {t("contentManager.makeFree")}
+                </Button>
+              )}
+              <Button size="sm" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
+                {t("contentManager.delete")}
+              </Button>
+            </>
+          )}
+          <Button size="sm" variant="ghost" disabled={bulk.pending} onClick={() => setSelected(new Set())}>
+            {t("contentManager.clearSelection")}
+          </Button>
+        </div>
+      )}
+      {loading && !items.length ? (
         <Rows />
-      ) : list.error && !list.items.length ? (
-        <LoadFailed error={list.error} message={t("contentManager.loadFailed")} retry={list.reload} />
-      ) : !list.items.length ? (
-        <p className="text-muted-foreground">{t(deleted ? "contentManager.noDeleted" : "contentManager.empty")}</p>
+      ) : listing.error && !items.length ? (
+        <LoadFailed error={listing.error} message={t("contentManager.loadFailed")} retry={listing.reload} />
+      ) : !items.length ? (
+        <div className="grid justify-items-start gap-2">
+          <p className="text-muted-foreground">{t(filtered ? "contentManager.noMatches" : deleted ? "contentManager.noDeleted" : "contentManager.emptyAll")}</p>
+          {filtered ? (
+            <Button size="sm" variant="outline" onClick={() => loc.go("", { deleted: deleted ? "1" : undefined })}>
+              {t("contentManager.clearFilters")}
+            </Button>
+          ) : (
+            !deleted && (
+              <Button size="sm" onClick={() => loc.go("new")}>
+                {t("contentManager.new")}
+              </Button>
+            )
+          )}
+        </div>
       ) : (
-        <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={list.loading}>
-          {list.items.map((c) => {
+        <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={loading}>
+          {selectable && (
+            <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="size-4 shrink-0 accent-primary"
+                checked={allChosen}
+                aria-label={t("contentManager.selectPage")}
+                onChange={(e) => setSelected(e.target.checked ? new Set(items.map((c) => c.id)) : new Set())}
+              />
+              <span>{t("contentManager.selectPage")}</span>
+            </li>
+          )}
+          {items.map((c) => {
             const s = contentStatus(c);
             const href = s === "published" ? contentHref?.(c) : undefined;
+            const pending = busy.has(c.id);
+            const isPremium = c.access.level === "tier";
             return (
               <li key={c.id} className="flex flex-wrap items-start gap-3 p-3" data-ckui="content-row" data-status={deleted ? "deleted" : s}>
+                {selectable && (
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 shrink-0 accent-primary"
+                    checked={selected.has(c.id)}
+                    aria-label={t("contentManager.select", { title: c.title })}
+                    onChange={(e) =>
+                      setSelected((cur) => {
+                        const n = new Set(cur);
+                        if (e.target.checked) n.add(c.id);
+                        else n.delete(c.id);
+                        return n;
+                      })
+                    }
+                  />
+                )}
+                <RowCover url={c.cover?.url} />
                 <div className="grid min-w-0 flex-1 gap-1">
                   {deleted ? (
-                    <span className="font-medium break-words">{c.title}</span>
+                    <span className="font-medium break-words line-through">{c.title}</span>
                   ) : (
                     <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => open(c)}>
                       {c.title}
@@ -255,18 +464,35 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
                   )}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     {!deleted && <Badge variant={badge[s]}>{t(`contentManager.${s}`)}</Badge>}
+                    <Badge variant={isPremium ? "secondary" : "outline"} data-ckui="access-badge">
+                      {accessLabel(t, c.access, labels)}
+                    </Badge>
+                    <span className="font-mono">{c.code}</span>
                     <span>{c.language}</span>
-                    <RelativeTime at={deleted && c.deleted_at ? c.deleted_at : c.updated_at} />
+                    {c.published_at && s === "published" ? (
+                      <time dateTime={c.published_at} title={formatDate(m, c.published_at)}>
+                        {t("contentManager.liveOn", { date: formatDate(m, c.published_at, false) })}
+                      </time>
+                    ) : (
+                      <RelativeTime at={deleted && c.deleted_at ? c.deleted_at : c.updated_at} />
+                    )}
                     {s === "scheduled" && c.publish_at && <span>{t("pollManager.goesLive", { date: formatDate(m, c.publish_at) })}</span>}
                   </div>
+                  <ErrorLine error={rowErrors[c.id] ?? null} />
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {deleted ? (
                     <Button size="sm" variant="outline" disabled={del.pending} onClick={() => void del.run(() => client.contents.restore(c.id))}>
                       {t("moderation.restore")}
                     </Button>
                   ) : (
                     <>
+                      {toggleable(c) && (
+                        <Button size="sm" variant="outline" disabled={pending} aria-busy={pending} onClick={() => void setAccess(c, !isPremium)}>
+                          {pending && <Spinner />}
+                          {t(isPremium ? "contentManager.makeFree" : "contentManager.makePremium")}
+                        </Button>
+                      )}
                       {href && (
                         <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={href}>
                           {t("contentManager.view")}
@@ -286,10 +512,35 @@ function List({ loc, open, client, kind, languages: offered, contentHref, pageSi
           })}
         </ul>
       )}
-      <Pager page={page} hasNext={list.hasNext} disabled={list.loading} onPage={(n) => loc.go("", { ...filters, page: n > 1 ? n : undefined })} />
+      <Pager
+        page={page}
+        hasNext={listing.hasNext}
+        disabled={loading}
+        total={total}
+        truncated={counted.data?.truncated}
+        pageSize={size}
+        pageSizes={PAGE_SIZES}
+        onPageSize={(n) => loc.go("", { ...filters, size: n !== defaultSize ? n : undefined, page: undefined })}
+        onPage={(n) => loc.go("", { ...filters, page: n > 1 ? n : undefined })}
+      />
       {dialog}
     </div>
   );
+}
+
+/** A row's portrait cover, or a quiet placeholder. */
+function RowCover({ url }: { url?: string }) {
+  return url ? (
+    <img src={url} alt="" loading="lazy" className="aspect-[7/10] w-12 shrink-0 rounded-sm bg-muted object-cover" />
+  ) : (
+    <span aria-hidden className="grid aspect-[7/10] w-12 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-5" />
+    </span>
+  );
+}
+
+function Spinner() {
+  return <span aria-hidden className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />;
 }
 
 interface Form {

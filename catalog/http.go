@@ -48,6 +48,7 @@ var routes = []httpapi.Route[*Store]{
 		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
 			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}},
@@ -56,10 +57,18 @@ var routes = []httpapi.Route[*Store]{
 		Doc: "Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
 			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleManage)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/{kind}/count", Resource: "contents", Auth: httpapi.Public,
+		Doc: "How many items of one kind the caller manages under the /manage/{kind} filters: exact up to 10,000; beyond that, truncated marks a lower bound.",
+		Query: []httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"), httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
+			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case")},
+		Responses: []httpapi.Reply{httpapi.OK(ManageCount{})}, Errors: []string{httpapi.CodeNotFound}},
+		Serve: httpapi.H((*Store).handleManageCount)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
@@ -645,7 +654,7 @@ func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
-			Text: q.Get("q"), Code: q.Get("code"), IDs: only, Limit: limit, Offset: offset})
+			Text: q.Get("q"), Code: q.Get("code"), Access: q.Get("access"), Tier: q.Get("tier"), IDs: only, Limit: limit, Offset: offset})
 	}
 	var v *Viewer
 	if err == nil {
@@ -696,7 +705,10 @@ type ManageQuery struct {
 	Code string
 	// IDs selects these items (at most MaxManageIDs); with State "" it
 	// matches deleted items too, so member lists resolve every member.
-	IDs           []string
+	IDs []string
+	// Access keeps items whose own rule has this level; Tier those whose rule
+	// names this configured tier (implying the tier level).
+	Access, Tier  string
 	Limit, Offset int
 }
 
@@ -754,6 +766,11 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
 	default:
 		return nil, invalid("state %q must be draft, scheduled, published or deleted", q.State)
 	}
+	cond, err := s.accessCond(q.Access, q.Tier)
+	if err != nil {
+		return nil, err
+	}
+	state += cond
 	if q.Limit <= 0 {
 		q.Limit = 20
 	}
@@ -779,4 +796,76 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ManageCount is how many items a manage listing selects.
+type ManageCount struct {
+	Total int `json:"total"`
+	// Truncated makes Total a lower bound.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// manageCountBound caps a count: no numbered list needs an exact total past it.
+const manageCountBound = 10000
+
+func (s *Store) handleManageCount(w http.ResponseWriter, r *http.Request) {
+	actor, err := writer(r.Context())
+	kind := r.PathValue("kind")
+	if _, ok := s.cfg.Kinds[kind]; err == nil && !ok {
+		err = ErrNotFound
+	}
+	var out ManageCount
+	if err == nil {
+		q := r.URL.Query()
+		out, err = s.CountManaged(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
+			Text: q.Get("q"), Access: q.Get("access"), Tier: q.Get("tier")})
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// CountManaged counts what Manage selects for q, exactly up to manageCountBound.
+// It pages through Manage itself so the filters cannot drift apart.
+func (s *Store) CountManaged(ctx context.Context, actor access.Actor, q ManageQuery) (ManageCount, error) {
+	q.Limit, q.Offset = manageCountBound+1, 0
+	ids, err := s.Manage(ctx, actor, q)
+	if err != nil {
+		return ManageCount{}, err
+	}
+	if len(ids) > manageCountBound {
+		return ManageCount{Total: manageCountBound, Truncated: true}, nil
+	}
+	return ManageCount{Total: len(ids)}, nil
+}
+
+// accessCond is the SQL condition for a manage access filter. Levels and
+// tiers are checked against the model before they reach the statement.
+func (s *Store) accessCond(level, tier string) (string, error) {
+	if tier != "" {
+		if !slices.Contains(s.cfg.Tiers, tier) {
+			return "", invalid("tier %q is not configured", tier)
+		}
+		if level == "" {
+			level = string(access.TierLevel)
+		}
+		if level != string(access.TierLevel) {
+			return "", invalid("tier filters need access tier")
+		}
+	}
+	switch access.Level(level) {
+	case "":
+		return "", nil
+	case access.Public, access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV:
+	default:
+		return "", invalid("access %q must be public, tier, group, ppv or group_ppv", level)
+	}
+	cond := " AND c.access->>'level' = '" + level + "'"
+	if tier != "" {
+		b, _ := json.Marshal([]string{tier})
+		cond += " AND c.access->'tiers' @> '" + strings.ReplaceAll(string(b), "'", "''") + "'::jsonb"
+	}
+	return cond, nil
 }

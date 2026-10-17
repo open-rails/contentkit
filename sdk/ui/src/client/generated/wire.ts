@@ -1188,6 +1188,11 @@ export interface Locked {
   preview?: Preview;
 }
 
+export interface ManageCount {
+  total: number;
+  truncated?: boolean;
+}
+
 export interface MemberPage {
   members: Membership[];
   next_cursor?: string;
