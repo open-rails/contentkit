@@ -1,22 +1,26 @@
-import type { FileDownload, ForkBody, PageReview, PageReviewPatch, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
+import type { FileDownload, ForkBody, PageNotices, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call, routeURL } from "./route.js";
 
 /** A version's answer while it is prepared (202). */
 export const isPending = (x: unknown): x is Pending => !!x && typeof x === "object" && "status" in x && !("pages" in x) && !("url" in x);
 
-/** Content versions: page review, reader plans, reader metadata, forks and downloads. */
+/** Content versions: page notices, reader plans, reader metadata, forks and downloads. */
 export class VersionsClient {
   constructor(private readonly http: Http) {}
 
-  /** Editors: retained page sources, automatic decisions and manual overrides. */
-  pages(content: string, version: string, signal?: AbortSignal): Promise<PageReview> {
-    return call(this.http, "GET", "/contents/{id}/versions/{version}/pages", { params: { id: content, version }, signal });
+  /** Editors: undismissed notes about automatic page changes (removed or reordered pages). */
+  pageNotices(content: string, version: string, signal?: AbortSignal): Promise<PageNotices> {
+    return call(this.http, "GET", "/contents/{id}/versions/{version}/page-notices", { params: { id: content, version }, signal });
   }
-  /** Editors: changes choices or order against the review's current revision. */
-  async updatePages(content: string, version: string, patch: PageReviewPatch): Promise<PageReview> {
+  /** Editors: hides a page notice. */
+  dismissPageNotice(content: string, version: string, notice: string): Promise<void> {
+    return call(this.http, "POST", "/contents/{id}/versions/{version}/page-notices/{notice}/dismiss", { params: { id: content, version, notice } });
+  }
+  /** Editors: puts a removed-pages notice's pages back where they were. */
+  async restorePageNotice(content: string, version: string, notice: string): Promise<PageNotices> {
     const emit = this.http.captureChanges();
-    const next: PageReview = await call(this.http, "PATCH", "/contents/{id}/versions/{version}/pages", { params: { id: content, version }, body: patch });
+    const next: PageNotices = await call(this.http, "POST", "/contents/{id}/versions/{version}/page-notices/{notice}/restore", { params: { id: content, version, notice } });
     emit({ type: "content.changed", id: content });
     emit({ type: "reader.changed", content, version });
     return next;

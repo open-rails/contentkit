@@ -46,6 +46,7 @@ export const es: ContentKitUiMessageBundle = {
   sortable: {
     handle: "Reordenar {name}",
     instructions: "Para reordenar, pulsa Espacio o Intro, muévete con las flechas y pulsa Espacio o Intro de nuevo para soltar. Escape cancela.",
+    instructionsTile: "Para reordenar, pulsa Espacio, muévete con las flechas y pulsa Espacio de nuevo para soltar. Intro selecciona. Escape cancela.",
     pickedUp: "{name} seleccionado, posición {position} de {total}.",
     over: "{name} se moverá a la posición {position} de {total}.",
     dropped: "{name} soltado en la posición {position} de {total}.",

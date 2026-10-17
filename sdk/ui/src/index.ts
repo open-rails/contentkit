@@ -52,7 +52,7 @@ export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./c
 export { MediaItemPanel, VideoMediaEditor, videoPaths, type MediaItemPanelProps, type VideoMediaEditorProps } from "./components/admin/media-item-panel.js";
 export { StatsDashboard, type StatsDashboardProps } from "./components/admin/stats-dashboard.js";
 export { ReaderManifestEditor, type ReaderManifestEditorProps } from "./components/admin/reader-manifest.js";
-export { PageReview, type PageReviewProps } from "./components/admin/page-review.js";
+export { PageNotices, type PageNoticesProps } from "./components/admin/page-notices.js";
 export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";
 export type { AdminNavigation, ContentKitAuth, StaffAccess, StaffArea } from "./react/admin.js";

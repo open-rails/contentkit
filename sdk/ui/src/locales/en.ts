@@ -45,6 +45,7 @@ export const en = {
   sortable: {
     handle: "Reorder {name}",
     instructions: "To reorder, press Space or Enter, move with the arrow keys, and press Space or Enter again to drop. Escape cancels.",
+    instructionsTile: "To reorder, press Space, move with the arrow keys, and press Space again to drop. Enter selects. Escape cancels.",
     pickedUp: "Picked up {name}, position {position} of {total}.",
     over: "{name} will move to position {position} of {total}.",
     dropped: "{name} dropped at position {position} of {total}.",

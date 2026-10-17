@@ -46,6 +46,7 @@ export const zh: ContentKitUiMessageBundle = {
   sortable: {
     handle: "调整 {name} 的顺序",
     instructions: "要调整顺序，请按空格键或回车键，用方向键移动，再按空格键或回车键放下。按 Esc 取消。",
+    instructionsTile: "要重新排序，请按空格键，用方向键移动，再按空格键放下。回车键选择，Esc 键取消。",
     pickedUp: "已拿起 {name}，位于第 {position} 位，共 {total} 项。",
     over: "{name} 将移到第 {position} 位，共 {total} 项。",
     dropped: "{name} 已放在第 {position} 位，共 {total} 项。",

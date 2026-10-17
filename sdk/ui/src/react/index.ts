@@ -2,7 +2,7 @@
 // Hooks read the client from the provider; a `client` option overrides it.
 export { ContentKitProvider, type ContentKitProviderProps } from "./provider.js";
 export { useReaderPreferences } from "./reader-preferences.js";
-export { usePageReview, type UsePageReview } from "./page-review.js";
+export { usePageNotices, type UsePageNotices } from "./page-notices.js";
 export {
   useContentKit,
   useContentKitClient,

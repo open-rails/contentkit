@@ -1,5 +1,6 @@
 import {
   Alert02Icon,
+  Cancel01Icon,
   CropIcon,
   Delete02Icon,
   Edit02Icon,
@@ -23,8 +24,8 @@ import { isAudioType, isImageType, isSubtitleType, isVideoType } from "../client
 import type { FileInfo, RefBody, UploadRule } from "../client/generated/wire.js";
 import { stem } from "../client/media/client.js";
 import type { QueueItem } from "../client/media/queue.js";
-import { acceptOf, ratioLabel } from "../client/media/rules.js";
-import { isProcessing } from "../client/media/windows.js";
+import { acceptOf, ratioLabel, ruleFor } from "../client/media/rules.js";
+import { isProcessing, pageRemoved } from "../client/media/windows.js";
 import { useMessages } from "../i18n/context.js";
 import { megabytes, type Translator } from "../i18n/messages.js";
 import { useEditorCrop } from "../react/crop.js";
@@ -63,6 +64,9 @@ export interface MediaFolderEditorViewProps {
   footer?: ReactNode;
   /** Shapes offered when cropping an image whose path has no preset shape; "" is the original's. */
   aspects?: readonly AspectRatio[];
+  /** The page tile chosen in a grid (e.g. to set a thumbnail from); clicking a tile reports it, again clears it. */
+  selectedPage?: string | null;
+  onSelectPage?: (file: FileInfo | null) => void;
   /** Asked before removing selected uploads; default the browser's confirm; false skips it. */
   confirmRemove?: ((count: number) => boolean | Promise<boolean>) | false;
   disabled?: boolean;
@@ -141,15 +145,15 @@ export function MediaFolderEditor(p: MediaFolderEditorProps) {
 }
 
 function OwnFolder(p: MediaFolderEditorViewProps & MediaFolderOptions & { item: RefBody }) {
-  const { item, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, ...options } = p;
+  const { item, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, selectedPage, onSelectPage, ...options } = p;
   const folder = useMediaFolder(item, options);
-  return <FolderView {...{ folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance }} />;
+  return <FolderView {...{ folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, selectedPage, onSelectPage }} />;
 }
 
 const NO_ITEM: RefBody = { kind: "", id: "" };
 
 function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) {
-  const { folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance } = p;
+  const { folder, ref, label, layout, inputLabel, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance, selectedPage, onSelectPage } = p;
   const { t, error: errorText } = useMessages();
   const { groups, queue, read, options } = folder;
   useImperativeHandle(ref, () => ({ discard: folder.discard, commit: folder.commit, folder }), [folder]);
@@ -198,6 +202,15 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
   };
 
   const uploaded = queue.items.filter((i) => i.status === "uploaded").length + folder.pending.length;
+  // Page uploads in flight join the page grid as tiles; the rest stay listed.
+  const pageGroup = layout === "grid" ? groups.find((g) => g.rule?.page) : undefined;
+  const inPages = (path: string) => !!pageGroup && ruleFor(rules, path)?.path === pageGroup.rule!.path;
+  const pageQueue = queue.items.filter((i) => inPages(i.path));
+  const otherQueue = queue.items.filter((i) => !inPages(i.path));
+  const pagePending = folder.pending.filter((f) => inPages(f.path));
+  const otherPending = folder.pending.filter((f) => !inPages(f.path));
+  const pageWaiting = pageGroup ? folder.waiting.filter((f) => isImageType(f.type)) : [];
+  const otherWaiting = pageGroup ? folder.waiting.filter((f) => !isImageType(f.type)) : folder.waiting;
   const picker = (big: boolean) => (
     <label
       className={cn(
@@ -294,7 +307,22 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
       )}
 
       {groups.map((g) =>
-        g.files.length ? (
+        g === pageGroup ? (
+          g.files.length + pageQueue.length + pagePending.length + pageWaiting.length > 0 && (
+            <PageGrid
+              key={g.path}
+              group={g}
+              folder={folder}
+              disabled={off}
+              auto={auto}
+              selected={selectedPage ?? null}
+              onSelect={(f) => onSelectPage?.(f)}
+              queued={pageQueue}
+              pending={pagePending}
+              waiting={pageWaiting}
+            />
+          )
+        ) : g.files.length ? (
           <Group
             key={g.path}
             group={g}
@@ -316,9 +344,9 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
         ) : null,
       )}
 
-      {folder.waiting.length > 0 && (
+      {otherWaiting.length > 0 && (
         <ul className="grid" aria-label={t("folder.label")}>
-          {folder.waiting.map((f, i) => (
+          {otherWaiting.map((f, i) => (
             <li key={i} className="flex min-h-11 items-center gap-2 px-1" data-ckui="queue-row" data-status="waiting">
               <Thumb kind={kindOf(f.type)} />
               <div className="grid min-w-0 flex-1 gap-1">
@@ -332,22 +360,22 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
         </ul>
       )}
 
-      {folder.pending.length > 0 && (
+      {otherPending.length > 0 && (
         <ul className="grid" aria-label={t("folder.label")} data-ckui="folder-pending">
-          {folder.pending.map((f) => (
+          {otherPending.map((f) => (
             <PendingRow key={f.path} file={f} folder={folder} auto={auto} disabled={off} />
           ))}
         </ul>
       )}
 
-      {queue.items.length > 0 && (
+      {otherQueue.length > 0 && (
         <SortableList
-          items={queue.items}
+          items={otherQueue}
           id={(i) => i.id}
           name={(i) => i.file.name}
           disabled={auto || off}
           label={t("folder.label")}
-          onMove={(from, to) => queue.move(queue.items[from]!.id, to)}
+          onMove={(from, to) => queue.move(otherQueue[from]!.id, queue.items.indexOf(otherQueue[to]!))}
           row={(i) => ({ className: "flex min-h-11 items-center gap-2 px-1", "data-ckui": "queue-row", "data-status": i.status })}
         >
           {(i, handle) => <QueueRow item={i} handle={auto ? null : handle} auto={auto} folder={folder} />}
@@ -459,6 +487,174 @@ function Group({
             actions={rowActions?.(f)}
           />
         )}
+      </SortableList>
+    </section>
+  );
+}
+
+/** A page's name from its place: zero-padded to at least two digits, keeping its extension. */
+export function positionalName(position: number, count: number, path: string): string {
+  const dot = path.lastIndexOf(".");
+  const ext = dot > path.lastIndexOf("/") ? path.slice(dot).toLowerCase() : "";
+  return String(position).padStart(Math.max(2, String(count).length), "0") + ext;
+}
+
+const TILE = "group relative grid min-w-0 content-start gap-1 rounded-lg border bg-background p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: boolean; onRemove: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      className="absolute end-2 top-2 inline-flex size-6 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 disabled:hidden"
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onRemove();
+      }}
+      data-ckui="tile-remove"
+    >
+      <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5" />
+    </button>
+  );
+}
+
+function TileImage({ url, aspect, busy }: { url?: string; aspect?: number; busy?: boolean }) {
+  return (
+    <span className="relative block w-full overflow-hidden rounded-md bg-muted" style={{ aspectRatio: aspect ?? 0.75 }}>
+      {url && <img src={url} alt="" loading="lazy" decoding="async" draggable={false} className={cn("size-full object-cover", busy && "opacity-70")} />}
+      {busy && !url && <span aria-hidden className="absolute inset-[40%] rounded-full border-2 border-current/25 border-t-current text-muted-foreground motion-safe:animate-spin" />}
+    </span>
+  );
+}
+
+/**
+ * Pages as one grid: committed pages (drag anywhere on a tile to reorder;
+ * names follow position) followed by uploads still on their way, shown from
+ * their local files. Pages automatic processing removed are left out.
+ */
+function PageGrid({
+  group,
+  folder,
+  disabled,
+  auto,
+  selected,
+  onSelect,
+  queued,
+  pending,
+  waiting,
+}: {
+  group: FolderGroup;
+  folder: UseMediaFolder;
+  disabled: boolean;
+  auto: boolean;
+  selected: string | null;
+  onSelect: (file: FileInfo | null) => void;
+  queued: readonly QueueItem[];
+  pending: readonly FileInfo[];
+  waiting: readonly File[];
+}) {
+  const { t, error: errorText } = useMessages();
+  const pages = useMemo(() => group.files.filter((f) => !pageRemoved(f)), [group.files]);
+  const total = pages.length + pending.length + queued.length + waiting.length;
+  // Local previews bridge an upload until the server's thumbnail arrives.
+  const previews = useRef(new Map<string, string>());
+  for (const i of queued) if (!previews.current.has(i.path)) previews.current.set(i.path, URL.createObjectURL(i.file));
+  useEffect(() => {
+    const urls = previews.current;
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+  const locked = disabled || folder.updating;
+  const choose = (f: FileInfo) => onSelect(selected === f.path ? null : f);
+  return (
+    <section className="grid gap-1" data-ckui="folder-group" data-path={group.path}>
+      <SortableList
+        layout="grid"
+        wholeItem
+        className="grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))]"
+        items={pages}
+        id={(f) => f.path}
+        name={(f) => positionalName(pages.indexOf(f) + 1, total, f.path)}
+        disabled={locked}
+        label={t(`folder.kinds.${ruleKind(group.rule)}`)}
+        onMove={(from, to) => void folder.move(pages[from]!.path, group.files.findIndex((f) => f.path === pages[to]!.path)).catch(() => {})}
+        row={(f) => ({
+          className: cn(TILE, "cursor-grab active:cursor-grabbing", selected === f.path ? "border-primary ring-1 ring-primary/40" : "border-border"),
+          "data-ckui": "page-tile",
+          "data-path": f.path,
+          "data-selected": selected === f.path || undefined,
+          "aria-pressed": selected === f.path,
+          onClick: () => choose(f),
+          onKeyDown: (e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            choose(f);
+          },
+        })}
+        trailing={
+          <>
+            {pending.map((f, i) => {
+              const thumb = thumbnailOf(folder.read.read, f);
+              return (
+                <li key={f.path} className={cn(TILE, "border-dashed border-border")} data-ckui="page-tile-pending">
+                  <TileImage url={thumb?.url ?? previews.current.get(f.path)} busy={isProcessing(f)} />
+                  <span className="truncate px-0.5 text-xs text-muted-foreground tabular-nums">
+                    {positionalName(pages.length + i + 1, total, f.path)} · {f.failed ? errorText(failureError(f.failed)) : auto ? t("folder.adding") : t("folder.notAdded")}
+                  </span>
+                  <RemoveTile label={t("common.remove")} disabled={locked} onRemove={() => void folder.remove([f.path]).catch(() => {})} />
+                </li>
+              );
+            })}
+            {queued.map((i, n) => {
+              const value = i.status === "uploading" ? progressValue(i.progress) : null;
+              return (
+                <li key={i.id} className={cn(TILE, "border-dashed border-border")} data-ckui="page-tile-upload" data-status={i.status}>
+                  <TileImage url={previews.current.get(i.path)} busy />
+                  {value !== null && <Progress value={value} aria-label={queueLabel(t, errorText, i, auto)} className="h-1" />}
+                  <span className={cn("truncate px-0.5 text-xs tabular-nums", i.status === "failed" ? "text-destructive" : "text-muted-foreground")} title={i.file.name}>
+                    {positionalName(pages.length + pending.length + n + 1, total, i.path)} · {queueLabel(t, errorText, i, auto)}
+                  </span>
+                  <RemoveTile label={t("common.remove")} onRemove={() => folder.queue.remove(i.id)} />
+                </li>
+              );
+            })}
+            {waiting.map((f, n) => (
+              <li key={`waiting-${n}`} className={cn(TILE, "border-dashed border-border")} data-ckui="page-tile-waiting">
+                <TileImage busy />
+                <span className="truncate px-0.5 text-xs text-muted-foreground" title={f.name}>
+                  {t("folder.queued")}
+                </span>
+              </li>
+            ))}
+          </>
+        }
+      >
+        {(f, _handle, index) => {
+          const busy = isProcessing(f);
+          const thumb = thumbnailOf(folder.read.read, f);
+          const failure = f.failed ? errorText(failureError(f.failed)) : undefined;
+          return (
+            <>
+              <TileImage url={thumb?.url ?? previews.current.get(f.path)} aspect={thumb?.w && thumb.h ? thumb.w / thumb.h : undefined} busy={busy} />
+              <span className="flex min-w-0 items-center justify-between gap-1 px-0.5 text-xs text-muted-foreground tabular-nums">
+                <span className="truncate" data-ckui="upload-name" title={f.path}>
+                  {positionalName(index + 1, total, f.path)}
+                </span>
+                {failure ? (
+                  <span className="truncate text-destructive" title={failure} data-ckui="failed">
+                    {t("folder.failed")}
+                  </span>
+                ) : (
+                  busy && <span>{t("folder.processing")}</span>
+                )}
+              </span>
+              <RemoveTile label={t("common.remove")} disabled={locked} onRemove={() => void folder.remove([f.path]).catch(() => {})} />
+            </>
+          );
+        }}
       </SortableList>
     </section>
   );
