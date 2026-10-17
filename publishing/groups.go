@@ -12,10 +12,10 @@ import (
 )
 
 func (s *Store) resolveGroups(ctx context.Context, tx pgx.Tx, writer *groups.Store, refs []EntityReference, create bool) ([]string, []EntityResolution, error) {
-	// Only taxonomy resolution is serialized, in this catalog. The transaction
-	// does no storage I/O; concurrent submissions cannot mint duplicate names.
+	// Only taxonomy resolution is serialized, in this catalog, with content
+	// edits that create entities; neither can mint a duplicate name.
 	if len(refs) > 0 {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "publishing:groups:"+s.o.Tenant); err != nil {
+		if err := writer.LockNames(ctx, tx); err != nil {
 			return nil, nil, err
 		}
 	}

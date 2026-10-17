@@ -3,7 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Rule } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, NewEntity, Rule } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { isProcessing } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
@@ -125,7 +125,10 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   );
   const associations = useDraft(
     useMemo(
-      () => ({ memberships: membership.memberships.filter((a) => groupKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")) }),
+      () => ({
+        memberships: membership.memberships.filter((a) => groupKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")),
+        create: [] as NewEntity[],
+      }),
       [membership.memberships, membership.entities, groupKinds],
     ),
   );
@@ -241,6 +244,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const snapshotTexts = { ...state.texts.get() };
     const snapshotDetails = state.details.get();
     const snapshotAssociations = state.associations.get().memberships.slice();
+    const snapshotCreate = state.associations.get().create.slice();
     let cleanAssociations = true;
     try {
       let content = await ensure();
@@ -272,9 +276,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             const kind = cards.get(a.group_id ?? "")?.kind;
             return kind && model.entity_kinds[kind]?.version_level && !a.version_id ? { ...a, version_id: targetVersion?.id } : a;
           });
-          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships }, language);
+          const saved = await client.entities.setOfContent(content.id, { kinds: [...groupKinds], memberships, create: snapshotCreate }, language);
+          setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
           cleanAssociations = settleAssociations({
             memberships: saved.memberships.filter((a) => groupKinds.includes(saved.entities.find((g) => g.id === a.group_id)?.kind ?? "")),
+            create: [],
           });
         }
       });
@@ -508,11 +514,14 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                     management={p.management}
                     client={client}
                     disabled={!!item && membership.loading}
-                    onChange={(i, patch) => associations.edit((d) => ({ memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
-                    onRemove={(i) => associations.edit((d) => ({ memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}
+                    created={associations.value.create.filter((c) => c.kind === kind).map((c) => c.name)}
+                    onCreatedChange={(names) => associations.edit((d) => ({ ...d, create: [...d.create.filter((c) => c.kind !== kind), ...names.map((name) => ({ kind, name, language }))] }))}
+                    onChange={(i, patch) => associations.edit((d) => ({ ...d, memberships: d.memberships.map((x, j) => (j === rows[i]!.index ? { ...x, ...patch } : x)) }))}
+                    onRemove={(i) => associations.edit((d) => ({ ...d, memberships: d.memberships.filter((_, j) => j !== rows[i]!.index) }))}
                     onAdd={(card) => {
                       setPicked((all) => new Map(all).set(card.id, card));
                       associations.edit((d) => ({
+                        ...d,
                         memberships: [...d.memberships, { group_id: card.id, ...(model.entity_kinds[kind]?.version_level && version ? { version_id: version.id } : {}) }],
                       }));
                     }}

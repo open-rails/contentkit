@@ -13,8 +13,9 @@ const card = (id: string, name: string, slug = name.toLowerCase().replace(/\s+/g
   ({ id, kind: "tag", slug, internal: false, name, count: 0, attributes: {}, created_at: "2026-01-01T00:00:00Z" }) as GroupCard;
 const catalog = [card("g1", "Vanilla"), card("g2", "Big Breasts"), card("g3", "Café Au Lait", "cafe-au-lait")];
 
-function Harness({ initial = [] as Membership[] }) {
+function Harness({ initial = [] as Membership[], creatable = false }) {
   const [memberships, setMemberships] = useState<Membership[]>(initial);
+  const [created, setCreated] = useState<string[]>([]);
   const [cards, setCards] = useState(new Map(catalog.map((g) => [g.id, g])));
   return (
     <EntityChips
@@ -22,8 +23,10 @@ function Harness({ initial = [] as Membership[] }) {
       label="Tags"
       memberships={memberships}
       cards={cards}
-      spec={{}}
+      spec={{ creatable }}
       versionLabel={(id) => id}
+      created={created}
+      onCreatedChange={setCreated}
       onAdd={(g) => {
         setCards((all) => new Map(all).set(g.id, g));
         setMemberships((m) => [...m, { group_id: g.id }]);
@@ -34,7 +37,7 @@ function Harness({ initial = [] as Membership[] }) {
   );
 }
 
-function setup(initial?: Membership[]) {
+function setup(initial?: Membership[], creatable = false) {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const q = (new URL(String(input), "https://ck.test").searchParams.get("q") ?? "").toLowerCase();
     const fold = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
@@ -43,7 +46,7 @@ function setup(initial?: Membership[]) {
   const client = createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch });
   render(
     <ContentKitProvider client={client} viewer="admin">
-      <Harness initial={initial} />
+      <Harness initial={initial} creatable={creatable} />
     </ContentKitProvider>,
   );
   return screen.getByRole("combobox", { name: "Add: Tags" });
@@ -90,4 +93,18 @@ it("adds a suggestion picked with the keyboard", async () => {
   await screen.findByRole("option", { name: /Big Breasts/ });
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("button", { name: "Remove Big Breasts" })).toBeVisible();
+});
+
+it("keeps new names of a creatable kind as chips created on save", async () => {
+  const user = userEvent.setup();
+  const input = setup([], true);
+  await user.click(input);
+  await user.paste("Vanilla, Brand New, Another One,");
+  await waitFor(() => expect(document.querySelectorAll('[data-ckui="entity-chip-new"]')).toHaveLength(2));
+  expect(screen.getByText("New names (highlighted) are created when you save.")).toBeVisible();
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove Vanilla" })).toBeVisible();
+  await user.keyboard("{Backspace}");
+  expect(document.querySelectorAll('[data-ckui="entity-chip-new"]')).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Remove Brand New" })).toBeVisible();
 });

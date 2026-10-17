@@ -68,7 +68,9 @@ export function MembershipEditor(p: MembershipEditorProps) {
     [cg.memberships, cg.entities, groupKinds],
   );
   const [draft, setDraft] = useState<Draft[]>([]);
-  const dirty = !same(draft.map(strip), initial);
+  const [created, setCreated] = useState<Record<string, string[]>>({});
+  const newNames = Object.entries(created).flatMap(([kind, names]) => names.map((name) => ({ kind, name, language: p.language })));
+  const dirty = !same(draft.map(strip), initial) || newNames.length > 0;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   useEffect(() => {
@@ -104,9 +106,10 @@ export function MembershipEditor(p: MembershipEditorProps) {
       onSubmit={(e) => {
         e.preventDefault();
         setSaved(false);
-        void save.run(() => cg.set(draft.map(strip), [...groupKinds])).then((out) => {
+        void save.run(() => cg.set(draft.map(strip), [...groupKinds], newNames)).then((out) => {
           if (!out) return;
           setSaved(true);
+          setCreated({});
           setDraft(out.memberships.filter((x) => groupKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
           p.onSaved?.(out);
         });
@@ -130,6 +133,11 @@ export function MembershipEditor(p: MembershipEditorProps) {
               language={p.language}
               management={p.management}
               client={p.client}
+              created={created[kind] ?? []}
+              onCreatedChange={(names) => {
+                setSaved(false);
+                setCreated((all) => ({ ...all, [kind]: names }));
+              }}
               onChange={(i, patch) => change(rows[i]!.key, patch)}
               onRemove={(i) => {
                 setSaved(false);
@@ -151,7 +159,16 @@ export function MembershipEditor(p: MembershipEditorProps) {
           {save.pending ? t("common.saving") : t("common.save")}
         </Button>
         {dirty && (
-          <Button type="button" size="sm" variant="ghost" disabled={save.pending} onClick={() => setDraft(initial.map((x) => ({ ...x, key: ++seq.current })))}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={save.pending}
+            onClick={() => {
+              setCreated({});
+              setDraft(initial.map((x) => ({ ...x, key: ++seq.current })));
+            }}
+          >
             {t("memberships.discard")}
           </Button>
         )}

@@ -299,6 +299,9 @@ type GroupKind struct {
 	Windows bool `json:"windows,omitempty" yaml:"windows"`
 	// VersionLevel lets memberships target one version (voice actors).
 	VersionLevel bool `json:"version_level,omitempty" yaml:"version_level"`
+	// Creatable lets a content edit create an entity of the kind from a name no
+	// entity carries yet; never user-owned or authorization kinds.
+	Creatable bool `json:"creatable,omitempty" yaml:"creatable"`
 	// Roles are membership roles (publisher on an artist group).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
@@ -367,6 +370,9 @@ func (c Config) Validate() error {
 		}
 		if err := route("group kind "+name, gk.Route); err != nil {
 			return err
+		}
+		if gk.Creatable && (gk.Owner == "user" || gk.AuthScope) {
+			return fmt.Errorf("%w: group kind %q: user-owned and auth_scope kinds are not creatable", ErrInvalid, name)
 		}
 		for _, ref := range []string{gk.Parent, gk.ScopedBy} {
 			if _, ok := c.GroupKinds[ref]; ref != "" && !ok {
