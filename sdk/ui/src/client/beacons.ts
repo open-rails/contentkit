@@ -230,7 +230,8 @@ export class Beacons {
       return null;
     }
     if (generation !== this.generation) return null;
-    const unique = [...new Map(targets.map((target) => [targetKey(target), target])).values()];
+    // Exposure rows carry list fields (position); the strict endpoint takes only the target.
+    const unique = [...new Map(targets.map((t) => [targetKey(t), { content_id: t.content_id, version_id: t.version_id }])).values()];
     const batches = [];
     const session = this.session();
     for (let i = 0; i < unique.length; i += MAX) batches.push(this.client.discovery.activityContexts(unique.slice(i, i + MAX), session, language));

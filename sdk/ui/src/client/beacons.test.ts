@@ -319,6 +319,24 @@ it("retries failed exposure receipts on a later cumulative observation", async (
   expect(sent[0]?.shown).toHaveLength(2);
 });
 
+it("requests activity contexts with only the target fields the server accepts", async () => {
+  const targets: object[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/strict-targets", fetch: async (url, init) => {
+    if (String(url).endsWith("/kinds")) return Response.json({ signals: true });
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (String(url).endsWith("/activity-contexts")) {
+      targets.push(...body.targets);
+      return Response.json({ enabled: false, contexts: [] });
+    }
+    return new Response(null, { status: 204 });
+  } });
+  const b = new Beacons(client, { delay: 60_000 });
+  b.exposure({ render_id: "r", stage: "visible", shown: [{ content_id: "c1", version_id: "v1", position: 1 }, { content_id: "c2", position: 2 }] });
+  b.click("c3", { surface: "home", position: 3, version_id: "v3" });
+  await b.flush();
+  expect(targets).toEqual([{ content_id: "c1", version_id: "v1" }, { content_id: "c2" }, { content_id: "c3", version_id: "v3" }]);
+});
+
 it("serializes keepalive bodies across clients within the shared byte budget", async () => {
   let activeBytes = 0, maximumBytes = 0;
   const bodies: number[] = [], finish: (() => void)[] = [];
