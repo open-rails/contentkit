@@ -1,6 +1,31 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  readerEditor: {
+    new: "新しいギャラリー",
+    untitled: "無題のギャラリー",
+    saveDraft: "下書きを保存",
+    schedule: "公開予約",
+    details: "ギャラリーの詳細",
+    files: "ギャラリーファイル",
+    fileHelp: "ZIPまたは画像を追加します。ページをドラッグして並べ替え、星で表紙を選びます。",
+    entities: "作者・シリーズ・タグ",
+    additionalText: "追加テキストとURL",
+    useCover: "表紙に使用",
+    useCoverFor: "{name}を表紙に使用",
+    firstPageCover: "別の画像を指定しない場合、最初のページが表紙になります。",
+    publication: "公開設定",
+    versions: "バージョンと章",
+    readerTools: "音声と読み進め位置",
+    filesNotReady: "公開する前に、ページのアップロードと処理を完了してください。",
+    filesFailed: "確認が必要なファイルがあります。失敗したアップロードを再試行するか削除してください。",
+    processing: "ファイルをアップロードまたは処理中です。詳細の編集は続けられます。",
+    addPages: "公開する前に、ページを1枚以上追加してください。",
+    fixSection: "公開する前に、{section}を確認して保存してください。",
+    accessRequired: "保存する前にアクセス設定を完成させてください。",
+    changedDuringSave: "保存中に新しい変更がありました。公開する前に保存してください。",
+    versionDraft: "このバージョンは下書きです。公開前に下書き設定を解除してください。",
+  },
   contentAdmin: {
     groups: "グループ",
     modelFailed: "コンテンツモデルを読み込めませんでした。",

@@ -12,6 +12,7 @@ import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
+import { useEditorSaveTask } from "../content/editor-save.js";
 import { LoadFailed, Rows } from "./shell.js";
 
 export interface PageReviewProps {
@@ -41,6 +42,7 @@ export function PageReview({ content, version, client, onError, className, appea
   const r = usePageReview(content, version, { client });
   const save = useAction("reader.save", onError);
   const [saved, setSaved] = useState(false);
+  useEditorSaveTask(`page-review:${version}`,{label:t("pageReview.title"),dirty:false,pending:save.pending,valid:true,save:async()=>true});
   const review = r.review;
   const chapterGuarded = review?.pages.some((page) => page.flags.includes("segmented_selection_preserved")) ?? false;
   const apply = (patch: Omit<PageReviewPatch, "revision">) => {

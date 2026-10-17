@@ -1,6 +1,31 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  readerEditor: {
+    new: "Nueva galería",
+    untitled: "Galería sin título",
+    saveDraft: "Guardar borrador",
+    schedule: "Programar",
+    details: "Detalles de la galería",
+    files: "Archivos de la galería",
+    fileHelp: "Añade un ZIP o imágenes individuales. Arrastra las páginas para ordenarlas; usa la estrella para elegir la portada.",
+    entities: "Artistas, series y etiquetas",
+    additionalText: "Texto adicional y URL",
+    useCover: "Usar como portada",
+    useCoverFor: "Usar {name} como portada",
+    firstPageCover: "La primera página será la portada si no eliges otra o subes una portada.",
+    publication: "Publicación",
+    versions: "Versiones y capítulos",
+    readerTools: "Audio y puntos de lectura",
+    filesNotReady: "Termina de subir y procesar las páginas antes de publicar.",
+    filesFailed: "Hay archivos que requieren atención. Reintenta o elimina las subidas fallidas antes de publicar.",
+    processing: "Los archivos se están subiendo o procesando. Puedes seguir editando los detalles.",
+    addPages: "Añade al menos una página antes de publicar.",
+    fixSection: "Revisa y guarda {section} antes de publicar.",
+    accessRequired: "Completa los ajustes de acceso antes de guardar.",
+    changedDuringSave: "Hay cambios nuevos sin guardar. Guárdalos antes de publicar.",
+    versionDraft: "Esta versión sigue siendo un borrador. Desactiva su estado de borrador antes de publicar.",
+  },
   contentAdmin: {
     groups: "Grupos",
     modelFailed: "No se pudo cargar el modelo de contenido.",

@@ -19,6 +19,7 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
+import { ReaderContentEditor } from "./reader-content-editor.js";
 import { ContentSections } from "../content/editors.js";
 import type { Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
@@ -109,7 +110,6 @@ function Contents({ basePath, navigation, ...p }: Inner) {
       </Button>
       <ContentEditor
         management
-        key={loc.view}
         {...p}
         id={loc.view === "new" ? null : loc.view}
         onCreated={(c) => loc.go(c.id, undefined, { replace: true })}
@@ -291,7 +291,24 @@ export interface ContentEditorProps {
  * schedule, cover and body per language, publish, unpublish and delete;
  * then listing and attributes, access rule and price, versions and groups.
  */
-export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
+export function ContentEditor(p:ContentEditorProps){
+  const {client,scope}=useContentScope(p.client);
+  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,key:0,allocated:null as string|null});
+  let boundary=session;
+  if(session.id!==p.id||session.kind!==p.kind||session.client!==client||session.scope!==scope){
+    const continues=session.id==null&&p.id===session.allocated&&session.kind===p.kind&&session.client===client&&session.scope===scope;
+    boundary={id:p.id,kind:p.kind,client,scope,key:continues?session.key:session.key+1,allocated:null};
+    setSession(boundary);
+  }
+  const {kinds,error,reload}=useKinds({client});
+  const {t}=useMessages();
+  if(!kinds)return error?<LoadFailed error={error} message={t("contentManager.loadFailed")} retry={reload}/>:<Rows/>;
+  const props={...p,client,onCreated:(content:Content)=>{setSession((old)=>({...old,allocated:content.id}));p.onCreated?.(content);}};
+  if(kinds.kinds[p.kind]?.presentation==="reader")return <ReaderContentEditor key={boundary.key} {...props} model={kinds}/>;
+  return <StandardContentEditor key={boundary.key} {...props}/>;
+}
+
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError, management }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;

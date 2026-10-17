@@ -180,7 +180,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
   );
 }
 
-function MembershipRow({
+export function MembershipRow({
   m: x,
   card,
   spec,

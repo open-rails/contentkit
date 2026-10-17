@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
 import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
@@ -25,6 +25,8 @@ import { ErrorLine, useAction } from "../social/parts.js";
 import { GroupPicker, labelOf, useGroupNames, type Labels } from "../groups/parts.js";
 import { AttributeFields, formOf } from "../groups/fields.js";
 import { MembershipEditor } from "../groups/memberships.js";
+import { useDraft } from "../../react/use-draft.js";
+import { useEditorSaveTask, readerMediaReady } from "./editor-save.js";
 import { OfferFields } from "./offer-fields.js";
 
 interface Common {
@@ -64,45 +66,6 @@ function useKind(kind: string, client?: ContentKitClient): { model: ContentModel
   return { model: kinds, spec: kinds?.kinds[kind] };
 }
 
-// A fresh record rebases clean fields; only an explicit save/discard settles edits.
-// Per-field counters also protect edits made while that operation is pending.
-function useDraft<T extends object>(seed: T) {
-  const [value, setValue] = useState(seed);
-  const draft = useRef({ value: seed, dirty: new Set<keyof T>(), edits: new Map<keyof T, number>() });
-  useEffect(() => {
-    const next = { ...seed };
-    for (const key of draft.current.dirty) next[key] = draft.current.value[key];
-    draft.current.value = next;
-    setValue(next);
-  }, [seed]);
-  const edit = (update: SetStateAction<T>) => {
-    const d = draft.current;
-    const next = typeof update === "function" ? (update as (value: T) => T)(d.value) : update;
-    for (const key of new Set([...Object.keys(d.value), ...Object.keys(next)] as (keyof T)[])) {
-      if (!Object.is(d.value[key], next[key])) {
-        d.dirty.add(key);
-        d.edits.set(key, (d.edits.get(key) ?? 0) + 1);
-      }
-    }
-    d.value = next;
-    setValue(next);
-  };
-  const checkpoint = () => {
-    const edits = new Map(draft.current.edits);
-    return (canonical: T) => {
-      const d = draft.current;
-      const next = { ...canonical };
-      for (const key of new Set([...Object.keys(d.value), ...Object.keys(canonical)] as (keyof T)[])) {
-        if (d.edits.get(key) !== edits.get(key)) next[key] = d.value[key];
-        else d.dirty.delete(key);
-      }
-      d.value = next;
-      setValue(next);
-      return d.dirty.size === 0;
-    };
-  };
-  return { value, edit, checkpoint };
-}
 
 function useEditorKey(id: string, client: ContentKitClient, scope: string) {
   const [identity, setIdentity] = useState({ id, client, scope, key: 0 });
@@ -232,7 +195,7 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
 }
 
 /** A rule's form: level, tiers, group (the content's owner group by default), the preview its kind has and when it turns free. */
-function RuleFields({ value, onChange, model, kind, owner, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; kind: string; owner?: string; labels?: Labels; client: ContentKitClient }) {
+export function RuleFields({ value, onChange, model, kind, owner, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; kind: string; owner?: string; labels?: Labels; client: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
   const tiers = model?.tiers ?? [];
@@ -349,10 +312,10 @@ function RuleFields({ value, onChange, model, kind, owner, labels, client }: { v
 }
 
 /** A rule the server takes: a group level names its group. */
-const complete = (r: Rule) => !grouped(r.level) || !!r.group_id;
+export const complete = (r: Rule) => !grouped(r.level) || !!r.group_id;
 
 /** A rule as stored: empty previews and absent fields left out. */
-function cleanRule(r: Rule): Rule {
+export function cleanRule(r: Rule): Rule {
   const preview = r.preview && (r.preview.pages || r.preview.segments) ? { pages: r.preview.pages || undefined, segments: r.preview.segments || undefined } : undefined;
   return {
     level: r.level,
@@ -410,7 +373,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
       <OfferFields
         offer={content.offer}
         pending={offer.pending}
-        onSell={(terms) => void offer.run(() => client.offers.sell({ content: content.id }, terms))}
+        onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id }))}
       />
       <ErrorLine error={offer.error} />
@@ -429,7 +392,7 @@ export function versionLabel(v: Version, languageName: (l: string) => string, la
  * the version's media folder; add and delete. A kind whose one version is
  * hidden shows only that version's segments and media.
  */
-export function VersionsEditor({ content, media = true, ...p }: Common & { content: Content; media?: boolean }) {
+export function VersionsEditor({ content, media = true, activeVersion, ...p }: Common & { content: Content; media?: boolean; activeVersion?: string }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const languageName = useLanguageName();
@@ -437,6 +400,10 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
   const order = useAction("content.save", p.onError);
   const add = useAction("content.save", p.onError);
   const [open, setOpen] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string[]>([]);
+  const reveal = (id: string) => { setOpen(id); setOpened((ids) => ids.includes(id) ? ids : [...ids,id]); };
+  useEffect(() => { if (activeVersion) { setOpen(activeVersion); setOpened((ids)=>ids.includes(activeVersion)?ids:[...ids,activeVersion]); } }, [activeVersion]);
+  useEditorSaveTask(`versions:${content.id}`, {label:t("contentEditor.versions"),dirty:false,pending:order.pending||add.pending,valid:true,save:async()=>true});
   const versions = useMemo(() => [...content.versions].sort((a, b) => a.position - b.position), [content.versions]);
   if (!spec) return null;
   if (spec.versions.hidden) {
@@ -473,11 +440,11 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
               <Badge variant={v.live ? "default" : "outline"}>{t(v.live ? "contentEditor.live" : v.state === "draft" ? "contentManager.draft" : "contentManager.scheduled")}</Badge>
               {v.access && <Badge variant="secondary">{t(`contentEditor.level_${v.access.level}`)}</Badge>}
               {v.pages ? <span className="text-xs text-muted-foreground">{t("contentEditor.pageCount", { count: v.pages })}</span> : null}
-              <Button type="button" size="xs" variant="ghost" aria-expanded={open === v.id} onClick={() => setOpen(open === v.id ? null : v.id)}>
+              <Button type="button" size="xs" variant="ghost" aria-expanded={open === v.id} onClick={() => open === v.id ? setOpen(null) : reveal(v.id)}>
                 {t(open === v.id ? "contentEditor.close" : "contentEditor.edit")}
               </Button>
             </div>
-            {open === v.id && <VersionForm content={content} version={v} model={model} media={media} {...p} />}
+            {opened.includes(v.id) && <div hidden={open !== v.id}><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
           </div>
         )}
       </SortableList>
@@ -487,7 +454,7 @@ export function VersionsEditor({ content, media = true, ...p }: Common & { conte
         many={spec?.versions.languages === "many"}
         pending={add.pending}
         // A new version is a draft: open it for its media.
-        onAdd={(input) => void add.run(() => client.contents.addVersion(content.id, input)).then((v) => v && setOpen(v.id))}
+        onAdd={(input) => void add.run(() => client.contents.addVersion(content.id, input)).then((v) => v && reveal(v.id))}
       />
       <ErrorLine error={add.error} />
     </Section>
@@ -552,45 +519,36 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
   const id = useId();
   const client = useContentKitClient(p.client);
   const spec = model?.kinds[content.kind];
-  const [langs, setLangs] = useState<string[]>(v.languages);
-  const [traits, setTraits] = useState<string[]>(v.traits);
-  const [label, setLabel] = useState(v.label ?? "");
-  const [draft, setDraft] = useState(v.state === "draft");
-  const [at, setAt] = useState(toLocalInput(v.publish_at));
-  const [own, setOwn] = useState(!!v.access);
-  const [rule, setRule] = useState<Rule>(v.access ?? content.access);
+  const seed = useCallback((v: Version) => ({langs:v.languages,traits:v.traits,label:v.label??"",draft:v.state==="draft",at:toLocalInput(v.publish_at),own:!!v.access,rule:v.access??content.access}),[content.access]);
+  const fields = useDraft(useMemo(()=>seed(v),[seed,v]));
+  const {langs,traits,label,draft,at,own,rule}=fields.value;
+  const edit=(patch:Partial<typeof fields.value>)=>{fields.edit((old)=>({...old,...patch}));setSaved(false);};
+  const [invalid,setInvalid]=useState<string|null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const remove = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
+  const valid=langs.length>0&&(!own||complete(rule));
+  const submit=async()=>{
+    if(!valid)return false;
+    setInvalid(null);setSaved(false);
+    if(spec?.presentation==="reader"&&v.state==="draft"&&!draft&&!(await readerMediaReady(client,{kind:content.kind,id:content.id,version:v.id}))){setInvalid(t("readerEditor.filesNotReady"));return false;}
+    const settle=fields.checkpoint();
+    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,label:label.trim(),state:draft?"draft":"published",publish_at:fromLocalInput(at),...(own?{access:cleanRule(rule)}:{clear_access:!!v.access})}));
+    if(!out)return false;
+    const clean=settle(seed(out));setSaved(clean);return clean;
+  };
+  useEditorSaveTask(`version:${v.id}`,{label:t("contentEditor.versions"),dirty:fields.dirty.length>0,pending:save.pending||remove.pending,valid,save:submit,order:10});
   return (
     <div className="grid gap-4 pt-2">
-      <form
-        className="grid gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setSaved(false);
-          void save
-            .run(() =>
-              client.contents.updateVersion(content.id, v.id, {
-                languages: langs,
-                traits,
-                label: label.trim(),
-                state: draft ? "draft" : "published",
-                publish_at: fromLocalInput(at),
-                ...(own ? { access: cleanRule(rule) } : { clear_access: !!v.access }),
-              }),
-            )
-            .then((d) => d && setSaved(true));
-        }}
-      >
-        <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={setLangs} />
+      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();void submit();}}>
+        <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
         {!!spec?.versions.traits?.length && (
           <fieldset className="flex flex-wrap gap-3">
             <legend className="sr-only">{t("contentEditor.traits")}</legend>
             {spec.versions.traits.map((x) => (
               <label key={x} className="flex items-center gap-1.5">
-                <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => setTraits(on ? [...traits, x] : traits.filter((y) => y !== x))} aria-label={labelOf(p.labels, x)} />
+                <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => edit({traits:on ? [...traits, x] : traits.filter((y) => y !== x)})} aria-label={labelOf(p.labels, x)} />
                 {labelOf(p.labels, x)}
               </label>
             ))}
@@ -599,22 +557,23 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-label`}>{t("contentEditor.versionLabel")}</Label>
-            <Input id={`${id}-label`} className="h-8" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <Input id={`${id}-label`} className="h-8" value={label} onChange={(e)=>edit({label:e.target.value})} />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-at`}>{t("contentEditor.versionPublishAt")}</Label>
-            <Input id={`${id}-at`} className="h-8" type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} />
+            <Input id={`${id}-at`} className="h-8" type="datetime-local" value={at} onChange={(e)=>edit({at:e.target.value})} />
           </div>
         </div>
         <label className="flex items-center gap-2">
-          <Switch size="sm" checked={draft} onCheckedChange={setDraft} />
+          <Switch size="sm" checked={draft} onCheckedChange={(draft)=>edit({draft})} />
           {t("contentEditor.versionDraft")}
         </label>
         <label className="flex items-center gap-2">
-          <Switch size="sm" checked={own} onCheckedChange={setOwn} />
+          <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
           {t("contentEditor.ownAccess")}
         </label>
-        {own && <RuleFields value={rule} onChange={setRule} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
+        {own && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
+        {invalid&&<ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending || !langs.length || (own && !complete(rule))}>
@@ -630,7 +589,7 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
       <OfferFields
         offer={v.offer}
         pending={offer.pending}
-        onSell={(terms) => void offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
+        onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
       />
       <ErrorLine error={offer.error} />
@@ -719,16 +678,15 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
 }
 
 type Row = { title: string; start: string; end: string; release: string };
+const segmentRows=(version:Version):Row[]=>version.segments.map((s)=>({title:s.title??"",start:String(s.start),end:String(s.end),release:toLocalInput(s.release_at)}));
 
 /** A version's segments (chapters): page ranges with titles and release times. */
 export function SegmentsEditor({ content, version, ...p }: Common & { content: Content; version: Version }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
-  const seed = () => version.segments.map((s) => ({ title: s.title ?? "", start: String(s.start), end: String(s.end), release: toLocalInput(s.release_at) }));
-  const [rows, setRows] = useState<Row[]>(seed);
-  // Seeded again when the stored segments change.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => setRows(seed()), [JSON.stringify(version.segments)]);
+  const fields=useDraft(useMemo(()=>({rows:segmentRows(version)}),[version]));
+  const rows=fields.value.rows;
+  const setRows=(next:SetStateAction<Row[]>)=>fields.edit((old)=>({rows:typeof next==="function"?next(old.rows):next}));
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const set = (i: number, patch: Partial<Row>) => {
@@ -736,6 +694,14 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
     setRows((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   };
   const valid = rows.every((r) => /^\d+$/.test(r.start) && /^\d+$/.test(r.end) && Number(r.end) > Number(r.start));
+  const submit=async()=>{
+    if(!valid)return false;
+    setSaved(false);const settle=fields.checkpoint();
+    const segments:Segment[]=rows.map((r,i)=>({position:i+1,title:r.title.trim()||undefined,start:Number(r.start),end:Number(r.end),release_at:fromLocalInput(r.release),released:false}));
+    const out=await save.run(()=>client.contents.setSegments(content.id,version.id,segments));
+    if(!out)return false;const clean=settle({rows:segmentRows(out)});setSaved(clean);return clean;
+  };
+  useEditorSaveTask(`segments:${version.id}`,{label:t("contentEditor.segments"),dirty:fields.dirty.length>0,pending:save.pending,valid,save:submit,order:20});
   return (
     <div className="grid gap-2" data-ckui="segments-editor">
       <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>
@@ -770,11 +736,7 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
           type="button"
           size="sm"
           disabled={save.pending || !valid}
-          onClick={() => {
-            setSaved(false);
-            const segments: Segment[] = rows.map((r, i) => ({ position: i + 1, title: r.title.trim() || undefined, start: Number(r.start), end: Number(r.end), release_at: fromLocalInput(r.release), released: false }));
-            void save.run(() => client.contents.setSegments(content.id, version.id, segments)).then((d) => d && setSaved(true));
-          }}
+          onClick={()=>void submit()}
         >
           {t("contentEditor.saveSegments")}
         </Button>

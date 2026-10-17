@@ -1,6 +1,31 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  readerEditor: {
+    new: "新建画廊",
+    untitled: "未命名画廊",
+    saveDraft: "保存草稿",
+    schedule: "定时发布",
+    details: "画廊详情",
+    files: "画廊文件",
+    fileHelp: "添加 ZIP 或单独的图片。拖动页面调整顺序，点击星标选择封面。",
+    entities: "作者、系列和标签",
+    additionalText: "其他文本与网址",
+    useCover: "设为封面",
+    useCoverFor: "将 {name} 设为封面",
+    firstPageCover: "未另行选择或上传封面时，将使用第一页。",
+    publication: "发布设置",
+    versions: "版本与章节",
+    readerTools: "音频与阅读锚点",
+    filesNotReady: "请先完成页面上传和处理，再发布。",
+    filesFailed: "部分文件需要处理。发布前请重试或移除上传失败的文件。",
+    processing: "正在上传或处理文件，你可以继续编辑详情。",
+    addPages: "发布前请至少添加一页。",
+    fixSection: "发布前请检查并保存{section}。",
+    accessRequired: "保存前请完善访问设置。",
+    changedDuringSave: "保存期间有新的修改。请先保存再发布。",
+    versionDraft: "此版本仍是草稿。发布前请关闭草稿设置。",
+  },
   contentAdmin: {
     groups: "群组",
     modelFailed: "无法加载内容模型。",

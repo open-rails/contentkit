@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useMemo } from "react";
 import type { Offer, Terms } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { Badge } from "#ckui/ui/badge";
@@ -6,20 +6,32 @@ import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
+import { useDraft } from "../../react/use-draft.js";
+import { useEditorSaveTask } from "./editor-save.js";
 import { priceLabel } from "./paywall.js";
 
 type Mode = "once" | "rent" | "renew";
 
 /** An offer's form: price, currency and whether it rents or renews; the current offer with its withdrawal. */
-export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pick<Offer, "terms"> & Partial<Pick<Offer, "state" | "synced">>; onSell: (t: Terms) => void; onWithdraw: () => void; pending: boolean }) {
+export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pick<Offer, "terms"> & Partial<Pick<Offer, "state" | "synced">>; onSell: (t: Terms) => unknown | Promise<unknown>; onWithdraw: () => void; pending: boolean }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
   const active = offer && (offer.state ?? "active") === "active" ? offer : undefined;
-  const [amount, setAmount] = useState(active?.terms.amount ?? "");
-  const [currency, setCurrency] = useState(active?.terms.currency ?? "USD");
-  const [mode, setMode] = useState<Mode>(active?.terms.renew_hours ? "renew" : active?.terms.access_hours ? "rent" : "once");
-  const [days, setDays] = useState(String(((active?.terms.renew_hours ?? active?.terms.access_hours ?? 720) / 24) | 0));
+  const fields=useDraft(useMemo(()=>({amount:active?.terms.amount??"",currency:active?.terms.currency??"USD",mode:(active?.terms.renew_hours?"renew":active?.terms.access_hours?"rent":"once")as Mode,days:String(((active?.terms.renew_hours??active?.terms.access_hours??720)/24)|0)}),[active?.terms]));
+  const {amount,currency,mode,days}=fields.value;
+  const edit=(patch:Partial<typeof fields.value>)=>fields.edit((old)=>({...old,...patch}));
+  const valid=/^\d+(\.\d{1,2})?$/.test(amount.trim())&&currency.length===3&&(mode==="once"||Number(days)>0);
+  const submit=async()=>{
+    if(!valid)return false;
+    const settle=fields.checkpoint();
+    const hours=Math.max(1,Math.trunc(Number(days)||0))*24;
+    const terms:Terms={amount:amount.trim(),currency,...(mode==="rent"?{access_hours:hours}:mode==="renew"?{renew_hours:hours}:{})};
+    const out=await onSell(terms);
+    if(!out)return false;
+    return settle({amount:terms.amount,currency:terms.currency,mode,days});
+  };
+  useEditorSaveTask(`offer:${id}`,{label:t("contentEditor.price"),dirty:fields.dirty.length>0,pending,valid,save:submit,order:40});
   return (
     <div className="grid gap-2" data-ckui="offer-fields">
       {active ? (
@@ -39,15 +51,15 @@ export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pi
           <Label htmlFor={`${id}-amount`} className="text-xs text-muted-foreground">
             {t("contentEditor.price")}
           </Label>
-          <Input id={`${id}-amount`} className="h-8 w-28" inputMode="decimal" value={amount} placeholder="4.99" onChange={(e) => setAmount(e.target.value)} />
+          <Input id={`${id}-amount`} className="h-8 w-28" inputMode="decimal" value={amount} placeholder="4.99" onChange={(e) => edit({amount:e.target.value})} />
         </div>
         <div className="grid gap-1">
           <Label htmlFor={`${id}-currency`} className="text-xs text-muted-foreground">
             {t("contentEditor.currency")}
           </Label>
-          <Input id={`${id}-currency`} className="h-8 w-20 uppercase" maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+          <Input id={`${id}-currency`} className="h-8 w-20 uppercase" maxLength={3} value={currency} onChange={(e) => edit({currency:e.target.value.toUpperCase()})} />
         </div>
-        <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
+        <Select value={mode} onValueChange={(v) => edit({mode:v as Mode})}>
           <SelectTrigger size="sm" aria-label={t("contentEditor.priceMode")}>
             <SelectValue>{(v: string) => t(`contentEditor.mode_${v as Mode}`)}</SelectValue>
           </SelectTrigger>
@@ -64,18 +76,15 @@ export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pi
             <Label htmlFor={`${id}-days`} className="text-xs text-muted-foreground">
               {t("contentEditor.days")}
             </Label>
-            <Input id={`${id}-days`} className="h-8 w-20" type="number" min={1} value={days} onChange={(e) => setDays(e.target.value)} />
+            <Input id={`${id}-days`} className="h-8 w-20" type="number" min={1} value={days} onChange={(e) => edit({days:e.target.value})} />
           </div>
         )}
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={pending || !/^\d+(\.\d{1,2})?$/.test(amount.trim()) || currency.length !== 3}
-          onClick={() => {
-            const hours = Math.max(1, Math.trunc(Number(days) || 0)) * 24;
-            onSell({ amount: amount.trim(), currency, access_hours: mode === "rent" ? hours : undefined, renew_hours: mode === "renew" ? hours : undefined });
-          }}
+          disabled={pending || !valid}
+          onClick={()=>void submit()}
         >
           {t(active ? "contentEditor.reprice" : "contentEditor.sell")}
         </Button>

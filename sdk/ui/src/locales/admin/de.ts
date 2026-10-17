@@ -1,6 +1,31 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  readerEditor: {
+    new: "Neue Galerie",
+    untitled: "Unbenannte Galerie",
+    saveDraft: "Entwurf speichern",
+    schedule: "Planen",
+    details: "Galeriedetails",
+    files: "Galeriedateien",
+    fileHelp: "ZIP oder einzelne Bilder hinzufügen. Seiten zum Sortieren ziehen; mit dem Stern das Cover wählen.",
+    entities: "Künstler, Serien und Tags",
+    additionalText: "Weitere Texte und URL",
+    useCover: "Als Cover verwenden",
+    useCoverFor: "{name} als Cover verwenden",
+    firstPageCover: "Ohne eigene Auswahl wird die erste Seite als Cover verwendet.",
+    publication: "Veröffentlichung",
+    versions: "Versionen und Kapitel",
+    readerTools: "Audio und Lesemarken",
+    filesNotReady: "Vor dem Veröffentlichen müssen alle Seiten hochgeladen und verarbeitet sein.",
+    filesFailed: "Einige Dateien benötigen Aufmerksamkeit. Fehlgeschlagene Uploads erneut versuchen oder entfernen.",
+    processing: "Dateien werden hochgeladen oder verarbeitet. Die Details können weiter bearbeitet werden.",
+    addPages: "Vor dem Veröffentlichen mindestens eine Seite hinzufügen.",
+    fixSection: "Vor dem Veröffentlichen {section} prüfen und speichern.",
+    accessRequired: "Vor dem Speichern die Zugriffseinstellungen vervollständigen.",
+    changedDuringSave: "Es gibt neuere ungespeicherte Änderungen. Vor dem Veröffentlichen speichern.",
+    versionDraft: "Diese Version ist noch ein Entwurf. Vor dem Veröffentlichen den Entwurfsmodus ausschalten.",
+  },
   contentAdmin: {
     groups: "Gruppen",
     modelFailed: "Das Inhaltsmodell konnte nicht geladen werden.",

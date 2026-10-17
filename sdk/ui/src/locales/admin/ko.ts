@@ -1,6 +1,31 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  readerEditor: {
+    new: "새 갤러리",
+    untitled: "제목 없는 갤러리",
+    saveDraft: "초안 저장",
+    schedule: "예약",
+    details: "갤러리 정보",
+    files: "갤러리 파일",
+    fileHelp: "ZIP 또는 개별 이미지를 추가하세요. 페이지를 드래그해 정렬하고 별표로 표지를 선택하세요.",
+    entities: "작가, 시리즈 및 태그",
+    additionalText: "추가 텍스트와 URL",
+    useCover: "표지로 사용",
+    useCoverFor: "{name}을(를) 표지로 사용",
+    firstPageCover: "다른 페이지나 표지를 선택하지 않으면 첫 페이지가 표지가 됩니다.",
+    publication: "게시 설정",
+    versions: "버전 및 챕터",
+    readerTools: "오디오 및 읽기 지점",
+    filesNotReady: "게시하기 전에 페이지 업로드와 처리를 완료하세요.",
+    filesFailed: "확인이 필요한 파일이 있습니다. 실패한 업로드를 다시 시도하거나 제거하세요.",
+    processing: "파일을 업로드하거나 처리하고 있습니다. 정보를 계속 편집할 수 있습니다.",
+    addPages: "게시하기 전에 페이지를 하나 이상 추가하세요.",
+    fixSection: "게시하기 전에 {section}을(를) 확인하고 저장하세요.",
+    accessRequired: "저장하기 전에 접근 설정을 완료하세요.",
+    changedDuringSave: "저장 중에 새 변경 사항이 생겼습니다. 게시하기 전에 저장하세요.",
+    versionDraft: "이 버전은 아직 초안입니다. 게시하기 전에 초안 설정을 해제하세요.",
+  },
   contentAdmin: {
     groups: "그룹",
     modelFailed: "콘텐츠 모델을 불러올 수 없습니다.",
