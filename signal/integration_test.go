@@ -389,12 +389,13 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 		t.Fatalf("watch history used non-view activity: %+v", seenAfterClear)
 	}
 
-	// TopStates orders by last_score.
+	// TopStates orders by measured reading quality; the retired legacy score
+	// (g2 40 > b1 30) cannot outrank b1's larger measured coverage.
 	top, err := st.TopStates(ctx, tenant, user, TopStatesOptions{Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(top) != 2 || top[0].ContentID != g1 || top[1].ContentID != g2 {
+	if len(top) != 2 || top[0].ContentID != g1 || top[1].ContentID != b1 || top[0].Quality < top[1].Quality || top[1].Quality <= 0 {
 		t.Fatalf("top states: %+v", top)
 	}
 }
@@ -535,7 +536,7 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	ctx := context.Background()
 	tenant := "t"
 	// Fix the snapshot clock so identical rebuilds exercise insert deduplication.
-	gate := newGate(conn, "INSERT INTO "+testDB+".content_pairs")
+	gate := newGate(conn, "INSERT INTO "+testDB+".engagement_pairs")
 	close(gate.release)
 	gate.dispatch = func(ctx context.Context, query string, args ...any) error {
 		return conn.Exec(ctx, strings.ReplaceAll(query, "now()", "toDateTime(0)"), args...)
@@ -557,8 +558,13 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	}
 
 	u1, u2, u3 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}
+	read := func(sub Subject, id string, day int) readingFixture {
+		return view(tenant, id, sub, day, 10, 10, 10, 0, true)
+	}
 	signals := []readingFixture{
-		// u1 likes A and B; u2 likes A and C; u3 likes A but DISLIKES B.
+		// u1 reads and likes A and B; u2 reads and likes A and C; u3 reads A and B
+		// but DISLIKES B. Co-engagement counts measured readers, netted by feedback.
+		read(u1, A, 1), read(u1, B, 1), read(u2, A, 2), read(u2, C, 2), read(u3, A, 3), read(u3, B, 3),
 		react(u1, A, "like", 1, 1), react(u1, B, "like", 1, 1),
 		react(u2, A, "like", 1, 2), react(u2, C, "like", 1, 2),
 		react(u3, A, "like", 1, 3), react(u3, B, "dislike", -1, 3),
@@ -618,7 +624,7 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 		t.Fatalf("C net strength should be 1: %+v", co)
 	}
 
-	// Rollup path: refresh content_pairs and read through it.
+	// Rollup path: refresh engagement_pairs and read through it.
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -636,14 +642,14 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	}
 
 	// Refresh is idempotent (DELETE + INSERT).
-	storedPairs := countWhere(t, conn, "content_pairs", "tenant = ?", tenant)
+	storedPairs := countWhere(t, conn, "engagement_pairs", "tenant = ?", tenant)
 	if storedPairs == 0 {
 		t.Fatal("first refresh did not store any pairs")
 	}
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countWhere(t, conn, "content_pairs", "tenant = ?", tenant); got != storedPairs {
+	if got := countWhere(t, conn, "engagement_pairs", "tenant = ?", tenant); got != storedPairs {
 		t.Fatalf("identical refresh lost stored pairs: got %d, want %d", got, storedPairs)
 	}
 	coR2, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10})

@@ -605,14 +605,18 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.engagement_pairs WHERE tenant=?", st.db), tenant); err != nil {
 		return err
 	}
+	// A fresh token per build: replicated insert deduplication would otherwise
+	// drop a rebuild identical to the block just deleted, leaving no pairs.
 	q := fmt.Sprintf(`INSERT INTO %s.engagement_pairs
  (tenant,content_kind_a,content_id_a,content_kind_b,content_id_b,strength,refreshed_at)
  SELECT ?,a.1,a.2,b.1.1,b.1.2,toInt64(sum(b.2)),now() FROM (
  SELECT arrayJoin(positive) AS a,arrayJoin(arrayConcat(arrayMap(x->tuple(x,1),positive),arrayMap(x->tuple(x,-1),negative))) AS b FROM (
  SELECT subject_kind,subject,groupUniqArrayIf(%d)(tuple(content_kind,content_id),net_value>=0) AS positive,
  groupUniqArrayIf(%d)(tuple(content_kind,content_id),net_value<0) AS negative
- FROM (%s) GROUP BY subject_kind,subject)) WHERE a!=b.1 GROUP BY a,b.1 HAVING sum(b.2)>0`, st.db, maxPer, maxPer, source)
-	return st.conn.Exec(ctx, q, append([]any{tenant}, args...)...)
+ FROM (%s) GROUP BY subject_kind,subject)) WHERE a!=b.1 GROUP BY a,b.1 HAVING sum(b.2)>0
+ SETTINGS insert_deduplication_token = ?`, st.db, maxPer, maxPer, source)
+	args = append(append([]any{tenant}, args...), contentref.NewID())
+	return st.conn.Exec(ctx, q, args...)
 }
 
 // DayActivity reports distinct people with measured attention, not page opens.

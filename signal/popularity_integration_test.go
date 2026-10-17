@@ -22,9 +22,9 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 		id  string
 		day int
 	}{{earlyID, 2}, {lateID, 28}} {
-		for i, seconds := range []int{80, 40} {
-			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, seconds, 10, 10, 0, true)
-			s.EventID = fmt.Sprintf("%s-%d", cohort.id, i)
+		for i, seconds := range []uint32{80, 40} {
+			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, 8, 10, 10, 0, true)
+			s.EventID, s.DurationS = fmt.Sprintf("%s-%d", cohort.id, i), seconds
 			if err := recordFixtureSignals(st, ctx, "t", []readingFixture{s, s}); err != nil {
 				t.Fatal(err)
 			}
@@ -36,8 +36,8 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	like.ContentRef, like.Type, like.EventID = gallery("t", reactionID), "like", "like"
 	outside := view("t", outsideID, Subject{UserID: "u3"}, 1, 8, 10, 10, 100, true)
 	// The same person reading a second edition remains one person for the work.
-	edition := view("t", earlyID, Subject{UserID: "u0"}, 10, 80, 10, 10, 0, true)
-	edition.ContentRef, edition.EventID = edition.WithVersion("v2"), "edition"
+	edition := view("t", earlyID, Subject{UserID: "u0"}, 10, 8, 10, 10, 0, true)
+	edition.ContentRef, edition.EventID, edition.DurationS = edition.WithVersion("v2"), "edition", 80
 	if err := recordFixtureSignals(st, ctx, "t", []readingFixture{click, like, outside, edition}); err != nil {
 		t.Fatal(err)
 	}

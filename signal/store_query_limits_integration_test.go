@@ -29,14 +29,19 @@ func queryLimitStore(t *testing.T) (*Store, driver.Conn) {
 	return st, conn
 }
 
-func seedMeasuredSQL(st *Store, rows string) string {
-	return `INSERT INTO ` + st.db + `.engagement_segments
+// The page JSON is bound, never inlined: a {…:…} literal makes clickhouse-go
+// treat the statement as using server-side parameters and reject positional args.
+const seededMeasurement = `{"pages":[{"index":0,"active_ms":1000,"ranges":[{"from":0,"to":10000}]}]}`
+
+func seedMeasured(ctx context.Context, conn driver.Conn, st *Store, rows string, args ...any) error {
+	q := `INSERT INTO ` + st.db + `.engagement_segments
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,
  active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement)
  SELECT tenant,'gallery',content_id,version_id,'user',subject,event_id,toUInt64(1),event_id,event_id,at,
  toUInt32(1000),CAST(range(100),'Array(UInt32)'),map(toUInt32(0),toUInt64(1000)),toUInt32(100),toUInt32(100),'',
  toJSONString(map('observed_at',formatDateTime(at,'%Y-%m-%dT%H:%i:%SZ'),'content_access','public','viewer_access','full','audience','public')),
- '{"pages":[{"index":0,"active_ms":1000,"ranges":[{"from":0,"to":10000}]}]}' FROM (` + rows + `)`
+ ? FROM (` + rows + `)`
+	return conn.Exec(ctx, q, append([]any{seededMeasurement}, args...)...)
 }
 
 func TestIntegrationRepairDailyPartitionLimit(t *testing.T) {
@@ -44,16 +49,16 @@ func TestIntegrationRepairDailyPartitionLimit(t *testing.T) {
 	ctx := clickhouse.Context(t.Context(), clickhouse.WithSettings(clickhouse.Settings{"max_partitions_per_insert_block": 100, "max_memory_usage": 536870912, "max_threads": 1}))
 	ref := gallery("repair", cid(1))
 	subject := Subject{UserID: "history"}
-	seed := seedMeasuredSQL(st, `SELECT 'repair' AS tenant,? AS content_id,'fixture-edition' AS version_id,? AS subject,
- toString(number+?) AS event_id,addMonths(toDateTime64('2010-01-01',6,'UTC'),toInt32(number+?)) AS at FROM numbers(55)`)
+	seed := `SELECT 'repair' AS tenant,? AS content_id,'fixture-edition' AS version_id,? AS subject,
+ toString(number+?) AS event_id,addMonths(toDateTime64('2010-01-01',6,'UTC'),toInt32(number+?)) AS at FROM numbers(55)`
 	for start := 0; start < 165; start += 55 {
-		if err := conn.Exec(ctx, seed, ref.ContentID, subject.Key(), start, start); err != nil {
+		if err := seedMeasured(ctx, conn, st, seed, ref.ContentID, subject.Key(), start, start); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bulk := seedMeasuredSQL(st, `SELECT 'repair' AS tenant,? AS content_id,'fixture-edition' AS version_id,? AS subject,
- concat('bulk-',toString(number)) AS event_id,toDateTime64('2015-03-01',6,'UTC') AS at FROM numbers(100000)`)
-	if err := conn.Exec(ctx, bulk, ref.ContentID, subject.Key()); err != nil {
+	bulk := `SELECT 'repair' AS tenant,? AS content_id,'fixture-edition' AS version_id,? AS subject,
+ concat('bulk-',toString(number)) AS event_id,toDateTime64('2015-03-01',6,'UTC') AS at FROM numbers(100000)`
+	if err := seedMeasured(ctx, conn, st, bulk, ref.ContentID, subject.Key()); err != nil {
 		t.Fatal(err)
 	}
 	orphan := `INSERT INTO ` + st.db + `.engagement_daily
@@ -120,9 +125,9 @@ func TestIntegrationRepairDefaultPageQueryLimit(t *testing.T) {
 			st, conn := queryLimitStore(t)
 			ctx := clickhouse.Context(t.Context(), clickhouse.WithSettings(clickhouse.Settings{"max_query_size": 262144}))
 			version, subject := cid(20000), cid(30000)
-			q := seedMeasuredSQL(st, `SELECT 'repair' AS tenant,concat('01920000-0000-7000-8000-',leftPad(toString(number+1),12,'0')) AS content_id,
- ? AS version_id,? AS subject,toString(number) AS event_id,toDateTime64('2026-05-01',6,'UTC') AS at FROM numbers(1001)`)
-			if err := conn.Exec(ctx, q, version, subject); err != nil {
+			q := `SELECT 'repair' AS tenant,concat('01920000-0000-7000-8000-',leftPad(toString(number+1),12,'0')) AS content_id,
+ ? AS version_id,? AS subject,toString(number) AS event_id,toDateTime64('2026-05-01',6,'UTC') AS at FROM numbers(1001)`
+			if err := seedMeasured(ctx, conn, st, q, version, subject); err != nil {
 				t.Fatal(err)
 			}
 			first, err := st.RepairProjections(ctx, "repair", RepairOptions{Rebuild: rebuild})

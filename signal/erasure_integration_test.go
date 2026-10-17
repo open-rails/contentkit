@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -114,8 +115,10 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 		if err != nil || len(hist) != 0 {
 			t.Fatalf("history after erasure: %v %v", hist, err)
 		}
-		if n := countWhere(t, conn, "content_pairs", "tenant = ?", tenant); n != 0 {
-			t.Fatalf("pairs involving erased contributions must be removed until refreshed: %d", n)
+		for _, table := range []string{"content_pairs", "engagement_pairs"} {
+			if n := countWhere(t, conn, table, "tenant = ?", tenant); n != 0 {
+				t.Fatalf("%s involving erased contributions must be removed until refreshed: %d", table, n)
+			}
 		}
 	}
 	after := metricsByID(t, st, "doujins", []string{c1, c2}, AllTime())
@@ -158,21 +161,31 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	}
 
 	// Residue: a writer that passed the fence before it existed, or a restored
-	// backup, re-introduces rows; enforcement removes them.
-	if err := conn.Exec(ctx, `INSERT INTO signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at)
-VALUES ('doujins', 'gallery', '`+c9+`', 'user', 'gone', 'view', 'residue', '2026-05-09 00:00:00')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.Exec(ctx, `INSERT INTO exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at)
-VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], ['`+c9+`'], [1], '2026-05-09 00:00:00')`); err != nil {
-		t.Fatal(err)
-	}
+	// backup, re-introduces rows in every subject table. Rebuilds never project
+	// it, reads never see it, and enforcement removes exactly it.
+	plantSubjectResidue(t, conn, "doujins", gone, gallery("doujins", c9), at.AddDate(0, 0, 7), time.Now().UTC())
 	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
 		t.Fatal(err)
 	}
-	if n := countWhere(t, conn, "subject_content_state", "tenant = 'doujins' AND subject = 'gone'"); n == 0 {
-		t.Fatal("precondition: residue projected")
+	for _, table := range subjectTables {
+		if n := countWhere(t, conn, table, "tenant = 'doujins' AND subject_kind = 'user' AND subject = 'gone'"); n == 0 {
+			t.Fatalf("precondition: residue planted in %s", table)
+		}
 	}
+	if m9 := metricsByID(t, st, "doujins", []string{c9}, AllTime()); m9[c9].Readers != 0 {
+		t.Fatalf("residue counted before enforcement: %+v", m9)
+	}
+	if hist, err := st.History(ctx, "doujins", gone, HistoryOptions{}); err != nil || len(hist) != 0 {
+		t.Fatalf("residue visible in history before enforcement: %v %v", hist, err)
+	}
+	keptRows := func() map[string]uint64 {
+		out := map[string]uint64{}
+		for _, table := range subjectTables {
+			out[table] = countWhere(t, conn, table, "tenant = 'doujins' AND subject_kind = 'user' AND subject = 'kept'")
+		}
+		return out
+	}
+	keptBefore := keptRows()
 	enforced, err := st.EnforceErasures(ctx, "doujins")
 	if err != nil || !enforced.Complete() {
 		t.Fatalf("enforce: %+v %v", enforced, err)
@@ -182,8 +195,8 @@ VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], [
 			t.Fatalf("residue remains in %s: %d", table, n)
 		}
 	}
-	if n := countWhere(t, conn, "signals", "tenant = 'doujins' AND subject = 'kept'"); n != 4 {
-		t.Fatalf("kept subject damaged by enforcement: %d", n)
+	if keptAfter := keptRows(); !reflect.DeepEqual(keptBefore, keptAfter) || keptAfter["engagement_segments"] == 0 {
+		t.Fatalf("kept subject damaged by enforcement: before=%v after=%v", keptBefore, keptAfter)
 	}
 	// Idempotent.
 	if report, err := st.EraseSubjects(ctx, []string{"doujins"}, []Subject{gone}); err != nil || !report.Complete() {

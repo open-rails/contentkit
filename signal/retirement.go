@@ -40,7 +40,7 @@ func (st *Store) RetireOpenCounters(ctx context.Context, o RetirementOptions) er
 		q := fmt.Sprintf(`INSERT INTO %s.legacy_reading_state SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,
  first_seen_at,last_view_at,max_progress,progress_max,completed,resume,
  bitOr(bitShiftLeft(toUInt256(toUnixTimestamp64Micro(toDateTime64(last_view_at,6,'UTC'))),128),toUInt256(cityHash64(first_seen_at,last_view_at,max_progress,progress_max,completed,resume))) FROM %s.subject_content_state FINAL
- WHERE max_progress>0 AND %s`, st.db, st.db, st.notErased())
+ WHERE (max_progress>0 OR completed OR resume!='') AND %s`, st.db, st.db, st.notErased())
 		if err := st.conn.Exec(ctx, q); err != nil {
 			return fmt.Errorf("signal: final legacy resume copy: %w", err)
 		}

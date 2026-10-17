@@ -104,7 +104,7 @@ SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,
     first_seen_at,last_view_at,max_progress,progress_max,completed,resume,
     bitOr(bitShiftLeft(toUInt256(toUnixTimestamp64Micro(toDateTime64(last_view_at,6,'UTC'))),128),toUInt256(cityHash64(first_seen_at,last_view_at,max_progress,progress_max,completed,resume)))
 FROM subject_content_state FINAL
-WHERE max_progress>0 AND (sipHash128(concat(subject_kind,':',subject)),tenant)
+WHERE (max_progress>0 OR completed OR resume!='') AND (sipHash128(concat(subject_kind,':',subject)),tenant)
     NOT IN (SELECT subject_hash,tenant FROM erasures);
 
 -- Co-engagement derived from measured readers has a separate lineage too.

@@ -228,9 +228,15 @@ func erase(t *testing.T, st *Store, tenant string, sub Subject) ErasureReport {
 // projection publication leaves behind.
 func plantResidue(t *testing.T, conn Conn, f barrierFixture, ingested time.Time) {
 	t.Helper()
+	plantSubjectResidue(t, conn, f.tenant, f.gone, f.e1, f.at, ingested)
+}
+
+// plantSubjectResidue writes one row into every table in subjectTables.
+func plantSubjectResidue(t *testing.T, conn Conn, tenant string, sub Subject, ref ContentRef, at, ingested time.Time) {
+	t.Helper()
 	ctx := context.Background()
-	kind, key := f.gone.Kind(), f.gone.Key()
-	accessJSON, err := json.Marshal(AccessContext{ObservedAt: f.at, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true})
+	kind, key := sub.Kind(), sub.Key()
+	accessJSON, err := json.Marshal(AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,27 +245,29 @@ func plantResidue(t *testing.T, conn Conn, f barrierFixture, ingested time.Time)
 		args []any
 	}{
 		{fmt.Sprintf(`INSERT INTO %s.signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, ingested_at)
-VALUES (?, ?, ?, ?, ?, 'view', 'residue', ?, 2, 2, 50, true, ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, ingested}},
+VALUES (?, ?, ?, ?, ?, 'view', 'residue', ?, 2, 2, 50, true, ?)`, testDB), []any{tenant, ref.ContentKind, ref.ContentID, kind, key, at, ingested}},
 		{fmt.Sprintf(`INSERT INTO %s.subject_content_state (tenant, subject_kind, subject, content_kind, content_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
+VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{tenant, kind, key, ref.ContentKind, ref.ContentID, at, at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, uint64(ingested.UnixMicro())}},
+VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{tenant, ref.ContentKind, ref.ContentID, kind, key, at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at, ingested_at)
-VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, ingested}},
+VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{tenant, kind, key, ref.ContentKind, ref.ContentID, at, ingested}},
 		{fmt.Sprintf(`INSERT INTO %s.population_observations (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
-VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{f.tenant, kind, key, f.at}},
+VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{tenant, kind, key, at}},
+		{fmt.Sprintf(`INSERT INTO %s.measured_population_observations (tenant,content_kind,subject_kind,subject,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
+VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{tenant, kind, key, at}},
 		{fmt.Sprintf(`INSERT INTO %s.engagement_segments
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,ingested_at)
- VALUES (?,?,?,'residue-version',?,?,'residue',1,'residue-visit','residue-segment',?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,'p:2',?,'{}',?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, string(accessJSON), ingested}},
+ VALUES (?,?,?,'residue-version',?,?,'residue',1,'residue-visit','residue-segment',?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,'p:2',?,'{}',?)`, testDB), []any{tenant, ref.ContentKind, ref.ContentID, kind, key, at, string(accessJSON), ingested}},
 		{fmt.Sprintf(`INSERT INTO %s.engagement_state
  (tenant,subject_kind,subject,content_kind,content_id,content_version_id,source_version,first_engaged_at,last_engaged_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,qualified,coverage,quality,completed,resume,version)
- VALUES (?,?,?,?,?,'','residue-version',?,?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,true,1,1,true,'p:2',?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
+ VALUES (?,?,?,?,?,'','residue-version',?,?,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,true,1,1,true,'p:2',?)`, testDB), []any{tenant, kind, key, ref.ContentKind, ref.ContentID, at, at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.engagement_daily
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,day,present,active_ms,covered_units,unit_attention,unit_total,unit_scale,version)
- VALUES (?,?,?,'residue-version',?,?,toDate(?),true,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, uint64(ingested.UnixMicro())}},
+ VALUES (?,?,?,'residue-version',?,?,toDate(?),true,8000,range(100),map(toUInt32(0),toUInt64(8000)),100,100,?)`, testDB), []any{tenant, ref.ContentKind, ref.ContentID, kind, key, at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.legacy_reading_state
  (tenant,subject_kind,subject,content_kind,content_id,content_version_id,first_seen_at,last_seen_at,progress,progress_max,completed,resume,version)
- VALUES (?,?,?,?,?,'',?,?,2,2,true,'p:2',?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
+ VALUES (?,?,?,?,?,'',?,?,2,2,true,'p:2',?)`, testDB), []any{tenant, kind, key, ref.ContentKind, ref.ContentID, at, at, uint64(ingested.UnixMicro())}},
 	} {
 		if err := conn.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("plant residue: %v\n%s", err, q.sql)
@@ -681,7 +689,7 @@ func TestIntegrationErasureBarrierAcrossReplicas(t *testing.T) {
 	f := newBarrierFixture("barrier")
 	f.seed(t, stA)
 	sync(connB)
-	if n := f.rawRows(t, connB, "signals"); n != 3 {
+	if n := f.rawRows(t, connB, "engagement_segments"); n != 2 {
 		t.Fatalf("replica B must hold the seed: %d", n)
 	}
 	gate := newGate(envB.Open(t, testDB), "INSERT INTO "+testDB+".engagement_segments")
