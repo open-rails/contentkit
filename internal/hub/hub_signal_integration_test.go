@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -27,14 +28,14 @@ func signalHubConn(t *testing.T, mutate func(*Config)) (*Hub, signal.Conn) {
 	return newTestHub(t, conn, hubSignalTestCHDB, mutate), conn
 }
 
-func hubView(tenant, id, subject string, day int, score int16) signal.Signal {
-	return signal.Signal{
+func hubReading(tenant, id, subject string, day int) engagementtest.Observation {
+	return engagementtest.Observation{
 		ContentRef: contentref.New(tenant, "gallery", id),
 		Subject:    signal.Subject{UserID: subject},
-		Type:       signal.TypeView,
+		Type:       engagementtest.TypeReading,
 		EventID:    id + ":" + subject,
 		OccurredAt: time.Date(2026, 6, day, 10, 0, 0, 0, time.UTC),
-		Progress:   10, ProgressMax: 10, Score: score,
+		Progress:   10, ProgressMax: 10, DurationS: 80,
 	}
 }
 
@@ -43,7 +44,7 @@ func TestHubEraseSubjectsIsTenantScoped(t *testing.T) {
 	ctx := context.Background()
 	other := newTestHub(t, conn, hubSignalTestCHDB, func(c *Config) { c.Tenant = "hentai0" })
 	for _, hub := range []*Hub{h, other} {
-		if err := hub.RecordSignals(ctx, []signal.Signal{hubView(hub.Tenant(), cid(1), "gone", 1, 50), hubView(hub.Tenant(), cid(1), "kept", 1, 50)}); err != nil {
+		if err := hub.RecordSignals(ctx, engagementtest.Native([]engagementtest.Observation{hubReading(hub.Tenant(), cid(1), "gone", 1), hubReading(hub.Tenant(), cid(1), "kept", 1)})); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,7 +66,7 @@ func TestHubEraseSubjectsIsTenantScoped(t *testing.T) {
 	}
 	g1 := h.Content("gallery", cid(1))
 	m, err := h.Metrics(ctx, []ContentRef{g1}, signal.AllTime())
-	if err != nil || m[g1.Key()].Viewers != 1 {
+	if err != nil || m[g1.Key()].Readers != 1 {
 		t.Fatalf("metrics after erasure: %+v %v", m, err)
 	}
 }

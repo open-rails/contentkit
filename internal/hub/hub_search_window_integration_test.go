@@ -10,6 +10,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -37,7 +38,7 @@ func TestPersonalizedSearchPagesCompleteCandidateWindows(t *testing.T) {
 		documents = append(documents, document)
 	}
 	upsertDocs(t, ctx, pool, schema, documents...)
-	if err := hub.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery(cid(600)), Subject: signal.Subject{AnonKey: "popular-reader"}, Type: signal.TypeView, EventID: "late-candidate", OccurredAt: time.Now(), Progress: 1, ProgressMax: 1}}); err != nil {
+	if err := hub.RecordSignals(ctx, engagementtest.Native([]engagementtest.Observation{{ContentRef: gallery(cid(600)), Subject: signal.Subject{AnonKey: "popular-reader"}, Type: engagementtest.TypeReading, EventID: "late-candidate", OccurredAt: time.Now(), Progress: 1, ProgressMax: 1, DurationS: 8}})); err != nil {
 		t.Fatal(err)
 	}
 	opts := HubSearchOptions{
@@ -81,7 +82,7 @@ func TestPersonalizedSearchPagesCompleteCandidateWindows(t *testing.T) {
 		bulk = append(bulk, document)
 	}
 	upsertDocs(t, ctx, pool, schema, bulk...)
-	if err := hub.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery(cid(17001)), Subject: signal.Subject{UserID: "reader"}, Type: signal.TypeView, EventID: "bulk-late-candidate", OccurredAt: time.Now(), Progress: 1, ProgressMax: 1, Completed: true}}); err != nil {
+	if err := hub.RecordSignals(ctx, engagementtest.Native([]engagementtest.Observation{{ContentRef: gallery(cid(17001)).WithVersion("bulk-edition-7001"), Subject: signal.Subject{UserID: "reader"}, Type: engagementtest.TypeReading, EventID: "bulk-late-candidate", OccurredAt: time.Now(), Progress: 1, ProgressMax: 1, DurationS: 8}})); err != nil {
 		t.Fatal(err)
 	}
 	p := *opts.Personalize
@@ -99,7 +100,7 @@ func TestPersonalizedSearchPagesCompleteCandidateWindows(t *testing.T) {
 	if err != nil || len(demoted.Hits) != 10 || demoted.Hits[0].ContentID != cid(17001) || math.Abs(float64(demoted.Hits[0].Score-popular.Hits[0].Score*0.6)) > 1e-6 {
 		t.Fatalf("large-window completed state must affect the matched edition: %+v, %v", demoted, err)
 	}
-	if err := conn.Exec(ctx, "DROP TABLE "+database+".subject_content_state"+env.OnCluster()+" SYNC"); err != nil {
+	if err := conn.Exec(ctx, "DROP TABLE "+database+".engagement_state"+env.OnCluster()+" SYNC"); err != nil {
 		t.Fatal(err)
 	}
 	opts.Limit, opts.Offset, opts.CandidateLimit = 50, 550, 1000

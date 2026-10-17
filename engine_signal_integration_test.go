@@ -104,10 +104,10 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	}
 	var detail catalog.Content
 	s.call(http.StatusOK, u1, "GET", "/ck/v1/contents/"+c.ID, nil, &detail)
-	if v := detail.Viewer; v == nil || !v.Favorited || !v.Seen || v.Progress != 7 || v.Resume != "page:7" || v.LastReadAt == nil {
+	if v := detail.Viewer; v == nil || !v.Favorited || !v.Seen || v.ProgressMax == 0 || uint64(v.Progress)*10 != uint64(v.ProgressMax)*7 || v.Resume != "page:7" || v.LastReadAt == nil {
 		t.Fatalf("detail standing %+v", v)
 	}
-	if v := detail.Versions[0].Viewer; v == nil || v.Favorited || v.Progress != 7 || v.Resume != "page:7" {
+	if v := detail.Versions[0].Viewer; v == nil || v.Favorited || v.ProgressMax == 0 || uint64(v.Progress)*10 != uint64(v.ProgressMax)*7 || v.Resume != "page:7" {
 		t.Fatalf("version standing %+v", v)
 	}
 	var version catalog.Version

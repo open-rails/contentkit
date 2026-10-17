@@ -212,7 +212,6 @@ type item struct {
 	deleted      bool
 	favorites    int    // the counts job's
 	popularity   string // discovery's popularity job's
-	viewBaseline int64  // an import's legacy views
 	versions     []ver
 	groups       []string // slugs, content-level memberships
 }
@@ -302,8 +301,7 @@ func (f *fixture) seed(items ...item) {
 		if it.popularity == "" {
 			it.popularity = "{}"
 		}
-		f.exec(`UPDATE {s}.content_items SET view_baseline = $2 WHERE id = $1`, id, it.viewBaseline)
-		f.exec(`UPDATE {s}.content_facets SET favorites = $2, popularity = $3, view_baseline = $4 WHERE content_id = $1`, id, it.favorites, it.popularity, it.viewBaseline)
+		f.exec(`UPDATE {s}.content_facets SET favorites = $2, popularity = $3 WHERE content_id = $1`, id, it.favorites, it.popularity)
 	}
 }
 
