@@ -333,6 +333,9 @@ type Deps struct {
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.
 	Scopes groups.Scopes
+	// GroupReferences maintains host-owned catalog links during group changes.
+	// Nil preserves the standalone catalog behavior.
+	GroupReferences groups.References
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store

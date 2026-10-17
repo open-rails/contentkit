@@ -487,6 +487,7 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		var textIDs, nameIDs, reach []string
 		var restored []groupRow
 		var flipped, renamed []Ref
+		var unavailable []Ref
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -498,6 +499,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			}
 			if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: row.Kind, Slug: row.Slug, ScopeID: GroupID(row.ScopeID), State: State(row.State), Internal: row.Internal}); err != nil {
 				return err
+			}
+			if row.State == string(StateDeleted) || !g.Internal && row.Internal {
+				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			row.Ordinal = i
 			rows = append(rows, row)
@@ -537,6 +541,14 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 				}
 				texts = append(texts, t...)
 				textIDs = append(textIDs, string(g.ID))
+			}
+		}
+		if s.references != nil && len(unavailable) > 0 {
+			if err := checkReferenceTransaction(ctx, q); err != nil {
+				return err
+			}
+			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
+				return err
 			}
 		}
 		data, err := json.Marshal(rows)
