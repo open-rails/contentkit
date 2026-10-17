@@ -209,6 +209,10 @@ func TestManagementAliasRowsGroupBeforeSuggestionLimit(t *testing.T) {
 	f.group("tag", "azure-second")
 	f.exec(`INSERT INTO {s}.content_group_names(tenant_id,group_id,language,kind,name)
  SELECT $1,$2,'en','alias','Azure variant '||i::text FROM generate_series(1,200) i`, tenant, f.ids["azure-marker"])
+	// All current-name locales are searched even when the display language is
+	// English. Translated aliases must share the same target budget too.
+	f.exec(`INSERT INTO {s}.content_group_names(tenant_id,group_id,language,kind,name)
+ SELECT $1,$2,'x-'||lpad(i::text,3,'0'),'alias','Azure localized variant' FROM generate_series(1,20) i`, tenant, f.ids["azure-marker"])
 	var out Typeahead
 	path := q("/manage/search-suggestions", "q", "azure", "include_entities", "true", "entity_kinds", "tag", "limit", "2")
 	if status, _ := f.call(http.MethodGet, "main.test", "staff", path, nil, &out); status != http.StatusOK || len(out.Groups) != 2 || out.Groups[0].ID == out.Groups[1].ID {
