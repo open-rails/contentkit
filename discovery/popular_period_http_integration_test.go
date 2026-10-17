@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -19,11 +20,11 @@ func TestSignaledPopularPeriodHTTPValidation(t *testing.T) {
 	if !f.svc.o.Hub.SignalsConfigured() {
 		t.Fatal("the regression requires the signaled popularity path")
 	}
-	if err := f.svc.o.Hub.Signals().RecordSignals(f.ctx, tenant, []signal.Signal{{
+	if err := f.svc.o.Hub.Signals().RecordSignals(f.ctx, tenant, engagementtest.Native([]engagementtest.Observation{{
 		ContentRef: contentref.New(tenant, "gallery", f.cid(1)), Subject: signal.Subject{UserID: "popular-period-reader"},
-		Type: signal.TypeView, EventID: "popular-period-view", OccurredAt: f.now.Add(-time.Hour),
+		Type: engagementtest.TypeReading, EventID: "popular-period-reading", OccurredAt: f.now.Add(-time.Hour),
 		Progress: 10, ProgressMax: 10, DurationS: 100,
-	}}); err != nil {
+	}})); err != nil {
 		t.Fatal(err)
 	}
 	for _, period := range []string{"7d", "30d"} {

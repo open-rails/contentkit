@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/engagementtest"
@@ -83,7 +84,7 @@ func TestEngineSignalPlaneIntegration(t *testing.T) {
 	deadline := time.Now().Add(60 * time.Second)
 	for {
 		var liked, favorited uint64
-		if err := admin.QueryRow(ctx, "SELECT countIf(signal_type='like' AND value=1),countIf(signal_type='favorite' AND value=1) FROM "+chDB+".signals FINAL WHERE tenant=? AND subject_kind='user' AND subject=? AND content_id=?", tenant, user.Key(), c.ID).Scan(&liked, &favorited); err != nil {
+		if err := admin.QueryRow(ctx, "SELECT countIf(signal_type=? AND value=1),countIf(signal_type=? AND value=1) FROM "+chDB+".signals FINAL WHERE tenant=? AND subject_kind='user' AND subject=? AND content_id=?", content.PreferenceAxisReaction, content.PreferenceAxisFavorite, tenant, user.Key(), c.ID).Scan(&liked, &favorited); err != nil {
 			t.Fatal(err)
 		}
 		if liked == 1 && favorited == 1 {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -21,24 +22,24 @@ func TestHistoricalActivityRanksWindowBeforeVisiblePagination(t *testing.T) {
 		item{n: 10, titles: map[string]string{"en": "New but unviewed"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}})
 	from := time.Date(f.now.Year(), f.now.Month(), f.now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -60)
 	until := from.AddDate(0, 0, 7)
-	var events []signal.Signal
-	view := func(n, count int, at time.Time, label string) {
+	var observations []engagementtest.Observation
+	read := func(n, count int, at time.Time, label string) {
 		kind := "gallery"
 		if n == 7 {
 			kind = "video"
 		}
 		for i := range count {
-			events = append(events, signal.Signal{ContentRef: contentref.New(tenant, kind, f.cid(n)),
-				Subject: signal.Subject{UserID: fmt.Sprintf("%s-%d", label, i)}, Type: signal.TypeView,
+			observations = append(observations, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, kind, f.cid(n), f.vid(n, 0)),
+				Subject: signal.Subject{UserID: fmt.Sprintf("%s-%d", label, i)}, Type: engagementtest.TypeReading,
 				EventID: fmt.Sprintf("%s-%d", label, i), OccurredAt: at, Progress: 10, ProgressMax: 10, DurationS: 100})
 		}
 	}
 	for n, count := range map[int]int{1: 3, 2: 60, 3: 20, 4: 50, 5: 45, 6: 40, 7: 100, 8: 8} {
-		view(n, count, from, fmt.Sprintf("inside-%d", n))
+		read(n, count, from, fmt.Sprintf("inside-%d", n))
 	}
-	view(9, 80, from.Add(-time.Second), "before")
-	view(9, 80, until, "exclusive-until")
-	if err := f.svc.o.Hub.Signals().RecordSignals(f.ctx, tenant, events); err != nil {
+	read(9, 80, from.Add(-time.Second), "before")
+	read(9, 80, until, "exclusive-until")
+	if err := engagementtest.Record(f.ctx, f.svc.o.Hub.Signals(), tenant, observations); err != nil {
 		t.Fatal(err)
 	}
 	path := func(extra ...string) string {

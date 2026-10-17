@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/engagementtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -21,15 +22,15 @@ const (
 
 func gallery(id string) contentref.ContentRef { return contentref.New(recTenant, "gallery", id) }
 
-func recView(tenant, id, subject string, day int, score int16) signal.Signal {
-	return signal.Signal{
+func recReading(tenant, id, subject string, day int, seconds uint32) signal.Signal {
+	return (engagementtest.Observation{
 		ContentRef: contentref.New(tenant, "gallery", id),
 		Subject:    signal.Subject{UserID: subject},
-		Type:       signal.TypeView,
+		Type:       engagementtest.TypeReading,
 		EventID:    id + ":" + subject,
 		OccurredAt: time.Date(2026, 6, day, 10, 0, 0, 0, time.UTC),
-		Progress:   10, ProgressMax: 10, Score: score,
-	}
+		Progress:   10, ProgressMax: 10, DurationS: seconds,
+	}).Signals()[0]
 }
 
 // recHub is a Recommender over a fresh ClickHouse signal plane.
@@ -118,13 +119,13 @@ func TestRecommenderCustomCandidatesGetSharedPolicy(t *testing.T) {
 
 	u1 := signal.Subject{UserID: "u1"}
 	batch := []signal.Signal{
-		recView(recTenant, cid(3), "u1", 1, 50),
+		recReading(recTenant, cid(3), "u1", 1, 50),
 		{ContentRef: gallery(cid(2)), Subject: u1, Type: "reaction", EventID: "dislike", OccurredAt: time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC), Value: -1},
 	}
 	for i := 1; i <= 3; i++ {
-		batch = append(batch, recView(recTenant, cid(8), fmt.Sprintf("p%d", i), 1, 50))
+		batch = append(batch, recReading(recTenant, cid(8), fmt.Sprintf("p%d", i), 1, 50))
 		if i <= 2 {
-			batch = append(batch, recView(recTenant, cid(9), fmt.Sprintf("p%d", i), 1, 50))
+			batch = append(batch, recReading(recTenant, cid(9), fmt.Sprintf("p%d", i), 1, 50))
 		}
 	}
 	if err := h.RecordSignals(ctx, batch); err != nil {
@@ -182,9 +183,9 @@ func TestRecommenderFallbackCandidatesOverEngagement(t *testing.T) {
 
 	var batch []signal.Signal
 	for _, fan := range []string{"f1", "f2"} {
-		batch = append(batch, recView(recTenant, cid(1), fan, 1, 60), recView(recTenant, cid(2), fan, 1, 60), recView(recTenant, cid(3), fan, 1, 60))
+		batch = append(batch, recReading(recTenant, cid(1), fan, 1, 60), recReading(recTenant, cid(2), fan, 1, 60), recReading(recTenant, cid(3), fan, 1, 60))
 	}
-	batch = append(batch, recView(recTenant, cid(1), "u1", 2, 90))
+	batch = append(batch, recReading(recTenant, cid(1), "u1", 2, 90))
 	if err := h.RecordSignals(ctx, batch); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func TestRecommenderFallbackFillsAfterPolicyFiltering(t *testing.T) {
 		OnError: func(err error) { reported = append(reported, err) },
 	})
 	if err := h.RecordSignals(ctx, []signal.Signal{
-		recView(recTenant, cid(2), "u1", 1, 10),
+		recReading(recTenant, cid(2), "u1", 1, 10),
 		{
 			ContentRef: gallery(cid(5)), Subject: user, Type: "reaction", EventID: "dislike",
 			OccurredAt: time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC), Value: -1,
@@ -383,9 +384,9 @@ func TestRecommenderFallbackFillsAfterPolicyFiltering(t *testing.T) {
 
 	t.Run("popularity fill survives secondary error", func(t *testing.T) {
 		if err := h.RecordSignals(ctx, []signal.Signal{
-			recView(recTenant, cid(6), "p1", 1, 10),
-			recView(recTenant, cid(6), "p2", 1, 10),
-			recView(recTenant, cid(6), "p3", 1, 10),
+			recReading(recTenant, cid(6), "p1", 1, 10),
+			recReading(recTenant, cid(6), "p2", 1, 10),
+			recReading(recTenant, cid(6), "p3", 1, 10),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -412,18 +413,18 @@ func TestRecommenderRecommendFromCanonicalSignals(t *testing.T) {
 	var batch []signal.Signal
 	// Popularity: g1 by 6 subjects, g2 by 5 (more than any co-engaged item).
 	for i := 1; i <= 6; i++ {
-		batch = append(batch, recView(recTenant, cid(1), fmt.Sprintf("p%d", i), 1, 50))
+		batch = append(batch, recReading(recTenant, cid(1), fmt.Sprintf("p%d", i), 1, 50))
 		if i <= 5 {
-			batch = append(batch, recView(recTenant, cid(2), fmt.Sprintf("p%d", i), 1, 50))
+			batch = append(batch, recReading(recTenant, cid(2), fmt.Sprintf("p%d", i), 1, 50))
 		}
 	}
 	// Co-engagement: seed1 fans also read gShared and gOne; seed2 fans read gShared and gTwo.
 	for _, s := range []string{"f1", "f2"} {
-		batch = append(batch, recView(recTenant, cid(11), s, 2, 60), recView(recTenant, cid(21), s, 2, 60), recView(recTenant, cid(22), s, 2, 60))
-		batch = append(batch, recView(recTenant, cid(12), s+"b", 2, 60), recView(recTenant, cid(21), s+"b", 2, 60), recView(recTenant, cid(23), s+"b", 2, 60))
+		batch = append(batch, recReading(recTenant, cid(11), s, 2, 60), recReading(recTenant, cid(21), s, 2, 60), recReading(recTenant, cid(22), s, 2, 60))
+		batch = append(batch, recReading(recTenant, cid(12), s+"b", 2, 60), recReading(recTenant, cid(21), s+"b", 2, 60), recReading(recTenant, cid(23), s+"b", 2, 60))
 	}
 	// u1 strongly engaged both seeds, has seen gTwo, and dislikes gOne.
-	batch = append(batch, recView(recTenant, cid(11), "u1", 3, 90), recView(recTenant, cid(12), "u1", 3, 80), recView(recTenant, cid(23), "u1", 3, 10),
+	batch = append(batch, recReading(recTenant, cid(11), "u1", 3, 90), recReading(recTenant, cid(12), "u1", 3, 80), recReading(recTenant, cid(23), "u1", 3, 10),
 		signal.Signal{ContentRef: h.Content("gallery", cid(22)), Subject: signal.Subject{UserID: "u1"},
 			Type: "reaction", EventID: "pref", OccurredAt: time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC), Value: -1})
 	if err := h.RecordSignals(ctx, batch); err != nil {
