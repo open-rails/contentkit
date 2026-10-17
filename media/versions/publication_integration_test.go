@@ -179,6 +179,27 @@ WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current
 	}
 }
 
+// The first presign creates the manifest before any upload; readers wait for
+// the first page instead of reading an empty plan.
+func TestNoPublicationBeforeFirstUpload(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	body := pngOf(t, 30, 40, 1)
+	sum := sha256.Sum256(body)
+	if _, err := s.uploads.Presign(s.ctx, s.creator, media.PresignRequest{Ref: ref, Path: "originals/001", Type: "image/png", Size: int64(len(body)), SHA256: sum[:]}); err != nil {
+		t.Fatal(err)
+	}
+	if err := versions.Publish(s.svc, s.ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.svc.Plan(s.ctx, s.fan, v); !errors.Is(err, versions.ErrNotReady) {
+		t.Fatalf("a manifest without uploads planned %+v, %v", p, err)
+	}
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", body)
+	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+}
+
 // Removing a page withdraws the publication showing it at once, previews
 // included; the next one replaces it.
 func TestWithdrawal(t *testing.T) {
