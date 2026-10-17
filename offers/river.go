@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	riverhelpers "github.com/open-rails/helpers/river"
 )
@@ -69,8 +70,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	})
 }
 
+// syncOpts keeps at most one waiting or running sync per target. Completed
+// jobs are not in ByState, so a later revision is always synced again.
 func (s *Service) syncOpts() *river.InsertOpts {
-	return &river.InsertOpts{Queue: s.queue, MaxAttempts: 10}
+	return &river.InsertOpts{Queue: s.queue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
+		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,
+		rivertype.JobStateRetryable, rivertype.JobStateScheduled}}}
 }
 
 // RiverJobs contributes the offer sync worker, its queue and the periodic
