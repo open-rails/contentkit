@@ -198,6 +198,7 @@ export function SearchBox(p: SearchBoxProps) {
           key={suggestionKey(s)}
           id={`${id}-${i}`}
           role="option"
+          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)} ${s.type === "content" ? s.card.title || s.card.code : s.group.name || s.group.slug}` : undefined}
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
