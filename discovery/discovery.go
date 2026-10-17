@@ -58,6 +58,9 @@ type Options struct {
 	// ActivitySigner preserves trusted event-time access facts. Nil retains
 	// legacy telemetry without normalized-population qualification.
 	ActivitySigner ActivitySigner
+	// MeasuredEngagement activates new measured writes only after the erasure
+	// executor cohort understands their storage. False leaves this API disabled.
+	MeasuredEngagement bool
 	// Groups names the groups on cards and in typeahead.
 	Groups *groups.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.

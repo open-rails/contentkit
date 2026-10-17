@@ -58,6 +58,7 @@ var (
 	}
 	filterParams = []httpapi.Param{
 		httpapi.Text("kind", "only this content kind"),
+		httpapi.List("ids", "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
 		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
@@ -100,6 +101,9 @@ func dailyFilterParams() []httpapi.Param {
 }
 
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/engagement", Resource: "discovery", Auth: httpapi.Public,
+		Doc:     "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
+		Request: EngagementBatch{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.engagement)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity-contexts", Resource: "discovery", Auth: httpapi.Public,
 		Doc:     "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
 		Request: ActivityContextsInput{}, Responses: []httpapi.Reply{httpapi.OK(ActivityContexts{})}, Errors: signals}, Serve: httpapi.H(handler.activityContexts)},
@@ -109,12 +113,12 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.OK(DailyReleases{})}}, Serve: httpapi.H(handler.releases)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents", Resource: "discovery", Auth: httpapi.Public,
 		Doc:   "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
-		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups}, activityParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
+		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only")}, activityParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
 		Errors: signals}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
-			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups,
+			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardGroups, httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page only"),
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
@@ -186,6 +190,21 @@ func intParam(r *http.Request, name string) (int, error) {
 	return n, nil
 }
 
+func optionalFlag(r *http.Request, name string) (bool, error) {
+	values, ok := r.URL.Query()[name]
+	if !ok {
+		return false, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return false, fmt.Errorf("%w: %s must be one boolean", ErrInvalid, name)
+	}
+	v, err := strconv.ParseBool(values[0])
+	if err != nil {
+		return false, fmt.Errorf("%w: %s must be one boolean", ErrInvalid, name)
+	}
+	return v, nil
+}
+
 func readerOf(r *http.Request) Reader {
 	q := r.URL.Query()
 	return Reader{Actor: gate.Actor(r.Context()), Host: r.Host, Language: q.Get("language"), DisplayLanguage: q.Get("display_language"),
@@ -194,7 +213,11 @@ func readerOf(r *http.Request) Reader {
 
 func filterOf(r *http.Request) Filter {
 	q := r.URL.Query()
-	return Filter{Kind: q.Get("kind"), Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
+	ids := list(q.Get("ids"))
+	if values, ok := q["ids"]; ok && (len(values) != 1 || q.Get("ids") == "") {
+		ids = []string{}
+	}
+	return Filter{Kind: q.Get("kind"), IDs: ids, Groups: list(q.Get("groups")), ExcludeGroups: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
 		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
 		OwnerGroups: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
@@ -211,6 +234,11 @@ func (h handler) releases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handler) list(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -225,11 +253,16 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
 		ActivityFrom: q.Get("activity_from"), ActivityUntil: q.Get("activity_until"),
-		Cursor: q.Get("cursor"), Limit: limit})
+		Cursor: q.Get("cursor"), Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
 func (h handler) search(w http.ResponseWriter, r *http.Request) {
+	summary, flagErr := optionalFlag(r, "summary")
+	if flagErr != nil {
+		h.fail(w, r, flagErr)
+		return
+	}
 	limit, err := intParam(r, "limit")
 	if err != nil {
 		h.fail(w, r, err)
@@ -237,7 +270,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardGroups: list(q.Get("card_entities")),
-		Cursor: q.Get("cursor"), Limit: limit}
+		Cursor: q.Get("cursor"), Limit: limit, Summary: summary}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
 		if err != nil {
@@ -357,6 +390,15 @@ func (h handler) signals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.done(w, r, h.s.RecordSignals(r.Context(), gate.Actor(r.Context()), in))
+}
+
+func (h handler) engagement(w http.ResponseWriter, r *http.Request) {
+	var in EngagementBatch
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.done(w, r, h.s.RecordEngagement(r.Context(), gate.Actor(r.Context()), in))
 }
 
 func (h handler) activityContexts(w http.ResponseWriter, r *http.Request) {

@@ -132,6 +132,10 @@ type Signal struct {
 	// Access is a trusted access snapshot at the event's observation time. Nil
 	// marks legacy events whose audience cannot be inferred retroactively.
 	Access *AccessContext
+
+	// Measurement is trusted measured consumption. It is stored separately
+	// from generic feedback and never increments a route-open counter.
+	Measurement *Measurement
 }
 
 func (s Signal) validate(tenant string) error {

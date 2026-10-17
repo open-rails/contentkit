@@ -50,7 +50,8 @@ func (r ErasureReport) Complete() bool {
 }
 
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
-var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "population_observations"}
+var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "population_observations",
+	"engagement_segments", "engagement_state", "engagement_daily", "legacy_reading_state"}
 
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.
@@ -217,17 +218,19 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 		in := "(" + strings.Join(tuples, ", ") + ")"
 		pairArgs = append(pairArgs, pairArgs[1:]...)
 		where := fmt.Sprintf("tenant = ? AND ((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
-		n, err := st.count(ctx, "content_pairs", tenant, where[len("tenant = ? AND "):], pairArgs[1:])
-		if err != nil {
-			return report, err
+		for _, table := range []string{"content_pairs", "engagement_pairs"} {
+			n, err := st.count(ctx, table, tenant, where[len("tenant = ? AND "):], pairArgs[1:])
+			if err != nil {
+				return report, err
+			}
+			if n == 0 {
+				continue
+			}
+			if err := st.mutate(ctx, table, where, pairArgs...); err != nil {
+				return report, err
+			}
+			report.PairsRemoved += n
 		}
-		if n == 0 {
-			continue
-		}
-		if err := st.mutate(ctx, "content_pairs", where, pairArgs...); err != nil {
-			return report, err
-		}
-		report.PairsRemoved += n
 	}
 	for _, table := range subjectTables {
 		if err := st.mutate(ctx, table, "tenant = ? AND "+filter, append([]any{tenant}, args...)...); err != nil {
@@ -250,8 +253,15 @@ const mutationTupleChunk = 1000
 // contributedContent lists the works (kind, id) the filtered subjects have
 // daily rows for; version rows collapse onto their work.
 func (st *Store) contributedContent(ctx context.Context, tenant, filter string, args []any) ([][2]string, error) {
-	q := fmt.Sprintf(`SELECT DISTINCT content_kind, content_id FROM %s.subject_content_daily WHERE tenant = ? AND %s ORDER BY content_kind, content_id`, st.db, filter)
-	rows, err := st.conn.Query(ctx, q, append([]any{tenant}, args...)...)
+	var parts []string
+	var bindings []any
+	for _, table := range []string{"subject_content_daily", "engagement_daily", "engagement_segments", "legacy_reading_state"} {
+		parts = append(parts, fmt.Sprintf(`SELECT content_kind,content_id FROM %s.%s WHERE tenant=? AND %s`, st.db, table, filter))
+		bindings = append(bindings, tenant)
+		bindings = append(bindings, args...)
+	}
+	q := `SELECT DISTINCT content_kind,content_id FROM (` + strings.Join(parts, " UNION ALL ") + `) ORDER BY content_kind,content_id`
+	rows, err := st.conn.Query(ctx, q, bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: contributed content: %w", err)
 	}

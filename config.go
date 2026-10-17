@@ -59,6 +59,10 @@ type Config struct {
 	// contentkit_clickhouse probe fails with the cause. The engine retries a
 	// down one in the background and turns signals back on when it answers.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
+	// MeasuredEngagement enables the measured reader write API after every
+	// account-erasure executor has upgraded. Keep false through a mixed-writer
+	// rollout; reads and legacy history remain available. No migration runs here.
+	MeasuredEngagement bool `yaml:"measured_engagement,omitempty" json:"measured_engagement,omitempty"`
 	// Offers prices what creators and staff put on sale (needs Deps.Billing).
 	Offers offers.Config `yaml:"offers" json:"offers"`
 	// Accounts declares one shared account space for inboxes and avatars.

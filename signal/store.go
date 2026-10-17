@@ -113,6 +113,23 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if len(signals) > MaxSignalsPerBatch {
 		return &LimitError{Field: "signals per batch", Limit: MaxSignalsPerBatch, Got: len(signals)}
 	}
+	var measured, generic []Signal
+	for _, s := range signals {
+		if s.Measurement != nil || s.Type == TypeEngagement {
+			measured = append(measured, s)
+		} else {
+			generic = append(generic, s)
+		}
+	}
+	if len(measured) > 0 {
+		if err := st.recordMeasured(ctx, tenant, measured); err != nil {
+			return err
+		}
+		if len(generic) == 0 {
+			return nil
+		}
+		signals = generic
+	}
 	subjects := make([]Subject, 0, len(signals))
 	for i := range signals {
 		if err := signals[i].validate(tenant); err != nil {

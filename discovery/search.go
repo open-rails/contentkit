@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/popularity"
@@ -37,6 +38,8 @@ type SearchOptions struct {
 	Limit int
 	// Unpersonalized ranks a signed-in reader's results as anyone's.
 	Unpersonalized bool
+	// Summary adds contextual filtered and locked counts on the first page.
+	Summary bool
 }
 
 // eligibility keeps the content documents whose item the reader's listing
@@ -66,18 +69,19 @@ func (s *Service) languageMode() hub.LanguageMode {
 
 // Search pages the contents matching a keyword query, grouped per content
 // item, under the reader's visibility and the filter.
-func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, error) {
+func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPage, resultErr error) {
+	ctx = access.WithMemo(ctx)
 	empty := ContentPage{Contents: []Card{}}
 	text := strings.TrimSpace(o.Query)
 	if text == "" {
 		return empty, fmt.Errorf("%w: q is required", ErrInvalid)
 	}
 	var err error
-	order := o.Sort
-	if order == "" {
-		order = SortRelevance
+	sortName := o.Sort
+	if sortName == "" {
+		sortName = SortRelevance
 	}
-	o.Filter, err = publicationCursor(o.Filter, o.Cursor, order)
+	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sortName)
 	if err != nil {
 		return empty, err
 	}
@@ -85,6 +89,12 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 	if err != nil {
 		return empty, err
 	}
+	var summaryOrder order
+	defer func() {
+		if resultErr == nil && o.Summary && o.Cursor == "" {
+			result.Summary, resultErr = s.searchSummary(ctx, o, q, summaryOrder)
+		}
+	}()
 	limit := pageLimit(o.Limit, 24)
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
@@ -103,6 +113,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (ContentPage, err
 		if err != nil {
 			return empty, err
 		}
+		summaryOrder = srt
 		base.Limit = sortedMatches
 		res, err := s.o.Hub.Search(ctx, text, hub.HubSearchOptions{SearchOptions: base})
 		if err != nil {
