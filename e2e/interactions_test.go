@@ -213,17 +213,16 @@ func TestImportStagesBucketCopies(t *testing.T) {
 
 // An importer's legacy identifiers resolve over the API as codes do,
 // following merges: hidden content is not_found, removed content gone. The
-// imported comments setting holds, and the legacy view counts show on cards
-// and order most_viewed.
-func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
+// imported comments setting holds, and only published contents appear on cards.
+func TestImportedLegacyURLsAndComments(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
 	t0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	gallery := func(n int, state, comments string, views int64) importer.ContentRecord {
+	gallery := func(n int, state, comments string) importer.ContentRecord {
 		ext := fmt.Sprintf("gallery:%d", n)
-		return importer.ContentRecord{ExternalID: ext, Kind: "gallery", State: state, PublishedAt: &t0, Comments: comments, ViewBaseline: views,
+		return importer.ContentRecord{ExternalID: ext, Kind: "gallery", State: state, PublishedAt: &t0, Comments: comments,
 			Text:     map[string]catalog.Text{"en": {Title: fmt.Sprintf("Legacy %d", n)}},
 			Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, Languages: []string{"en"}, PublishedAt: &t0}}}
 	}
@@ -236,8 +235,8 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 		Groups: []importer.GroupRecord{
 			{ExternalID: "tag:1", Kind: "tag", Slug: "colour", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Colour"}}},
 			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}},
-		Contents: []importer.ContentRecord{gallery(1, "published", "closed", 5000), gallery(2, "published", "", 50), gallery(3, "draft", "", 0),
-			gallery(4, "deleted", "", 0)},
+		Contents: []importer.ContentRecord{gallery(1, "published", "closed"), gallery(2, "published", ""), gallery(3, "draft", ""),
+			gallery(4, "deleted", "")},
 		Aliases: []importer.AliasRecord{{Kind: "video", Key: "101", Target: to("gallery:1")}, {Kind: "video", Key: "101/page", Locator: "3", Target: to("gallery:1")},
 			{Kind: "video", Key: "103", Target: to("gallery:3")}, {Kind: "video", Key: "104", Target: to("gallery:4")},
 			{Kind: "tag-name", Key: "Colour", Target: tag("tag:1")}}}, &res)
@@ -274,15 +273,16 @@ func TestImportedLegacyURLsCommentsAndViews(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, "", "POST", "/codes/aliases", contenturl.AliasLookup{Aliases: []contenturl.AliasKey{key("Video", "1")}}, nil)
 
-	if item.Comments != content.CommentsClosed || *item.Views != 5000 {
-		t.Fatalf("detail comments %q, views %d", item.Comments, *item.Views)
+	if item.Comments != content.CommentsClosed {
+		t.Fatalf("detail comments %q", item.Comments)
 	}
 	f.want(http.StatusForbidden, user, "POST", "/contents/"+g1+"/comments", content.CommentInput{Body: "late"}, nil)
 	f.want(http.StatusCreated, user, "POST", "/contents/"+g2+"/comments", content.CommentInput{Body: "open"}, nil)
 
 	var cards discovery.ContentPage
-	f.want(http.StatusOK, "", "GET", "/contents?kind=gallery&sort=most_viewed", nil, &cards)
-	if len(cards.Contents) != 2 || cards.Contents[0].ID != g1 || *cards.Contents[0].Counts.Views != 5000 || *cards.Contents[1].Counts.Views != 50 {
-		t.Fatalf("most viewed %+v", cards.Contents)
+	f.want(http.StatusOK, "", "GET", "/contents?kind=gallery&sort=title", nil, &cards)
+	if len(cards.Contents) != 2 || cards.Contents[0].ID != g1 || cards.Contents[1].ID != g2 {
+		t.Fatalf("published imported cards %+v", cards.Contents)
 	}
+	f.want(http.StatusBadRequest, "", "GET", "/contents?kind=gallery&sort=most_viewed", nil, nil)
 }
