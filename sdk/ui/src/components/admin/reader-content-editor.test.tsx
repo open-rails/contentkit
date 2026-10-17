@@ -185,7 +185,8 @@ it("starts a new gallery linked to the entity it was created from", async () => 
   await user.type(await screen.findByLabelText("Title"), "First chapter");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
-  expect(writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities")?.body.memberships).toEqual([{ group_id: "s1" }]);
+  const linked = writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities")?.body as { memberships?: unknown } | undefined;
+  expect(linked?.memberships).toEqual([{ group_id: "s1" }]);
 });
 
 it("saves the visible text and current revision before publishing", async () => {

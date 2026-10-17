@@ -84,6 +84,13 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	if len(managed) != 1 || managed[0].ID != post.ID {
 		t.Fatalf("managed %+v", managed)
 	}
+	// The numbered list's total counts the same selection.
+	var count catalog.ManageCount
+	f.want(http.StatusOK, staff, "GET", "/manage/blog/count?q=hello", nil, &count)
+	if count.Total != 1 || count.Truncated {
+		t.Fatalf("managed count %+v", count)
+	}
+	f.want(http.StatusUnauthorized, anon, "GET", "/manage/blog/count", nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/unpublish", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/contents/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)

@@ -357,9 +357,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     if (current()) await client.contents.setCover(content.id, v.id, up.name);
   };
   // The thumbnail is the version's cover: a copy of the chosen page, then cropped.
+  // Cover uploads are server-named, so the copy takes a fresh i-{uuid} name.
   const setThumbnail = async (file: FileInfo) => {
     if (!ref || !item || !version) return;
-    const path = await client.media.presetPath(p.kind, "cover", new File([], file.path.split("/").at(-1) ?? "cover", { type: file.type }));
+    const ext = /\.[^./]+$/.exec(file.path)?.[0] ?? "";
+    const path = await client.media.presetPath(p.kind, "cover", new File([], `i-${crypto.randomUUID()}${ext}`, { type: file.type }));
     await client.media.commit(ref, [{ op: "copy", from: { id: item.id, version: version.id, path: file.path }, to: path }]);
     if (!current()) return;
     await client.contents.setCover(item.id, version.id, stem(path).split("/").at(-1)!);
