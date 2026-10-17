@@ -71,9 +71,30 @@ func TestNormalizedPopularityUsesEventTimePopulationAndQuality(t *testing.T) {
 		t.Fatal(err)
 	}
 	window := signal.Between(start, end)
+	// Real measured attention alone cannot manufacture a population denominator.
+	// This separate work would rank under explicit viewer-reach policy, but must
+	// not silently become a v1 fallback for a requested normalized ranking.
+	unobserved := cid(206)
+	if err := engagementtest.Record(ctx, store, source.Tenant(), []engagementtest.Observation{{
+		ContentRef: contentref.New(source.Tenant(), "gallery", unobserved), Subject: signal.Subject{UserID: "unobserved-reader"},
+		Type: engagementtest.TypeReading, EventID: "without-population", OccurredAt: start.Add(time.Minute),
+		Progress: 1, ProgressMax: 1, DurationS: 8,
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	before, err := ranker.PopularResult(ctx, "gallery", window, 10)
-	if err != nil || before.Ranking.Policy != "v1" || before.Ranking.Mode != "legacy" {
-		t.Fatalf("unobserved history must be explicit legacy: %+v %v", before, err)
+	if err != nil || before.Ranking.Policy != "none" || before.Ranking.Mode != "standing_unavailable" || len(before.Hits) != 0 {
+		t.Fatalf("missing population must not fall back to viewer reach: %+v %v", before, err)
+	}
+	if candidates, err := ranker.Candidates(ctx, "gallery", []string{unobserved}, window); err != nil || len(candidates) != 0 {
+		t.Fatalf("candidates without population must not rank: %+v %v", candidates, err)
+	}
+	viewerReach, err := popularity.New(popularity.Config{Source: source, Policy: popularity.PolicyV1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control, err := viewerReach.Candidates(ctx, "gallery", []string{unobserved}, window); err != nil || len(control) != 1 || control[0].Readers != 1 {
+		t.Fatalf("control measured evidence must exist: %+v %v", control, err)
 	}
 	var population []signal.PopulationObservation
 	for day := range 2 {

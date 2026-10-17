@@ -130,12 +130,14 @@ to public, earlier paid attention keeps its cohort. Preview-only access never
 becomes full readership.
 
 Normalization clips every candidate to one common trustworthy coverage window.
-When trusted population/availability history is unavailable, the **whole query**
-falls back to measured `v1`; it never mixes the formulas item by item. The API's
-`ranking` states the actual policy, mode, requested window and covered window.
-The fallback mode's historical name is `legacy`; it does not restore old opens,
-scores or counters. A broken population query is an error, not permission to
-invent a denominator or silently reclassify receipts.
+When trusted population/availability history is unavailable, the ranker returns
+no scored hits, with `ranking.policy=none` and `ranking.mode=standing_unavailable`.
+It never silently substitutes unnormalized reader reach for a requested normalized
+ranking. The API also states the requested and covered windows. Discovery's
+separate catalog-standing order is not a measured popularity score. Explicitly
+selecting `v1` remains supported and reports mode `viewer_reach`.
+A broken population query is an error, not permission to invent a denominator or
+silently reclassify receipts.
 
 ## Distinct-reader ranking (`PolicyV1`)
 
@@ -167,7 +169,7 @@ five-reader, vote-count or completion quorum. A positive short partial below the
 qualification threshold contributes active time but does not yet supply reader
 reach. A normalized interval also needs trustworthy nonzero eligible population;
 an impossible reader count exceeding that population is reported as an error.
-An empty activity window returns no results.
+The ranker returns no scored hits for an empty activity window.
 
 Named windows are literal whole UTC days: `7d`, `30d`, `90d`, `365d`, `all`.
 The finite windows include today and move at UTC midnight. Time selects activity;
