@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -366,6 +367,83 @@ func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, con
 		}
 	}
 	return nil
+}
+
+// ForgottenContent names purged content: a whole work (VersionID empty) or
+// one version of it.
+type ForgottenContent struct {
+	Kind      string `json:"kind"`
+	ContentID string `json:"content_id"`
+	VersionID string `json:"version_id,omitempty"`
+}
+
+// contentTables hold per-content rows; exposures keep their served lists.
+var contentTables = []string{"signals", "subject_content_state", "subject_content_daily", "engagement_segments",
+	"engagement_state", "engagement_daily", "legacy_reading_state"}
+
+// ForgetContents erases every subject's events and projections of purged
+// content, and a purged work's co-engagement pairs. Idempotent.
+func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []ForgottenContent) error {
+	if strings.TrimSpace(tenant) == "" {
+		return fmt.Errorf("signal: tenant is required")
+	}
+	var works, versions [][]any
+	for _, c := range contents {
+		if strings.TrimSpace(c.Kind) == "" || strings.TrimSpace(c.ContentID) == "" {
+			return fmt.Errorf("signal: forgotten content needs a kind and an id")
+		}
+		if c.VersionID == "" {
+			works = append(works, []any{c.Kind, c.ContentID})
+		} else {
+			versions = append(versions, []any{c.Kind, c.ContentID, c.VersionID})
+		}
+	}
+	active, err := st.activeSubjectTables(ctx)
+	if err != nil {
+		return err
+	}
+	var tables []string
+	for _, t := range contentTables {
+		if slices.Contains(active, t) {
+			tables = append(tables, t)
+		}
+	}
+	pairs, err := st.existing(ctx, []string{"engagement_pairs", "content_pairs"})
+	if err != nil {
+		return err
+	}
+	forget := func(rows [][]any, tables []string, where func(in string) string) error {
+		for start := 0; start < len(rows); start += mutationTupleChunk {
+			chunk := rows[start:min(start+mutationTupleChunk, len(rows))]
+			marks := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(chunk[0])), ", ") + ")"
+			tuples := make([]string, len(chunk))
+			args := []any{tenant}
+			for i, r := range chunk {
+				tuples[i] = marks
+				args = append(args, r...)
+			}
+			in := "(" + strings.Join(tuples, ", ") + ")"
+			cond := where(in)
+			if strings.Count(cond, in) == 2 {
+				args = append(args, args[1:]...)
+			}
+			for _, table := range tables {
+				if err := st.mutate(ctx, table, "tenant = ? AND "+cond, args...); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := forget(works, tables, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
+		return err
+	}
+	if err := forget(works, pairs, func(in string) string {
+		return fmt.Sprintf("((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
+	}); err != nil {
+		return err
+	}
+	return forget(versions, tables, func(in string) string { return "(content_kind, content_id, content_version_id) IN " + in })
 }
 
 // escapeCHString escapes a string for inline use in a ClickHouse literal.

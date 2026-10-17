@@ -190,3 +190,22 @@ func coverURL(rs []media.PublicRendition) *string {
 	u := media.PublicImage{Renditions: rs}.URL(math.MaxInt)
 	return &u
 }
+
+// Existing reports which of ids are this tenant's content items or versions,
+// for the media orphan sweep; deleted rows not yet purged still exist.
+func (s *Store) Existing(ctx context.Context, ids []string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)
+ UNION SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(found))
+	for _, id := range found {
+		out[id] = true
+	}
+	return out, nil
+}
