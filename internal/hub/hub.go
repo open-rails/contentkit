@@ -538,3 +538,11 @@ func (h *Hub) CompletedCount(ctx context.Context, subject signal.Subject, kind s
 	}
 	return store.CompletedCount(ctx, h.tenant, subject, kind)
 }
+
+func (h *Hub) ImportLegacyReading(ctx context.Context, in []signal.LegacyReading) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.ImportLegacyReading(ctx, h.tenant, in)
+}

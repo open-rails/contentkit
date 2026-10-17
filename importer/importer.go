@@ -37,19 +37,20 @@ type Batch struct {
 	// ProvisionScopes lets ContentKit create the AuthKit scope of an
 	// imported group of an auth_scope kind that names none; without it such
 	// a group fails.
-	ProvisionScopes bool             `json:"provision_scopes,omitempty"`
-	Groups          []GroupRecord    `json:"entities,omitempty"`
-	Contents        []ContentRecord  `json:"contents,omitempty"`
-	Memberships     []MembershipSet  `json:"memberships,omitempty"`
-	Offers          []OfferRecord    `json:"offers,omitempty"`
-	Aliases         []AliasRecord    `json:"aliases,omitempty"`
-	Comments        []CommentRecord  `json:"comments,omitempty"`
-	Reactions       []ReactionRecord `json:"reactions,omitempty"`
-	Favorites       []FavoriteRecord `json:"favorites,omitempty"`
-	Polls           []PollRecord     `json:"polls,omitempty"`
-	Votes           []VoteRecord     `json:"votes,omitempty"`
-	Answers         []AnswerRecord   `json:"answers,omitempty"`
-	Signals         []SignalRecord   `json:"signals,omitempty"`
+	ProvisionScopes bool                  `json:"provision_scopes,omitempty"`
+	Groups          []GroupRecord         `json:"entities,omitempty"`
+	Contents        []ContentRecord       `json:"contents,omitempty"`
+	Memberships     []MembershipSet       `json:"memberships,omitempty"`
+	Offers          []OfferRecord         `json:"offers,omitempty"`
+	Aliases         []AliasRecord         `json:"aliases,omitempty"`
+	Comments        []CommentRecord       `json:"comments,omitempty"`
+	Reactions       []ReactionRecord      `json:"reactions,omitempty"`
+	Favorites       []FavoriteRecord      `json:"favorites,omitempty"`
+	Polls           []PollRecord          `json:"polls,omitempty"`
+	Votes           []VoteRecord          `json:"votes,omitempty"`
+	Answers         []AnswerRecord        `json:"answers,omitempty"`
+	LegacyReading   []LegacyReadingRecord `json:"legacy_reading,omitempty"`
+	Signals         []SignalRecord        `json:"signals,omitempty"`
 	// Deletes, written last, remove records gone from the source. Records
 	// are never deleted by their absence from a batch.
 	Deletes []DeleteRecord `json:"deletes,omitempty"`
@@ -299,9 +300,23 @@ type AnswerRecord struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// SignalRecord is a view or click on a content item or one version, for the
-// signal plane; skipped without one. A view on a version counts for its
-// content too.
+// LegacyReadingRecord preserves source bookmarks/progress as legacy state,
+// never as measured attention or popularity evidence.
+type LegacyReadingRecord struct {
+	Target      TargetRef  `json:"target"`
+	UserID      string     `json:"user_id,omitempty"`
+	AnonKey     string     `json:"anon_key,omitempty"`
+	FirstReadAt *time.Time `json:"first_read_at,omitempty"`
+	LastReadAt  time.Time  `json:"last_read_at"`
+	Progress    uint32     `json:"progress"`
+	ProgressMax uint32     `json:"progress_max"`
+	Completed   bool       `json:"completed"`
+	Resume      string     `json:"resume,omitempty"`
+	Revision    uint64     `json:"revision,omitempty"`
+}
+
+// SignalRecord imports an explicit click. Existing bookmarks/progress use
+// LegacyReadingRecord; raw opens and imported counters are not accepted.
 type SignalRecord struct {
 	Target TargetRef `json:"target"`
 	// UserID or, signed out, an opaque AnonKey.
@@ -328,19 +343,20 @@ type DeleteRecord struct {
 
 // Sections, in the order a batch writes them.
 const (
-	SectionGroups      = "entities"
-	SectionContents    = "contents"
-	SectionMemberships = "memberships"
-	SectionOffers      = "offers"
-	SectionAliases     = "aliases"
-	SectionComments    = "comments"
-	SectionReactions   = "reactions"
-	SectionFavorites   = "favorites"
-	SectionPolls       = "polls"
-	SectionVotes       = "votes"
-	SectionAnswers     = "answers"
-	SectionSignals     = "signals"
-	SectionDeletes     = "deletes"
+	SectionGroups        = "entities"
+	SectionContents      = "contents"
+	SectionMemberships   = "memberships"
+	SectionOffers        = "offers"
+	SectionAliases       = "aliases"
+	SectionComments      = "comments"
+	SectionReactions     = "reactions"
+	SectionFavorites     = "favorites"
+	SectionPolls         = "polls"
+	SectionVotes         = "votes"
+	SectionAnswers       = "answers"
+	SectionLegacyReading = "legacy_reading"
+	SectionSignals       = "signals"
+	SectionDeletes       = "deletes"
 )
 
 // Entities of external ids.

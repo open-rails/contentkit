@@ -73,3 +73,21 @@ columns. Neither operation runs on startup or as an automatic migration.
 Back up and verify the writer cohort before running these destructive final
 steps. Do not report the rollout complete until both catalog schemas and the
 shared ClickHouse database have completed retirement.
+
+## Importing existing bookmarks
+
+`importer.Batch.LegacyReading` (`legacy_reading`) accepts
+`LegacyReadingRecord{Target, UserID/AnonKey, FirstReadAt?, LastReadAt, Progress,
+ProgressMax, Completed, Resume, Revision}`. `Target.Content` restores work
+progress; `Target.Version` also retains that edition's progress. Version
+bookmarks get a work resume copy so they remain discoverable in account
+history. Exactly one subject identity is required. Last-read time orders
+updates; revision orders updates at the same instant; duplicate delivery is
+idempotent. Erasure fences apply during every insert.
+
+These facts never become loaded-page observations, elapsed attention,
+qualified people, measured completions or popularity evidence. A bookmark at
+page10 does not claim that pages1 through9 were read. Importers should set
+`Completed` only when preserving an existing source fact, not infer it from
+the last-position bookmark. Bare opens and legacy all-time counts have no
+replacement import route.

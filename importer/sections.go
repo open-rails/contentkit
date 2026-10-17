@@ -50,6 +50,10 @@ func (run *batchRun) sections() []section {
 		{name: SectionPolls, n: len(b.Polls), prepare: run.poll, write: typed(s.o.Content.ImportPolls)},
 		{name: SectionVotes, n: len(b.Votes), prepare: run.vote, write: typed(s.o.Content.ImportVotes)},
 		{name: SectionAnswers, n: len(b.Answers), prepare: run.answer, write: typed(s.o.Content.ImportAnswers)},
+		{name: SectionLegacyReading, n: len(b.LegacyReading), prepare: run.legacyReading,
+			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportLegacyReading) error {
+				return s.o.Signals.ImportLegacyReading(ctx, in)
+			})},
 		{name: SectionSignals, n: len(b.Signals), prepare: run.signal,
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
 				return s.o.Signals.ImportSignals(ctx, in)
@@ -62,7 +66,11 @@ func (run *batchRun) sections() []section {
 		out[3].write = typed(s.o.Offers.PutTx)
 	}
 	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
-		out[len(out)-2].skip = "no signal plane, or it is down"
+		for i := range out {
+			if out[i].name == SectionSignals || out[i].name == SectionLegacyReading {
+				out[i].skip = "no signal plane, or it is down"
+			}
+		}
 	}
 	return out
 }
@@ -321,4 +329,19 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 		return err
 	}
 	return s.o.Content.ImportDeletes(ctx, tx, by[EntityComment], by[EntityPoll])
+}
+
+func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
+	row := run.b.LegacyReading[i]
+	target, err := r.target(row.Target, []string{EntityContent, EntityVersion})
+	if err != nil {
+		return nil, row.UserID, err
+	}
+	subject := signal.Subject{UserID: row.UserID, AnonKey: row.AnonKey}
+	if err := subject.Validate(); err != nil {
+		return nil, row.UserID, fmt.Errorf("%w: %v", errInvalid, err)
+	}
+	key := subject.Kind() + ":" + subject.Key() + "/" + target.content + "/" + target.version
+	return discovery.ImportLegacyReading{ContentID: target.content, VersionID: target.version, Subject: subject, FirstReadAt: row.FirstReadAt,
+		LastReadAt: row.LastReadAt, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision}, key, nil
 }

@@ -24,8 +24,8 @@ type ImportSignal struct {
 // SignalPlane reports whether signals are recorded now.
 func (s *Service) SignalPlane() bool { return s.o.Hub.SignalPlane() }
 
-// ImportSignals records imported events in the signal plane, without a
-// visibility check: a view on a version also counts for its content.
+// ImportSignals records explicit imported clicks under the importer authority.
+// Legacy resume/progress has a separate non-measured import path.
 // ErrNoSignals without a signal plane (ErrSignalsDown while it is down).
 func (s *Service) ImportSignals(ctx context.Context, in []ImportSignal) error {
 	if err := s.signals(); err != nil {
