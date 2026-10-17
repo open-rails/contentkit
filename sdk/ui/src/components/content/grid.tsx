@@ -226,6 +226,8 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     loadMedia={p.loadMedia}
                     groupKinds={p.groupKinds}
                     chips={p.chips}
+                    chipOverflow={p.chipOverflow}
+                    chipFit={p.chipFit}
                     filterEntity={p.filterEntity}
                     entityStyle={p.entityStyle}
                     entityLayout={p.entityLayout}

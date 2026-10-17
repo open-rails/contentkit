@@ -1,7 +1,7 @@
 import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useCallback, useContext, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useContext, useLayoutEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { Card, CardAccess, Chip as EntityChip } from "../../client/generated/wire.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { ratio } from "../../client/aspect.js";
@@ -34,8 +34,12 @@ export interface ContentCardProps {
   loadMedia?: boolean;
   /** The group kinds whose chips show, in order; default every kind the card names. */
   groupKinds?: readonly string[];
-  /** Chips per group kind. Default 3. */
-  chips?: number;
+  /** Chips per group kind, or `{ base, lg }` to show a different number from the lg breakpoint. Default 3. */
+  chips?: number | { base: number; lg: number };
+  /** After a kind's chips, a "+N" chip counting the ones left out. Default false. */
+  chipOverflow?: boolean;
+  /** Inline chips on one line, as many whole chips as fit (at least one); the "+N" counts the rest. Default false. */
+  chipFit?: boolean;
   /** Select which entity chips appear, before the per-kind chip limit. */
   filterEntity?: (entity: EntityChip, kind: string) => boolean;
   /** Bordered chips (default) or plain linked text. */
@@ -71,6 +75,8 @@ export interface CardMetadata {
   traits?: boolean | readonly string[];
   pages?: boolean;
   duration?: boolean;
+  /** Group kinds named last in the meta line: the first entity of the first kind the card has, linked. */
+  groups?: readonly string[];
 }
 
 /** What a card says about the reader's standing and the work's state. */
@@ -151,8 +157,46 @@ function useLink(url: string | undefined, before?: () => void) {
   );
 }
 
+/** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show, `squeezed` when even the first one does not fit and must shrink; null until measured. `chipsKey` names the chips rendered, so new ones are measured. */
+function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: string) {
+  const [fit, setFit] = useState<{ through: number; fitted: number; squeezed: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!list) return;
+    const view = list.ownerDocument.defaultView;
+    const measure = () => {
+      const gap = Number.parseFloat(view?.getComputedStyle(list).columnGap ?? "") || 0;
+      const items = [...list.children] as HTMLElement[];
+      const more = items.find((li) => li.dataset.ckui === "card-chip-more")?.offsetWidth ?? 0;
+      let used = 0;
+      let through = 0;
+      let fitted = 0;
+      let first = -1;
+      const chips = items.filter((li) => li.dataset.ckui !== "card-chip-more");
+      for (const [i, chip] of chips.entries()) {
+        if (view?.getComputedStyle(chip).display === "none") continue;
+        if (first < 0) first = i;
+        const next = used + (fitted > 0 ? gap : 0) + chip.offsetWidth;
+        if (next + (total > fitted + 1 && more > 0 ? gap + more : 0) > list.clientWidth) break;
+        used = next;
+        through = i + 1;
+        fitted += 1;
+      }
+      const squeezed = fitted === 0 && first >= 0;
+      if (squeezed) [through, fitted] = [first + 1, 1];
+      setFit((f) => f?.through === through && f.fitted === fitted && f.squeezed === squeezed ? f : { through, fitted, squeezed });
+    };
+    measure();
+    // Each chip too: a breakpoint hiding one, or a web font loading, changes a chip but not the list.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(list);
+    for (const li of list.children) observer?.observe(li);
+    return () => observer?.disconnect();
+  }, [list, total, chipsKey]);
+  return fit;
+}
+
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -167,27 +211,77 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const v = card.version;
   const progress = card.viewer?.completed ? 1 : card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
   const kinds = groupKinds ?? Object.keys(card.entities);
-  const entityGroups = kinds.map((kind) => ({ kind, entities: (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).slice(0, chips) })).filter(({ entities }) => entities.length > 0);
+  const limit = typeof chips === "number" ? { base: chips, lg: chips } : chips;
+  const entityGroups = kinds.map((kind) => {
+    const all = (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind));
+    return { kind, entities: all.slice(0, Math.max(limit.base, limit.lg)), total: all.length };
+  }).filter(({ entities }) => entities.length > 0);
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
-  const meta = [
+  const metaGroup = metadata?.groups?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
+  const meta: ReactNode[] = [
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
+    metaGroup ? <MetaLink key="group" url={metaGroup.path} name={metaGroup.name || metaGroup.slug} /> : null,
   ].filter(Boolean);
   const title = card.title || card.code;
   const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-2 gap-y-1" : "gap-1");
-  const entityItems = (kind: string, entities: EntityChip[]) => entities.map((entity) => <li key={`${kind}:${entity.id}`} data-kind={kind}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>);
+  // A chip past one breakpoint's limit shows only at the other.
+  const atWidth = (i: number) => i < limit.base && i < limit.lg ? undefined : i < limit.base ? "lg:hidden" : "hidden lg:list-item";
+  const overflowItems = (kind: string, total: number) => {
+    if (!chipOverflow) return [];
+    const base = total - Math.min(total, limit.base);
+    const lg = total - Math.min(total, limit.lg);
+    const more = (n: number, className?: string) => <li key={`${kind}:more:${className ?? ""}`} data-kind={kind} data-ckui="card-chip-more" className={className}>
+      <span aria-hidden><Chip name={`+${n}`} variant={entityStyle} /></span>
+      <span className="sr-only">{m.plural("contents.moreChips", n)}</span>
+    </li>;
+    if (base === lg) return base > 0 ? [more(base)] : [];
+    return [base > 0 && more(base, "lg:hidden"), lg > 0 && more(lg, "hidden lg:list-item")].filter(Boolean);
+  };
+  const entityItems = (kind: string, entities: EntityChip[], total: number) => [
+    ...entities.map((entity, i) => <li key={`${kind}:${entity.id}`} data-kind={kind} className={atWidth(i)}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>),
+    ...overflowItems(kind, total),
+  ];
+  const [chipList, setChipList] = useState<HTMLUListElement | null>(null);
+  const fitting = chipFit && entityLayout === "inline";
+  const chipTotal = entityGroups.reduce((n, g) => n + g.total, 0);
+  const chipsKey = `${entityStyle}:${limit.base}:${limit.lg}:${entityGroups.map(({ kind, entities }) => `${kind}=${entities.map((e) => e.id).join(",")}`).join(";")}`;
+  const fit = useChipFit(fitting ? chipList : null, chipTotal, chipsKey);
+  const fittedItems = () => {
+    let index = 0;
+    const items = entityGroups.flatMap(({ kind, entities }) => entities.map((entity, i) => {
+      const at = index++;
+      const out = fit !== null && at >= fit.through;
+      const squeezed = fit?.squeezed && at === fit.through - 1;
+      return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn(squeezed ? "min-w-0 shrink [&>*]:block [&>*]:truncate" : "shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>;
+    }));
+    if (!chipOverflow) return items;
+    // Always present, so its width is kept free; shown once measured with chips left out.
+    const more = fit === null ? chipTotal : chipTotal - fit.fitted;
+    const hidden = fit === null || more <= 0;
+    return [...items, <li key="more" data-ckui="card-chip-more" className={cn("shrink-0", hidden && "pointer-events-none invisible absolute")} aria-hidden={hidden || undefined}>
+      <span aria-hidden><Chip name={`+${more}`} variant={entityStyle} /></span>
+      <span className="sr-only">{m.plural("contents.moreChips", more)}</span>
+    </li>];
+  };
   const entityList = entityGroups.length > 0 ? entityLayout === "rows" ? (
     <div className="grid gap-1" data-ckui="card-groups" data-layout="rows">
-      {entityGroups.map(({ kind, entities }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities)}</ul>)}
+      {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
     </div>
   ) : (
-    <ul className={entityClassName} data-ckui="card-groups" data-layout="inline">
-      {entityGroups.flatMap(({ kind, entities }) => entityItems(kind, entities))}
+    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-groups" data-layout="inline" data-fit={fitting ? "" : undefined}>
+      {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
+  const metaLine = meta.length > 0 && <p className="line-clamp-2 text-xs break-words text-muted-foreground" data-ckui="card-meta">
+    {meta.map((item, i) => <Fragment key={i}>
+      {i > 0 && <><span className="sr-only"> · </span><span className="mx-1.5 mb-px inline-block size-[3px] rounded-full bg-current align-middle" aria-hidden data-ckui="card-meta-dot" /></>}
+      {item}
+    </Fragment>)}
+  </p>;
   const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
@@ -233,7 +327,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
         {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
-        {meta.length > 0 && <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>}
+        {metaLine}
         {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
         {entityStyle === "chips" && entityList}
         {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
@@ -270,6 +364,11 @@ export function OwnerChip({ group, href, className, loadMedia = true }: { group:
       </GroupLink>
     </span>
   );
+}
+
+function MetaLink({ url, name }: { url?: string; name: string }) {
+  const onClick = useLink(url);
+  return url ? <a href={url} onClick={onClick} className="hover:text-foreground hover:underline">{name}</a> : <span>{name}</span>;
 }
 
 function Chip({ url, name, variant = "chips" }: { url?: string; name: string; variant?: "chips" | "text" }) {

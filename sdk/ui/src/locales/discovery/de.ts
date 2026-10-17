@@ -35,6 +35,8 @@ export const discovery: typeof en = {
     pages_other: "{count} Seiten",
     minutes_one: "{count} Min.",
     minutes_other: "{count} Min.",
+    moreChips_one: "{count} weiterer",
+    moreChips_other: "{count} weitere",
     completed: "Beendet",
     freeFrom: "Kostenlos ab {date}",
     favorites: "Favoriten",
