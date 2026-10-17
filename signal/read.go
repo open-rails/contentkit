@@ -619,11 +619,14 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	return st.conn.Exec(ctx, q, args...)
 }
 
-// DayActivity reports distinct people with measured attention, not page opens.
+// DayActivity reports distinct people with measured attention, not page opens,
+// by audience: guests, signed-in people without a tier, and premium people.
 type DayActivity struct {
 	Day      time.Time
 	Readers  uint64
-	Users    uint64
+	Anon     uint64
+	Free     uint64
+	Premium  uint64
 	ActiveMS uint64
 }
 
@@ -635,12 +638,21 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 		return nil, err
 	}
 	pred, args := window.dayPredicate("day")
-	q := fmt.Sprintf(`SELECT day,toUInt64(countIf(active>=1000 AND units>0)),
- toUInt64(countIf(active>=1000 AND units>0 AND subject_kind='user')),sum(active) FROM (
+	observed, observedArgs := window.dayPredicate("toDate(observed_at)")
+	// Premium needs a known tier observed that day; other signed-in people are free.
+	q := fmt.Sprintf(`SELECT d.day,toUInt64(count()),toUInt64(countIf(d.subject_kind<>'user')),
+ toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=0)),
+ toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=1)),sum(d.active) FROM (
  SELECT day,subject_kind,subject,sum(active_ms) AS active,sum(length(covered_units)) AS units
- FROM %s.engagement_daily FINAL WHERE tenant=? AND content_kind=? AND present%s AND %s
- GROUP BY day,subject_kind,subject) GROUP BY day HAVING sum(active)>0 ORDER BY day DESC%s`, st.db, pred, st.notErased(), finalSettings)
-	rows, err := st.conn.Query(ctx, q, append([]any{tenant, contentKind}, args...)...)
+ FROM %[1]s.engagement_daily FINAL WHERE tenant=? AND content_kind=? AND present%[2]s AND %[3]s
+ GROUP BY day,subject_kind,subject HAVING active>=1000 AND units>0) d
+ LEFT JOIN (SELECT toDate(observed_at) AS day,subject_kind,subject,toUInt8(max(eligibility_known AND notEmpty(eligible_tiers))) AS premium
+ FROM %[1]s.measured_population_observations FINAL WHERE tenant=? AND content_kind=?%[4]s
+ GROUP BY day,subject_kind,subject) p ON p.day=d.day AND p.subject_kind=d.subject_kind AND p.subject=d.subject
+ GROUP BY d.day ORDER BY d.day DESC%[5]s`, st.db, pred, st.notErased(), observed, finalSettings)
+	params := append([]any{tenant, contentKind}, args...)
+	params = append(append(params, tenant, contentKind), observedArgs...)
+	rows, err := st.conn.Query(ctx, q, params...)
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +660,7 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 	var out []DayActivity
 	for rows.Next() {
 		var row DayActivity
-		if err := rows.Scan(&row.Day, &row.Readers, &row.Users, &row.ActiveMS); err != nil {
+		if err := rows.Scan(&row.Day, &row.Readers, &row.Anon, &row.Free, &row.Premium, &row.ActiveMS); err != nil {
 			return nil, err
 		}
 		row.Day = utcDay(row.Day)

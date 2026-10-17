@@ -37,6 +37,9 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	observed := []engagementtest.Observation{{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(1), f.vid(1, 0)),
 		Subject: signal.Subject{UserID: "u1"}, Type: engagementtest.TypeReading, EventID: "read-u1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400,
 		Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[1]})}}
+	observed = append(observed, engagementtest.Observation{ContentRef: contentref.NewVersion(tenant, "gallery", f.cid(1), f.vid(1, 0)),
+		Subject: signal.Subject{UserID: "p1"}, Type: engagementtest.TypeReading, EventID: "read-p1-g1", OccurredAt: at, Progress: 20, ProgressMax: 20, DurationS: 400,
+		Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[1]})})
 	population := []signal.Subject{{UserID: "u1"}, {UserID: "nonreader-1"}, {UserID: "nonreader-2"}}
 	for i := range 3 {
 		session := fmt.Sprintf("s%d", i)
@@ -55,6 +58,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	for _, l := range []string{"en", "ja"} {
 		seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: l}, at.Add(-time.Hour), population, nil)
 	}
+	seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: "en"}, at.Add(-time.Hour), []signal.Subject{{UserID: "p1"}}, []string{"premium"})
 	if err := f.svc.o.Hub.RecordSignals(f.ctx, engagementtest.Native(observed)); err != nil {
 		t.Fatal(err)
 	}
@@ -96,30 +100,19 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	// One person per UTC day regardless of how many contents they read;
 	// explicit clicks do not contribute active reading time or reader counts.
 	var activity Activity
-	if status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity); status != http.StatusOK ||
-		len(activity.Days) != 1 || activity.Days[0] != (ActivityDay{Date: at.Format(time.DateOnly), ActiveMS: 1_000_000, Readers: 4, Users: 1}) {
-		t.Fatalf("activity: %d %s %+v", status, code, activity)
+	// Every day of the default 10 is listed; readers split by audience.
+	status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity)
+	want := ActivityDay{Date: at.Format(time.DateOnly), ActiveMS: 1_400_000, Readers: 5, Anon: 3, Free: 1, Premium: 1}
+	var day ActivityDay
+	for _, d := range activity.Days {
+		if d.Date == want.Date {
+			day = d
+		} else if d.Readers != 0 {
+			t.Errorf("activity on %s: %+v", d.Date, d)
+		}
 	}
-	for _, c := range []struct {
-		host, path string
-		want       []string
-	}{
-		{host, q("/stats/top", "kind", "gallery", "period", "7d"), []string{f.cid(1) + "=4", f.cid(3) + "=3"}},
-		{"clean.test", q("/stats/top", "kind", "gallery", "period", "all"), []string{f.cid(1) + "=4"}},
-		{host, q("/stats/top", "kind", "gallery", "tiers", "premium"), []string{}},
-	} {
-		var top TopContents
-		status, code := f.call(http.MethodGet, c.host, "staff", c.path, nil, &top)
-		got := []string{}
-		for _, r := range top.Contents {
-			got = append(got, fmt.Sprintf("%s=%d", r.ID, r.Value))
-		}
-		if status != http.StatusOK || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s on %s: %d %s %v, want %v", c.path, c.host, status, code, got, c.want)
-		}
-		if len(top.Contents) > 0 && (top.Contents[0].Title != "Alpha" || top.Contents[0].Path != "/en/g/"+f.codes[1]+"/alpha") {
-			t.Errorf("ranked names %+v", top.Contents[0])
-		}
+	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != time.Now().UTC().Format(time.DateOnly) || day != want {
+		t.Fatalf("activity: %d %s %+v", status, code, activity)
 	}
 	var mine MyStats
 	if status, code := f.call(http.MethodGet, host, "u1", "/me/stats", nil, &mine); status != http.StatusOK || mine.Completed["gallery"] != 1 {

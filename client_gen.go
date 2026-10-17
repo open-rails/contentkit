@@ -3289,7 +3289,7 @@ func (c *Client) GetSitemapEntities(ctx context.Context, q GetSitemapEntitiesQue
 type GetStatsActivityQuery struct {
 	// the content kind; required
 	Kind string
-	// the last days, today included: 7 by default, at most 90
+	// the last days, today included: 10 by default, at most 90
 	Days int
 }
 
@@ -3304,61 +3304,10 @@ func (q GetStatsActivityQuery) values() url.Values {
 	return v
 }
 
-// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership per UTC day, newest first: distinct qualified readers, focused active time and signed-in readers, from the signal plane.
+// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.
 func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) (discovery.Activity, error) {
 	var out discovery.Activity
 	err := c.call(ctx, http.MethodGet, "/v1/stats/activity", q.values(), nil, &out)
-	return out, err
-}
-
-// GetStatsTopQuery is the query of GetStatsTop.
-type GetStatsTopQuery struct {
-	// the content kind; required
-	Kind string
-	// readers (the default) or comments
-	Metric string
-	// 7d, 30d (the default), 90d, 365d or all
-	Period string
-	// public, tier, group, ppv or group_ppv, as lists filter
-	Access []string
-	// configured tiers, as lists filter
-	Tiers []string
-	// the language of titles and paths; the site's first by default
-	Language string
-	// 10 by default, at most 100
-	Limit int
-}
-
-func (q GetStatsTopQuery) values() url.Values {
-	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
-	if q.Metric != "" {
-		v.Set("metric", q.Metric)
-	}
-	if q.Period != "" {
-		v.Set("period", q.Period)
-	}
-	if len(q.Access) > 0 {
-		v.Set("access", strings.Join(q.Access, ","))
-	}
-	if len(q.Tiers) > 0 {
-		v.Set("tiers", strings.Join(q.Tiers, ","))
-	}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	return v
-}
-
-// GetStatsTop is GET /v1/stats/top (staff). A content kind's live, listed content in the request's site ranked by readers (the signal plane's) or published comments over a period.
-func (c *Client) GetStatsTop(ctx context.Context, q GetStatsTopQuery) (discovery.TopContents, error) {
-	var out discovery.TopContents
-	err := c.call(ctx, http.MethodGet, "/v1/stats/top", q.values(), nil, &out)
 	return out, err
 }
 

@@ -45,8 +45,10 @@ export interface ActivityContextsInput {
 export interface ActivityDay {
   date: string;
   readers: number;
+  anon: number;
+  free: number;
+  premium: number;
   active_ms: number;
-  users: number;
 }
 
 export interface ActivityTarget {
@@ -1698,13 +1700,6 @@ export interface Published {
   items: Item[];
 }
 
-export interface RankedContent {
-  id: string;
-  title: string;
-  path?: string;
-  value: number;
-}
-
 export interface RankingInfo {
   policy: string;
   mode: string;
@@ -1985,10 +1980,6 @@ export interface Terms {
 
 export interface TicketBody {
   ticket: string;
-}
-
-export interface TopContents {
-  contents: RankedContent[];
 }
 
 export interface Total {

@@ -577,34 +577,11 @@ func TestStats(t *testing.T) {
 	}
 	comment(4, "ann", time.Hour, 0, "")
 	const host = "main.test"
-	top := func(path string) []RankedContent {
-		t.Helper()
-		var out TopContents
-		if status, code := f.call(http.MethodGet, host, "staff", path, nil, &out); status != http.StatusOK {
-			t.Fatalf("GET %s: %d %s", path, status, code)
-		}
-		return out.Contents
-	}
-	got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "all"))
-	if want := []RankedContent{{ID: f.cid(2), Title: "Premium", Path: "/en/g/" + f.codes[2] + "/premium", Value: 3}, {ID: f.cid(1), Title: "Free",
-		Path: "/en/g/" + f.codes[1] + "/free", Value: 2}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("most commented = %+v, want %+v (unlisted, deleted and held left out)", got, want)
-	}
-	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "period", "30d", "access", "public")); len(got) != 1 || got[0].ID != f.cid(1) || got[0].Value != 1 {
-		t.Errorf("free, last 30 days = %+v", got)
-	}
-	if got := top(q("/stats/top", "kind", "gallery", "metric", "comments", "tiers", "premium", "limit", "1", "language", "ja")); len(got) != 1 ||
-		got[0].ID != f.cid(2) || got[0].Path != "/ja/g/"+f.codes[2]+"/premium" {
-		t.Errorf("premium = %+v", got)
-	}
 	for path, want := range map[string]int{
-		q("/stats/top", "kind", "gallery", "metric", "comments"):                 http.StatusForbidden,
-		q("/stats/top", "kind", "comic", "metric", "comments"):                   http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery", "metric", "likes"):                    http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery", "metric", "comments", "period", "2d"): http.StatusBadRequest,
-		q("/stats/top", "kind", "gallery"):                                       http.StatusNotImplemented,
-		q("/stats/activity", "kind", "gallery"):                                  http.StatusNotImplemented,
-		q("/stats/activity", "kind", "gallery", "days", "91"):                    http.StatusBadRequest,
+		q("/stats/activity", "kind", "gallery", "days", "7"):  http.StatusForbidden,
+		q("/stats/activity", "kind", "comic"):                 http.StatusBadRequest,
+		q("/stats/activity", "kind", "gallery"):               http.StatusNotImplemented,
+		q("/stats/activity", "kind", "gallery", "days", "91"): http.StatusBadRequest,
 	} {
 		user := "staff"
 		if want == http.StatusForbidden {

@@ -11626,7 +11626,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's measured readership per UTC day, newest first: distinct qualified readers, focused active time and signed-in readers, from the signal plane.",
+        "summary": "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.",
         "parameters": [
           {
             "name": "kind",
@@ -11639,7 +11639,7 @@
           {
             "name": "days",
             "in": "query",
-            "description": "the last days, today included: 7 by default, at most 90",
+            "description": "the last days, today included: 10 by default, at most 90",
             "schema": {
               "type": "integer"
             }
@@ -11652,113 +11652,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Activity"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "discovery",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:content:view-restricted",
-        "x-contentkit-errors": [
-          "not_configured"
-        ],
-        "x-contentkit-error-sets": [
-          "module:discovery",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/stats/top": {
-      "get": {
-        "tags": [
-          "stats"
-        ],
-        "summary": "A content kind's live, listed content in the request's site ranked by readers (the signal plane's) or published comments over a period.",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "the content kind; required",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "metric",
-            "in": "query",
-            "description": "readers (the default) or comments",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "period",
-            "in": "query",
-            "description": "7d, 30d (the default), 90d, 365d or all",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "access",
-            "in": "query",
-            "description": "public, tier, group, ppv or group_ppv, as lists filter",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "tiers",
-            "in": "query",
-            "description": "configured tiers, as lists filter",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "description": "the language of titles and paths; the site's first by default",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "10 by default, at most 100",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TopContents"
                 }
               }
             }
@@ -12302,18 +12195,26 @@
           "readers": {
             "type": "integer"
           },
-          "active_ms": {
+          "anon": {
             "type": "integer"
           },
-          "users": {
+          "free": {
+            "type": "integer"
+          },
+          "premium": {
+            "type": "integer"
+          },
+          "active_ms": {
             "type": "integer"
           }
         },
         "required": [
           "date",
           "readers",
-          "active_ms",
-          "users"
+          "anon",
+          "free",
+          "premium",
+          "active_ms"
         ]
       },
       "ActivityTarget": {
@@ -17795,28 +17696,6 @@
           "items"
         ]
       },
-      "RankedContent": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "value": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "value"
-        ]
-      },
       "RankingInfo": {
         "type": "object",
         "properties": {
@@ -18751,20 +18630,6 @@
             "type": "string"
           }
         }
-      },
-      "TopContents": {
-        "type": "object",
-        "properties": {
-          "contents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RankedContent"
-            }
-          }
-        },
-        "required": [
-          "contents"
-        ]
       },
       "Total": {
         "type": "object",
