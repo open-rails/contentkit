@@ -337,7 +337,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
         if (edition?.state !== "published") throw new ValidationError(t("readerEditor.versionDraft"));
         if (!current()) return;
         const settlePublication = publication.checkpoint();
-        const published = await guarded(() => client.contents.publish(content.id, publishAt ? new Date(publishAt).toISOString() : undefined));
+        const published = await guarded(() => client.contents.publishWhenReady(content.id, publishAt ? new Date(publishAt).toISOString() : undefined));
         settlePublication({ at: published.publish_at ? localInput(new Date(published.publish_at)) : "" });
         setNotice(t("contentManager.publishedNotice"));
       } else setNotice(t("pollEditor.saved"));

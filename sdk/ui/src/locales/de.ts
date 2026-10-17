@@ -241,6 +241,7 @@ export const de: ContentKitUiMessageBundle = {
     operation_busy: "Diese Einreichung wird noch aktualisiert. Versuche es gleich erneut.",
     source_conflict: "Diese Quelle wurde bereits eingereicht.",
     content_changed: "Der Inhalt wurde nach der Einreichung geändert. Prüfe ihn vor der Veröffentlichung.",
+    not_ready: "Dateien werden noch verarbeitet; veröffentliche, sobald sie fertig sind.",
     invalid_archive: "Diese ZIP-Datei konnte nicht verarbeitet werden. Prüfe, ob sie unterstützte Dateien enthält.",
     download_unavailable: "Das ist gerade nicht zum Herunterladen verfügbar.",
     no_download: "Hier gibt es noch nichts herunterzuladen.",

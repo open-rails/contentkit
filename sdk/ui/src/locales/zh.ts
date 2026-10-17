@@ -241,6 +241,7 @@ export const zh: ContentKitUiMessageBundle = {
     operation_busy: "此提交仍在更新。请稍后重试。",
     source_conflict: "此来源已提交。",
     content_changed: "内容在提交后发生了更改。请在发布前检查。",
+    not_ready: "文件仍在处理中，完成后再发布。",
     invalid_archive: "无法处理此ZIP。请检查其中是否包含支持的文件。",
     download_unavailable: "目前无法下载。",
     no_download: "暂时没有可下载的内容。",

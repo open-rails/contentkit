@@ -781,6 +781,21 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 				return fx, err
 			}
 		}
+		// A scheduled item goes live at its time without another check, so
+		// scheduling needs ready media too.
+		var going []string
+		for _, p := range in {
+			if o := got[p.ContentID]; o.state != StateDeleted && !(o.state == StatePublished && o.publishedAt) {
+				going = append(going, p.ContentID)
+			}
+		}
+		targets, err := s.publishedVersions(ctx, tx, going)
+		if err != nil {
+			return fx, err
+		}
+		if err := s.readyTx(ctx, tx, targets); err != nil {
+			return fx, err
+		}
 		for _, p := range in {
 			o := got[p.ContentID]
 			switch {
@@ -1032,6 +1047,18 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				}
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 				continue
+			}
+			if o.state == StatePublished && (p.State == StatePublished || p.State == "" && p.PublishAt != nil) {
+				var was string
+				if err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
+					s.tenant, p.ContentID, p.VersionID).Scan(&was); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return fx, err
+				}
+				if (p.State == StatePublished || was == StatePublished) && (was != StatePublished || p.PublishAt != nil) {
+					if err := s.readyTx(ctx, tx, []versions.Target{{Content: p.ContentID, Version: p.VersionID}}); err != nil {
+						return fx, err
+					}
+				}
 			}
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err

@@ -53,9 +53,41 @@ type VersionMedia interface {
 	DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
 	// ForkTx fills new versions' media from siblings.
 	ForkTx(ctx context.Context, tx pgx.Tx, forks []versions.Fork) error
+	// PendingTx reports versions whose media is not ready to go live.
+	PendingTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) ([]versions.MediaPending, error)
 }
 
 var errMediaNotConfigured = errors.New("catalog: media is not bound")
+
+// NotReadyError refuses making versions live while their media is still
+// processing or being published; it is versions.ErrNotReady.
+type NotReadyError struct{ Pending []versions.MediaPending }
+
+func (e *NotReadyError) Error() string {
+	reasons := make([]string, len(e.Pending))
+	for i, p := range e.Pending {
+		reasons[i] = p.Reason
+	}
+	slices.Sort(reasons)
+	return "media not ready: " + strings.Join(slices.Compact(reasons), "; ")
+}
+
+func (e *NotReadyError) Unwrap() error { return versions.ErrNotReady }
+
+// readyTx refuses targets that would go live without readable media.
+func (s *Store) readyTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
+	if s.media == nil || len(targets) == 0 {
+		return nil
+	}
+	pending, err := s.media.Versions.PendingTx(ctx, tx, targets)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return &NotReadyError{Pending: pending}
+	}
+	return nil
+}
 
 // BindMedia attaches media; call it once, before serving.
 func (s *Store) BindMedia(m Media) error {
@@ -208,4 +240,16 @@ func (s *Store) Existing(ctx context.Context, ids []string) (map[string]bool, er
 		out[id] = true
 	}
 	return out, nil
+}
+
+// publishedVersions are the items' published versions, which go live with them.
+func (s *Store) publishedVersions(ctx context.Context, tx pgx.Tx, ids []string) ([]versions.Target, error) {
+	if s.media == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT content_id, id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2) AND state = 'published'`, s.tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[versions.Target])
 }

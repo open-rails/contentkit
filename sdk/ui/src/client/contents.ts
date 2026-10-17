@@ -10,6 +10,7 @@ import type {
   Version,
   VersionInput,
 } from "./generated/wire.js";
+import { toContentKitError } from "./errors.js";
 import type { Http } from "./http.js";
 import { call, type RouteQuery } from "./route.js";
 
@@ -78,6 +79,18 @@ export class ContentsClient {
   /** Publishes now, or schedules for at; moderation "held" when the moderator holds it. */
   publish(id: string, at?: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/publish", { params: { id }, body: { publish_at: at } }));
+  }
+  /** publish, retrying while the server answers not_ready (files finishing their publication) for up to waitMs. */
+  async publishWhenReady(id: string, at?: string, waitMs = 30_000): Promise<Content> {
+    const deadline = Date.now() + waitMs;
+    for (let delay = 1000; ; delay = Math.min(delay * 2, 5000)) {
+      try {
+        return await this.publish(id, at);
+      } catch (e) {
+        if (toContentKitError(e).code !== "not_ready" || Date.now() + delay > deadline) throw e;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
   unpublish(id: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/unpublish", { params: { id } }));

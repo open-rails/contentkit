@@ -87,9 +87,9 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleRestore)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/publish", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review." + editorsDoc,
+		Doc:     "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published." + editorsDoc,
 		Request: PublishInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{}), httpapi.Accepted(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "moderation_rejected"}},
+		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "moderation_rejected", "not_ready"}},
 		Serve: httpapi.H((*Store).handlePublish)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/unpublish", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Returns a published or scheduled content item to a draft." + editorsDoc,
@@ -122,8 +122,8 @@ var routes = []httpapi.Route[*Store]{
 		Request: OrderInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover." + editorsDoc,
-		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
+		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Publishing it on a published item is refused (not_ready) while its media is still processing." + editorsDoc,
+		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_ready"}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Deletes a version; a content item keeps at least one." + editorsDoc,
@@ -222,6 +222,7 @@ func writeErr(w http.ResponseWriter, err error) {
 func classify(err error) (int, string, string) {
 	var ae *AuthError
 	var rej content.RejectedError
+	var notReady *NotReadyError
 	switch {
 	case errors.As(err, &ae):
 		if errors.Is(err, auth.ErrExpired) || errors.Is(err, auth.ErrRevoked) {
@@ -240,6 +241,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusConflict, httpapi.CodeConflict, httpapi.Message(httpapi.CodeConflict)
 	case errors.As(err, &rej):
 		return http.StatusUnprocessableEntity, "moderation_rejected", rej.Reason
+	case errors.As(err, &notReady):
+		return http.StatusConflict, "not_ready", notReady.Error()
 	case errors.Is(err, errMediaNotConfigured):
 		return http.StatusNotImplemented, "not_configured", "images need ContentKit media"
 	case errors.Is(err, access.ErrUnavailable):

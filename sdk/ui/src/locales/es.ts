@@ -241,6 +241,7 @@ export const es: ContentKitUiMessageBundle = {
     operation_busy: "Este envío se está actualizando. Inténtalo de nuevo en unos momentos.",
     source_conflict: "Esta fuente ya se ha enviado.",
     content_changed: "El contenido cambió después del envío. Revísalo antes de publicarlo.",
+    not_ready: "Los archivos aún se están procesando; publica cuando terminen.",
     invalid_archive: "No se pudo procesar este ZIP. Comprueba que contiene archivos compatibles.",
     download_unavailable: "Esto no está disponible para descargar ahora.",
     no_download: "Todavía no hay nada que descargar.",

@@ -387,6 +387,16 @@ hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
 
+**Publishing waits for media.** Publishing or scheduling an item, or
+publishing a version of a published item, answers `409 not_ready` while a
+version that would go live still has pages or video producing, a failed file,
+or a publication not yet current for its files; `error` says which. Scheduled
+items go live at their time without another check, so they need ready media
+when scheduled. Uploads a client has not committed are not visible to the
+server: editors keep Publish disabled until their uploads commit. The SDK's
+`contents.publishWhenReady` waits out the seconds between files finishing and
+their publication going current; headless publishing already waits.
+
 **Content and poll images.** Every file of a content lives in a version,
 `{tenant}/{kind}/{id}/{version}/`: there is no content-level item, and
 versions share no files. A version's cover is one of its uploads with a

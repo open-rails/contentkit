@@ -48,6 +48,7 @@ var codes = []ErrorCode{
 	{"ambiguous_entity", http.StatusConflict, "More than one entity matches the localized name or alias and scope; supply its ID.", "More than one entity matches; supply an entity ID."},
 	{"unknown_entity", http.StatusBadRequest, "A publishing entity reference does not resolve in this app and entity creation is disabled.", "An entity was not found."},
 	{"operation_busy", http.StatusConflict, "The publishing operation is preparing an upload or completing another request; retry.", "This publishing operation is busy; retry shortly."},
+	{"not_ready", http.StatusConflict, "A version that would go live still has files processing or a publication not yet current; `error` says what. Retry once processing finishes.", "Files are still processing; publish when they're done."},
 	{"content_changed", http.StatusConflict, "A publishing operation's content or version was edited after submission.", "The content changed after this publishing operation started."},
 	{"invalid_archive", http.StatusUnprocessableEntity, "The publishing archive cannot produce the required supported pages.", "The archive could not be processed."},
 	{"incomplete", http.StatusConflict, "A multipart upload is missing parts.", "The upload is missing parts."},

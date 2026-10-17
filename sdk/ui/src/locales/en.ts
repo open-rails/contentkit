@@ -240,6 +240,7 @@ export const en = {
     operation_busy: "This submission is still being updated. Try again shortly.",
     source_conflict: "This source has already been submitted.",
     content_changed: "The content changed after submission. Review it before publishing.",
+    not_ready: "Files are still processing; publish when they're done.",
     invalid_archive: "This ZIP could not be processed. Check that it contains supported files.",
     download_unavailable: "This isn't available to download right now.",
     no_download: "There is nothing to download yet.",
