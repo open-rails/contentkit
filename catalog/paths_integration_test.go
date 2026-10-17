@@ -68,3 +68,26 @@ func TestDecorativePathsFollowSeriesAndTitle(t *testing.T) {
 		t.Fatalf("CJK title in a series: %q", got)
 	}
 }
+
+func TestRefreshPathsBackfillsEntityPaths(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.create("staff", gallery("Night Before", "en"))
+	f.publish("staff", id, nil)
+	f.join(f.group("series", "saga"), id, "")
+	// A path stored before its kind named a path entity.
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_codes")+` SET slug = 'night-before', slugs = '{"en":"night-before"}' WHERE tenant_id = $1 AND content_id = $2`, tenant, id); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read("staff", "main.test", id)[0].Path; !strings.HasSuffix(got, "/night-before") || strings.Contains(got, "saga") {
+		t.Fatalf("stale path %q", got)
+	}
+	if n, err := RefreshPaths(f.ctx, f.pool, f.schema, tenant, config()); err != nil || n != 1 {
+		t.Fatalf("RefreshPaths = %d, %v", n, err)
+	}
+	if got := f.read("staff", "main.test", id)[0].Path; !strings.HasSuffix(got, "/saga/night-before") {
+		t.Fatalf("refreshed path %q", got)
+	}
+	if n, err := f.s.RefreshPaths(f.ctx); err != nil || n != 1 {
+		t.Fatalf("idempotent RefreshPaths = %d, %v", n, err)
+	}
+}

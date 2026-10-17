@@ -3,8 +3,14 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // entitySlugs is a path entity's code slugs: the default and per language.
@@ -69,4 +75,71 @@ func (s *Store) pathEntities(ctx context.Context, q groups.Querier, ids []string
 		out[id] = e
 	}
 	return out, rows.Err()
+}
+
+// RefreshPaths re-derives the decorative paths of every item whose kind has
+// a path entity, in batches; run it after enabling or changing a kind's
+// path_entity. Idempotent; it returns the items visited.
+func (s *Store) RefreshPaths(ctx context.Context) (int, error) {
+	var pathKinds []string
+	for name, k := range s.cfg.Kinds {
+		if k.PathEntity != "" {
+			pathKinds = append(pathKinds, name)
+		}
+	}
+	if len(pathKinds) == 0 {
+		return 0, nil
+	}
+	visited, after := 0, ""
+	for {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return visited, err
+		}
+		// Content rows first, in id order, as catalog writes lock them.
+		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND kind = ANY($2) AND id > $3 ORDER BY id LIMIT 500 FOR UPDATE`,
+			s.tenant, pathKinds, after)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return visited, err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				_ = tx.Rollback(ctx)
+				return visited, err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(ids) == 0 {
+			_ = tx.Rollback(ctx)
+			return visited, err
+		}
+		if err := s.putCodes(ctx, tx, ids); err != nil {
+			_ = tx.Rollback(ctx)
+			return visited, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return visited, err
+		}
+		visited, after = visited+len(ids), ids[len(ids)-1]
+	}
+}
+
+// RefreshPaths is the operator form of Store.RefreshPaths; it opens no
+// server, auth or billing runtime.
+func RefreshPaths(ctx context.Context, pool *pgxpool.Pool, schema, tenant string, model kinds.Config) (int, error) {
+	if pool == nil || strings.TrimSpace(schema) == "" || strings.TrimSpace(tenant) == "" {
+		return 0, fmt.Errorf("catalog: pool, schema and tenant are required")
+	}
+	if err := model.Validate(); err != nil {
+		return 0, err
+	}
+	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: tenant, cfg: model,
+		t: tables{items: q("content_items"), text: q("content_text"), groups: q("content_groups"), memberships: q("content_memberships")}}
+	return s.RefreshPaths(ctx)
 }
