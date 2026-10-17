@@ -17,6 +17,8 @@ export interface MineQuery {
   language?: string;
   display_language?: string;
   mode?: AccessMode;
+  /** Counts for the caller's matching content selection, on the first page. */
+  summary?: boolean;
 }
 
 /** Favorites: the target's count for everyone, the signed-in caller's own. */

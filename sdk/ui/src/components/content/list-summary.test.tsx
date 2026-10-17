@@ -6,7 +6,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
 import type { Card, GroupCard, ListingSummary } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
-import { CardGrid, ContentGrid } from "./grid.js";
+import { CardGrid, ContentGrid, ContentRail } from "./grid.js";
+import { ContentFavorites } from "./favorites.js";
 
 const at = "2026-10-16T00:00:00Z";
 const entity = (id: string): GroupCard => ({ id, kind: "tag", internal: false, slug: id, name: id.toUpperCase(), count: 0, attributes: {}, created_at: at });
@@ -41,6 +42,8 @@ function server(items: Card[] = [], metadata: ListingSummary = summary()) {
       const u = new URL(String(input));
       reads.push(u);
       if (u.pathname === "/v1/contents") return Response.json({ contents: items, summary: metadata });
+      if (u.pathname.endsWith("/similar")) return Response.json({ contents: items, summary: metadata });
+      if (u.pathname === "/v1/me/favorites") return Response.json({ items: items.map((content) => ({ content, value: 1, at })), summary: metadata });
       if (u.pathname.endsWith("/content-filters"))
         return Response.json({
           applies_to: ["gallery", "blog"],
@@ -207,4 +210,38 @@ it("measures an all-locked preview before deciding whether its summary tile fits
     </ContentKitProvider>,
   );
   expect(await screen.findByRole("button", { name: "Show 50 locked items" })).toBeVisible();
+});
+
+it("shows filter controls for a favorites selection even when every favorite is filtered", async () => {
+  const s = server([]);
+  render(<ContentKitProvider client={s.client} viewer="reader"><ContentFavorites query={{ kind: "gallery" }} empty="No favorites yet" /></ContentKitProvider>);
+  expect(await screen.findByRole("button", { name: "5 items filtered out" })).toBeVisible();
+  expect(screen.queryByText("No favorites yet")).toBeNull();
+  expect(s.reads.find(u => u.pathname === "/v1/me/favorites")?.searchParams.get("summary")).toBe("true");
+});
+
+it("keeps an entirely filtered related rail visible and uses the shared filter dialog", async () => {
+  const s = server([], summary({ truncated: true }));
+  render(<ContentKitProvider client={s.client} viewer={null}><ContentRail title="Related" similar="anchor" query={{ kind: "gallery" }} /></ContentKitProvider>);
+  const tile = await screen.findByRole("button", { name: "≥ 5 items filtered out" });
+  expect(screen.getByRole("heading", { name: "Related" })).toBeVisible();
+  await userEvent.setup().click(tile);
+  const dialog = await screen.findByRole("dialog", { name: "Content filters" });
+  expect(await within(dialog).findByRole("switch", { name: "FUTA: ≥ 5" })).toBeVisible();
+  expect(s.reads.find(u => u.pathname.endsWith("/similar"))?.searchParams.get("summary")).toBe("true");
+});
+
+it("uses the shared premium reveal in related rails", async () => {
+  const s = server([card("paid", false)], summary({ filtered_count: 0, filtered_entities: [], locked_count: 1 }));
+  const view = render(<ContentKitProvider client={s.client} viewer={null}><ContentRail title="Related" similar="anchor" locked="collapse" /></ContentKitProvider>);
+  expect(view.container.querySelector('article[data-id="paid"]')).toBeNull();
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Show 1 locked item" }));
+  expect(await screen.findByText("Gallery paid")).toBeVisible();
+});
+
+it("keeps guest favorites empty without asking the account endpoint", async () => {
+  const s = server([card("private")]);
+  render(<ContentKitProvider client={s.client} viewer={null}><ContentFavorites empty="Favorite galleries will appear here" /></ContentKitProvider>);
+  expect(await screen.findByText("Favorite galleries will appear here")).toBeVisible();
+  expect(s.reads.some(u => u.pathname === "/v1/me/favorites")).toBe(false);
 });

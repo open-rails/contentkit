@@ -75,7 +75,7 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
 
 /** A list carries exact selection-wide counts when the API was asked for them. */
 type SummaryList = UseList<Card> & { summary?: ListingSummary };
-type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean };
 
 /** A list's cards and summary controls share one responsive, animated grid. */
 export function CardGrid(p: GridProps) {
@@ -96,7 +96,7 @@ export function CardGrid(p: GridProps) {
   return <CardGridBody key={session.key} {...p} />;
 }
 
-function CardGridBody({ list, render, filterKinds, filterLanguage, ...p }: GridProps) {
+function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
@@ -158,7 +158,9 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, ...p }: GridP
     },
     [animationGrid],
   );
-  const layout = cardGridLayout(p.grid);
+  const layout: ReturnType<typeof cardGridLayout> = horizontal
+    ? { className: "relative flex snap-x gap-4 overflow-x-auto pb-2 [&>li]:w-36 [&>li]:shrink-0 [&>li]:snap-start sm:[&>li]:w-44" }
+    : cardGridLayout(p.grid);
   const lowerBound = list.summary?.truncated ? "≥ " : "";
   const premiumLabel = lowerBound + (p.summaryLabels?.premium?.(lockedCount) ?? m.plural("contents.lockedShow", lockedCount));
   const filteredLabel = lowerBound + (p.summaryLabels?.filtered?.(filteredCount) ?? m.plural("releases.filteredMore", filteredCount));
@@ -359,69 +361,44 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
  */
 export function ContentRail({ title, similar, recommendations, history, group, list: listQuery, query = {}, more, ...p }: ContentRailProps) {
   const limit = query.limit ?? p.pageSize ?? 12;
-  const q = useMemo(() => ({ ...query, limit }), [query, limit]);
+  const q = useMemo(() => ({ ...query, summary: query.summary ?? true, limit }), [query, limit]);
   const listing = useMemo(
-    () => (listQuery ? { ...listQuery, limit: listQuery.limit ?? limit } : group ? { groups: [group], sort: "position" as const, limit } : null),
+    () => (listQuery ? { ...listQuery, summary: listQuery.summary ?? true, limit: listQuery.limit ?? limit } : group ? { groups: [group], sort: "position" as const, summary: true, limit } : null),
     [listQuery, group, limit],
   );
   const like = useSimilar(recommendations || history || listing ? null : similar, q, { client: p.client });
   const mine = useRecommendations(recommendations ? q : null, { client: p.client });
-  const seen = useHistory(history ? { ...history, limit: history.limit ?? limit } : null, { client: p.client });
+  const seen = useHistory(history ? { ...history, summary: history.summary ?? true, limit: history.limit ?? limit } : null, { client: p.client });
   const listed = useContents(listing, { client: p.client });
   const rail: UseRail = recommendations
     ? mine
     : history || listing
       ? (() => {
           const l = history ? seen : listed;
-          return { items: l.items, loading: l.loading, error: l.error, unavailable: l.error?.code === "not_configured", reload: l.reload };
+          return { items: l.items, summary: l.summary, loading: l.loading, error: l.error, unavailable: l.error?.code === "not_configured", reload: l.reload };
         })()
       : like;
-  const { kinds } = useKinds({ client: p.client });
   const surface = p.surface ?? (recommendations ? "recommendations" : history ? "history" : group ? "featured" : listing ? "list" : "similar");
-  const exposure = useExposure(rail.items, { surface, render: JSON.stringify([similar, recommendations, history, group, listing, q]), client: p.client });
   const source = similar || recommendations || history || group || listing;
-  const layout = p.grid ? cardGridLayout(p.grid) : undefined;
-  if (!source || rail.unavailable || (!rail.loading && !rail.items.length)) return null;
+  if (!source || rail.unavailable || (!rail.loading && !rail.items.length && !rail.summary?.filtered_count && !rail.summary?.locked_count)) return null;
+  const list: SummaryList = { ...rail, loadingMore: false, hasMore: false, loadMore: async () => {} };
+  const kind = listQuery?.kind ?? history?.kind ?? q.kind;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="content-rail" data-surface={surface}>
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold">{title}</h2>
         {more}
       </div>
-      <ol className={layout?.className ?? "relative flex snap-x gap-4 overflow-x-auto pb-2"} style={layout?.style}>
-        {(rail.loading && !rail.items.length ? Array.from({ length: 6 }, () => null) : rail.items).map((card, i) => (
-          <li key={card?.id ?? i} className={layout ? undefined : "w-36 shrink-0 snap-start sm:w-44"} ref={card ? exposure.track(card.id, i + 1) : undefined}>
-            {!card ? (
-              <Skeleton className={p.aspectRatio === undefined ? p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full" : "w-full"} style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }} />
-            ) : p.renderCard ? (
-              p.renderCard(card, i + 1)
-            ) : (
-              <ContentCard
-                card={card}
-                client={p.client}
-                href={p.href}
-                shape={p.shape}
-                aspectRatio={p.aspectRatio}
-                titlePosition={p.titlePosition}
-                loadMedia={p.loadMedia}
-                groupKinds={p.groupKinds}
-                chips={p.chips}
-                filterEntity={p.filterEntity}
-                entityStyle={p.entityStyle}
-                entityLayout={p.entityLayout}
-                metadata={p.metadata}
-                showCounts={p.showCounts}
-                tiers={p.tiers ?? kinds?.tiers}
-                labels={p.labels}
-                owner={p.owner}
-                ownerHref={p.ownerHref}
-                decorate={p.decorate}
-                onOpen={() => exposure.click(card.id, i + 1)}
-              />
-            )}
-          </li>
-        ))}
-      </ol>
+      <CardGrid
+        {...p}
+        className={undefined}
+        surface={surface}
+        horizontal={!p.grid}
+        list={list}
+        render={JSON.stringify([similar, recommendations, history, group, listing, q])}
+        filterKinds={kind ? [kind] : undefined}
+        filterLanguage={listQuery?.display_language ?? history?.display_language ?? q.display_language ?? listQuery?.language ?? history?.language ?? q.language}
+      />
     </ContentKitUiRoot>
   );
 }
