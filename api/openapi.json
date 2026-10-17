@@ -6535,7 +6535,7 @@
         "tags": [
           "codes"
         ],
-        "summary": "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.",
+        "summary": "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. An editor of content not live yet gets it privately (no-store, noindex).",
         "parameters": [
           {
             "name": "code",
@@ -6560,6 +6560,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
         ],
         "responses": {
@@ -6578,16 +6588,20 @@
           }
         },
         "security": [
-          {}
+          {},
+          {
+            "host": []
+          }
         ],
         "x-contentkit-module": "codes",
-        "x-contentkit-auth": "open",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "gone",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:codes",
+          "auth",
           "request"
         ]
       }

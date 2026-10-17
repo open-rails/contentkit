@@ -1506,7 +1506,7 @@ func (q GetCodeQuery) values() url.Values {
 	return v
 }
 
-// GetCode is GET /v1/codes/{code} (open). A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.
+// GetCode is GET /v1/codes/{code} (public). A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. An editor of content not live yet gets it privately (no-store, noindex).
 func (c *Client) GetCode(ctx context.Context, code string, q GetCodeQuery) (contenturl.Resolved, error) {
 	var out contenturl.Resolved
 	err := c.call(ctx, http.MethodGet, expand("/v1/codes/{code}", "{code}", url.PathEscape(code)), q.values(), nil, &out)

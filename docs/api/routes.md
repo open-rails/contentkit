@@ -138,7 +138,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. Query: `lang`, `v`. |
+| GET | `/v1/codes/{code}` | public | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. An editor of content not live yet gets it privately (no-store, noindex). Query: `lang`, `v`. |
 | POST | `/v1/codes/aliases` | open | `AliasLookup` | 200 `AliasResults` | Resolves legacy identifiers (the import's aliases) to their content's link, canonical path and locator, in order, following merges: found, not_found (unknown or hidden) or gone; at most 100. Query: `lang`. |
 
 ## Entities: listings, pages, writes and memberships (`/v1`)

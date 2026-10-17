@@ -54,8 +54,9 @@ type Card struct {
 	// Ranking is present for a population-normalized popular result. Raw
 	// participation is retained alongside its single reliability adjustment.
 	Ranking *ContentRanking `json:"ranking,omitempty"`
-	// UpdatedAt is when a newer version of the work was published after this
-	// card's version; absent until then.
+	// UpdatedAt is when the work last gained something after this card's
+	// version was published: a newer version, or pages added to this one
+	// (new chapters); absent until then.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// Deleted marks a deleted item or version for staff and its creators.
 	Deleted bool `json:"deleted,omitempty"`

@@ -200,6 +200,40 @@ func TestNoPublicationBeforeFirstUpload(t *testing.T) {
 	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
 }
 
+// A republication that adds pages records when (new chapters in the same
+// edition); the first publication and an unchanged republication do not.
+func TestPagesAddedMarksTheVersion(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	added := func() *time.Time {
+		t.Helper()
+		var at *time.Time
+		if err := s.pool.QueryRow(s.ctx, `SELECT pages_added_at FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND id = $2`, s.tenant, v.Version).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	for i := range 2 {
+		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
+	}
+	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 2 })
+	if at := added(); at != nil {
+		t.Fatalf("first publication recorded added pages at %v", at)
+	}
+	if err := versions.Publish(s.svc, s.ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if at := added(); at != nil {
+		t.Fatalf("unchanged republication recorded added pages at %v", at)
+	}
+	s.mustUpload(s.creator, ref, "originals/003", "image/png", pngOf(t, 30, 40, 3))
+	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 3 })
+	if at := added(); at == nil || time.Since(*at) > time.Minute {
+		t.Fatalf("added page not recorded: %v", at)
+	}
+}
+
 // Removing a page withdraws the publication showing it at once, previews
 // included; the next one replaces it.
 func TestWithdrawal(t *testing.T) {

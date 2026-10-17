@@ -356,6 +356,16 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	if err != nil {
 		return false, err
 	}
+	// A republication with more pages than the one it replaces added pages
+	// (new chapters in the same edition): cards mark the work updated.
+	if kind == kindPages && len(old) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2
+ AND (SELECT jsonb_array_length(source->'pages') FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
+     (SELECT max(jsonb_array_length(source->'pages')) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
+			s.o.Tenant, v.Version, id, old); err != nil {
+			return false, err
+		}
+	}
 	if err := s.retireTx(ctx, tx, k, old); err != nil {
 		return false, err
 	}

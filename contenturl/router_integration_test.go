@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 func TestRouterCanonicalizes(t *testing.T) {
@@ -104,7 +105,7 @@ func TestRouterCanonicalizes(t *testing.T) {
 		}
 	}
 
-	api := http.StripPrefix("/api/content-urls", router.Handler())
+	api := http.StripPrefix("/api/content-urls", router.Handler(openGuard))
 	get := func(target string) (*httptest.ResponseRecorder, contenturl.Resolved) {
 		rec := httptest.NewRecorder()
 		api.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
@@ -198,6 +199,50 @@ func TestRouterCanonicalizes(t *testing.T) {
 	}
 	if path, ok := router.Path(contenturl.Link{ContentRef: contentref.New(tenant, "gallery", id(9)), Code: "0000000AB", Slug: "x"}, ""); !ok || path != "/en/g/0000000AB/x" {
 		t.Fatalf("Path %q %v", path, ok)
+	}
+}
+
+// openGuard admits every request as it is; the tests decide visibility.
+func openGuard(_ httpapi.Spec, next http.Handler) http.Handler { return next }
+
+// A Preview verdict resolves for its viewer only: never cached or indexed.
+func TestRouterPreviewIsPrivate(t *testing.T) {
+	_, _, _, s := setup(t)
+	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "Draft"})
+	router, err := contenturl.NewRouter(s, contenturl.RouterOptions{Routes: contenturl.Routes{"gallery": "g"}, Languages: []string{"en"},
+		Visibility: func(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) {
+			v := contenturl.Hidden
+			if r.Header.Get("X-Editor") != "" {
+				v = contenturl.Preview
+			}
+			return []contenturl.Visibility{v}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := "/en/g/" + string(links[0].Code) + "/draft"
+	var seen contenturl.Decision
+	page := router.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = contenturl.FromContext(r.Context())
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	api := router.Handler(openGuard)
+	for _, editor := range []bool{false, true} {
+		req := httptest.NewRequest("GET", canonical, nil)
+		lookup := httptest.NewRequest("GET", "/"+string(links[0].Code), nil)
+		if editor {
+			req.Header.Set("X-Editor", "1")
+			lookup.Header.Set("X-Editor", "1")
+		}
+		seen = contenturl.Decision{}
+		rec, found := httptest.NewRecorder(), httptest.NewRecorder()
+		page.ServeHTTP(rec, req)
+		api.ServeHTTP(found, lookup)
+		private := rec.Header().Get("Cache-Control") == "private, no-store" && rec.Header().Get("X-Robots-Tag") == "noindex" &&
+			found.Header().Get("Cache-Control") == "private, no-store" && found.Header().Get("X-Robots-Tag") == "noindex"
+		if seen.Matched != editor || seen.Private != editor || private != editor || (found.Code == http.StatusOK) != editor {
+			t.Errorf("editor=%v: decision %+v, page headers %v, lookup %d %v", editor, seen, rec.Header(), found.Code, found.Header())
+		}
 	}
 }
 

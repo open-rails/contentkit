@@ -25,6 +25,9 @@ const (
 	Visible
 	// Gone content was removed for good: 410, no redirect.
 	Gone
+	// Preview content is served only to the requesting editor (a draft they
+	// may edit): resolved like Visible, never cached or indexed.
+	Preview
 )
 
 // RouterOptions configures a Router.
@@ -99,6 +102,8 @@ type Decision struct {
 	Gone bool
 	// Redirect: the path is not canonical; answer 301 to Location.
 	Redirect bool
+	// Private: matched only for this viewer (Preview); never cache or index it.
+	Private  bool
 	Link     Link
 	Language string
 	Path     string // the canonical path
@@ -147,8 +152,8 @@ func (r *Router) decide(req *http.Request, link Link, language string) (Decision
 		return Decision{}, err
 	}
 	switch v[0] {
-	case Visible:
-		return Decision{Matched: true, Link: link, Language: language, Path: path, Location: path}, nil
+	case Visible, Preview:
+		return Decision{Matched: true, Private: v[0] == Preview, Link: link, Language: language, Path: path, Location: path}, nil
 	case Gone:
 		return Decision{Gone: true}, nil
 	default:
@@ -201,8 +206,14 @@ func (r *Router) Middleware(next http.Handler) http.Handler {
 		case !d.Matched:
 			next.ServeHTTP(w, req)
 		case d.Redirect:
+			if d.Private {
+				private(w)
+			}
 			http.Redirect(w, req, d.Location, http.StatusMovedPermanently)
 		default:
+			if d.Private {
+				private(w)
+			}
 			if r.opts.BaseURL != "" {
 				w.Header().Add("Link", "<"+r.opts.BaseURL+d.Path+`>; rel="canonical"`)
 			}
@@ -303,17 +314,20 @@ func (r *Router) resolveAliases(req *http.Request, keys []AliasKey, language str
 // not_found, Gone content 410 gone, malformed codes 400 invalid_request.
 // POST /aliases resolves legacy identifiers the same way, in batches. The
 // engine serves them as the codes route group (/v1/codes).
-func (r *Router) Handler() http.Handler {
+//
+// guard binds each request's actor (the code lookup is public; an editor's
+// draft resolves only for them).
+func (r *Router) Handler(guard httpapi.Guard) http.Handler {
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, nil, r, codeRoutes)
+	httpapi.Mount(mux, guard, r, codeRoutes)
 	return mux
 }
 
 func init() { httpapi.Register(httpapi.Codes, codeRoutes) }
 
 var codeRoutes = []httpapi.Route[*Router]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Open,
-		Doc: "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any.",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Public,
+		Doc: "A content code's link and canonical path; any spelling of the code resolves. With v, the live version that code names, if any. An editor of content not live yet gets it privately (no-store, noindex).",
 		Query: []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug; the site's default by default"),
 			httpapi.Text("v", "a version code (the page's ?v=)")},
 		Responses: []httpapi.Reply{httpapi.OK(Resolved{})}, Errors: []string{"gone", httpapi.CodeNotFound}},
@@ -347,7 +361,7 @@ func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	switch {
-	case err == nil && v != Visible && v != Gone:
+	case err == nil && v != Visible && v != Gone && v != Preview:
 		writeJSON(w, http.StatusNotFound, errorBody{Error: "no content has this code", Code: "not_found"})
 	case err != nil:
 		r.log.ErrorContext(req.Context(), "contenturl: resolve", "code", code, "err", err)
@@ -355,6 +369,9 @@ func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
 	case v == Gone:
 		writeJSON(w, http.StatusGone, errorBody{Error: "this content was removed", Code: "gone"})
 	default:
+		if v == Preview {
+			private(w)
+		}
 		path, _ := r.Path(link, lang)
 		out := Resolved{Link: link, Path: path}
 		if v, err := ParseVersionCode(req.URL.Query().Get(VersionParam)); err == nil {
@@ -404,4 +421,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// private marks a response only its viewer may see: no shared caching, no indexing.
+func private(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Robots-Tag", "noindex")
 }

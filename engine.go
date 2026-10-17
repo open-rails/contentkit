@@ -655,7 +655,7 @@ func (e *Engine) mount(deps Deps) error {
 	if err != nil {
 		return err
 	}
-	e.modules[httpapi.Codes] = router.Handler()
+	e.modules[httpapi.Codes] = router.Handler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard)
 	e.inproc = e.dispatch("", e.modules)
 	return nil
 }

@@ -53,4 +53,17 @@ func TestCardStatusMarksNewerVersionsReactionsAndDeletions(t *testing.T) {
 	if c, ok := cards("maker")[f.vid(22, 0)]; !ok || !c.Deleted {
 		t.Errorf("creator's deleted item unmarked: %v %+v", ok, c)
 	}
+
+	// Pages added to a published version (new chapters in one edition) mark
+	// it updated; additions before it was published do not.
+	added := f.now.Add(-2 * time.Hour).UTC().Truncate(time.Microsecond)
+	f.exec(`UPDATE {s}.content_versions SET pages_added_at = $2 WHERE id = $1`, f.vid(23, 0), added)
+	f.exec(`UPDATE {s}.content_versions SET pages_added_at = $2 WHERE id = $1`, f.vid(21, 1), later.Add(-time.Hour))
+	reader = cards("u1")
+	if c := reader[f.vid(23, 0)]; c.UpdatedAt == nil || !c.UpdatedAt.Equal(added) {
+		t.Errorf("version with added pages not marked updated: %+v", c.UpdatedAt)
+	}
+	if c := reader[f.vid(21, 1)]; c.UpdatedAt != nil {
+		t.Errorf("pages added before publication marked updated: %v", c.UpdatedAt)
+	}
 }

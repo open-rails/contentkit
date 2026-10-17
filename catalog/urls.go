@@ -5,12 +5,14 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/gate"
 )
 
 // Visibility is contenturl.RouterOptions.Visibility for content kinds: a
 // page shows while its item is live for an anonymous visitor of the
-// request's site, is Gone once a live item was deleted (or erased), and is
-// Hidden otherwise. Other kinds are Visible.
+// request's site, is Gone once a live item was deleted (or erased), is a
+// Preview for a signed-in editor of an item not live yet (staff, creators),
+// and is Hidden otherwise. Other kinds are Visible.
 func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) {
 	out := make([]contenturl.Visibility, len(links))
 	at := map[string][]int{}
@@ -69,9 +71,29 @@ func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contentu
 	if err != nil {
 		return nil, err
 	}
+	var hidden []string
 	for i, c := range got {
 		if c != nil && c.Live {
 			set(candidates[i], contenturl.Visible)
+		} else {
+			hidden = append(hidden, candidates[i])
+		}
+	}
+	actor := gate.Actor(r.Context())
+	if len(hidden) == 0 || actor.Anonymous {
+		return out, nil
+	}
+	ev, err := s.Viewer(r.Context(), ViewerOptions{Actor: actor, Host: r.Host})
+	if err != nil {
+		return nil, err
+	}
+	mine, err := s.Contents(r.Context(), ev, hidden)
+	if err != nil {
+		return nil, err
+	}
+	for i, c := range mine {
+		if c != nil && c.Editor {
+			set(hidden[i], contenturl.Preview)
 		}
 	}
 	return out, nil
