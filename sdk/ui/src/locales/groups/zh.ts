@@ -17,7 +17,6 @@ export const groups: typeof en = {
     alsoKnownAs: "又名",
     children: "子分组",
     showMore: "显示更多",
-    showMore: "显示更多",
     yes: "是",
     no: "否",
     searchPlaceholder: "按名称搜索",

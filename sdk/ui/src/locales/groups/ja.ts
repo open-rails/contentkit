@@ -17,7 +17,6 @@ export const groups: typeof en = {
     alsoKnownAs: "別名",
     children: "サブグループ",
     showMore: "もっと見る",
-    showMore: "もっと見る",
     yes: "はい",
     no: "いいえ",
     searchPlaceholder: "名前で検索",

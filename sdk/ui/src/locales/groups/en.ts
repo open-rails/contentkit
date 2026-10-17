@@ -16,7 +16,6 @@ export const groups = {
     alsoKnownAs: "Also known as",
     children: "Sub-groups",
     showMore: "Show more",
-    showMore: "Show more",
     yes: "Yes",
     no: "No",
     searchPlaceholder: "Search by name",

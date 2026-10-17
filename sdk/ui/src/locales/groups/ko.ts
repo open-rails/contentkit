@@ -17,7 +17,6 @@ export const groups: typeof en = {
     alsoKnownAs: "다른 이름",
     children: "하위 그룹",
     showMore: "더 보기",
-    showMore: "더 보기",
     yes: "예",
     no: "아니요",
     searchPlaceholder: "이름으로 검색",
