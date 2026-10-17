@@ -17,6 +17,7 @@ export const groups: typeof en = {
     alsoKnownAs: "También conocido como",
     children: "Subgrupos",
     showMore: "Mostrar más",
+    showMore: "Mostrar más",
     yes: "Sí",
     no: "No",
     searchPlaceholder: "Buscar por nombre",

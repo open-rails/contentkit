@@ -11,6 +11,7 @@ import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { contentError, formatDate } from "../social/parts.js";
 import { GroupCover, GroupLink, labelOf, type GroupLike, type Labels } from "./parts.js";
+import { ScopedGroups } from "./scoped.js";
 
 export interface GroupHeaderProps {
   /** The group the host already read; or give id. */
@@ -126,6 +127,7 @@ export function GroupHeader(p: GroupHeaderProps) {
             ))}
           </nav>
         )}
+        <ScopedGroups group={g} language={p.language} labels={p.labels} href={p.href} client={p.client} />
         {p.children}
       </div>
     </div>,

@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { GroupEditor } from "../groups/editor.js";
 import { GroupMembers } from "../groups/memberships.js";
 import { labelOf, type Labels } from "../groups/parts.js";
+import { ScopedGroups } from "../groups/scoped.js";
 import { contentError } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
@@ -233,14 +234,17 @@ function Edit({ loc, kind, client, labels, onError, renderContent, id }: Ctx & {
         onMerged={(r) => loc.go(`${kind}/${r.into}`, undefined, { replace: true })}
       >
         {(group) => (
-          <GroupMembers
-            group={group}
-                labels={labels}
-            client={client}
-            onError={onError}
-            renderContent={renderContent}
-            onUseCover={(content) => client.entities.update(group.id, { cover: { content_id: content } })}
-          />
+          <>
+            <ScopedGroups group={group} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} />
+            <GroupMembers
+              group={group}
+              labels={labels}
+              client={client}
+              onError={onError}
+              renderContent={renderContent}
+              onUseCover={(content) => client.entities.update(group.id, { cover: { content_id: content } })}
+            />
+          </>
         )}
       </GroupEditor>
     </div>
