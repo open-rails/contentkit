@@ -62,7 +62,7 @@ export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { useContent, useManagedContents, type ManageFilter, type UseContent } from "./contents.js";
-export { useActivity, useMyStats, useTopContents, type UseStats } from "./stats.js";
+export { useActivity, useMyStats, type UseStats } from "./stats.js";
 export { defaultVersion, editionOf, findVersion, liveVersions, useContentDetail, type ContentDetailOptions, type UseContentDetail } from "./detail.js";
 export { useVersionParam } from "./location.js";
 export {

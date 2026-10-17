@@ -1,39 +1,38 @@
+import { cn } from "cn";
 import { useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
-import type { Period } from "../../client/discovery.js";
 import { formatDuration } from "../../client/gallery.js";
-import type { TopQuery } from "../../client/stats.js";
-import type { RankedContent } from "../../client/generated/wire.js";
+import type { ActivityDay } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
-import { useActivity, useTopContents } from "../../react/stats.js";
+import { useActivity } from "../../react/stats.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
-type Metric = NonNullable<TopQuery["metric"]>;
 
 export interface StatsDashboardProps extends AdminFlowProps {
   /** Content kinds offered: codes, or codes with labels; the first shows first. */
   kinds: readonly Choice[];
-  /** A ranked item's link; default its path. */
-  contentHref?: (content: RankedContent) => string | undefined;
-  /** Rows in the ranking. Default 10. */
-  limit?: number;
 }
 
 const choices = (list: readonly Choice[]) => list.map((c) => (typeof c === "string" ? { value: c, label: c } : c));
-const DAYS = [7, 30, 90] as const;
-const METRICS: readonly Metric[] = ["readers", "comments"];
-const PERIODS: readonly Period[] = ["7d", "30d", "90d", "365d", "all"];
+const DAYS = [10, 30, 90] as const;
 const refused = (e?: ContentKitError) => e?.code === "forbidden" || e?.code === "unauthorized";
 
+// Validated categorical slots (light / dark steps), stacked bottom to top.
+const AUDIENCES = [
+  { key: "anon", fill: "bg-[#2a78d6] dark:bg-[#3987e5]" },
+  { key: "free", fill: "bg-[#eb6834] dark:bg-[#d95926]" },
+  { key: "premium", fill: "bg-[#1baf7a] dark:bg-[#199e70]" },
+] as const;
+
 /**
- * Staff statistics from measured attention: daily distinct people and focused
- * active time, plus content ranked by distinct engaged people or comments.
- * Daily people are never summed into a misleading period-unique total.
- * Comments remain available without the signal plane.
+ * Staff statistics from measured attention: distinct people per UTC day who
+ * read or played at least one item, by audience (anonymous, free, premium).
+ * People are distinct within a day only, so days are never summed into a
+ * period-unique total.
  */
 export function StatsDashboard({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: StatsDashboardProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
@@ -46,19 +45,15 @@ export function StatsDashboard({ client: own, baseUrl, auth, guard, appearance, 
 
 type Inner = Omit<StatsDashboardProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
 
-function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
+function Dashboard({ kinds, client }: Inner) {
   const { t } = useMessages();
   const options = choices(kinds);
   const [kind, setKind] = useState(options[0]?.value ?? "");
-  const [days, setDays] = useState<number>(7);
-  const [metric, setMetric] = useState<Metric>("readers");
-  const [period, setPeriod] = useState<Period>("30d");
+  const [days, setDays] = useState<number>(DAYS[0]);
   const activity = useActivity(kind ? { kind, days } : null, { client });
-  const top = useTopContents(kind ? { kind, metric, period, limit } : null, { client });
-  if (refused(activity.error) || refused(top.error)) return <NoAccess>{t("stats.noAccess")}</NoAccess>;
-  const rows = activity.data?.days ?? [];
-  const most = Math.max(1, ...rows.map((d) => d.readers));
-  const totalActiveMS = rows.reduce((n, d) => n + d.active_ms, 0);
+  if (refused(activity.error)) return <NoAccess>{t("stats.noAccess")}</NoAccess>;
+  // Newest first from the server; the chart reads oldest to newest.
+  const rows = [...(activity.data?.days ?? [])].reverse();
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -68,7 +63,10 @@ function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
 
       <section className="grid gap-3" data-ckui="stats-activity">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-medium">{t("stats.activity")}</h3>
+          <div className="grid gap-0.5">
+            <h3 className="font-medium">{t("stats.activity")}</h3>
+            <p className="text-xs text-muted-foreground">{t("stats.visitorsNote")}</p>
+          </div>
           <Pick
             label={t("stats.days")}
             value={String(days)}
@@ -83,90 +81,165 @@ function Dashboard({ kinds, contentHref, limit = 10, client }: Inner) {
         ) : activity.error ? (
           <LoadFailed error={activity.error} message={t("stats.loadFailed")} retry={activity.reload} />
         ) : activity.loading && !activity.data ? (
-          <Rows count={2} />
-        ) : !rows.length ? (
-          <p className="text-muted-foreground">{t("stats.noActivity")}</p>
-        ) : (
-          <table className="w-full text-left tabular-nums" aria-busy={activity.loading}>
-            <thead className="text-xs text-muted-foreground">
-              <tr>
-                <th className="py-1 font-medium">{t("stats.date")}</th>
-                <th className="py-1 font-medium">{t("stats.readers")}</th>
-                <th className="py-1 text-end font-medium">{t("stats.users")}</th>
-                <th className="py-1 text-end font-medium">{t("stats.activeTime")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.date} className="border-t border-border" data-ckui="stats-day">
-                  <td className="py-1.5 pe-3 whitespace-nowrap">{d.date}</td>
-                  <td className="w-1/2 py-1.5 pe-3">
-                    <span className="flex items-center gap-2">
-                      <span aria-hidden className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(2, (d.readers / most) * 100)}%` }} />
-                      {d.readers}
-                    </span>
-                  </td>
-                  <td className="py-1.5 text-end">{d.users}</td>
-                  <td className="py-1.5 text-end">{formatDuration(Math.floor(d.active_ms / 1000))}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-border font-medium">
-                <th scope="row" colSpan={3} className="py-1.5 font-medium">
-                  {t("stats.totalActiveTime")}
-                </th>
-                <td className="py-1.5 text-end" data-ckui="stats-active-total">
-                  {formatDuration(Math.floor(totalActiveMS / 1000))}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        )}
-      </section>
-
-      <section className="grid gap-3" data-ckui="stats-top">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-medium">{t("stats.top")}</h3>
-          <div className="flex flex-wrap gap-2">
-            <Pick label={t("stats.metric")} value={metric} onChange={(v) => setMetric(v as Metric)} options={METRICS.map((x) => ({ value: x, label: t(`stats.metric_${x}`) }))} />
-            <Pick label={t("stats.period")} value={period} onChange={(v) => setPeriod(v as Period)} options={PERIODS.map((x) => ({ value: x, label: t(`stats.period_${x}`) }))} />
-          </div>
-        </div>
-        {top.unavailable ? (
-          <p className="text-muted-foreground" role="status">
-            {t("stats.unavailable")}
-          </p>
-        ) : top.error ? (
-          <LoadFailed error={top.error} message={t("stats.loadFailed")} retry={top.reload} />
-        ) : top.loading && !top.data ? (
           <Rows count={3} />
-        ) : !top.data?.contents.length ? (
-          <p className="text-muted-foreground">{t("stats.noTop")}</p>
         ) : (
-          <ol className="grid divide-y divide-border rounded-lg border border-border" aria-busy={top.loading}>
-            {top.data.contents.map((c, i) => {
-              const href = contentHref ? contentHref(c) : c.path;
-              return (
-                <li key={c.id} className="flex items-center gap-3 p-2.5" data-ckui="stats-ranked">
-                  <span className="w-6 text-end text-muted-foreground tabular-nums">{i + 1}</span>
-                  {href ? (
-                    <a className="min-w-0 flex-1 break-words hover:underline" href={href}>
-                      {c.title}
-                    </a>
-                  ) : (
-                    <span className="min-w-0 flex-1 break-words">{c.title}</span>
-                  )}
-                  <span className="tabular-nums" data-ckui="stats-value">
-                    {c.value}
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
+          <div className="grid gap-4" aria-busy={activity.loading}>
+            <Today day={rows.at(-1)} />
+            <Chart rows={rows} />
+            <DayTable rows={rows} />
+          </div>
         )}
       </section>
     </>
+  );
+}
+
+function Today({ day }: { day?: ActivityDay }) {
+  const { t } = useMessages();
+  const tiles = [
+    { label: t("stats.visitors"), value: day?.readers ?? 0, fill: undefined },
+    ...AUDIENCES.map((a) => ({ label: t(`stats.${a.key}`), value: day?.[a.key] ?? 0, fill: a.fill })),
+  ];
+  return (
+    <div className="grid gap-2" data-ckui="stats-today">
+      <p className="text-xs font-medium text-muted-foreground">
+        {t("stats.today")}
+        {day && day.active_ms > 0 && (
+          <span className="font-normal">
+            {" · "}
+            {t("stats.activeTime")} {formatDuration(Math.floor(day.active_ms / 1000))}
+          </span>
+        )}
+      </p>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="grid gap-0.5 rounded-lg border border-border p-3">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {tile.fill && <span aria-hidden className={cn("size-2.5 rounded-sm", tile.fill)} />}
+              {tile.label}
+            </dt>
+            <dd className="text-xl font-semibold tabular-nums">{tile.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function Chart({ rows }: { rows: ActivityDay[] }) {
+  const m = useMessages();
+  const { t } = m;
+  const [active, setActive] = useState<number | null>(null);
+  const most = Math.max(0, ...rows.map((d) => d.readers));
+  const scale = most || 1;
+  const every = Math.ceil(rows.length / 10);
+  const short = new Intl.DateTimeFormat(m.language, { month: "short", day: "numeric", timeZone: "UTC" });
+  const long = new Intl.DateTimeFormat(m.language, { dateStyle: "medium", timeZone: "UTC" });
+  const at = (date: string) => new Date(`${date}T00:00:00Z`);
+  const shown = active === null ? undefined : rows[active];
+  return (
+    <figure className="grid gap-2" data-ckui="stats-chart">
+      <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {AUDIENCES.map((a) => (
+          <span key={a.key} className="flex items-center gap-1.5">
+            <span aria-hidden className={cn("size-2.5 rounded-sm", a.fill)} />
+            {t(`stats.${a.key}`)}
+          </span>
+        ))}
+        <span className="ms-auto tabular-nums">{t("stats.peak", { count: most })}</span>
+      </figcaption>
+      <div className="relative">
+        <div className="pointer-events-none absolute inset-x-0 top-0 border-t border-dashed border-border" aria-hidden />
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 border-t border-dashed border-border/60" aria-hidden />
+        <ol className="relative flex h-48 items-end gap-1 border-b border-border" onMouseLeave={() => setActive(null)}>
+          {rows.map((d, i) => (
+            <li
+              key={d.date}
+              tabIndex={0}
+              data-ckui="stats-day"
+              aria-label={`${long.format(at(d.date))}: ${t("stats.visitors")} ${d.readers}, ${t("stats.anon")} ${d.anon}, ${t("stats.free")} ${d.free}, ${t("stats.premium")} ${d.premium}`}
+              className="flex h-full min-w-0 flex-1 cursor-default flex-col justify-end rounded-sm outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring"
+              onMouseEnter={() => setActive(i)}
+              onFocus={() => setActive(i)}
+              onBlur={() => setActive(null)}
+            >
+              {/* 2px surface gaps between segments; the top segment carries the 4px rounded end. */}
+              <span className="mx-auto flex w-full max-w-10 flex-col-reverse gap-[2px]" style={{ height: `${(d.readers / scale) * 100}%` }}>
+                {AUDIENCES.map((a, j) => {
+                  const value = d[a.key];
+                  if (!value) return null;
+                  const top = AUDIENCES.slice(j + 1).every((b) => !d[b.key]);
+                  return <span key={a.key} className={cn("min-h-[2px] w-full", a.fill, top && "rounded-t-[4px]")} style={{ flexGrow: value, flexBasis: 0 }} />;
+                })}
+              </span>
+            </li>
+          ))}
+        </ol>
+        {shown && active !== null && (
+          <div
+            role="tooltip"
+            className="pointer-events-none absolute -top-2 z-10 grid min-w-36 -translate-y-full gap-1 rounded-md border border-border bg-popover p-2 text-xs text-popover-foreground shadow-md"
+            style={{ left: `clamp(0%, ${((active + 0.5) / rows.length) * 100}% - 4.5rem, calc(100% - 9rem))` }}
+          >
+            <p className="font-medium">{long.format(at(shown.date))}</p>
+            <p className="flex justify-between gap-3 tabular-nums">
+              <span>{t("stats.visitors")}</span>
+              <span className="font-semibold">{shown.readers}</span>
+            </p>
+            {[...AUDIENCES].reverse().map((a) => (
+              <p key={a.key} className="flex items-center justify-between gap-3 tabular-nums text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className={cn("size-2 rounded-sm", a.fill)} />
+                  {t(`stats.${a.key}`)}
+                </span>
+                <span className="text-popover-foreground">{shown[a.key]}</span>
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+      <ol aria-hidden className="flex gap-1 text-[11px] text-muted-foreground tabular-nums">
+        {rows.map((d, i) => (
+          <li key={d.date} className="min-w-0 flex-1 overflow-visible text-center whitespace-nowrap">
+            {(rows.length - 1 - i) % every === 0 ? short.format(at(d.date)) : ""}
+          </li>
+        ))}
+      </ol>
+      {most === 0 && <p className="text-muted-foreground">{t("stats.noActivity")}</p>}
+    </figure>
+  );
+}
+
+function DayTable({ rows }: { rows: ActivityDay[] }) {
+  const { t } = useMessages();
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-xs text-muted-foreground">{t("stats.showTable")}</summary>
+      <table className="mt-2 w-full text-left tabular-nums">
+        <thead className="text-xs text-muted-foreground">
+          <tr>
+            <th className="py-1 font-medium">{t("stats.date")}</th>
+            <th className="py-1 text-end font-medium">{t("stats.visitors")}</th>
+            <th className="py-1 text-end font-medium">{t("stats.anon")}</th>
+            <th className="py-1 text-end font-medium">{t("stats.free")}</th>
+            <th className="py-1 text-end font-medium">{t("stats.premium")}</th>
+            <th className="py-1 text-end font-medium">{t("stats.activeTime")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...rows].reverse().map((d) => (
+            <tr key={d.date} className="border-t border-border">
+              <td className="py-1.5 pe-3 whitespace-nowrap">{d.date}</td>
+              <td className="py-1.5 text-end">{d.readers}</td>
+              <td className="py-1.5 text-end">{d.anon}</td>
+              <td className="py-1.5 text-end">{d.free}</td>
+              <td className="py-1.5 text-end">{d.premium}</td>
+              <td className="py-1.5 text-end">{formatDuration(Math.floor(d.active_ms / 1000))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
   );
 }
 
