@@ -74,9 +74,18 @@ func inPattern(pattern, path string) bool {
 
 // recordFacts writes v's facts and refreshes its facets when they changed.
 func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) error {
-	f := factsOf(k, m)
+	// Catalog edits lock the parent before the version and derive access in
+	// a later statement. Hold that same parent lock through the facet callback
+	// so media facts cannot restore an access snapshot read before an edit.
 	var id string
-	err := tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
+	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, v.Content).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	f := factsOf(k, m)
+	err = tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3
 AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8) RETURNING id`,
 		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio).Scan(&id)
