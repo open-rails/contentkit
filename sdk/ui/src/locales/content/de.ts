@@ -42,6 +42,7 @@ export const content: typeof en = {
     comments_closed: "Geschlossen (bleiben, keine neuen)",
     comments_hidden: "Ausgeblendet",
     accessTitle: "Zugang und Preis",
+    accessOnlyTitle: "Zugriff",
     access: "Wer es öffnen kann",
     level_public: "Alle",
     level_tier: "Mitglieder einer Stufe",

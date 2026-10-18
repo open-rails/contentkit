@@ -237,6 +237,33 @@ names, driver text and stack traces are logged, never served.
 
 ## Access and offers (`access`, `offers`)
 
+An app can restrict each content kind's editorial and sales policy in its
+ContentKit model. The same policy is returned by `/kinds` and used by the admin
+UI; it is enforced for content creation, updates, version overrides, imports
+and individual offer creation. Omitting a policy retains the full feature set.
+For example, a subscription-only gallery app can set:
+
+```yaml
+kinds:
+  gallery:
+    # Other kind settings omitted.
+    access_levels: [public, tier]
+    comment_modes: [open]
+```
+
+This permits free and tier-gated content, disables individual content/version
+sales and keeps comments open. Tier names still come from `tiers`; the host's
+OpenRails catalog supplies those subscriptions. Allowed access levels are
+`public`, `tier`, `ppv`, `group`, `group_ppv`. Allowed comment modes are `open`,
+`closed`, `hidden`. An omitted or empty list permits all modes. Entity sales
+remain independently controlled by each entity kind's `sellable` setting.
+Changing policy does not rewrite previously stored content access rules;
+migrate those deliberately before applying a stricter policy. Disallowed
+individual offers stop appearing as sales immediately and the normal offer
+reconciliation withdraws them from billing, retaining their purchase history.
+A restored item adopts a fixed comment mode where the kind declares one.
+
+
 ContentKit gives entitlement keys meaning; OpenRails grants them and never
 parses one. Keys are constructed, never typed:
 

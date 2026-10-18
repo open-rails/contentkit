@@ -41,6 +41,7 @@ export const content = {
     comments_closed: "Closed (kept, no new ones)",
     comments_hidden: "Hidden",
     accessTitle: "Access and price",
+    accessOnlyTitle: "Access",
     access: "Who can open it",
     level_public: "Everyone",
     level_tier: "Tier members",

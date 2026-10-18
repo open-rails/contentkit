@@ -42,7 +42,7 @@ const item = (id: string, title: string, access: Rule, extra: Partial<Content> =
   ...extra,
 });
 
-function server(items: Content[], o: { count?: ManageCount; fail?: string } = {}) {
+function server(items: Content[], o: { count?: ManageCount; fail?: string; model?: ContentModel } = {}) {
   const calls: { method: string; path: string; query: URLSearchParams; body: unknown }[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "https://test.invalid");
@@ -50,7 +50,7 @@ function server(items: Content[], o: { count?: ManageCount; fail?: string } = {}
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, query: url.searchParams, body });
-    if (method === "GET" && path === "/kinds") return Response.json(model);
+    if (method === "GET" && path === "/kinds") return Response.json(o.model ?? model);
     const shown = url.searchParams.get("q") ? [] : items;
     if (method === "GET" && path === "/manage/gallery") return Response.json(shown);
     if (method === "GET" && path === "/manage/gallery/count") return Response.json(o.count ?? { total: shown.length });
@@ -135,4 +135,15 @@ it("searches as the admin types and tells filtered from truly empty", async () =
   expect(s.calls.some((c) => c.path === "/manage/gallery" && c.query.get("q") === "zz")).toBe(true);
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(await screen.findByText("Alpha")).toBeVisible();
+});
+
+
+it("does not advertise individual purchases in a subscription-only manager", async () => {
+  const limited: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"] } } };
+  const s = server([], { model: limited });
+  const user = userEvent.setup();
+  render(<Route client={s.client} />);
+  await user.click(await screen.findByRole("combobox", { name: "Access" }));
+  expect(screen.queryByRole("option", { name: "Buyers" })).toBeNull();
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).not.toContain("Pay per view");
 });

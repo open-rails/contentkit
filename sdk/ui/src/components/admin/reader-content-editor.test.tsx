@@ -73,7 +73,7 @@ const read = (files: FileInfo[] = [page]): ReadResult => ({
 const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean } = {}) {
+function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel } = {}) {
   let item = gallery();
   if (options.noText) delete item.text;
   const calls: Call[] = [];
@@ -83,14 +83,14 @@ function server(options: { failText?: boolean; media?: ReadResult; memberships?:
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, body });
-    if (method === "GET" && path === "/kinds") return Response.json(model);
+    if (method === "GET" && path === "/kinds") return Response.json(options.model ?? model);
     if (method === "GET" && (path === "/manage/gallery" || path === "/manage")) {
       const code = url.searchParams.get("code");
       return Response.json(code && code !== item.code ? [] : [item]);
     }
     if (method === "GET" && path === "/contents/c1") return Response.json(item);
     if (method === "POST" && path === "/contents") {
-      item = { ...item, text: body.text, title: Object.values(body.text as NonNullable<Content["text"]>)[0]!.title };
+      item = { ...item, ...body, text: body.text, title: Object.values(body.text as NonNullable<Content["text"]>)[0]!.title };
       return Response.json(item);
     }
     if (method === "GET" && path === "/contents/c1/entities") return Response.json(await (options.memberships ?? Promise.resolve(links)));
@@ -399,4 +399,44 @@ it("refreshes pages and notices after asynchronous ZIP extraction replaces the a
   // or media.processed event to refresh the notices separately.
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), { timeout: 6_000 });
   expect(s.calls.filter((call) => call.path.endsWith("/page-notices")).length).toBeGreaterThan(1);
+});
+
+
+it("the reader workspace follows the host's subscription-only model", async () => {
+  const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"], comment_modes: ["open"] } } };
+  const s = server({ model: limited });
+  const user = userEvent.setup();
+  const { container } = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  expect(await screen.findByRole("heading", { name: "Access" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Access and price" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Comments" })).toBeNull();
+  expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
+  await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  await user.click(screen.getByRole("option", { name: "Tier members" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.access?.tiers?.[0] === "premium")).toBe(true));
+});
+
+
+it("keeps unlisted publishing available independently of subscription-only access", async () => {
+  const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"], comment_modes: ["open"] } } };
+  const s = server({ model: limited });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await user.click(await screen.findByRole("combobox", { name: "Listing" }));
+  await user.click(screen.getByRole("option", { name: "Unlisted (link only)" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.listing === "unlisted")).toBe(true));
+});
+
+
+it("a new reader item uses restricted defaults before its first create request", async () => {
+  const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["tier"], comment_modes: ["closed"] } } };
+  const s = server({ model: limited });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id={null} />);
+  await user.type(await screen.findByLabelText("Title"), "Members only");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(s.calls.find((c) => c.method === "POST" && c.path === "/contents")?.body).toMatchObject({ access: { level: "tier", tiers: ["premium"] }, comments: "closed" }));
 });

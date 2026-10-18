@@ -25,7 +25,7 @@ import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "..
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { createDraft, uploadTarget } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
-import { ContentSections } from "../content/editors.js";
+import { ContentSections, allowsIndividualSales } from "../content/editors.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
@@ -427,7 +427,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   {labelOf(labels, x)}
                 </SelectItem>
               ))}
-            <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>
+            {allowsIndividualSales(model, kind) && <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>}
           </SelectContent>
         </Select>
       </div>

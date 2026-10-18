@@ -42,6 +42,7 @@ export const content: typeof en = {
     comments_closed: "닫힘 (기존 댓글 유지)",
     comments_hidden: "숨김",
     accessTitle: "이용 권한과 가격",
+    accessOnlyTitle: "접근",
     access: "열 수 있는 사람",
     level_public: "모두",
     level_tier: "등급 회원",

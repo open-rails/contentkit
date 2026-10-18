@@ -52,10 +52,15 @@ func (w *reconcileWorker) Work(ctx context.Context, _ *river.Job[reconcileArgs])
 }
 
 // Reconcile queues a sync of every target with an offer OpenRails does not
-// match yet: those whose job was lost, or whose sync keeps failing.
+// match yet: those whose job was lost, whose sync keeps failing, or whose
+// active offer is no longer permitted by the host's current kind policy.
 func (s *Service) Reconcile(ctx context.Context) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT target_kind, target_id FROM `+s.t.offers+` WHERE tenant_id = $1 AND synced_revision < revision`, s.tenant)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT o.target_kind, o.target_id FROM `+s.t.offers+` o
+ LEFT JOIN `+s.t.versions+` v ON o.target_kind = 'version' AND v.tenant_id = o.tenant_id AND v.id = o.target_id
+ WHERE o.tenant_id = $1 AND (o.synced_revision < o.revision OR (o.state = 'active' AND o.target_kind <> 'group'
+ AND EXISTS (SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=o.tenant_id
+  AND c.id = CASE WHEN o.target_kind = 'content' THEN o.target_id ELSE v.content_id END AND NOT (c.kind = ANY($2::text[])))))`, s.tenant, s.sellableKinds())
 		if err != nil {
 			return err
 		}

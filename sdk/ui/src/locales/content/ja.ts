@@ -42,6 +42,7 @@ export const content: typeof en = {
     comments_closed: "締め切り（表示のみ）",
     comments_hidden: "非表示",
     accessTitle: "アクセスと価格",
+    accessOnlyTitle: "アクセス",
     access: "開ける人",
     level_public: "全員",
     level_tier: "プランの会員",

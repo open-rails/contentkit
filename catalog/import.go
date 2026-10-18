@@ -15,7 +15,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
@@ -624,17 +623,23 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 		return err
 	}
 	if c.Comments == "" {
-		c.Comments = content.CommentsOpen
+		c.Comments = s.defaultComments(c.Kind)
 	}
 	if err := checkComments(c.Comments); err != nil {
 		return err
 	}
+	if err := s.checkKindComments(c.Kind, c.Comments); err != nil {
+		return err
+	}
 
-	rule := access.Rule{Level: access.Public}
+	rule := s.defaultRule(c.Kind)
 	if c.Access != nil {
 		rule = *c.Access
 	}
 	if rule, err = s.checkRule(rule); err != nil {
+		return err
+	}
+	if err := s.checkKindRule(c.Kind, rule); err != nil {
 		return err
 	}
 	c.Access = &rule
@@ -717,6 +722,9 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 	if v.Access != nil {
 		r, err := s.checkRule(*v.Access)
 		if err != nil {
+			return err
+		}
+		if err := s.checkKindRule(kind, r); err != nil {
 			return err
 		}
 		v.Access = &r

@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Membership, NewEntity, RefBody, Rule } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Membership, NewEntity, RefBody } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { ruleFor } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
@@ -25,7 +25,7 @@ import { labelOf } from "../groups/parts.js";
 import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor, positionalName } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
-import { RuleFields, cleanRule, complete, VersionsEditor, versionLabel } from "../content/editors.js";
+import { RuleFields, cleanRule, complete, VersionsEditor, versionLabel, allowsIndividualSales, defaultAccessRule } from "../content/editors.js";
 import { OfferFields } from "../content/offer-fields.js";
 import { ErrorLine, contentError, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
@@ -115,11 +115,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     useMemo(
       () => ({
         listing: item?.listing ?? ("listed" as Listing),
-        comments: item?.comments ?? "open",
+        comments: item?.comments ?? (!spec.comment_modes?.length || spec.comment_modes.includes("open") ? "open" : spec.comment_modes[0]!),
         attributes: formOf(spec.attributes ?? {}, item?.attributes ?? {}),
-        access: item?.access ?? ({ level: "public" } as Rule),
+        access: item?.access ?? defaultAccessRule(model, p.kind),
       }),
-      [item?.listing, item?.comments, item?.attributes, item?.access, spec.attributes],
+      [item?.listing, item?.comments, item?.attributes, item?.access, spec.attributes, spec.comment_modes, model, p.kind],
     ),
   );
   const associations = useDraft(
@@ -169,7 +169,13 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const before = latest.current.texts.get()[l] ?? blank();
     const title = before.title.trim() || fileTitle(suggested ?? "") || t("readerEditor.untitled");
     if (!before.title.trim()) latest.current.texts.edit((all) => ({ ...all, [l]: { ...(all[l] ?? blank()), title } }));
-    const input = { kind: p.kind, text: { [l]: { ...before, title } }, owner_group_id: p.ownerGroup };
+    const input = {
+      kind: p.kind,
+      text: { [l]: { ...before, title } },
+      owner_group_id: p.ownerGroup,
+      ...(spec.access_levels?.length ? { access: cleanRule(latest.current.details.get().access) } : {}),
+      ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
+    };
     creating.current = ed
       .create(input)
       .then((content) => {
@@ -593,7 +599,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               </label>
               <ErrorLine error={cover.error} />
             </Panel>
-            <Panel title={t("contentEditor.accessTitle")}>
+            <Panel title={t(allowsIndividualSales(model, p.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")}>
               <RuleFields
                 value={details.value.access}
                 onChange={(access) => changeDetails({ access })}
@@ -603,7 +609,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 labels={p.labels}
                 client={client}
               />
-              {item && (details.value.access.level === "ppv" || details.value.access.level === "group_ppv" || item.offer) && (
+              {item && allowsIndividualSales(model, p.kind) && (details.value.access.level === "ppv" || details.value.access.level === "group_ppv" || item.offer) && (
                 <OfferFields
                   offer={item.offer}
                   pending={offer.pending}
@@ -633,19 +639,23 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                   ))}
                 </SelectContent>
               </Select>
-              <Label htmlFor={`${ids}-comments`}>{t("contentEditor.comments")}</Label>
-              <Select value={details.value.comments} onValueChange={(comments) => comments && changeDetails({ comments })}>
-                <SelectTrigger id={`${ids}-comments`}>
-                  <SelectValue>{t(`contentEditor.comments_${details.value.comments as "open" | "closed" | "hidden"}`)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {(["open", "closed", "hidden"] as const).map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {t(`contentEditor.comments_${value}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {spec.comment_modes?.length !== 1 && (
+                <>
+                  <Label htmlFor={`${ids}-comments`}>{t("contentEditor.comments")}</Label>
+                  <Select value={details.value.comments} onValueChange={(comments) => comments && changeDetails({ comments })}>
+                    <SelectTrigger id={`${ids}-comments`}>
+                      <SelectValue>{t(`contentEditor.comments_${details.value.comments as "open" | "closed" | "hidden"}`)}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["open", "closed", "hidden"] as const).filter((mode) => !spec.comment_modes?.length || spec.comment_modes.includes(mode)).map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {t(`contentEditor.comments_${value}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
               {item?.state === "published" && (
                 <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(() => client.contents.unpublish(item.id))}>
                   {t("contentManager.unpublish")}

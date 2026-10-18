@@ -31,10 +31,12 @@ type ContentInput struct {
 	// Text is the text per language.
 	Text    map[string]Text `json:"text,omitempty"`
 	Listing string          `json:"listing,omitempty"` // default listed
-	// Comments is open (the default), closed (existing ones show, new ones
-	// are refused) or hidden.
+	// Comments is open (the default when permitted), closed (existing ones
+	// show, new ones are refused) or hidden. A kind excluding open defaults to
+	// its first configured comment mode.
 	Comments string `json:"comments,omitempty"`
-	// Access defaults to public.
+	// Access defaults to public when permitted, otherwise the kind's first
+	// allowed level (and the first configured tier for tier access).
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
@@ -262,16 +264,22 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 			return nil, err
 		}
 		if p.Comments == "" {
-			p.Comments = content.CommentsOpen
+			p.Comments = s.defaultComments(c.Kind)
 		}
 		if err := checkComments(p.Comments); err != nil {
 			return nil, err
 		}
-		rule := access.Rule{Level: access.Public}
+		if err := s.checkKindComments(c.Kind, p.Comments); err != nil {
+			return nil, err
+		}
+		rule := s.defaultRule(c.Kind)
 		if c.Access != nil {
 			rule = *c.Access
 		}
 		if rule, err = s.checkRule(rule); err != nil {
+			return nil, err
+		}
+		if err := s.checkKindRule(c.Kind, rule); err != nil {
 			return nil, err
 		}
 		p.Access = &rule
@@ -428,6 +436,16 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		fx := effects{expose: true}
 		for _, u := range in {
 			o := got[u.ID]
+			if u.Comments != nil {
+				if err := s.checkKindComments(o.kind, *u.Comments); err != nil {
+					return fx, err
+				}
+			}
+			if u.Access != nil {
+				if err := s.checkKindRule(o.kind, *u.Access); err != nil {
+					return fx, err
+				}
+			}
 			if o.state == StateDeleted {
 				return fx, ErrNotFound
 			}
@@ -781,6 +799,9 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 				return fx, err
 			}
 		}
+		if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+			return fx, err
+		}
 		// A scheduled item goes live at its time without another check, so
 		// scheduling needs ready media too.
 		var going []string
@@ -898,6 +919,18 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 // restoreRows brings deleted items back as they were: published (or
 // scheduled) when they had been, else drafts.
 func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
+	// A fixed comment policy is applied only when explicitly restoring a
+	// deleted item. Retained tombstones are not rewritten on configuration load.
+	for kind, spec := range s.cfg.Kinds {
+		if len(spec.CommentModes) == 1 {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET comments = $3 WHERE tenant_id = $1 AND id = ANY($2) AND kind = $4`, s.tenant, ids, spec.CommentModes[0], kind); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,
  state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	return err
@@ -1131,7 +1164,19 @@ func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versi
 		if err != nil {
 			return r, err
 		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
 		r.access, _ = json.Marshal(rule)
+	}
+	if r.access != nil {
+		var rule access.Rule
+		if err := json.Unmarshal(r.access, &rule); err != nil {
+			return r, err
+		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
 	}
 	if v.Attributes != nil {
 		a, err := checkAttributes(k.Attributes, v.Attributes)

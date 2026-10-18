@@ -16090,6 +16090,18 @@
       "Kind": {
         "type": "object",
         "properties": {
+          "access_levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comment_modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "route": {
             "type": "string"
           },

@@ -121,7 +121,10 @@ func (s *Service) Live(ctx context.Context, keys []access.Key) (map[string]Offer
 	if len(ids) == 0 {
 		return out, nil
 	}
-	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[])) AND (o.target_kind <> 'group' OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))`, kinds, ids)
+	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+ AND ((o.target_kind = 'group' AND EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))
+ OR (o.target_kind <> 'group' AND EXISTS (SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=o.tenant_id
+  AND c.id = CASE WHEN o.target_kind = 'content' THEN o.target_id ELSE v.content_id END AND c.kind = ANY($4::text[]))))`, kinds, ids, s.sellableKinds())
 	for _, o := range list {
 		out[o.Key.String()] = o
 	}
@@ -218,21 +221,36 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// sellableKinds is the current content policy, including kinds with no
+// explicit restriction. It is also applied to offers created before a host
+// disabled individual sales.
+func (s *Service) sellableKinds() []string {
+	names := []string{}
+	for name, kind := range s.kinds.Kinds {
+		if kind.Sellable() {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
 // resolve checks each target exists and may be sold: a version must belong
-// to the content it names, a group's kind must be sellable.
+// to the content it names, and its content or group's kind must be sellable.
 func (s *Service) resolve(ctx context.Context, q querier, targets []Target) error {
 	for _, t := range targets {
 		if _, err := s.key(Target{Kind: t.Kind, ID: t.ID, Content: orID(t)}); err != nil {
 			return fmt.Errorf("%w: %w", ErrNotFound, err)
 		}
 		var ok bool
+		var kind string
 		var err error
 		switch t.Kind {
 		case ContentTarget:
-			err = q.QueryRow(ctx, `SELECT true FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 AND state <> 'deleted'`, s.tenant, t.ID).Scan(&ok)
+			err = q.QueryRow(ctx, `SELECT true, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 AND state <> 'deleted'`, s.tenant, t.ID).Scan(&ok, &kind)
 		case VersionTarget:
-			err = q.QueryRow(ctx, `SELECT v.content_id = $3 FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-				WHERE v.tenant_id = $1 AND v.id = $2 AND v.state <> 'deleted' AND c.state <> 'deleted'`, s.tenant, t.ID, t.Content).Scan(&ok)
+			err = q.QueryRow(ctx, `SELECT v.content_id = $3, c.kind FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+				WHERE v.tenant_id = $1 AND v.id = $2 AND v.state <> 'deleted' AND c.state <> 'deleted'`, s.tenant, t.ID, t.Content).Scan(&ok, &kind)
 		case GroupTarget:
 			var kind string
 			err = q.QueryRow(ctx, `SELECT kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active'`, s.tenant, t.ID).Scan(&kind)
@@ -246,6 +264,12 @@ func (s *Service) resolve(ctx context.Context, q querier, targets []Target) erro
 		}
 		if err != nil {
 			return err
+		}
+		if t.Kind != GroupTarget {
+			spec, exists := s.kinds.Kinds[kind]
+			if !exists || !spec.Sellable() {
+				return fmt.Errorf("%w: content kind %s does not allow individual sales", ErrConflict, kind)
+			}
 		}
 	}
 	return nil

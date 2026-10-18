@@ -44,6 +44,19 @@ type Comments = (typeof COMMENTS)[number];
 const LEVELS: readonly Rule["level"][] = ["public", "tier", "ppv", "group", "group_ppv"];
 const grouped = (l: Rule["level"]) => l === "group" || l === "group_ppv";
 
+/** Prefer public access, otherwise the kind's first allowed level. */
+export function defaultAccessRule(model: ContentModel, kind: string): Rule {
+  const levels = model.kinds[kind]?.access_levels;
+  const level = (!levels?.length || levels.includes("public") ? "public" : levels[0]) as Rule["level"];
+  return { level, ...(level === "tier" ? { tiers: model.tiers.slice(0, 1) } : {}) };
+}
+
+/** The host's content model controls individual sale controls everywhere. */
+export function allowsIndividualSales(model: ContentModel | null, kind: string): boolean {
+  const spec = model?.kinds[kind];
+  return !!spec && (!spec.access_levels?.length || spec.access_levels.some((level) => level === "ppv" || level === "group_ppv"));
+}
+
 function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
   return (
     <section className="grid gap-3 border-t border-border pt-4" data-ckui={ckui}>
@@ -157,21 +170,23 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
             </SelectContent>
           </Select>
         </div>
-        <div className="grid gap-1.5 sm:max-w-xs">
-          <Label>{t("contentEditor.comments")}</Label>
-          <Select value={comments} onValueChange={(v) => { fields.edit((f) => ({ ...f, comments: v as Comments })); setSaved(false); }}>
-            <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
-              <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {COMMENTS.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {t(`contentEditor.comments_${c}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {spec?.comment_modes?.length !== 1 && (
+          <div className="grid gap-1.5 sm:max-w-xs">
+            <Label>{t("contentEditor.comments")}</Label>
+            <Select value={comments} onValueChange={(v) => { fields.edit((f) => ({ ...f, comments: v as Comments })); setSaved(false); }}>
+              <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
+                <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {COMMENTS.filter((mode) => !spec?.comment_modes?.length || spec.comment_modes.includes(mode)).map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {t(`contentEditor.comments_${c}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <AttributeFields declared={declared} form={attrs.value} onChange={(n, v) => { attrs.edit((a) => ({ ...a, [n]: v })); setSaved(false); }} labels={p.labels} />
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
@@ -202,6 +217,8 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const id = useId();
   const tiers = model?.tiers ?? [];
   const spec = model?.kinds[kind];
+  const declaredLevels = spec?.access_levels;
+  const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
   const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
@@ -221,14 +238,14 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           value={value.level}
           onValueChange={(v) => {
             const level = v as Rule["level"];
-            onChange({ level, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
+            onChange({ level, tiers: level === "tier" ? (tiers.length === 1 ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
           }}
         >
           <SelectTrigger size="sm" aria-label={t("contentEditor.access")}>
             <SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {LEVELS.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || groupKinds.length)).map((l) => (
+            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || groupKinds.length)).map((l) => (
               <SelectItem key={l} value={l}>
                 {t(`contentEditor.level_${l}`)}
               </SelectItem>
@@ -236,7 +253,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           </SelectContent>
         </Select>
       </div>
-      {value.level === "tier" && (
+      {value.level === "tier" && tiers.length > 1 && (
         <fieldset className="flex flex-wrap gap-3">
           <legend className="sr-only">{t("contentEditor.tiers")}</legend>
           {tiers.map((tier) => (
@@ -345,7 +362,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const save = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
   return (
-    <Section title={t("contentEditor.accessTitle")} ckui="access-editor">
+    <Section title={t(allowsIndividualSales(model, content.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")} ckui="access-editor">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -372,12 +389,12 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
           <Saved show={saved} />
         </div>
       </form>
-      <OfferFields
+      {allowsIndividualSales(model, content.kind) && <OfferFields
         offer={content.offer}
         pending={offer.pending}
         onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id }))}
-      />
+      />}
       <ErrorLine error={offer.error} />
     </Section>
   );
@@ -588,12 +605,12 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
         </div>
         <ErrorLine error={remove.error} />
       </form>
-      <OfferFields
+      {allowsIndividualSales(model, content.kind) && <OfferFields
         offer={v.offer}
         pending={offer.pending}
         onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
-      />
+      />}
       <ErrorLine error={offer.error} />
       {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
       {media && <VersionCover content={content} version={v} {...p} />}

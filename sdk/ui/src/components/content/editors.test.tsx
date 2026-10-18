@@ -135,3 +135,35 @@ it("AccessEditor: a group level saves only with a group; previews are the kind's
   expect(within(editor).getByLabelText("Free pages")).toBeInTheDocument();
   expect(within(editor).getByLabelText("Free chapters")).toBeInTheDocument();
 });
+
+
+it("subscription-only policy shows two access choices, saves its single tier, and removes all offer fields", async () => {
+  const limited = { ...model, tiers: ["premium"], kinds: { ...model.kinds, comic: { ...model.kinds.comic!, access_levels: ["public", "tier"] } } };
+  const s = server({
+    "GET /kinds": () => limited,
+    "PATCH /contents/p1": ({ body }) => content({ kind: "comic", access: (body as { access: Content["access"] }).access, revision: 4 }),
+  });
+  const user = userEvent.setup();
+  const { container } = render(<AccessEditor content={content({ kind: "comic" })} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("heading", { name: "Access" })).toBeVisible();
+  await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  await user.click(screen.getByRole("option", { name: "Tier members" }));
+  expect(screen.queryByRole("switch", { name: "premium" })).toBeNull();
+  expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(s.calls.find((c) => c.key === "PATCH /contents/p1")?.body).toEqual({ access: { level: "tier", tiers: ["premium"] }, revision: 3 }));
+});
+
+it("subscription-only versions do not expose prices or purchases", async () => {
+  const limited = { ...model, tiers: ["premium"], kinds: { ...model.kinds, comic: { ...model.kinds.comic!, access_levels: ["public", "tier"] } } };
+  const s = server({ "GET /kinds": () => limited });
+  const user = userEvent.setup();
+  const { container } = render(<VersionsEditor content={content({ kind: "comic" })} media={false} client={s.client} />);
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
+  expect(screen.queryByLabelText("Price")).toBeNull();
+  await user.click(screen.getByRole("switch", { name: "Its own access rule" }));
+  await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+});

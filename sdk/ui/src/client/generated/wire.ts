@@ -1130,6 +1130,8 @@ export interface Item {
 }
 
 export interface Kind {
+  access_levels?: string[];
+  comment_modes?: string[];
   route: string;
   path_entity?: string;
   presentation: string;

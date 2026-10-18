@@ -42,6 +42,7 @@ export const content: typeof en = {
     comments_closed: "关闭（保留已有评论）",
     comments_hidden: "隐藏",
     accessTitle: "访问权限与价格",
+    accessOnlyTitle: "访问权限",
     access: "谁可以打开",
     level_public: "所有人",
     level_tier: "会员等级",
