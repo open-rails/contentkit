@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -600,7 +601,7 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		return err
 	}
 	changed := false
-	m, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
+	_, err = s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
 		before := revisionOfInput(m.Files)
 		guardSegmentedPages(k, m, len(segments[t.Version]) > 0)
 		taken := map[string]bool{}
@@ -643,7 +644,19 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		return nil
 	})
 	if err == nil {
-		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.recordFacts(ctx, tx, k, t, m) }); err != nil {
+		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+			if err := s.lockTarget(ctx, tx, t); err != nil {
+				return err
+			}
+			// Not the manifest this edit wrote: a commit may have landed since.
+			m, _, err := s.m.Manifests.Get(ctx, ref)
+			if errors.Is(err, media.ErrNotFound) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			return s.recordFacts(ctx, tx, k, t, m)
+		}); err != nil {
 			return err
 		}
 		if changed && s.m.Jobs != nil {

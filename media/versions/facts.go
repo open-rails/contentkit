@@ -72,6 +72,17 @@ func inPattern(pattern, path string) bool {
 	return ok && strings.HasPrefix(path, dir) && len(path) > len(dir) && !strings.Contains(path[len(dir):], "/")
 }
 
+// lockTarget locks v's content, then v, the order catalog writes take them.
+// Holding v makes callbacks that read its manifest afterwards record their
+// snapshots in commit order. Its callers start tx for it, so it may wait.
+func (s *Service) lockTarget(ctx context.Context, tx pgx.Tx, v Target) error {
+	if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, v.Content); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, v.Version)
+	return err
+}
+
 // recordFacts writes v's facts and refreshes its facets when they changed.
 func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) error {
 	// Catalog edits lock the parent before the version and derive access in

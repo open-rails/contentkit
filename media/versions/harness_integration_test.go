@@ -418,6 +418,51 @@ FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize()
 	}
 }
 
+// lockVersion holds v's content and version rows, in the order catalog
+// writes take them, until the returned transaction ends; pid is its backend.
+func (s *site) lockVersion(v versions.Target, version bool) (tx pgx.Tx, pid uint32) {
+	s.t.Helper()
+	tx, err := s.pool.Begin(s.ctx)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if err := tx.QueryRow(s.ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		s.t.Fatal(err)
+	}
+	if _, err := tx.Exec(s.ctx, `SELECT FROM `+s.table("content_items")+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.tenant, v.Content); err != nil {
+		s.t.Fatal(err)
+	}
+	if version {
+		if _, err := tx.Exec(s.ctx, `SELECT FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.tenant, v.Version); err != nil {
+			s.t.Fatal(err)
+		}
+	}
+	return tx, pid
+}
+
+// waitBlocked waits until some backend waits on pid's locks and reports
+// true, or reports false once done receives first.
+func (s *site) waitBlocked(pid uint32, done <-chan error) bool {
+	s.t.Helper()
+	for {
+		select {
+		case err := <-done:
+			s.t.Logf("returned without waiting: %v", err)
+			return false
+		default:
+		}
+		var blocked bool
+		if err := s.pool.QueryRow(s.ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked); err != nil {
+			s.t.Fatal(err)
+		}
+		if blocked {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // dumpJobs logs the worker's and the host's River jobs: what a timed-out
 // wait was waiting on.
 func (s *site) dumpJobs() {
