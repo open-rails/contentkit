@@ -56,7 +56,7 @@ func TestRecordFactsPreservesConcurrentAccessIntegration(t *testing.T) {
 	go func() {
 		job <- pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 			return s.recordFacts(ctx, tx, &media.Kind{}, Target{Content: "content", Version: "version"},
-				&media.Manifest{Files: []media.File{{Path: "page.png", Type: "image/png", Blob: "page", W: 100, H: 200}}})
+				&media.Manifest{Files: []media.File{{Path: "source.mp4", Type: "video/mp4", Blob: "video", W: 100, H: 200, Dur: 1}}})
 		})
 	}()
 	select {
