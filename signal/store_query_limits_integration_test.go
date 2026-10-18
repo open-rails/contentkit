@@ -158,3 +158,73 @@ func TestIntegrationRepairDefaultPageQueryLimit(t *testing.T) {
 		})
 	}
 }
+
+// Inlined INSERT ... SELECT statements stay under ClickHouse's default
+// max_query_size when every row is at its validated maximum and escaping
+// doubles it, and a subject erased while such a batch is in flight is still
+// dropped by the statement that would have written it.
+func TestIntegrationInlinedInsertsFitMaxQuerySize(t *testing.T) {
+	st, conn := queryLimitStore(t)
+	ctx := clickhouse.Context(t.Context(), clickhouse.WithSettings(clickhouse.Settings{"max_query_size": 262144}))
+	const tenant = "inline"
+	// Backslashes double under JSON encoding and again when the driver inlines.
+	heavy := func(i int) string { return fmt.Sprintf("%04d", i) + strings.Repeat(`\`, MaxIdentifierBytes-4) }
+	payload := strings.Repeat(`\`, (MaxPayloadBytes-8)/2)
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	count := func(table, where string, args ...any) uint64 {
+		t.Helper()
+		var n uint64
+		if err := conn.QueryRow(ctx, "SELECT count() FROM "+st.db+"."+table+" WHERE "+where, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	signals := make([]Signal, MaxSignalsPerBatch)
+	for i := range signals {
+		signals[i] = Signal{ContentRef: contentref.NewVersion(tenant, "gallery", cid(1), heavy(0)), Subject: Subject{UserID: heavy(i)},
+			Type: "click", EventID: heavy(i), OccurredAt: at, Payload: map[string]any{"p": payload}}
+	}
+	gone := signals[len(signals)-1].Subject
+	gate := newGate(conn, "INSERT INTO "+st.db+".signals")
+	writer := *st
+	writer.conn = gate
+	done := make(chan error, 1)
+	go func() { done <- writer.RecordSignals(ctx, tenant, signals) }()
+	gate.wait(t, ctx)
+	erase(t, st, tenant, gone)
+	close(gate.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := count("signals", "tenant = ? AND subject != ?", tenant, gone.Key()); n != uint64(len(signals)-1) {
+		t.Fatalf("stored %d signals, want %d", n, len(signals)-1)
+	}
+	if n := count("signals", "tenant = ? AND subject = ?", tenant, gone.Key()); n != 0 {
+		t.Fatalf("stored %d signals of a subject erased in flight", n)
+	}
+
+	exposures := make([]Exposure, MaxExposuresPerBatch)
+	for i := range exposures {
+		exposures[i] = Exposure{RenderID: heavy(i), Stage: StageRendered, QueryID: heavy(i), Surface: heavy(i), Ranker: heavy(i), Language: heavy(i),
+			Subject: Subject{UserID: heavy(i)}, OccurredAt: at, Shown: []Placement{{ContentRef: contentref.NewVersion(tenant, "gallery", cid(1), heavy(i)), Position: 1}}}
+	}
+	if err := st.RecordExposures(ctx, tenant, exposures); err != nil {
+		t.Fatal(err)
+	}
+	if n := count("exposures", "tenant = ?", tenant); n != uint64(len(exposures)) {
+		t.Fatalf("stored %d exposures, want %d", n, len(exposures))
+	}
+
+	population := make([]PopulationObservation, MaxSignalsPerBatch)
+	for i := range population {
+		population[i] = PopulationObservation{ID: heavy(i), ContentKind: "gallery", Subject: Subject{UserID: heavy(len(signals) + i)}, ObservedAt: at,
+			Domain: heavy(i), Language: heavy(i), EligibleTiers: []string{heavy(1), heavy(2), heavy(3), heavy(4)}, EligibilityKnown: true}
+	}
+	if err := st.RecordPopulation(ctx, tenant, population); err != nil {
+		t.Fatal(err)
+	}
+	if n := count("measured_population_observations", "tenant = ?", tenant); n != uint64(len(population)) {
+		t.Fatalf("stored %d population observations, want %d", n, len(population))
+	}
+}
