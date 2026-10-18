@@ -145,5 +145,5 @@ it("does not advertise individual purchases in a subscription-only manager", asy
   render(<Route client={s.client} />);
   await user.click(await screen.findByRole("combobox", { name: "Access" }));
   expect(screen.queryByRole("option", { name: "Buyers" })).toBeNull();
-  expect(screen.getAllByRole("option").map((o) => o.textContent)).not.toContain("Pay per view");
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).not.toContain("Pay per view");
 });

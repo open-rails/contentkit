@@ -147,8 +147,8 @@ it("subscription-only policy shows two access choices, saves its single tier, an
   const { container } = render(<AccessEditor content={content({ kind: "comic" })} />, { wrapper: wrap(s.client) });
   expect(await screen.findByRole("heading", { name: "Access" })).toBeVisible();
   await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
-  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
-  await user.click(screen.getByRole("option", { name: "Tier members" }));
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  await user.click(await screen.findByRole("option", { name: "Tier members" }));
   expect(screen.queryByRole("switch", { name: "premium" })).toBeNull();
   expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -165,5 +165,5 @@ it("subscription-only versions do not expose prices or purchases", async () => {
   expect(screen.queryByLabelText("Price")).toBeNull();
   await user.click(screen.getByRole("switch", { name: "Its own access rule" }));
   await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
-  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
 });

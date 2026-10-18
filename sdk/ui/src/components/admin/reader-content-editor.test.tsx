@@ -412,8 +412,8 @@ it("the reader workspace follows the host's subscription-only model", async () =
   expect(screen.queryByRole("combobox", { name: "Comments" })).toBeNull();
   expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
   await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
-  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
-  await user.click(screen.getByRole("option", { name: "Tier members" }));
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  await user.click(await screen.findByRole("option", { name: "Tier members" }));
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.access?.tiers?.[0] === "premium")).toBe(true));
 });
@@ -425,7 +425,7 @@ it("keeps unlisted publishing available independently of subscription-only acces
   const user = userEvent.setup();
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
   await user.click(await screen.findByRole("combobox", { name: "Listing" }));
-  await user.click(screen.getByRole("option", { name: "Unlisted (link only)" }));
+  await user.click(await screen.findByRole("option", { name: "Unlisted (link only)" }));
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.listing === "unlisted")).toBe(true));
 });

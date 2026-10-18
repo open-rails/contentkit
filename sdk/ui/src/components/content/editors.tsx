@@ -218,6 +218,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const tiers = model?.tiers ?? [];
   const spec = model?.kinds[kind];
   const declaredLevels = spec?.access_levels;
+  const fixedTier = !!declaredLevels?.length && tiers.length === 1;
   const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
   const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
@@ -238,7 +239,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           value={value.level}
           onValueChange={(v) => {
             const level = v as Rule["level"];
-            onChange({ level, tiers: level === "tier" ? (tiers.length === 1 ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
+            onChange({ level, tiers: level === "tier" ? (fixedTier ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
           }}
         >
           <SelectTrigger size="sm" aria-label={t("contentEditor.access")}>
@@ -253,7 +254,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           </SelectContent>
         </Select>
       </div>
-      {value.level === "tier" && tiers.length > 1 && (
+      {value.level === "tier" && !fixedTier && (
         <fieldset className="flex flex-wrap gap-3">
           <legend className="sr-only">{t("contentEditor.tiers")}</legend>
           {tiers.map((tier) => (
