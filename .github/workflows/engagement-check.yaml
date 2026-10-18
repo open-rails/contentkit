@@ -11,7 +11,7 @@ run-name: Engagement ${{ inputs.package }} @ ${{ inputs.ref }} (${{ inputs.click
         description: Native engagement package
         required: true
         type: choice
-        options: [signal, popularity, discovery]
+        options: [signal, popularity, discovery, catalog, media/versions]
         default: signal
       test_filter:
         description: Go test name expression (default runs every test)
@@ -67,9 +67,15 @@ jobs:
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
+    - name: Install native media tools for version tests
+      if: inputs.package == 'media/versions'
+      run: |
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends libvips-dev ffmpeg
     - name: Run native source and concurrency tests
       run: |
-        case "$TEST_PACKAGE" in signal|popularity|discovery) ;; *) exit 2 ;; esac
+        case "$TEST_PACKAGE" in signal|popularity|discovery|catalog|media/versions) ;; *) exit 2 ;; esac
         git rev-parse HEAD > engagement-check-head.txt
         set -o pipefail
         go test "./$TEST_PACKAGE" -count=1 -race -run "$TEST_FILTER" -timeout=20m 2>&1 | tee engagement-check.log
