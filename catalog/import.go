@@ -628,8 +628,12 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	if err := checkComments(c.Comments); err != nil {
 		return err
 	}
-	if err := s.checkKindComments(c.Kind, c.Comments); err != nil {
-		return err
+	// Deleted records preserve historical settings. Restore applies the
+	// current policy before the retained item can become live again.
+	if c.State != StateDeleted {
+		if err := s.checkKindComments(c.Kind, c.Comments); err != nil {
+			return err
+		}
 	}
 
 	rule := s.defaultRule(c.Kind)
@@ -639,8 +643,10 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	if rule, err = s.checkRule(rule); err != nil {
 		return err
 	}
-	if err := s.checkKindRule(c.Kind, rule); err != nil {
-		return err
+	if c.State != StateDeleted {
+		if err := s.checkKindRule(c.Kind, rule); err != nil {
+			return err
+		}
 	}
 	c.Access = &rule
 	if c.Restrictions, err = s.checkRestrictions(c.Restrictions); err != nil {
@@ -678,14 +684,14 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 		return invalid("a content item needs at least one version")
 	}
 	for i := range c.Versions {
-		if err := s.checkImportVersion(c.Kind, &c.Versions[i]); err != nil {
+		if err := s.checkImportVersion(c.Kind, c.State == StateDeleted, &c.Versions[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
+func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
@@ -724,8 +730,13 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 		if err != nil {
 			return err
 		}
-		if err := s.checkKindRule(kind, r); err != nil {
-			return err
+		// Deleted imports preserve historical access, including versions whose
+		// parent is deleted while their own state remains published. Restoring
+		// either the item or version applies the current kind policy.
+		if !parentDeleted && v.State != StateDeleted {
+			if err := s.checkKindRule(kind, r); err != nil {
+				return err
+			}
 		}
 		v.Access = &r
 	}

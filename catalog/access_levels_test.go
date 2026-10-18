@@ -150,3 +150,75 @@ func TestConfiguredPolicyAfterContentExistsIntegration(t *testing.T) {
 		t.Fatalf("restore forbidden access: %v", err)
 	}
 }
+
+func TestConfiguredPolicyPreservesImportedTombstonesIntegration(t *testing.T) {
+	f := newFixture(t, func(o *Options) {
+		k := o.Kinds.Kinds["gallery"]
+		k.AccessLevels, k.CommentModes = []string{"public", "tier"}, []string{"open"}
+		o.Kinds.Kinds["gallery"] = k
+	})
+	makeItem := func(state, comments string, level access.Level) ImportContent {
+		return ImportContent{ID: contentref.NewID(), Kind: "gallery", State: state, Comments: comments,
+			Access: &access.Rule{Level: level}, Text: map[string]Text{"en": {Title: "Historical gallery"}},
+			Versions: []ImportVersion{{ID: contentref.NewID(), State: StatePublished, Languages: []string{"en"}}}}
+	}
+	importOne := func(in ImportContent) error {
+		return pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
+			return f.s.Import(f.ctx, tx, []ImportContent{in})
+		})
+	}
+	tombstone := makeItem(StateDeleted, "hidden", access.PPV)
+	tombstone.Versions[0].Access = &access.Rule{Level: access.PPV}
+	if err := importOne(tombstone); err != nil {
+		t.Fatalf("historical tombstone import: %v", err)
+	}
+	var state, comments, itemLevel, versionLevel string
+	if err := f.pool.QueryRow(f.ctx, `SELECT c.state, c.comments, c.access->>'level', v.access->>'level'
+ FROM `+f.s.t.items+` c JOIN `+f.s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id
+ WHERE c.tenant_id=$1 AND c.id=$2`, tenant, tombstone.ID).Scan(&state, &comments, &itemLevel, &versionLevel); err != nil {
+		t.Fatal(err)
+	}
+	if state != StateDeleted || comments != "hidden" || itemLevel != "ppv" || versionLevel != "ppv" {
+		t.Fatalf("historical fields changed: %s %s %s %s", state, comments, itemLevel, versionLevel)
+	}
+	if err := f.s.Restore(f.ctx, f.as("staff"), []string{tombstone.ID}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("restored forbidden access: %v", err)
+	}
+	// A failed restore must not commit even the fixed-mode comment repair.
+	if err := f.pool.QueryRow(f.ctx, `SELECT comments FROM `+f.s.t.items+` WHERE tenant_id=$1 AND id=$2`, tenant, tombstone.ID).Scan(&comments); err != nil || comments != "hidden" {
+		t.Fatalf("failed restore changed historical comments to %s: %v", comments, err)
+	}
+	tombstone.Access, tombstone.Versions[0].Access = &access.Rule{Level: access.Public}, &access.Rule{Level: access.Public}
+	if err := importOne(tombstone); err != nil {
+		t.Fatalf("repair retained access: %v", err)
+	}
+	if err := f.s.Restore(f.ctx, f.as("staff"), []string{tombstone.ID}); err != nil {
+		t.Fatalf("restore repaired tombstone: %v", err)
+	}
+	if got := f.read("staff", "main.test", tombstone.ID)[0]; got.Comments != "open" || got.State != StateDraft {
+		t.Fatalf("restored fields: comments=%s state=%s", got.Comments, got.State)
+	}
+	for _, in := range []ImportContent{
+		makeItem(StateDraft, "hidden", access.Public),
+		makeItem(StateDraft, "open", access.PPV),
+		makeItem(StateDeleted, "invalid", access.Public),
+		makeItem(StateDeleted, "hidden", access.Level("invalid")),
+	} {
+		if err := importOne(in); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid import state=%s comments=%s access=%s: %v", in.State, in.Comments, in.Access.Level, err)
+		}
+	}
+	item := makeItem(StateDraft, "open", access.Public)
+	item.Versions = append(item.Versions, ImportVersion{ID: contentref.NewID(), State: StateDeleted, Languages: []string{"en"}, Access: &access.Rule{Level: access.PPV}})
+	if err := importOne(item); err != nil {
+		t.Fatalf("deleted version history: %v", err)
+	}
+	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: item.ID, VersionID: item.Versions[1].ID, VersionInput: VersionInput{State: StateDraft}}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("restored forbidden version access: %v", err)
+	}
+	item.ID, item.Versions[0].ID, item.Versions[1].ID = contentref.NewID(), contentref.NewID(), contentref.NewID()
+	item.Versions[1].State = StatePublished
+	if err := importOne(item); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("live version accepted forbidden access: %v", err)
+	}
+}
