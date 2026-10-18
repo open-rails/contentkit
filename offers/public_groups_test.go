@@ -3,6 +3,7 @@ package offers
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -210,3 +211,184 @@ func TestReconcileQueuesOneSyncPerTarget(t *testing.T) {
 	}
 	waiting(2)
 }
+
+// joinBilling keeps products and free grants in memory; held keys follow the
+// grants. before, when set, runs at the start of Products or Grant.
+type joinBilling struct {
+	heldForPolicyTest
+	products        map[string]access.Product
+	grants, revokes int
+	beforeProducts  func()
+	beforeGrant     func() error
+}
+
+func (b *joinBilling) Products(_ context.Context, keys []string) (map[string]access.Product, error) {
+	if f := b.beforeProducts; f != nil {
+		b.beforeProducts = nil
+		f()
+	}
+	out := map[string]access.Product{}
+	for _, k := range keys {
+		if p, ok := b.products[k]; ok {
+			out[k] = p
+		}
+	}
+	return out, nil
+}
+
+func (b *joinBilling) StopRenewals(context.Context, []string) error { return nil }
+
+func (b *joinBilling) keyOf(product string) string {
+	for k, p := range b.products {
+		if p.ID == product {
+			return k
+		}
+	}
+	return ""
+}
+
+func (b *joinBilling) Grant(_ context.Context, grants []access.Grant) error {
+	b.grants++
+	var err error
+	if f := b.beforeGrant; f != nil {
+		b.beforeGrant = nil
+		err = f()
+	}
+	for _, g := range grants {
+		if k := b.keyOf(g.ProductID); k != "" && !slices.Contains(b.keys, k) {
+			b.keys = append(b.keys, k)
+		}
+	}
+	return err
+}
+
+func (b *joinBilling) Revoke(_ context.Context, grants []access.Grant) error {
+	b.revokes++
+	for _, g := range grants {
+		b.keys = slices.DeleteFunc(b.keys, func(k string) bool { return k == b.keyOf(g.ProductID) })
+	}
+	return nil
+}
+
+// A free join racing a reprice, withdrawal or product change leaves no free
+// grant of what is no longer free, whether the join synced first or not.
+func TestJoinRechecksFreeTerms(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	cfg := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader"}}, GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", Sellable: true}}}
+	billing := &joinBilling{products: map[string]access.Product{}}
+	gate, err := access.NewGate(access.GateConfig{Tenant: "policy", Kinds: cfg, Billing: billing})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Options{Pool: pool, Schema: schema, Tenant: "policy", Kinds: cfg, Billing: billing, Gate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := access.Actor{ID: "reader"}
+	paid := Terms{Amount: 5_000_000, Currency: "USD"}
+	// group creates a free group offer on product p; synced or awaiting sync.
+	group := func(t *testing.T, p string, synced bool) (string, access.Key) {
+		t.Helper()
+		id := contentref.NewID()
+		key, _ := access.GroupKey("policy", id)
+		billing.products[key.String()] = access.Product{ID: p, Key: key.String(), DisplayName: id}
+		rev := 0
+		if synced {
+			rev = 1
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO `+table("content_groups")+` (tenant_id,id,kind,slug) VALUES ('policy',$1,'tag',$1)`, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO `+table("content_offers")+` (tenant_id,id,target_kind,target_id,terms,revision,synced_revision,product_id)
+ VALUES ('policy',$1,'group',$2,'{"amount":0,"currency":"USD"}',1,$3,$4)`, contentref.NewID(), id, rev, p); err != nil {
+			t.Fatal(err)
+		}
+		return id, key
+	}
+	reprice := func(id string) func() error {
+		return func() error {
+			_, err := s.Put(ctx, []Put{{Target: Target{Kind: GroupTarget, ID: id}, Terms: paid}})
+			return err
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		synced bool
+		race   func(id string) func() error
+		want   error // nil: ErrNotJoinable
+		free   bool  // the offer is free again once the race is done
+	}{
+		{name: "repriced during sync", race: reprice},
+		{name: "repriced before grant", synced: true, race: reprice},
+		{name: "withdrawn before grant", synced: true, race: func(id string) func() error {
+			return func() error {
+				_, err := s.Withdraw(ctx, []Target{{Kind: GroupTarget, ID: id}})
+				return err
+			}
+		}},
+		{name: "product recreated before grant", synced: true, free: true, race: func(id string) func() error {
+			return func() error {
+				if _, err := s.Withdraw(ctx, []Target{{Kind: GroupTarget, ID: id}}); err != nil {
+					return err
+				}
+				_, err := s.Put(ctx, []Put{{Target: Target{Kind: GroupTarget, ID: id}}})
+				return err
+			}
+		}},
+		{name: "repriced and grant answer lost", synced: true, want: errLost, race: func(id string) func() error {
+			return func() error {
+				if err := reprice(id)(); err != nil {
+					return err
+				}
+				return errLost
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			id, key := group(t, contentref.NewID(), c.synced)
+			race := c.race(id)
+			if c.synced {
+				billing.beforeGrant = race
+			} else {
+				billing.beforeProducts = func() {
+					if err := race(); err != nil {
+						t.Error(err)
+					}
+				}
+			}
+			want := c.want
+			if want == nil {
+				want = ErrNotJoinable
+			}
+			if _, err := s.Join(ctx, actor, []string{id}); !errors.Is(err, want) {
+				t.Fatalf("join: %v, want %v", err, want)
+			}
+			if slices.Contains(billing.keys, key.String()) {
+				t.Fatal("a free grant of a group no longer free remains")
+			}
+			// A retry joins the offer as it now is.
+			if _, err := s.Join(ctx, actor, []string{id}); c.free != (err == nil) || slices.Contains(billing.keys, key.String()) != c.free {
+				t.Fatalf("retry: %v, held %v", err, slices.Contains(billing.keys, key.String()))
+			}
+		})
+	}
+
+	// A free join grants once; a retry, or a held membership, grants and
+	// takes back nothing.
+	id, key := group(t, contentref.NewID(), true)
+	for i := range 2 {
+		grants, revokes := billing.grants, billing.revokes
+		out, err := s.Join(ctx, actor, []string{id})
+		if err != nil || len(out) != 1 || !out[0].Member || !slices.Contains(billing.keys, key.String()) {
+			t.Fatalf("free join: %+v %v", out, err)
+		}
+		if billing.grants-grants != 1-i || billing.revokes != revokes {
+			t.Fatalf("join %d: %d grants, %d revokes", i, billing.grants-grants, billing.revokes-revokes)
+		}
+	}
+}
+
+var errLost = errors.New("grant answer lost")
