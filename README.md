@@ -105,7 +105,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   is the catalog's: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  co-engagement, projection repair, erasure, groups' counts and windows,
+  projection repair, erasure, groups' counts and windows,
   the catalog's scheduled publishing, event delivery, counts and purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
