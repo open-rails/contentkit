@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -304,11 +305,25 @@ func (s *Store) checkCreators(cs []Creator) ([]Creator, error) {
 
 func checkSegments(ss []Segment) ([]Segment, error) {
 	out := make([]Segment, len(ss))
+	anchored := len(ss) > 0 && ss[0].StartPage != ""
+	seen := map[string]bool{}
 	for i, sg := range ss {
-		if sg.Start < 0 || sg.End <= sg.Start {
+		if (sg.StartPage != "") != anchored {
+			return nil, invalid("chapters cannot mix page starts and numeric ranges")
+		}
+		if anchored {
+			digest, err := hex.DecodeString(sg.StartPage)
+			if seen[sg.StartPage] || err != nil || len(digest) != 32 || strings.ToLower(sg.StartPage) != sg.StartPage {
+				return nil, invalid("chapter %d: invalid or duplicate starting page", i)
+			}
+			seen[sg.StartPage] = true
+			if sg.Start != 0 || sg.End != 0 {
+				return nil, invalid("chapter %d: page starts do not take numeric ranges", i)
+			}
+		} else if sg.Start < 0 || sg.End <= sg.Start {
 			return nil, invalid("segment %d: start must be >= 0 and end > start", i)
 		}
-		if i > 0 && sg.Start < out[i-1].End {
+		if !anchored && i > 0 && sg.Start < out[i-1].End {
 			return nil, invalid("segment %d overlaps the one before", i)
 		}
 		if utf8.RuneCountInString(sg.Title) > maxTitle {
@@ -318,4 +333,12 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 		out[i] = sg
 	}
 	return out, nil
+}
+
+func checkSegmentInputs(in []SegmentInput) ([]Segment, error) {
+	segments := make([]Segment, len(in))
+	for i, sg := range in {
+		segments[i] = Segment{Position: sg.Position, Title: sg.Title, StartPage: sg.StartPage, Start: sg.Start, End: sg.End, ReleaseAt: sg.ReleaseAt}
+	}
+	return checkSegments(segments)
 }

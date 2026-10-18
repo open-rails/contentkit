@@ -486,6 +486,24 @@ before an app starts declaring it. When replacing an existing download
 preset, queue `Regenerate` for existing items so their new download files and
 ZIPs are generated; changing configuration alone does not enqueue every item.
 
+Reader page identity is the SHA-256 digest of the original source image.
+`FileInfo.page_id` and reader-plan page `id` expose that digest; logical names
+are display/path metadata. The manifest's ordered source list determines page
+numbers and consecutive ZIP entry names, without renaming source blobs when
+pages move. Reader metadata and chapter starts refer to source hashes.
+
+Reader chapters accept `start_page` and derive their end from the next start,
+or the end of the version. Inserting or reordering unmarked pages does not
+require renumbering markers. Missing, duplicated or out-of-order starts require
+repair; authorization resolves them against the exact published snapshot.
+Legacy numeric ranges remain supported for non-reader content.
+
+Personalized, watermarked archives stream per request with
+`Cache-Control: private, no-store`; they are never placed in a shared cache.
+Ordinary configured ZIP presets are currently generated and stored by the
+media worker. On-demand generation with a cache keyed by ordered source hashes
+is a separate possible change, not the current ZIP behavior.
+
 **Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's
 codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio
@@ -505,8 +523,10 @@ period old, unexpected public names at once, `temp/` by age); folder
 deletion (with a late-upload second pass and quota release); `Expose`;
 `Regenerate`; `SweepOrphans`; and the worker's relays.
 
-**Paywalls**: media gates each item through `Hooks.Resolver`; one item read
-is one billing read, and its token covers every file and segment.
+**Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
+cover a permitted span of an immutable publication, limited by chapter release
+and access rules; source originals remain editor-only. Existing signed URLs
+retain their normal expiry and revocation-window semantics.
 
 **Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version
 per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
@@ -517,6 +537,13 @@ content URLs, React hooks and styled components. See
 
 Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
 owner, sellable, auth_scope, windows, version_level, roles, attributes).
+Reader editors use one page per stable version code. Shared entity edits use
+`PUT /contents/{id}/entities/shared`; per-version credits use
+`PUT /contents/{id}/versions/{vid}/entities`. These routes replace only their
+own scope in a transaction, including newly created entity names, and preserve
+sibling versions. The older all-scopes entity replacement remains available
+for imports and callers deliberately replacing the entire work.
+
 Writes are batches in one transaction; memberships keep
 `content_facets.group_ids` current, `Recount` (an engine job) rebuilds
 per-language counts and automatic covers from the facets, and

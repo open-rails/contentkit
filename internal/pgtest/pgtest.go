@@ -134,6 +134,9 @@ func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatal(err)
 	}
 	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".up.sql") {
+			continue
+		}
 		sql, err := fs.ReadFile(migrations.Postgres, f.Name())
 		if err != nil {
 			t.Fatal(err)

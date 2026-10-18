@@ -1916,6 +1916,48 @@ func (c *Client) PutContentEntities(ctx context.Context, id string, body groups.
 	return out, err
 }
 
+// PutContentEntitiesSharedQuery is the query of PutContentEntitiesShared.
+type PutContentEntitiesSharedQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q PutContentEntitiesSharedQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PutContentEntitiesShared is PUT /v1/contents/{id}/entities/shared (staff). Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.
+func (c *Client) PutContentEntitiesShared(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesSharedQuery) (groups.ContentMemberships, error) {
+	var out groups.ContentMemberships
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities/shared", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	return out, err
+}
+
+// PutContentVersionEntitiesQuery is the query of PutContentVersionEntities.
+type PutContentVersionEntitiesQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q PutContentVersionEntitiesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PutContentVersionEntities is PUT /v1/contents/{id}/versions/{vid}/entities (staff). Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.
+func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body groups.ContentGroups, q PutContentVersionEntitiesQuery) (groups.ContentMemberships, error) {
+	var out groups.ContentMemberships
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/entities", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), body, &out)
+	return out, err
+}
+
 // GetNotificationsInboxQuery is the query of GetNotificationsInbox.
 type GetNotificationsInboxQuery struct {
 	// page size: 20 by default, at most 100

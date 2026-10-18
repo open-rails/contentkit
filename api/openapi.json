@@ -8041,6 +8041,150 @@
         ]
       }
     },
+    "/v1/contents/{id}/entities/shared": {
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentGroups"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{vid}/entities": {
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentGroups"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/notifications/inbox": {
       "get": {
         "tags": [
@@ -15016,6 +15160,9 @@
           "url": {
             "type": "string"
           },
+          "page_id": {
+            "type": "string"
+          },
           "create_id": {
             "type": "string"
           },
@@ -17157,6 +17304,9 @@
       "PlanPage": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -17177,6 +17327,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "w",
           "h",
@@ -17204,6 +17355,9 @@
       "PlanPreview": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "index": {
             "type": "integer"
           },
@@ -17221,6 +17375,7 @@
           }
         },
         "required": [
+          "id",
           "index",
           "name",
           "url",
@@ -18516,6 +18671,9 @@
           "title": {
             "type": "string"
           },
+          "start_page": {
+            "type": "string"
+          },
           "start": {
             "type": "integer"
           },
@@ -18537,13 +18695,40 @@
           "released"
         ]
       },
+      "SegmentInput": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start_page": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "release_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "released": {
+            "type": "boolean"
+          }
+        }
+      },
       "SegmentsInput": {
         "type": "object",
         "properties": {
           "segments": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Segment"
+              "$ref": "#/components/schemas/SegmentInput"
             }
           }
         }
@@ -19087,7 +19272,7 @@
           "segments": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Segment"
+              "$ref": "#/components/schemas/SegmentInput"
             }
           },
           "ordinal": {

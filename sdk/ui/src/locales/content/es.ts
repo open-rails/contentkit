@@ -31,6 +31,11 @@ export const content: typeof en = {
     lockedOption: "{name} (bloqueada)",
   },
   contentEditor: {
+    chapterRange: "Páginas {from}–{to}",
+    chapterStartRequired: "Elige una página de inicio para cada capítulo.",
+    chapterStartsOrdered: "Los inicios de capítulo deben seguir el orden de las páginas.",
+    chapterStartMissing: "Falta la página de inicio de este capítulo. Elige otra página.",
+    chapterStartAmbiguous: "Esta imagen aparece más de una vez. Elige una página de inicio única.",
     saved: "Guardado.",
     details: "Detalles",
     listing: "Listado",

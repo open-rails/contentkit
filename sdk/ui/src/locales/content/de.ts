@@ -31,6 +31,11 @@ export const content: typeof en = {
     lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
+    chapterRange: "Seiten {from}–{to}",
+    chapterStartRequired: "Wähle für jedes Kapitel eine Startseite.",
+    chapterStartsOrdered: "Die Kapitelanfänge müssen der Seitenreihenfolge folgen.",
+    chapterStartMissing: "Die Startseite dieses Kapitels fehlt. Wähle eine andere Seite.",
+    chapterStartAmbiguous: "Dieses Bild kommt mehrfach vor. Wähle eine eindeutige Kapitelstartseite.",
     saved: "Gespeichert.",
     details: "Details",
     listing: "Auflistung",

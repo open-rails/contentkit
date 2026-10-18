@@ -31,6 +31,11 @@ export const content: typeof en = {
     lockedOption: "{name} (잠김)",
   },
   contentEditor: {
+    chapterRange: "{from}–{to}페이지",
+    chapterStartRequired: "각 챕터의 시작 페이지를 선택하세요.",
+    chapterStartsOrdered: "챕터 시작은 페이지 순서대로 정렬해야 합니다.",
+    chapterStartMissing: "이 챕터의 시작 페이지가 없습니다. 다른 페이지를 선택하세요.",
+    chapterStartAmbiguous: "이 이미지가 여러 번 나옵니다. 중복되지 않는 시작 페이지를 선택하세요.",
     saved: "저장했습니다.",
     details: "세부 정보",
     listing: "목록 표시",

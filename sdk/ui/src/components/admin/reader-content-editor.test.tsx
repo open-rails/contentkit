@@ -73,8 +73,11 @@ const read = (files: FileInfo[] = [page]): ReadResult => ({
 const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel } = {}) {
+function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel; versions?: Version[] } = {}) {
   let item = gallery();
+  if (options.versions) item.versions = options.versions;
+  let memberState: ContentMemberships | undefined;
+  const members = async () => memberState ??= await (options.memberships ?? Promise.resolve(links));
   if (options.noText) delete item.text;
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -93,8 +96,14 @@ function server(options: { failText?: boolean; media?: ReadResult; memberships?:
       item = { ...item, ...body, text: body.text, title: Object.values(body.text as NonNullable<Content["text"]>)[0]!.title };
       return Response.json(item);
     }
-    if (method === "GET" && path === "/contents/c1/entities") return Response.json(await (options.memberships ?? Promise.resolve(links)));
-    if (method === "PUT" && path === "/contents/c1/entities") return Response.json({ ...links, memberships: body.memberships });
+    if (method === "GET" && path === "/contents/c1/entities") return Response.json(await members());
+    if (method === "PUT" && (path === "/contents/c1/entities/shared" || /^\/contents\/c1\/versions\/[^/]+\/entities$/.test(path))) {
+      const before = await members();
+      const version = path === "/contents/c1/entities/shared" ? undefined : path.split("/")[4];
+      const kept = before.memberships.filter((m) => m.version_id !== version || !body.kinds.includes(before.entities.find((g) => g.id === m.group_id)?.kind));
+      memberState = { ...before, memberships: [...kept, ...body.memberships.map((m: object) => ({ ...m, ...(version ? { version_id: version } : {}) }))] };
+      return Response.json(memberState);
+    }
     if (method === "PUT" && path.startsWith("/contents/c1/text/")) {
       if (options.failText) return Response.json({ code: "conflict", error: "Changed elsewhere" }, { status: 409 });
       const lang = path.split("/").at(-1)!;
@@ -106,12 +115,13 @@ function server(options: { failText?: boolean; media?: ReadResult; memberships?:
       item = { ...item, ...body, revision: item.revision + 1 };
       return Response.json(item);
     }
-    if (method === "PATCH" && path === "/contents/c1/versions/v1") {
-      item = { ...item, versions: [{ ...item.versions[0]!, ...body }] };
-      return Response.json(item.versions[0]);
+    const editedVersion = /^\/contents\/c1\/versions\/([^/]+)$/.exec(path)?.[1];
+    if (method === "PATCH" && editedVersion) {
+      item = { ...item, versions: item.versions.map((v) => v.id === editedVersion ? { ...v, ...body } : v) };
+      return Response.json(item.versions.find((v) => v.id === editedVersion));
     }
-    if (method === "GET" && path === "/contents/c1/versions/v1") return Response.json(item.versions[0]);
-    if (method === "GET" && path === "/contents/c1/versions/v1/page-notices") return Response.json({ notices: [] });
+    if (method === "GET" && editedVersion) return Response.json(item.versions.find((v) => v.id === editedVersion));
+    if (method === "GET" && path.endsWith("/page-notices")) return Response.json({ notices: [] });
     if (method === "POST" && path === "/contents/c1/publish") {
       item = { ...item, state: "published", live: true };
       return Response.json(item);
@@ -185,7 +195,7 @@ it("starts a new gallery linked to the entity it was created from", async () => 
   await user.type(await screen.findByLabelText("Title"), "First chapter");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
-  const linked = writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities")?.body as { memberships?: unknown } | undefined;
+  const linked = writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities/shared")?.body as { memberships?: unknown } | undefined;
   expect(linked?.memberships).toEqual([{ group_id: "s1" }]);
 });
 
@@ -199,7 +209,7 @@ it("saves the visible text and current revision before publishing", async () => 
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/publish")).toBe(true));
-  expect(writes(s).map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /contents/c1/text/en", "PATCH /contents/c1", "POST /contents/c1/publish"]);
+  expect(writes(s).map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /contents/c1/text/en", "POST /contents/c1/publish"]);
   expect(s.item.title).toBe("New title");
 });
 
@@ -270,7 +280,7 @@ it("keeps the editor mounted when its internal draft changes the route", async (
   const title = await screen.findByLabelText("Title");
   await user.type(title, "Stable editor");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
-  await waitFor(() => expect(writes(s).some((c) => c.method === "PATCH")).toBe(true));
+  await waitFor(() => expect(writes(s).some((c) => c.path === "/contents")).toBe(true));
   expect(screen.getByLabelText("Title")).toBe(title);
   expect(title).toHaveValue("Stable editor");
 });
@@ -286,15 +296,15 @@ it("checks every media window before publication, including late failures", asyn
   expect(s.media.mock.calls.map(([, o]) => o?.offset)).toEqual([0, 200]);
 });
 
-it("saves an advanced version edit before publishing even after its panel closes", async () => {
+it("saves the selected version edit before publishing without a combined versions panel", async () => {
   const s = server(),
     user = userEvent.setup();
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
   await screen.findByLabelText("Title");
-  await user.click(screen.getByText("Versions and chapters", { selector: "summary" }));
+  expect(screen.queryByText("Versions and chapters")).toBeNull();
   const label = await screen.findByLabelText("Label (optional)");
   await user.type(label, "Revised edition");
-  await user.click(screen.getByText("Versions and chapters", { selector: "summary" }));
+  expect(screen.queryByText("Versions and chapters")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/publish")).toBe(true));
   const order = writes(s).map((c) => c.path);
@@ -363,7 +373,7 @@ it("keeps the draft editing session when the built-in history router changes syn
     const title = await screen.findByLabelText("Title");
     await user.type(title, "Synchronous route");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/standalone/galleries/GALLERY01"));
+    await waitFor(() => expect(window.location.pathname).toBe("/standalone/galleries/GALLERY01/versions/VERSION1"));
     await screen.findByText("Saved.", { selector: "p[role=status]" });
     expect(screen.getByLabelText("Title")).toBe(title);
     expect(title).toHaveValue("Synchronous route");
@@ -439,4 +449,114 @@ it("a new reader item uses restricted defaults before its first create request",
   await user.type(await screen.findByLabelText("Title"), "Members only");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(s.calls.find((c) => c.method === "POST" && c.path === "/contents")?.body).toMatchObject({ access: { level: "tier", tiers: ["premium"] }, comments: "closed" }));
+});
+
+
+const scopedModel: ContentModel = {
+  ...model,
+  kinds: { gallery: { ...model.kinds.gallery!, entities: ["artist", "tag", "voice_actor", "translator"], versions: { languages: "one", traits: ["colored"] } } },
+  entity_kinds: { ...model.entity_kinds, voice_actor: { version_level: true }, translator: { version_level: true } },
+};
+const otherEdition: Version = { ...edition, id: "v2", code: "VERSION2", languages: ["en"], traits: [] };
+const scopedLinks: ContentMemberships = {
+  content_id: "c1",
+  memberships: [{ group_id: "artist" }, { group_id: "actor1", version_id: "v1" }, { group_id: "actor2", version_id: "v2" }],
+  entities: [
+    { id: "artist", code: "ARTIST", kind: "artist", slug: "shared-artist", name: "Shared artist", internal: false, count: 1, attributes: {}, created_at: at },
+    { id: "actor1", code: "ACTOR1", kind: "voice_actor", slug: "actor-one", name: "Actor one", internal: false, count: 1, attributes: {}, created_at: at },
+    { id: "actor2", code: "ACTOR2", kind: "voice_actor", slug: "actor-two", name: "Actor two", internal: false, count: 1, attributes: {}, created_at: at },
+  ],
+};
+
+it("a version URL loads only that version's files and credits", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  expect(await screen.findByText("Actor two")).toBeVisible();
+  expect(screen.queryByText("Actor one")).toBeNull();
+  expect(screen.getByText("Shared artist")).toBeVisible();
+  await waitFor(() => expect(s.media).toHaveBeenCalled());
+  expect(s.media.mock.calls.every(([ref]) => ref.version === "v2")).toBe(true);
+  expect(screen.queryByRole("combobox", { name: /Version for Actor/ })).toBeNull();
+});
+
+it("editing selected-version traits never writes gallery details or another version", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition] });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  await user.click(await screen.findByRole("switch", { name: /colored/i }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/versions/v2")).toBe(true));
+  expect(writes(s).every((c) => c.path === "/contents/c1/versions/v2")).toBe(true);
+  expect(s.item.versions[0]?.traits).toEqual([]);
+  expect(s.item.versions[1]?.traits).toEqual(["colored"]);
+});
+
+it("editing version credits targets only its atomic version scope", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  await user.click(await screen.findByRole("button", { name: "Remove Actor two" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/versions/v2/entities")).toBe(true));
+  expect(writes(s).map((c) => c.path)).toEqual(["/contents/c1/versions/v2/entities"]);
+});
+
+it("shared gallery entities use the parent-only atomic scope from any version", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  await user.click(await screen.findByRole("button", { name: "Remove Shared artist" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/entities/shared")).toBe(true));
+  expect(writes(s).map((c) => c.path)).toEqual(["/contents/c1/entities/shared"]);
+});
+
+it("rejects an unknown version URL without opening a sibling's media", async () => {
+  const s = server({ versions: [edition, otherEdition] });
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="MISSING" />);
+  expect(await screen.findByText("This version could not be found.")).toBeVisible();
+  expect(s.media).not.toHaveBeenCalled();
+});
+
+
+it("navigates between version pages and confirms before discarding shared edits", async () => {
+  const versions = [{ ...edition, label: "Edition one" }, { ...otherEdition, label: "Edition two" }];
+  const s = server({ model: scopedModel, versions, memberships: Promise.resolve(scopedLinks) });
+  const user = userEvent.setup();
+  function Route() {
+    const [path, setPath] = useState("/galleries/GALLERY01/versions/VERSION1");
+    return <><output aria-label="Editor URL">{path}</output><ContentManager client={s.client} kind="gallery" basePath="/galleries" navigation={{ pathname: path, search: "", navigate: (to) => setPath(to) }} /></>;
+  }
+  render(<Route />);
+  const title = await screen.findByLabelText("Title");
+  await screen.findByText("Actor one");
+  await user.type(title, " unsaved");
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions" })).toBeEnabled());
+  await user.click(screen.getByRole("combobox", { name: "Versions" }));
+  await user.click(await screen.findByRole("option", { name: "Edition two" }));
+  await screen.findByRole("alertdialog", { name: "Leave this version?" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByLabelText("Editor URL")).toHaveTextContent("VERSION1");
+  expect(title).toHaveValue("Old title unsaved");
+  await user.click(screen.getByRole("combobox", { name: "Versions" }));
+  await user.click(await screen.findByRole("option", { name: "Edition two" }));
+  await user.click(await screen.findByRole("button", { name: "Discard changes" }));
+  await waitFor(() => expect(screen.getByLabelText("Editor URL")).toHaveTextContent("VERSION2"));
+  expect(await screen.findByText("Actor two")).toBeVisible();
+  expect(screen.queryByText("Actor one")).toBeNull();
+  expect(screen.getByLabelText("Title")).toHaveValue("Old title");
+  expect(writes(s)).toEqual([]);
+});
+
+
+it("never saves vanished version credits into the first remaining version", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  await user.click(await screen.findByRole("button", { name: "Remove Actor two" }));
+  s.item.versions = [edition];
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText("This version could not be found.")).toBeVisible();
+  expect(writes(s)).toEqual([]);
 });

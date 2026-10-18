@@ -31,6 +31,11 @@ export const content: typeof en = {
     lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
+    chapterRange: "第 {from}–{to} 页",
+    chapterStartRequired: "请为每个章节选择起始页。",
+    chapterStartsOrdered: "章节起点必须按页面顺序排列。",
+    chapterStartMissing: "此章节的起始页已不存在，请选择其他页面。",
+    chapterStartAmbiguous: "此图片出现多次，请选择不重复的章节起始页。",
     saved: "已保存。",
     details: "详情",
     listing: "列表显示",

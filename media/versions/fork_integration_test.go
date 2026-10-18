@@ -96,9 +96,10 @@ func TestReaderMeta(t *testing.T) {
 		t.Fatalf("placements %v for %d commits: want at most one per commit and none for publication", n, commits)
 	}
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/reader"
-	page, anchor := "001", "a1"
+	page, anchor := sourcePageID(t, s, s.ref("gallery", v), "originals/001.png"), "a1"
+	last := sourcePageID(t, s, s.ref("gallery", v), "originals/005.png")
 	meta := versions.ReaderMeta{SchemaVersion: 1,
-		Anchors:    []versions.Anchor{{ID: "a1", Page: "001", OffsetPercent: 50}, {ID: "a5", Page: "005", OffsetPercent: 10}},
+		Anchors:    []versions.Anchor{{ID: "a1", Page: page, OffsetPercent: 50}, {ID: "a5", Page: last, OffsetPercent: 10}},
 		Background: []versions.BackgroundCue{{File: "theme", FromPage: &page}},
 		Foreground: []versions.ForegroundCue{{File: "theme", Anchor: &anchor}}}
 	if resp, _ := s.call(s.stranger, "PUT", path, meta); resp.StatusCode != 403 {
@@ -166,7 +167,7 @@ func TestDownload(t *testing.T) {
 	}
 	archive := strings.TrimSuffix(path, "download") + granted.URL
 	resp, b = s.call(access.Actor{}, "GET", archive, nil)
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" {
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" || resp.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("marked archive: %d %s", resp.StatusCode, b)
 	}
 	marked := entries(b)

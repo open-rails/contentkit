@@ -43,7 +43,11 @@ func (s *Service) applyPreviews(ctx context.Context, k *media.Kind, v Target) er
 		if err != nil {
 			return err
 		}
-		count = min(public(k, k.Publish.Previews).First, rule[v.Version].Pages, len(snap.Pages), released(segs[v.Version], len(snap.Pages), s.o.Now()))
+		chapters, err := resolveChapterStarts(segs[v.Version], snap.Pages)
+		if err != nil {
+			return err
+		}
+		count = min(public(k, k.Publish.Previews).First, rule[v.Version].Pages, len(snap.Pages), released(chapters, len(snap.Pages), s.o.Now()))
 		ref, err := s.ref(k.Name, v)
 		if err != nil {
 			return err

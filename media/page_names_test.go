@@ -79,7 +79,7 @@ func TestPagePutRetainsCanonicalCollisionsAndCreateIdentity(t *testing.T) {
 	if done, err := o.created(third); err != nil || !done {
 		t.Fatalf("allocated retry not found: %v %v", done, err)
 	}
-	if info := uploadInfo(o.m.Files[2]); info.CreateID != create {
+	if info := uploadInfo(o.m.Files[2], o.k); info.CreateID != create {
 		t.Fatal("editor reply lost allocation identity")
 	}
 }

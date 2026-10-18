@@ -180,18 +180,19 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := CommitReply{Files: []FileInfo{}}
+	kind, _ := h.u.reg.Kind(ref.ContentKind)
 	for _, f := range man.Files {
 		if f.IsUpload() {
-			out.Files = append(out.Files, uploadInfo(f))
+			out.Files = append(out.Files, uploadInfo(f, kind))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // uploadInfo is an upload as an editor reads it, without URLs.
-func uploadInfo(f File) FileInfo {
+func uploadInfo(f File, k *Kind) FileInfo {
 	return FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Upload: true,
-		CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
+		PageID: k.PageID(f), CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
 }
 
 func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {

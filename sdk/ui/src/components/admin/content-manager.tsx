@@ -1,10 +1,10 @@
 import { Image01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
-import type { Content, GroupCard, GroupDetail, ManageCount, Rule } from "../../client/generated/wire.js";
+import type { Content, GroupCard, GroupDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
@@ -91,7 +91,8 @@ const states = ["draft", "scheduled", "published"] as const;
  * listing and attributes, access rule and price, versions (order, languages,
  * traits, schedule, access override, price, segments, media) and groups. The
  * list is at basePath, a new item at basePath/new and each item at
- * basePath/{id}, filters in the query.
+ * basePath/{code}, with editions at basePath/{code}/versions/{versionCode}
+ * and list filters in the query.
  */
 export function ContentManager({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: ContentManagerProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
@@ -108,36 +109,71 @@ function Contents({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
   const access = useContentManagerAccess({ client: p.client });
+  const leaveGuard = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const registerLeaveGuard = useCallback((guard: (() => Promise<boolean>) | undefined) => { leaveGuard.current = guard; }, []);
   // Editor URLs name items by content code; the editor itself works on ids.
   const known = useRef(new Map<string, string>()).current;
+  const route = contentEditorRoute(loc.view);
+  const createdCode = useRef<string | undefined>(undefined);
   const open = (c: Content, replace = false) => {
     known.set(c.code, c.id);
-    loc.go(c.code, undefined, replace ? { replace: true } : undefined);
+    createdCode.current = c.code;
+    loc.go(encodeURIComponent(c.code), undefined, replace ? { replace: true } : undefined);
   };
-  const target = useCodeTarget(p.client, p.kind, loc.view && loc.view !== "new" ? loc.view : null, known);
+  const target = useCodeTarget(p.client, p.kind, route?.code ?? null, known);
   const entities = useStartingEntities(p.client, loc.view === "new" ? (loc.query.get("with") ?? "") : "");
   if (access.loading) return <Rows />;
   if (!access.allowed.contents) return <NoAccess>{t("contentManager.noAccess")}</NoAccess>;
   if (!loc.view) return <List {...p} loc={loc} open={open} />;
+  if (!route) return <NoAccess>{t("contentManager.notFound")}</NoAccess>;
   if (loc.view !== "new" && !target.id) {
     if (target.error) return <LoadFailed error={target.error} message={t("contentManager.loadFailed")} retry={target.retry} />;
     return target.missing ? <NoAccess>{t("contentManager.notFound")}</NoAccess> : <Rows />;
   }
   return (
     <>
-      <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go("")}>
+      <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => void (async () => {
+        if ((await leaveGuard.current?.()) ?? true) loc.go("");
+      })()}>
         {t("contentManager.back")}
       </Button>
       <ContentEditor
         management
         {...p}
         id={loc.view === "new" ? null : target.id}
+        versionCode={route.versionCode}
+        versionHref={(version) => {
+          if (basePath === undefined && !navigation) return undefined;
+          const code = route.code ?? createdCode.current;
+          return code ? `${basePath?.replace(/\/+$/, "") ?? ""}/${encodeURIComponent(code)}/versions/${encodeURIComponent(version.code)}` : undefined;
+        }}
+        onVersionChange={(version, options) => {
+          const code = route.code ?? createdCode.current;
+          if (code) loc.go(version ? `${encodeURIComponent(code)}/versions/${encodeURIComponent(version.code)}` : encodeURIComponent(code), undefined, options);
+        }}
         entities={entities}
         onCreated={(c) => open(c, true)}
         onDeleted={() => loc.go("", undefined, { replace: true })}
+        onLeaveGuard={registerLeaveGuard}
       />
     </>
   );
+}
+
+/** Only the parent code is resolved through management; an edition stays scoped to that parent. */
+function contentEditorRoute(view: string): { code?: string; versionCode?: string } | null {
+  if (view === "new") return {};
+  const parts = view.split("/");
+  if (parts.length !== 1 && (parts.length !== 3 || parts[1] !== "versions")) return null;
+  try {
+    const code = decodeURIComponent(parts[0]!);
+    const versionCode = parts.length === 3 ? decodeURIComponent(parts[2]!) : undefined;
+    const invalid = (part: string) => !part || part.includes("/") || part.includes("\\");
+    if (invalid(code) || code === "new" || (versionCode !== undefined && invalid(versionCode))) return null;
+    return { code, versionCode };
+  } catch {
+    return null;
+  }
 }
 
 /** Resolves an editor URL's content code to its id within the caller's manage rights; known codes resolve at once. */
@@ -633,6 +669,14 @@ export interface ContentEditorProps {
   renderEditor?: (props: BodyEditorProps) => ReactNode;
   /** A link to a live item's page. */
   contentHref?: (content: Content) => string | undefined;
+  /** A reader edition code from the route; omitted selects its first edition. Other presentations do not accept nested edition routes. */
+  versionCode?: string;
+  /** An edition's stable editor URL, when the host provides routing. */
+  versionHref?: (version: Version) => string | undefined;
+  /** Navigate to an edition, or the parent when none remain; replace canonicalizes or retires an edition URL. */
+  onVersionChange?: (version: Version | null, options?: { replace?: boolean }) => void;
+  /** Registers the editor's confirmation before the enclosing flow leaves it. */
+  onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   labels?: Labels;
   /** A new item's owner group: a channel its editors write for. */
   ownerGroup?: string;
@@ -653,11 +697,13 @@ export interface ContentEditorProps {
 export function ContentEditor(p:ContentEditorProps){
   const {client,scope}=useContentScope(p.client);
   const allocated=useRef<{id:string;session:number}|null>(null);
-  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,key:0});
+  const [session,setSession]=useState({id:p.id,kind:p.kind,client,scope,versionCode:p.versionCode,key:0});
   let boundary=session;
-  if(session.id!==p.id||session.kind!==p.kind||session.client!==client||session.scope!==scope){
+  if(session.id!==p.id||session.kind!==p.kind||session.client!==client||session.scope!==scope||session.versionCode!==p.versionCode){
     const continues=session.id==null&&p.id===allocated.current?.id&&allocated.current?.session===session.key&&session.kind===p.kind&&session.client===client&&session.scope===scope;
-    boundary={id:p.id,kind:p.kind,client,scope,key:continues?session.key:session.key+1};
+    const sameItem=session.id===p.id&&session.kind===p.kind&&session.client===client&&session.scope===scope;
+    const versionChanged=session.versionCode!==undefined&&session.versionCode!==p.versionCode;
+    boundary={id:p.id,kind:p.kind,client,scope,versionCode:p.versionCode,key:(continues||sameItem)&&!versionChanged?session.key:session.key+1};
     setSession(boundary);
   }
   const {kinds,error,reload}=useKinds({client});
@@ -665,6 +711,7 @@ export function ContentEditor(p:ContentEditorProps){
   if(!kinds)return error?<LoadFailed error={error} message={t("contentManager.loadFailed")} retry={reload}/>:<Rows/>;
   const props={...p,client,onCreated:(content:Content)=>{allocated.current={id:content.id,session:boundary.key};p.onCreated?.(content);}};
   if(kinds.kinds[p.kind]?.presentation==="reader")return <ReaderContentEditor key={boundary.key} {...props} model={kinds}/>;
+  if(p.versionCode!==undefined)return <NoAccess>{t("contentManager.notFound")}</NoAccess>;
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 

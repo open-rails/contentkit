@@ -2,6 +2,15 @@ import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
   readerEditor: {
+    sharedEntities: "图库关联信息",
+    sharedHint: "此图库的所有版本共用。",
+    versionDetails: "版本详情",
+    versionEntities: "版本制作人员",
+    versionHint: "仅适用于正在编辑的版本。",
+    versionMissing: "找不到此版本。",
+    leaveVersion: "离开此版本？",
+    discardVersionEdits: "放弃未保存的更改并打开其他版本？",
+    discard: "放弃更改",
     thumbnail: "缩略图",
     editThumbnail: "裁剪缩略图",
     setThumbnail: "设为缩略图",

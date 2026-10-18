@@ -68,7 +68,11 @@ func (s *Service) pending(ctx context.Context, q querier, k *media.Kind, t Targe
 	if err != nil {
 		return "", err
 	}
-	if ok, err := s.currentFor(ctx, q, t, kindPages, pagesSnapshot{Pages: pages, Spans: spans(segs[t.Version], len(pages))}); err != nil || !ok {
+	resolved, err := resolveChapterStarts(segs[t.Version], pages)
+	if err != nil {
+		return "", err
+	}
+	if ok, err := s.currentFor(ctx, q, t, kindPages, pagesSnapshot{Pages: pages, Spans: spans(resolved, len(pages))}); err != nil || !ok {
 		return "pages are still being published", err
 	}
 	if k.Publish.Playback == "" {

@@ -52,6 +52,9 @@ export function useReaderPlan(content: string | null | undefined, version: strin
 
 /** A segment's page with the URL of one rendition, once its item's read signed it. */
 export interface ReaderPage {
+  /** SHA-256 of the original source image; stable across renaming and reordering. */
+  id: string;
+  /** Display name only; never a page reference. */
   name: string;
   w: number;
   h: number;
@@ -76,7 +79,7 @@ export function useSegmentPages(segment: PlanSegment | null | undefined, renditi
     const urls = new Map((read.read?.files ?? []).flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
     return (segment?.pages ?? []).map((p) => {
       const path = p.files[rendition];
-      return { name: p.name, w: p.w, h: p.h, url: path ? urls.get(path) : undefined };
+      return { id: p.id, name: p.name, w: p.w, h: p.h, url: path ? urls.get(path) : undefined };
     });
   }, [segment, rendition, read.read]);
   return { pages, loading: !!item && read.loading, error: read.error };

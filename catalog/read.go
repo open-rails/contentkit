@@ -578,7 +578,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, start_index, end_index, release_at FROM `+s.t.segments+`
+	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, '') FROM `+s.t.segments+`
  WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, position`, s.tenant, vids)
 	if err != nil {
 		return nil, err
@@ -587,7 +587,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	for rows.Next() {
 		var vid string
 		var sg Segment
-		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt); err != nil {
+		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt, &sg.StartPage); err != nil {
 			return nil, err
 		}
 		out[vid].Segments = append(out[vid].Segments, sg)

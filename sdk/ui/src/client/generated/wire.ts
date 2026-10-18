@@ -814,6 +814,7 @@ export interface FileInfo {
   dur?: number;
   download?: string;
   url?: string;
+  page_id?: string;
   create_id?: string;
   upload?: boolean;
   staged?: boolean;
@@ -1458,6 +1459,7 @@ export interface Placement {
 }
 
 export interface PlanPage {
+  id: string;
   name: string;
   span?: PageSpan;
   w: number;
@@ -1471,6 +1473,7 @@ export interface PlanPlayback {
 }
 
 export interface PlanPreview {
+  id: string;
   index: number;
   name: string;
   url: string;
@@ -1856,14 +1859,25 @@ export interface Sale {
 export interface Segment {
   position: number;
   title?: string;
+  start_page?: string;
   start: number;
   end: number;
   release_at?: string;
   released: boolean;
 }
 
+export interface SegmentInput {
+  position?: number;
+  title?: string;
+  start_page?: string;
+  start?: number;
+  end?: number;
+  release_at?: string;
+  released?: boolean;
+}
+
 export interface SegmentsInput {
-  segments: Segment[];
+  segments: SegmentInput[];
 }
 
 export interface SignalInput {
@@ -2031,7 +2045,7 @@ export interface VersionInput {
   clear_access?: boolean;
   attributes?: Record<string, unknown>;
   text?: Record<string, VersionText>;
-  segments?: Segment[];
+  segments?: SegmentInput[];
   ordinal?: number;
   cover?: string;
   fork?: VersionFork;

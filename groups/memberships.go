@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -43,6 +44,10 @@ type Membership struct {
 type ContentGroups struct {
 	// ContentID names the content; routes take it from the path.
 	ContentID string `json:"-"`
+	// VersionScope limits replacement to one ownership scope. Nil preserves
+	// the legacy all-version replacement; empty means shared content links;
+	// otherwise it names the one version whose links may change.
+	VersionScope *string `json:"-"`
 	// Kinds limits the write to these group kinds; empty means every group
 	// kind the content's kind declares.
 	Kinds       []string     `json:"kinds,omitempty"`
@@ -356,8 +361,9 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		return nil
 	}
 	type scope struct {
-		ContentID string `json:"content_id"`
-		Kind      string `json:"kind"`
+		ContentID    string  `json:"content_id"`
+		Kind         string  `json:"kind"`
+		VersionScope *string `json:"version_scope"`
 	}
 	sets = slices.Clone(sets)
 	var contentIDs []string
@@ -369,12 +375,27 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 			return fmt.Errorf("%w: content %s is set twice", ErrInvalid, set.ContentID)
 		}
 		contentIDs = append(contentIDs, set.ContentID)
+		if set.VersionScope != nil {
+			version := *set.VersionScope
+			sets[i].VersionScope = &version
+			if version != "" {
+				if err := contentref.ValidateID(version); err != nil {
+					return fmt.Errorf("%w: version id: %w", ErrInvalid, err)
+				}
+			}
+		}
 		sets[i].Memberships = slices.Clone(set.Memberships)
 		for j, m := range sets[i].Memberships {
 			if m.ContentID != "" && m.ContentID != set.ContentID {
 				return fmt.Errorf("%w: a membership of %s names content %s", ErrInvalid, set.ContentID, m.ContentID)
 			}
 			sets[i].Memberships[j].ContentID = set.ContentID
+			if set.VersionScope != nil {
+				if m.VersionID != "" && m.VersionID != *set.VersionScope {
+					return fmt.Errorf("%w: membership version is outside the replacement scope", ErrInvalid)
+				}
+				sets[i].Memberships[j].VersionID = *set.VersionScope
+			}
 		}
 	}
 	return s.run(ctx, func(q Querier) error {
@@ -388,6 +409,9 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		}
 		var all []Membership
 		for i := range sets {
+			if err := s.scopeContentGroups(ctx, q, &sets[i]); err != nil {
+				return err
+			}
 			if len(sets[i].Create) > 0 {
 				known, err := s.facts(ctx, q, nil, []string{sets[i].ContentID}, nil)
 				if err != nil {
@@ -411,7 +435,7 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		if err != nil {
 			return err
 		}
-		var scopes []scope
+		scopes := []scope{}
 		for _, set := range sets {
 			contentKind, ok := known.contents[set.ContentID]
 			if !ok {
@@ -419,14 +443,14 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 			}
 			declared := s.cfg.Kinds[contentKind].Groups
 			kinds := set.Kinds
-			if len(kinds) == 0 {
+			if len(kinds) == 0 && set.VersionScope == nil {
 				kinds = declared
 			}
 			for _, k := range kinds {
 				if !slices.Contains(declared, k) {
 					return fmt.Errorf("%w: %s content does not join %s groups", ErrInvalid, contentKind, k)
 				}
-				scopes = append(scopes, scope{set.ContentID, k})
+				scopes = append(scopes, scope{set.ContentID, k, set.VersionScope})
 			}
 			for _, r := range rows {
 				if r.ContentID == set.ContentID && !slices.Contains(kinds, f.groups[r.GroupID].Kind) {
@@ -445,8 +469,9 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		if err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s m USING %s g, jsonb_to_recordset($2::jsonb) AS sc(content_id text, kind text)
+		if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s m USING %s g, jsonb_to_recordset($2::jsonb) AS sc(content_id text, kind text, version_scope text)
  WHERE m.tenant_id = $1 AND m.content_id = sc.content_id AND g.tenant_id = $1 AND g.id = m.group_id AND g.kind = sc.kind
+   AND (sc.version_scope IS NULL OR coalesce(m.version_id, '') = sc.version_scope)
    AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(group_id text, content_id text, version_id text, role text)
      WHERE r.group_id = m.group_id AND r.content_id = m.content_id AND r.version_id IS NOT DISTINCT FROM m.version_id AND r.role = m.role)`,
 			s.table("content_memberships"), s.table("content_groups")), s.tenant, scoped, keep); err != nil {
@@ -454,6 +479,54 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		}
 		return s.refreshFacets(ctx, q, contentIDs)
 	})
+}
+
+// scopeContentGroups validates a scoped replacement even when it clears every
+// membership. Its caller holds the same content advisory lock as legacy sets.
+func (s *Store) scopeContentGroups(ctx context.Context, q Querier, set *ContentGroups) error {
+	if set.VersionScope == nil {
+		return nil
+	}
+	var contentKind string
+	if err := q.QueryRow(ctx, `SELECT kind FROM `+s.table("content_items")+` WHERE tenant_id=$1 AND id=$2`, s.tenant, set.ContentID).Scan(&contentKind); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: content %s", ErrNotFound, set.ContentID)
+		}
+		return err
+	}
+	versionScope := *set.VersionScope
+	if versionScope != "" {
+		var exists bool
+		if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.table("content_versions")+` WHERE tenant_id=$1 AND id=$2 AND content_id=$3 AND state <> 'deleted')`, s.tenant, versionScope, set.ContentID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("%w: version %s of content %s", ErrNotFound, versionScope, set.ContentID)
+		}
+	}
+	declared := s.cfg.Kinds[contentKind].Groups
+	allowed := func(kind string) bool {
+		return s.cfg.GroupKinds[kind].VersionLevel == (versionScope != "")
+	}
+	if len(set.Kinds) == 0 {
+		set.Kinds = []string{}
+		for _, kind := range declared {
+			if allowed(kind) {
+				set.Kinds = append(set.Kinds, kind)
+			}
+		}
+	}
+	for _, kind := range set.Kinds {
+		if !slices.Contains(declared, kind) || !allowed(kind) {
+			return fmt.Errorf("%w: %s entities are outside the replacement scope", ErrInvalid, kind)
+		}
+	}
+	for _, entity := range set.Create {
+		if !slices.Contains(set.Kinds, entity.Kind) {
+			return fmt.Errorf("%w: %s entities are outside the replacement scope", ErrInvalid, entity.Kind)
+		}
+	}
+	return nil
 }
 
 // MembershipsOf returns every membership of each content and its

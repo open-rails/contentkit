@@ -449,7 +449,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Download: f.Download}
 		switch {
 		case f.IsUpload() && editor:
-			fi = uploadInfo(f)
+			fi = uploadInfo(f, k)
 		case editor:
 			fi.From = f.From
 		}

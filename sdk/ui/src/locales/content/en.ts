@@ -30,6 +30,11 @@ export const content = {
     lockedOption: "{name} (locked)",
   },
   contentEditor: {
+    chapterRange: "Pages {from}–{to}",
+    chapterStartRequired: "Choose a start page for each chapter.",
+    chapterStartsOrdered: "Chapter starts must follow page order.",
+    chapterStartMissing: "This chapter’s start page is missing. Choose another page.",
+    chapterStartAmbiguous: "This image appears more than once. Choose a unique chapter-start page.",
     saved: "Saved.",
     details: "Details",
     listing: "Listing",

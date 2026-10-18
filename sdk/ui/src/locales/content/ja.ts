@@ -31,6 +31,11 @@ export const content: typeof en = {
     lockedOption: "{name}（ロック中）",
   },
   contentEditor: {
+    chapterRange: "{from}–{to}ページ",
+    chapterStartRequired: "各チャプターの開始ページを選択してください。",
+    chapterStartsOrdered: "チャプターの開始はページ順に並べてください。",
+    chapterStartMissing: "このチャプターの開始ページがありません。別のページを選択してください。",
+    chapterStartAmbiguous: "この画像は複数回登場します。重複しない開始ページを選択してください。",
     saved: "保存しました。",
     details: "詳細",
     listing: "一覧表示",

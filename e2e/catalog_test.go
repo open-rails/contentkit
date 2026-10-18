@@ -102,7 +102,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	var second catalog.Version
 	f.want(http.StatusCreated, staff, "POST", "/contents/"+book.ID+"/versions", catalog.VersionInput{Languages: []string{"ja"}, Traits: &[]string{"colored"}}, &second)
 	f.want(http.StatusOK, staff, "PATCH", "/contents/"+book.ID+"/versions/"+second.ID, catalog.VersionInput{Label: ptr("Colored")}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.Segment{{Start: 0, End: 10, Title: "One"}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.SegmentInput{{Start: 0, End: 10, Title: "One"}}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/order", catalog.OrderInput{IDs: []string{second.ID, book.Versions[0].ID}}, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+book.ID+"/versions/"+book.Versions[0].ID, nil, nil)
 	f.want(http.StatusConflict, staff, "DELETE", "/contents/"+book.ID+"/versions/"+second.ID, nil, nil)

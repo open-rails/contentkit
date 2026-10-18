@@ -59,6 +59,38 @@ type VersionMedia interface {
 
 var errMediaNotConfigured = errors.New("catalog: media is not bound")
 
+type chapterStartValidator interface {
+	ValidateChapterStartsTx(context.Context, pgx.Tx, versions.Target, []string) error
+}
+
+func (s *Store) validateChapterStarts(ctx context.Context, tx pgx.Tx, version string, segments []Segment) error {
+	var target versions.Target
+	var kind string
+	target.Version = version
+	if err := tx.QueryRow(ctx, `SELECT v.content_id, c.kind FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id=$2`, s.tenant, version).Scan(&target.Content, &kind); err != nil {
+		return err
+	}
+	if s.cfg.Kinds[kind].Presentation != "reader" {
+		return invalid("page-anchored chapters require reader content")
+	}
+	var validator chapterStartValidator
+	if s.media != nil {
+		validator, _ = s.media.Versions.(chapterStartValidator)
+	}
+	if validator == nil {
+		return invalid("reader media must be bound before authoring page-anchored chapters")
+	}
+	starts := make([]string, len(segments))
+	for i, segment := range segments {
+		starts[i] = segment.StartPage
+	}
+	if err := validator.ValidateChapterStartsTx(ctx, tx, target, starts); err != nil {
+		return invalid("chapter starts: %v", err)
+	}
+	return nil
+}
+
 // NotReadyError refuses making versions live while their media is still
 // processing or being published; it is versions.ErrNotReady.
 type NotReadyError struct{ Pending []versions.MediaPending }

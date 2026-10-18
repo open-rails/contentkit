@@ -38,11 +38,14 @@ type pagesSnapshot struct {
 }
 
 type page struct {
-	Name   string      `json:"name,omitempty"`
-	Span   *PageSpan   `json:"span,omitempty"`
-	Path   string      `json:"path"`   // the page upload
-	Source string      `json:"source"` // its blob and edit (File.Key)
-	Files  []rendition `json:"files"`  // Publish.Renditions, in order
+	Name string `json:"name,omitempty"`
+	// The stored Source already includes the original blob digest. Keep this
+	// transient value out of snapshot JSON so existing publications stay valid.
+	SourceHash string      `json:"-"`
+	Span       *PageSpan   `json:"span,omitempty"`
+	Path       string      `json:"path"`   // the page upload
+	Source     string      `json:"source"` // its blob and edit (File.Key)
+	Files      []rendition `json:"files"`  // Publish.Renditions, in order
 }
 
 // rendition is a finished file, at the same path in the version's item and
@@ -130,7 +133,7 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 		if pageMeta(f).SchemaVersion > 0 && strings.HasPrefix(f.Type, "image/") && !f.Gone && f.Fail() == nil && media.PageAnalysisFits(f.Meta) && k.PageAnalysisCapacity(m) > 0 && !f.HasPageAnalysis(media.PageAnalysisRecipe) {
 			return nil, ErrNotReady
 		}
-		p := page{Path: f.Path, Source: f.Key(), Name: pageID(k, f), Span: pageMeta(f).Span}
+		p := page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f), Name: pageName(k, f), Span: pageMeta(f).Span}
 		for _, name := range k.Publish.Renditions {
 			pre := private(k, name)
 			outs := m.Outputs(f.Path, name)
@@ -387,7 +390,11 @@ func (s *Service) snapshotPages(ctx context.Context, q querier, k *media.Kind, v
 	if err != nil {
 		return pagesSnapshot{}, err
 	}
-	return pagesSnapshot{Pages: pages, Spans: spans(segs[v.Version], len(pages))}, nil
+	resolved, err := resolveChapterStarts(segs[v.Version], pages)
+	if err != nil {
+		return pagesSnapshot{}, err
+	}
+	return pagesSnapshot{Pages: pages, Spans: spans(resolved, len(pages))}, nil
 }
 
 // manifest is v's item's manifest; an empty one before its first upload.

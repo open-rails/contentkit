@@ -213,13 +213,14 @@ type FileDownload struct {
 
 // Archive is a marked page archive ready to stream.
 type Archive struct {
-	Name string // the attachment's file name
-	ctx  context.Context
-	s    *Service
-	keys []string
-	mark []int // pages from 0
-	v    Target
-	who  access.Actor
+	Name  string // the attachment's file name
+	ctx   context.Context
+	s     *Service
+	keys  []string
+	names []string
+	mark  []int // pages from 0
+	v     Target
+	who   access.Actor
 }
 
 // Download grants t's download to actor, what its kind's download serves
@@ -247,6 +248,15 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	item, m, err := s.downloadItem(ctx, k, t)
 	if err != nil {
 		return nil, err
+	}
+	if d.anchored {
+		pages, err := pagesOf(k, m)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := resolveChapterStarts(d.segs, pages); err != nil {
+			return nil, err
+		}
 	}
 	z := private(k, k.Download)
 	var pages []media.File
@@ -323,6 +333,25 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, tic
 	if err != nil {
 		return nil, err
 	}
+	if k.Publish != nil {
+		actor := access.Actor{ID: viewer, Kind: auth.SubjectUser}
+		ds, err := s.decisions(ctx, actor, k.Name, []Target{t}, nil)
+		if err != nil {
+			return nil, err
+		}
+		if d := ds[t]; d.anchored {
+			if !d.whole() {
+				return nil, ErrForbidden
+			}
+			pages, err := pagesOf(k, m)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := resolveChapterStarts(d.segs, pages); err != nil {
+				return nil, err
+			}
+		}
+	}
 	z := private(k, k.Download)
 	if z == nil || z.Zip == "" {
 		return nil, ErrNotFound
@@ -344,6 +373,7 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, tic
 			return nil, err
 		}
 		a.keys = append(a.keys, key)
+		a.names = append(a.names, media.PositionalName(len(a.names)+1, len(files), path.Ext(f.Path)))
 	}
 	if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
 		return nil, err
@@ -582,6 +612,9 @@ func (s *Service) streamMarked(ctx context.Context, w io.Writer, a *Archive) err
 			return err
 		}
 		name := media.PositionalName(i+1, len(a.keys), ".webp")
+		if i < len(a.names) {
+			name = a.names[i]
+		}
 		if slices.Contains(a.mark, i) {
 			marked, ext, err := s.o.Policy.Mark(ctx, a.who, a.v, i+1, body)
 			if err != nil {

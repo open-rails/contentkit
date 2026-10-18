@@ -22,7 +22,7 @@ export interface ReadingEngagement {
   video: (element: HTMLVideoElement | null) => void;
   /** Attach to a text post's body: one unit covered by its visible share. */
   text: (element: HTMLElement | null) => void;
-  /** Existing filename/anchor selector to restore, independent of page index. */
+  /** Stable source-hash/anchor selector to restore, independent of page index. */
   setResume: (resume: string | undefined) => void;
   flush: () => Promise<void>;
 }

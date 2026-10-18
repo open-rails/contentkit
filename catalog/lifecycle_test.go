@@ -279,7 +279,7 @@ func TestValidationIntegration(t *testing.T) {
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Access: members}}}); err != nil {
 		t.Errorf("a version's override on an unsold group: %v", err)
 	}
-	segs := []Segment{{Start: 0, End: 5}, {Start: 3, End: 9}}
+	segs := []SegmentInput{{Start: 0, End: 5}, {Start: 3, End: 9}}
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: got.Versions[0].ID, VersionInput: VersionInput{Segments: &segs}}}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("overlapping segments: %v", err)
 	}

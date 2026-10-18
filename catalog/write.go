@@ -77,7 +77,7 @@ type VersionInput struct {
 	ClearAccess bool                   `json:"clear_access,omitempty"`
 	Attributes  map[string]any         `json:"attributes,omitempty"` // replaces all
 	Text        map[string]VersionText `json:"text,omitempty"`       // replaces all
-	Segments    *[]Segment             `json:"segments,omitempty"`   // replaces all
+	Segments    *[]SegmentInput        `json:"segments,omitempty"`   // replaces all
 	Ordinal     *int                   `json:"ordinal,omitempty"`
 	// Cover selects one of the version's cover uploads by name (i-{uuid});
 	// "" returns to its first.
@@ -1332,16 +1332,26 @@ func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v 
 		}
 	}
 	if v.Segments != nil {
-		segs, err := checkSegments(*v.Segments)
+		segs, err := checkSegmentInputs(*v.Segments)
 		if err != nil {
 			return err
+		}
+		if len(segs) > 0 && segs[0].StartPage != "" {
+			if err := s.validateChapterStarts(ctx, tx, id, segs); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $2`, s.tenant, id); err != nil {
 			return err
 		}
 		for _, sg := range segs {
-			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				s.tenant, id, sg.Position, strings.TrimSpace(sg.Title), sg.Start, sg.End, sg.ReleaseAt); err != nil {
+			var start, end any = sg.Start, sg.End
+			var startPage any
+			if sg.StartPage != "" {
+				start, end, startPage = nil, nil, sg.StartPage
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				s.tenant, id, sg.Position, strings.TrimSpace(sg.Title), start, end, sg.ReleaseAt, startPage); err != nil {
 				return err
 			}
 		}

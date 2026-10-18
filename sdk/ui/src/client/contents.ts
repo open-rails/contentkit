@@ -6,7 +6,7 @@ import type {
   Creator,
   InlineImage,
   ManageCount,
-  Segment,
+  SegmentInput,
   Version,
   VersionInput,
 } from "./generated/wire.js";
@@ -129,7 +129,7 @@ export class ContentsClient {
     return this.write(call(this.http, "PUT", "/contents/{id}/versions/order", { params: { id }, body: { ids } }));
   }
   /** Replaces a version's segments (chapters). */
-  setSegments(id: string, vid: string, segments: Segment[]): Promise<Version> {
+  setSegments(id: string, vid: string, segments: SegmentInput[]): Promise<Version> {
     return this.writeVersion(id, call(this.http, "PUT", "/contents/{id}/versions/{vid}/segments", { params: { id, vid }, body: { segments } }));
   }
 

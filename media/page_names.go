@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -8,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 func withPageSource(meta map[string]any, name, source string) map[string]any {
@@ -39,6 +42,19 @@ func withPageSource(meta map[string]any, name, source string) map[string]any {
 	}
 	out["page"] = page
 	return out
+}
+
+// PageID is the SHA-256 of a reader page's stored original bytes, independent
+// of virtual filename, reading position, edits and generated renditions.
+func (k *Kind) PageID(f File) string {
+	if !k.IsPageUpload(f) {
+		return ""
+	}
+	digest, ok := layout.BlobDigest(f.Blob)
+	if !ok {
+		return "" // a staged source has no verified stored digest yet
+	}
+	return hex.EncodeToString(digest)
 }
 
 func pageIdentityUsed(k *Kind, m *Manifest, name string) bool {

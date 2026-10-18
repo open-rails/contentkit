@@ -136,6 +136,11 @@ func writePageMeta(f *media.File, value pageMetadata) {
 }
 
 func pageID(k *media.Kind, f media.File) string {
+	return k.PageID(f)
+}
+
+// pageName is display/path metadata only. Page identity is the original hash.
+func pageName(k *media.Kind, f media.File) string {
 	if n := pageMeta(f).Name; n != "" {
 		return n
 	}
@@ -370,7 +375,7 @@ func (s *Service) pageEditorAccess(ctx context.Context, actor access.Actor, t Ta
 			return nil, nil, contentref.ContentRef{}, e
 		}
 		m = m.Clone()
-		guardSegmentedPages(k, m, len(segments[t.Version]) > 0)
+		guardSegmentedPages(k, m, legacyPageRanges(segments[t.Version]))
 	}
 	return k, m, ref, err
 }
@@ -513,7 +518,7 @@ func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t T
 		return PageNotices{}, err
 	}
 	m = m.Clone()
-	guardSegmentedPages(k, m, len(segments[t.Version]) > 0)
+	guardSegmentedPages(k, m, legacyPageRanges(segments[t.Version]))
 	for i, f := range m.Files {
 		if !k.IsPageUpload(f) || f.Unattached || !restore[pageID(k, f)] {
 			continue
@@ -603,11 +608,11 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 	changed := false
 	_, err = s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
 		before := revisionOfInput(m.Files)
-		guardSegmentedPages(k, m, len(segments[t.Version]) > 0)
+		guardSegmentedPages(k, m, legacyPageRanges(segments[t.Version]))
 		taken := map[string]bool{}
 		next := 0
 		for _, f := range sourcePages(k, m) {
-			name := pageID(k, f)
+			name := pageName(k, f)
 			taken[name] = true
 			if _, _, end, ok := media.CanonicalPageName(name); ok && end > next {
 				next = end

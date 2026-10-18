@@ -152,7 +152,7 @@ type OrderInput struct {
 
 // SegmentsInput replaces a version's segments.
 type SegmentsInput struct {
-	Segments []Segment `json:"segments"`
+	Segments []SegmentInput `json:"segments"`
 }
 
 // InlineImage is an inline image of a body: Ref goes where its URL would

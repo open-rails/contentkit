@@ -63,11 +63,25 @@ type Creator struct {
 type Segment struct {
 	Position  int        `json:"position"`
 	Title     string     `json:"title,omitempty"`
+	StartPage string     `json:"start_page,omitempty"`
 	Start     int        `json:"start"`
 	End       int        `json:"end"`
 	ReleaseAt *time.Time `json:"release_at,omitempty"`
 	// Released is computed on reads.
 	Released bool `json:"released"`
+}
+
+// SegmentInput authors a chapter by its stable source page identity. Start and
+// End remain accepted together for older range-based clients. Anchored writes
+// omit both indices; the next start or the final page determines the end.
+type SegmentInput struct {
+	Position  int        `json:"position,omitempty"`
+	Title     string     `json:"title,omitempty"`
+	StartPage string     `json:"start_page,omitempty"`
+	Start     int        `json:"start,omitempty"`
+	End       int        `json:"end,omitempty"`
+	ReleaseAt *time.Time `json:"release_at,omitempty"`
+	Released  bool       `json:"released,omitempty"` // ignored, retained for older clients
 }
 
 // Cover is a version's cover: Image is the cover upload its editors
