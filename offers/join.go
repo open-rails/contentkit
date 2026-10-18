@@ -71,8 +71,9 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 	}
 	gerr := s.billing.Grant(ctx, grants)
 	// A Put or Withdraw may have committed since the read: take back the
-	// grant of each offer no longer free on the product granted, even when
-	// the grant's answer was lost, and even when the caller has gone.
+	// grant of each offer no longer free on the product granted (every grant,
+	// when the offers cannot be re-read or one was withdrawn), even when the
+	// grant's answer was lost, and even when the caller has gone.
 	ctx = context.WithoutCancel(ctx)
 	now, err := s.active(ctx, targets)
 	var revoke []access.Grant
@@ -83,7 +84,11 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 	}
 	if len(revoke) > 0 {
 		if rerr := s.billing.Revoke(ctx, revoke); rerr != nil {
-			return nil, errors.Join(gerr, err, rerr)
+			// A grant left in place is an internal failure, never a not-found.
+			if err != nil {
+				rerr = fmt.Errorf("%w (re-reading offers: %v)", rerr, err)
+			}
+			return nil, errors.Join(gerr, rerr)
 		}
 		if err == nil || errors.Is(err, ErrNotFound) {
 			err = fmt.Errorf("%w: an offer changed while joining", ErrNotJoinable)
