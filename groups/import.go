@@ -525,11 +525,16 @@ func (s *Store) sameMemberships(f facts, set ContentGroups, stored []Membership)
 			have[key(m)] = m
 		}
 	}
-	if len(have) != len(set.Memberships) {
+	// Duplicates collapse as the write keeps them: the last one wins.
+	want := map[string]Membership{}
+	for _, m := range set.Memberships {
+		want[key(m)] = m
+	}
+	if len(have) != len(want) {
 		return false
 	}
-	for _, m := range set.Memberships {
-		h, ok := have[key(m)]
+	for k, m := range want {
+		h, ok := have[k]
 		state := m.State
 		if state == "" {
 			state = MembershipActive

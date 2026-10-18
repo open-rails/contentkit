@@ -657,6 +657,30 @@ func TestMembershipRules(t *testing.T) {
 	if held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2), cid(3)}); len(held[cid(2)]) != 1 || len(held[cid(3)]) != 1 {
 		t.Fatalf("after remove %+v", held)
 	}
+
+	// An import naming one membership twice is still a change: the duplicate
+	// collapses as a write keeps it, so the stored artist membership goes.
+	f.add(Membership{GroupID: tag.ID, ContentID: cid(2)}, Membership{GroupID: artist.ID, ContentID: cid(2)})
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if err := f.s.ImportMemberships(f.ctx, tx, []ContentGroups{{ContentID: cid(2), Kinds: []string{"artist", "tag"},
+		Memberships: []Membership{{GroupID: tag.ID}, {GroupID: tag.ID}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2)})
+	kept := map[GroupID]bool{}
+	for _, m := range held[cid(2)] {
+		kept[m.GroupID] = true
+	}
+	if !kept[tag.ID] || kept[artist.ID] {
+		t.Fatalf("after importing a duplicated set %+v", held[cid(2)])
+	}
 }
 
 // Merging moves memberships (an accepted one wins over a proposed duplicate),
@@ -983,5 +1007,38 @@ func TestKeywordDocuments(t *testing.T) {
 	listed, _, done, err = f.s.ListDocuments(f.ctx, "tag", "en", "", 1)
 	if err != nil || len(listed) != 1 || done {
 		t.Fatalf("tag page %v %v %v", listed, done, err)
+	}
+}
+
+// An edge added while a merge retires one of its groups waits for the merge
+// and is refused, rather than staying attached to the retired group.
+func TestEdgeToAGroupBeingMergedIsRefused(t *testing.T) {
+	f := newFixture(t)
+	g := f.create(GroupInput{Kind: "series", Slug: "from"}, GroupInput{Kind: "series", Slug: "into"}, GroupInput{Kind: "series", Slug: "peer"})
+	from, into, peer := g[0], g[1], g[2]
+	merge, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer merge.Rollback(f.ctx)
+	groups := pgx.Identifier{f.schema, "content_groups"}.Sanitize()
+	if _, err := merge.Exec(f.ctx, `SELECT 1 FROM `+groups+` WHERE id = $1 FOR UPDATE`, string(from.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := merge.Exec(f.ctx, `UPDATE `+groups+` SET state = 'merged', merged_into = $2 WHERE id = $1`, string(from.ID), string(into.ID)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.s.AddEdges(f.ctx, []Edge{{From: from.ID, Relation: "related", To: peer.ID}}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("the edge did not wait for the merge: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := merge.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("edge to a merged group: %v", err)
 	}
 }
