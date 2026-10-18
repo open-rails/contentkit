@@ -420,17 +420,27 @@ WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state
 }
 
 // pending also discovers attempts that crashed before the first manifest PUT.
+// Unfinished commits come first; pending notifications fill the rest of the
+// limit. Each query matches a partial index, so neither reads the retained
+// receipt history.
 func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int, notifications bool) ([]manifestCommit, error) {
 	j = j.forTenant(tenant)
+	out, err := j.pendingIn(ctx, `state IN ('open', 'prepared', 'frozen')`, tenant, kinds, limit, nil)
+	if err != nil || !notifications || len(out) == limit {
+		return out, err
+	}
+	return j.pendingIn(ctx, `state = 'applied' AND effects->>'notify' = 'true'`, tenant, kinds, limit-len(out), out)
+}
+
+// pendingIn appends up to limit commits matching state, oldest first.
+func (j *PGJournal) pendingIn(ctx context.Context, state, tenant string, kinds []string, limit int, out []manifestCommit) ([]manifestCommit, error) {
 	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, content_version_id, folder_prefix FROM `+j.table+`
-WHERE tenant_id = $1 AND content_kind = ANY($2)
-AND (state IN ('open', 'prepared', 'frozen') OR ($4 AND state = 'applied' AND effects->>'notify' = 'true'))
-ORDER BY CASE WHEN state = 'applied' THEN 1 ELSE 0 END, updated_at, operation_id LIMIT $3`, tenant, kinds, limit, notifications)
+WHERE tenant_id = $1 AND content_kind = ANY($2) AND `+state+`
+ORDER BY updated_at, operation_id LIMIT $3`, tenant, kinds, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []manifestCommit
 	for rows.Next() {
 		c := manifestCommit{Ref: contentref.ContentRef{TenantID: tenant}}
 		if err := rows.Scan(&c.ID, &c.Ref.ContentKind, &c.Ref.ContentID, &c.Ref.ContentVersionID, &c.Folder); err != nil {
