@@ -34,8 +34,10 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 	if err != nil {
 		return err
 	}
+	const perRow = 16
 	rows := make([]string, 0, len(exposures))
-	args := make([]any, 0, len(exposures)*15)
+	args := make([]any, 0, len(exposures)*perRow)
+	sizes := make([]int, 0, len(exposures))
 	for i := range exposures {
 		e := exposures[i]
 		if _, erased := fenced[[2]string{e.Subject.Kind(), e.Subject.Key()}]; erased {
@@ -70,19 +72,20 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at, ? AS access_contexts")
 		args = append(args, tenant, e.RenderID, string(e.Stage), e.Revision, e.QueryID, surface, e.Ranker, e.Language,
 			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC(), contexts)
+		sizes = append(sizes, inlinedSize(rows[len(rows)-1], args[len(args)-perRow:]))
 	}
-	if len(rows) == 0 {
-		return nil
-	}
-	insert := fmt.Sprintf(`INSERT INTO %s.exposures
+	for start, end := 0, 0; start < len(rows); start = end {
+		end = insertEnd(sizes, start)
+		insert := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
  content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
        content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts
 FROM (%s) AS incoming
-WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
-	if err := st.conn.Exec(ctx, insert, args...); err != nil {
-		return fmt.Errorf("signal: insert exposures: %w", err)
+WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
+		if err := st.conn.Exec(ctx, insert, args[start*perRow:end*perRow]...); err != nil {
+			return fmt.Errorf("signal: insert exposures: %w", err)
+		}
 	}
 	return nil
 }

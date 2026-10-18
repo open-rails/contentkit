@@ -68,5 +68,10 @@ func (s *Service) ImportSignals(ctx context.Context, in []ImportSignal) error {
 		out = append(out, signal.Signal{ContentRef: ref, Subject: x.Subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()})
 
 	}
-	return s.o.Hub.RecordSignals(ctx, out)
+	for start := 0; start < len(out); start += signal.MaxSignalsPerBatch {
+		if err := s.o.Hub.RecordSignals(ctx, out[start:min(start+signal.MaxSignalsPerBatch, len(out))]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
