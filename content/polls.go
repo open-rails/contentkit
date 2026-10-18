@@ -993,7 +993,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 // three options and leave one; FOR NO KEY UPDATE does not block voting. Votes
 // go before their option, the order account erasure locks them in.
 func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx) // the count must see a delete committed during the lock wait
 	if err != nil {
 		return err
 	}
