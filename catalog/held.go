@@ -64,7 +64,7 @@ func (s *Store) ResolveHeld(ctx context.Context, id string, d content.ReviewDeci
  published_at = CASE WHEN $3 = 'approved' AND state = 'published' AND published_at IS NULL AND publish_at <= $7 THEN $7 ELSE published_at END,
  moderated_by = $5, moderated_at = $7, moderation_revision = moderation_revision + 1, revision = revision + 1, updated_at = clock_timestamp()
  WHERE tenant_id = $1 AND id = $2 AND moderation = 'held' AND state <> 'deleted' AND moderation_revision = $6
- RETURNING kind, published_at = $7`, s.tenant, id, state, d.Reason, d.Reviewer, d.Revision, now).Scan(&kind, &live)
+ RETURNING kind, published_at IS NOT DISTINCT FROM $7`, s.tenant, id, state, d.Reason, d.Reviewer, d.Revision, now).Scan(&kind, &live)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return content.ErrNotFound
 	}

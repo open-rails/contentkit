@@ -58,7 +58,7 @@ func pageOffset(page, limit int, cursor, sort string) (int, error) {
 		return 0, fmt.Errorf("%w: page and cursor are exclusive", ErrInvalid)
 	case sort == SortRandom:
 		return 0, fmt.Errorf("%w: random lists page by cursor", ErrInvalid)
-	case page*limit > maxPageOffset:
+	case page > maxPageOffset/limit: // page*limit could overflow
 		return 0, fmt.Errorf("%w: page × limit is at most %d", ErrInvalid, maxPageOffset)
 	}
 	return (page - 1) * limit, nil

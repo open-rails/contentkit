@@ -156,7 +156,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		return c, fmt.Errorf("%w: page", ErrInvalid)
 	case opts.Page > 0 && opts.Cursor != "":
 		return c, fmt.Errorf("%w: page and cursor are exclusive", ErrInvalid)
-	case opts.Page*c.limit > maxPageOffset:
+	case opts.Page > maxPageOffset/c.limit: // Page*limit could overflow
 		return c, fmt.Errorf("%w: page × limit is at most %d", ErrInvalid, maxPageOffset)
 	case opts.Page > 0:
 		c.args["offset"] = (opts.Page - 1) * c.limit

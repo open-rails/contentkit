@@ -7,10 +7,14 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
+	riverhelpers "github.com/open-rails/helpers/river"
 )
 
 type heldForPolicyTest struct {
@@ -136,4 +140,73 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 		t.Fatalf("kind-scoped library: %+v %v", page, err)
 	}
 
+}
+
+// Reconcile passes over the same unsynced offers keep one waiting sync per
+// target; once that sync is done, a later revision queues another.
+func TestReconcileQueuesOneSyncPerTarget(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	riverSchema := pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, riverSchema); err != nil {
+		t.Fatal(err)
+	}
+	cfg := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader"}}}
+	gate, err := access.NewGate(access.GateConfig{Tenant: "policy", Kinds: cfg, Billing: &heldForPolicyTest{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Options{Pool: pool, Schema: schema, Tenant: "policy", Kinds: cfg, Billing: &heldForPolicyTest{}, Gate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.client, err = river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: riverSchema}); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		exec(`INSERT INTO `+pgx.Identifier{schema, "content_offers"}.Sanitize()+` (tenant_id,id,target_kind,target_id,terms) VALUES ('policy',$1,'content',$2,'{"amount":0,"currency":"USD"}')`,
+			contentref.NewID(), contentref.NewID())
+	}
+	jobs := pgx.Identifier{riverSchema, "river_job"}.Sanitize()
+	waiting := func(want int) {
+		t.Helper()
+		var n, targets int
+		if err := pool.QueryRow(ctx, `SELECT count(*), count(DISTINCT args->'target') FROM `+jobs+` WHERE kind = 'contentkit_offer_sync' AND state <> 'completed'`).Scan(&n, &targets); err != nil {
+			t.Fatal(err)
+		}
+		if n != want || targets != want {
+			t.Fatalf("%d waiting syncs for %d targets, want %d for %d", n, targets, want, want)
+		}
+	}
+	for range 3 {
+		if err := s.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waiting(2)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Kind: ContentTarget, ID: contentref.NewID()}
+	if err := s.enqueue(ctx, tx, []Target{target, target}); err != nil {
+		t.Fatalf("a batch naming one target twice: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE ` + jobs + ` SET state = 'completed', finalized_at = now()`)
+	exec(`UPDATE ` + pgx.Identifier{schema, "content_offers"}.Sanitize() + ` SET revision = revision + 1`)
+	waiting(0)
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waiting(2)
 }

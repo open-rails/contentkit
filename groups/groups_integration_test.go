@@ -924,10 +924,14 @@ func TestList(t *testing.T) {
 		t.Fatalf("cursor page total %+v", page.Total)
 	}
 	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"},
-		"page": {Page: -1}, "page and cursor": {Page: 2, Cursor: "x"}, "deep page": {Page: 51, Limit: 200}} {
+		"page": {Page: -1}, "page and cursor": {Page: 2, Cursor: "x"}, "deep page": {Page: 51, Limit: 200},
+		"overflowing page": {Page: 92233720368547759, Limit: 100}} {
 		if _, err := f.s.List(f.ctx, opts); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	if _, err := f.s.List(f.ctx, ListOptions{Kind: "tag", Page: 50, Limit: 200}); err != nil {
+		t.Errorf("last allowed page: %v", err)
 	}
 
 	// Parent and scope filters; detail carries parent, scope and children.
