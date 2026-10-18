@@ -526,6 +526,8 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		var textIDs, nameIDs, reach []string
 		var restored []groupRow
 		var flipped, renamed []Ref
+		var relabeled []string
+		given := map[string][]nameRow{}
 		var unavailable []Ref
 		for i, u := range updates {
 			g := current[u.ID]
@@ -562,11 +564,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if u.Names != nil || u.Slug != nil {
 				renamed = append(renamed, Ref{Kind: g.Kind, ID: g.ID})
 			}
+			if row.Slug != g.Slug {
+				relabeled = append(relabeled, string(g.ID))
+			}
 			if u.Names != nil {
 				n, err := validateNames(g.ID, u.Names)
 				if err != nil {
 					return err
 				}
+				given[string(g.ID)] = n
 				for _, r := range n {
 					r.Ordinal = len(names)
 					names = append(names, r)
@@ -612,6 +618,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			}
 		}
 		if len(nameIDs) > 0 {
+			stored, err := s.names(ctx, q, nameIDs)
+			if err != nil {
+				return err
+			}
+			for _, id := range nameIDs {
+				if !sameNames(given[id], stored[GroupID(id)]) && !slices.Contains(relabeled, id) {
+					relabeled = append(relabeled, id)
+				}
+			}
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_names")), s.tenant, nameIDs); err != nil {
 				return err
 			}
@@ -637,6 +652,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			return err
 		}
 		if err := s.refreshGroupFacets(ctx, q, reach); err != nil {
+			return err
+		}
+		if err := s.namesChanged(ctx, q, relabeled); err != nil {
 			return err
 		}
 		updated, err := s.byIDs(ctx, q, list)
