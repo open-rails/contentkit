@@ -133,11 +133,15 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit fun
 	for key, value := range sort.args {
 		args[key] = value
 	}
+	sql := fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s`,
+		s.t.facets, q.predicate(), preference)
 	if name, _, _ := strings.Cut(sort.raw, ":"); name == SortPopular {
-		q = q.with("("+sort.expr+") > 0", nil)
+		// Popularity is per content: score each content's chosen edition once.
+		sql = fmt.Sprintf(`SELECT f.content_id, f.version_id FROM (
+ SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s
+WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id
- FROM %s f %s WHERE %s ORDER BY f.content_id, %s`, s.t.facets, sort.join, q.predicate(), preference), args)
+	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return err
 	}

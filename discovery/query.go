@@ -599,9 +599,6 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	for k, v := range o.args {
 		args[k] = v
 	}
-	if name, _, _ := strings.Cut(o.raw, ":"); name == SortPopular {
-		q = q.with("("+o.expr+") > 0", nil)
-	}
 	if o.raw == SortRandom && cur.Seed == "" {
 		cur.Seed = newSeed()
 	}
@@ -615,9 +612,20 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 		after = fmt.Sprintf("(c.sk, c.content_id) %s (@d_cv::%s, @d_cid::text)", cmp, o.cast)
 		args["d_cv"], args["d_cid"] = cur.Value, cur.ID
 	}
-	sql := fmt.Sprintf(`SELECT c.content_id, c.version_id, c.sk::text FROM (
- SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, (%s) AS sk FROM %s f %s WHERE %s ORDER BY f.content_id, %s) c
-WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, o.join, q.predicate(), preference, after, dir, dir)
+	if name, _, _ := strings.Cut(o.raw, ":"); name == SortPopular {
+		after += " AND c.sk > 0"
+	}
+	picked := fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id, (%s) AS sk FROM %s f WHERE %s ORDER BY f.content_id, %s`,
+		o.expr, s.t.facets, q.predicate(), preference)
+	if o.join != "" {
+		// The joined score is per content: choose each content's edition first
+		// so it is computed once, not once per matching edition.
+		picked = fmt.Sprintf(`SELECT f.content_id, f.version_id, (%s) AS sk FROM (
+ SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s`,
+			o.expr, s.t.facets, q.predicate(), preference, o.join)
+	}
+	sql := fmt.Sprintf(`SELECT c.content_id, c.version_id, c.sk::text FROM (%s) c
+WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, picked, after, dir, dir)
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", err
