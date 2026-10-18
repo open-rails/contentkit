@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -291,6 +292,67 @@ func TestPreviewsFollowReleases(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
+}
+
+// A recovery pass bounds builds and preview refreshes separately, so builds
+// that stay blocked cannot keep a released preview from refreshing.
+func TestRecoveryRequeuesBuildsAndPreviewsSeparately(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`)
+	v := s.version(c)
+	ref := s.ref("gallery", v)
+	for i := range 4 {
+		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
+	}
+	later := time.Now().Add(time.Hour)
+	s.segment(v, 1, 0, 1, nil)
+	s.segment(v, 2, 1, 4, &later)
+	anon := access.Actor{Anonymous: true, IP: "203.0.113.6"}
+	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 1 })
+
+	stuck := s.version(s.content("gallery", `{"level":"public"}`))
+	s.mustUpload(s.creator, s.ref("gallery", stuck), "originals/001", "image/png", pngOf(t, 30, 40, 9))
+	s.plan(anon, stuck, func(p *versions.ReaderPlan) bool { return true })
+	jobs := pgx.Identifier{s.host, "river_job"}.Sanitize()
+	// A publish still waiting would absorb the requeue, so let them finish.
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(100 * time.Millisecond) {
+		var waiting int
+		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+jobs+` WHERE kind = 'contentkit_version_publish'
+ AND state IN ('available', 'pending', 'running', 'retryable', 'scheduled')`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d publish jobs still waiting", waiting)
+		}
+	}
+	s.exec(`UPDATE `+s.table("content_version_publications")+` SET state = 'building', created_at = now() - interval '1 hour'
+ WHERE tenant_id = $1 AND version_id = $2`, s.tenant, stuck.Version)
+
+	// Release the second segment only now, so no earlier publish has already
+	// refreshed its previews.
+	s.exec(`UPDATE `+s.table("content_segments")+` SET release_at = now() - interval '1 second' WHERE tenant_id = $1 AND version_id = $2 AND position = 2`,
+		s.tenant, v.Version)
+	defer versions.SetRecoveryBatch(1)()
+	var before int64
+	if err := s.pool.QueryRow(s.ctx, `SELECT coalesce(max(id), 0) FROM `+jobs).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := versions.RecoverPublications(s.svc, s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []versions.Target{v, stuck} {
+		var queued int
+		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+jobs+`
+ WHERE kind = 'contentkit_version_publish' AND args->>'version' = $1 AND id > $2`, target.Version, before).Scan(&queued); err != nil {
+			t.Fatal(err)
+		}
+		if queued == 0 {
+			t.Errorf("version %s was not requeued", target.Version)
+		}
+	}
 }
 
 // Reader content gets what its host never uploads: each version a cover from
