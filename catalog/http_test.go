@@ -88,6 +88,11 @@ func TestRoutesIntegration(t *testing.T) {
 		t.Fatalf("one version %+v", one)
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id+"/versions/"+id, nil, nil)
+	// A version code selects that version alone, with its segments.
+	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+id+"/versions/"+strings.ToLower(ja.Versions[0].Code), nil, &one)
+	if one.ID != v.ID || len(one.Segments) != 2 {
+		t.Fatalf("version by code %+v", one)
+	}
 	f.want(http.StatusBadRequest, anon, "GET", "/v1/contents/"+id+"?language=xx", nil, nil)
 	// The site's default language is prefixed however it is asked for.
 	var en Content

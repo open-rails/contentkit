@@ -67,16 +67,18 @@ func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contentu
 	if err != nil {
 		return nil, err
 	}
-	got, err := s.Contents(r.Context(), v, candidates)
+	// Only liveness and editorship matter here, so the rule's verdict is read
+	// directly rather than through the full Contents graph.
+	views, err := v.decide(r.Context(), candidates, true)
 	if err != nil {
 		return nil, err
 	}
 	var hidden []string
-	for i, c := range got {
-		if c != nil && c.Live {
-			set(candidates[i], contenturl.Visible)
+	for _, id := range candidates {
+		if iv := views[id]; iv != nil && v.itemLive(iv) {
+			set(id, contenturl.Visible)
 		} else {
-			hidden = append(hidden, candidates[i])
+			hidden = append(hidden, id)
 		}
 	}
 	actor := gate.Actor(r.Context())
@@ -87,13 +89,13 @@ func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contentu
 	if err != nil {
 		return nil, err
 	}
-	mine, err := s.Contents(r.Context(), ev, hidden)
+	mine, err := ev.decide(r.Context(), hidden, true)
 	if err != nil {
 		return nil, err
 	}
-	for i, c := range mine {
-		if c != nil && c.Editor {
-			set(hidden[i], contenturl.Preview)
+	for _, id := range hidden {
+		if iv := mine[id]; iv != nil && iv.visible && iv.editor {
+			set(id, contenturl.Preview)
 		}
 	}
 	return out, nil
