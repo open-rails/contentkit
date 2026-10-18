@@ -24,10 +24,11 @@ import (
 // and versions it promoted.
 func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	total := 0
+	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
 		n, next, err := s.publishDue(ctx, after)
 		total += n
-		if err != nil || next == "" {
+		if err != nil || next == "" || time.Now().After(deadline) {
 			return total, err
 		}
 		after = next
@@ -249,8 +250,9 @@ func (s *Store) reconcileFacets(ctx context.Context, after string) ([]string, er
 	return ids, nil
 }
 
-// purgeBatch bounds one erasing transaction; purgeBudget bounds one job run,
-// under River's default one-minute timeout, so a backlog drains run by run.
+// purgeBatch bounds one erasing transaction; purgeBudget bounds a purge run
+// and skip-only version scans, under River's default one-minute timeout, so
+// backlogs drain run by run.
 const (
 	purgeBatch  = 200
 	purgeBudget = 45 * time.Second
@@ -359,9 +361,10 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 // eraseVersions deletes one batch of versions deleted before cutoff whose
 // item lives on and was never sold, with their media folders and interactions.
 func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
+	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
 		n, next, err := s.eraseVersionBatch(ctx, cutoff, after)
-		if err != nil || next == "" {
+		if err != nil || next == "" || time.Now().After(deadline) {
 			return n, err
 		}
 		after = next
