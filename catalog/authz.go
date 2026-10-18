@@ -5,6 +5,8 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
 )
@@ -19,16 +21,7 @@ func (e *AuthError) Unwrap() error { return e.Err }
 // staffRights are the actor's root permissions over content.
 type staffRights struct{ write, view bool }
 
-type checkedStaffKey struct{}
-type checkedStaff struct {
-	store  *Store
-	rights staffRights
-}
-
 func (s *Store) staffRights(ctx context.Context, actor access.Actor) (staffRights, error) {
-	if checked, ok := ctx.Value(checkedStaffKey{}).(checkedStaff); ok && checked.store == s {
-		return checked.rights, nil
-	}
 	if actor.Anonymous || actor.ID == "" {
 		return staffRights{}, nil
 	}
@@ -99,10 +92,43 @@ type owned struct {
 	everSold                    bool
 }
 
+// grants are the provider's answers a write needs, asked before its
+// transaction: the provider may share the pool, so a transaction must never
+// hold a connection and row locks while waiting on it. They last one write.
+type grants struct {
+	staff staffRights
+	// editors are the owner groups the rows named when asked, and whether
+	// the actor edits each.
+	editors map[string]bool
+}
+
+// grantsFor asks the provider what writing ids needs, before any
+// transaction: staff rights, else editorship of the owner groups the rows
+// name now, read without locking. authorize rechecks them under the lock.
+func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string) (grants, error) {
+	var g grants
+	var err error
+	if g.staff, err = s.staffRights(ctx, actor); err != nil || g.staff.write {
+		return g, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT owner_group_id FROM `+s.t.items+`
+ WHERE tenant_id = $1 AND id = ANY($2) AND owner_group_id IS NOT NULL`, s.tenant, ids)
+	if err != nil {
+		return g, err
+	}
+	groups, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return g, err
+	}
+	g.editors, err = s.groupEditor(ctx, s.pool, actor, groups)
+	return g, err
+}
+
 // authorize locks ids for the write and refuses unless actor edits each: a
 // root:content:write holder, one of its creators or an editor of its owner
-// group. A missing id is ErrNotFound.
-func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, ids []string) (map[string]owned, error) {
+// group, by g. An owner group that changed since g was asked is not in it,
+// so refuses. A missing id is ErrNotFound.
+func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, ids []string, g grants) (map[string]owned, error) {
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
 	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_group_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL, c.ever_sold,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3 AND $3 <> '')
@@ -112,7 +138,6 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 	}
 	out := make(map[string]owned, len(ids))
 	creator := map[string]bool{}
-	var groups []string
 	for rows.Next() {
 		var o owned
 		var isCreator bool
@@ -121,9 +146,6 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 			return nil, err
 		}
 		out[o.id], creator[o.id] = o, isCreator
-		if o.ownerGroup != "" && !slices.Contains(groups, o.ownerGroup) {
-			groups = append(groups, o.ownerGroup)
-		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -134,16 +156,11 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 			return nil, ErrNotFound
 		}
 	}
-	rights, err := s.staffRights(ctx, actor)
-	if err != nil || rights.write {
-		return out, err
-	}
-	editors, err := s.groupEditor(ctx, q, actor, groups)
-	if err != nil {
-		return nil, err
+	if g.staff.write {
+		return out, nil
 	}
 	for id, o := range out {
-		if !creator[id] && !editors[o.ownerGroup] {
+		if !creator[id] && !g.editors[o.ownerGroup] {
 			return nil, ErrForbidden
 		}
 	}

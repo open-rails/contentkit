@@ -351,6 +351,9 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
+		NamesChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return e.catalog.GroupsRenamed(ctx, q, ids)
+		},
 		DocumentsChanged: func(ctx context.Context, q groups.Querier) error { return e.syncDocuments(ctx, q) },
 		Owned:            ownedContent{e}}
 	if e.cfg.Media != nil {

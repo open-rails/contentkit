@@ -44,7 +44,7 @@ func config() kinds.Config {
 			"blog": {Route: "blog", Presentation: "post", Groups: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		},
 		GroupKinds: map[string]kinds.GroupKind{
-			"tag":     {Route: "tags", VersionLevel: true},
+			"tag":     {Route: "tags", VersionLevel: true, Parent: "tag"},
 			"channel": {Owner: "user", Sellable: true, AuthScope: true},
 			"series":  {Route: "series"},
 		},
@@ -103,6 +103,9 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(),
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return f.s.ContentChanged(ctx, q, ids)
+		},
+		NamesChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return f.s.GroupsRenamed(ctx, q, ids)
 		}}); err != nil {
 		t.Fatal(err)
 	}

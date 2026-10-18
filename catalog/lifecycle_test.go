@@ -8,9 +8,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -225,6 +229,102 @@ func TestEventsRedeliverAfterFailureIntegration(t *testing.T) {
 	if !slices.Equal(seen, []string{EventContentCreated, EventVersionCreated, EventContentPublished}) {
 		t.Fatalf("seen %v", seen)
 	}
+}
+
+// pooledRoles is the test auth reading its answers over the catalog's own
+// pool, as AuthKit sharing a host's pool does. moved, when set, runs once
+// before the first group-scope answer.
+type pooledRoles struct {
+	*roles
+	pool  *pgxpool.Pool
+	moved func(context.Context) error
+}
+
+func (p *pooledRoles) CanIn(ctx context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error) {
+	if _, err := p.pool.Exec(ctx, `SELECT 1`); err != nil {
+		return false, err
+	}
+	if move := p.moved; move != nil && scope != testauth.Scope {
+		p.moved = nil
+		if err := move(ctx); err != nil {
+			return false, err
+		}
+	}
+	return p.roles.CanIn(ctx, a, scope, perm)
+}
+
+// A write asks the authorization provider before it takes a connection and
+// row locks, so a provider sharing a one-connection pool still answers it.
+// The owner group is rechecked under the lock: one that changed after the
+// provider was asked refuses rather than granting on the old answer.
+func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	studio, other := f.group("channel", "studio"), f.group("channel", "other")
+	f.editor("studio", "ed")
+	in := gallery("Shared", "en", "ja")
+	in.OwnerGroupID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
+	id := f.create("staff", in)
+
+	one := pgtest.Pool(t, func(c *pgxpool.Config) { c.MaxConns = 1 })
+	provider := &pooledRoles{roles: f.roles, pool: one}
+	s, err := New(f.ctx, Options{Pool: one, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: provider},
+		Groups: f.groups, Now: f.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	as := func(id string) access.Actor { return testauth.Actor(access.Actor{ID: id}, provider) }
+
+	t.Run("owner-group editor publishes", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+		defer cancel()
+		if err := s.Publish(ctx, as("ed"), []Publish{{ContentID: id}}); err != nil {
+			t.Fatalf("the editor publishes: %v", err)
+		}
+	})
+
+	t.Run("staff, creator and owner-group editor edit", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+		defer cancel()
+		for _, who := range []string{"staff", "alice", "ed"} {
+			if err := s.Update(ctx, as(who), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingListed)}}}); err != nil {
+				t.Fatalf("%s updates: %v", who, err)
+			}
+		}
+		ed := as("ed")
+		vids, err := s.PutVersions(ctx, ed, []VersionPut{{ContentID: id, VersionInput: VersionInput{Languages: []string{"en"}}}})
+		if err != nil {
+			t.Fatalf("the editor adds a version: %v", err)
+		}
+		if err := s.DeleteVersions(ctx, ed, []VersionKey{{ContentID: id, VersionID: vids[0]}}); err != nil {
+			t.Fatalf("the editor deletes a version: %v", err)
+		}
+		if err := s.Delete(ctx, ed, []string{id}); err != nil {
+			t.Fatalf("the editor deletes: %v", err)
+		}
+		if err := s.Restore(ctx, ed, []string{id}); err != nil {
+			t.Fatalf("the editor restores: %v", err)
+		}
+	})
+
+	t.Run("owner group moved before the lock", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+		defer cancel()
+		provider.moved = func(ctx context.Context) error {
+			_, err := one.Exec(ctx, `UPDATE `+f.table("content_items")+` SET owner_group_id = $3 WHERE tenant_id = $1 AND id = $2`, tenant, id, other)
+			return err
+		}
+		if err := s.Delete(ctx, as("ed"), []string{id}); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("the studio's editor deleted an item moved to another group: %v", err)
+		}
+		var state, owner string
+		if err := f.pool.QueryRow(f.ctx, `SELECT state, owner_group_id FROM `+f.table("content_items")+` WHERE tenant_id = $1 AND id = $2`, tenant, id).Scan(&state, &owner); err != nil {
+			t.Fatal(err)
+		}
+		if state == StateDeleted || owner != other {
+			t.Fatalf("after the refused delete: state %s, owner %s", state, owner)
+		}
+	})
 }
 
 // Writes validate against the kinds config: languages, traits, attributes by
