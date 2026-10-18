@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -157,6 +158,9 @@ type section struct {
 	prepare func(r *resolver, i int) (in any, external string, err error)
 	// write writes prepared inputs in tx.
 	write func(ctx context.Context, tx pgx.Tx, in []any) error
+	// first, if set, reports whether a prepared input is written ahead of
+	// the rest, so a one-by-one retry keeps the section's lock order.
+	first func(in any) bool
 }
 
 // runChunk writes records [from, to) of a section in one transaction: all
@@ -185,6 +189,9 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			continue
 		}
 		ready = append(ready, pending{index: i, external: external, in: in, ids: r.minted})
+	}
+	if sec.first != nil {
+		sort.SliceStable(ready, func(a, b int) bool { return sec.first(ready[a].in) && !sec.first(ready[b].in) })
 	}
 	write := func(list []pending) error {
 		sp, err := tx.Begin(ctx)

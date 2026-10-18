@@ -1042,3 +1042,170 @@ func TestEdgeToAGroupBeingMergedIsRefused(t *testing.T) {
 		t.Fatalf("edge to a merged group: %v", err)
 	}
 }
+
+// raceAfter runs first in one transaction and, while it is open, second in
+// another. Once second has either returned or is waiting on first's locks,
+// first commits; second commits if it succeeded. It returns second's error.
+func (f *fixture) raceAfter(first, second func(pgx.Tx) error) error {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	a, err := f.pool.Begin(ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer a.Rollback(ctx)
+	if err := first(a); err != nil {
+		f.t.Fatal(err)
+	}
+	b, err := f.pool.Begin(ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer b.Rollback(ctx)
+	pid := b.Conn().PgConn().PID()
+	done := make(chan error, 1)
+	go func() { done <- second(b) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		default:
+		}
+	}()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	returned := false
+wait:
+	for {
+		select {
+		case err = <-done:
+			returned = true
+			break wait
+		case <-tick.C:
+			var blocked bool
+			if err := f.pool.QueryRow(ctx, "SELECT cardinality(pg_blocking_pids($1)) > 0", pid).Scan(&blocked); err != nil {
+				f.t.Fatal(err)
+			}
+			if blocked {
+				break wait
+			}
+		case <-ctx.Done():
+			f.t.Fatal("second transaction neither returned nor blocked")
+		}
+	}
+	if err := a.Commit(ctx); err != nil {
+		f.t.Fatal(err)
+	}
+	if !returned {
+		err = <-done
+	}
+	if err == nil {
+		if err := b.Commit(ctx); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return err
+}
+
+// hierarchyFaults lists groups on a parent cycle and active groups under a
+// parent that is not active.
+func (f *fixture) hierarchyFaults() []string {
+	f.t.Helper()
+	rows, err := f.pool.Query(f.ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id) AS (
+ SELECT id, parent_id FROM %[1]s WHERE parent_id IS NOT NULL
+ UNION
+ SELECT up.start, g.parent_id FROM up JOIN %[1]s g ON g.id = up.id WHERE g.parent_id IS NOT NULL)
+SELECT 'cycle ' || start FROM up WHERE start = id
+UNION ALL
+SELECT 'orphan ' || c.id FROM %[1]s c JOIN %[1]s p ON p.id = c.parent_id WHERE c.state = 'active' AND p.state <> 'active'`,
+		pgx.Identifier{f.schema, "content_groups"}.Sanitize()))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	faults, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return faults
+}
+
+// Topology writers serialize: the second validates against the first's
+// committed change instead of the state both started from.
+func TestConcurrentHierarchyChangesStayValid(t *testing.T) {
+	reparent := func(f *fixture, id, parent GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).UpdateGroups(f.ctx, []GroupUpdate{{ID: id, ParentID: &parent}})
+			return err
+		}
+	}
+	tests := map[string]func(f *fixture) (first, second func(pgx.Tx) error){
+		"opposite reparents": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			return reparent(f, g[0].ID, g[1].ID), reparent(f, g[1].ID, g[0].ID)
+		},
+		"import against a reparent": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			return reparent(f, g[0].ID, g[1].ID), func(tx pgx.Tx) error {
+				return f.s.ImportGroups(f.ctx, tx, []ImportGroup{{ID: g[1].ID, Kind: "series", Slug: "b", ParentID: g[0].ID}}, false)
+			}
+		},
+		// Merging a into b moves c under b while x, b's parent, moves under c.
+		"merge against a reparent": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "x"})
+			a, x := g[0], g[1]
+			g = f.create(GroupInput{Kind: "series", Slug: "b", ParentID: x.ID}, GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})
+			b, c := g[0], g[1]
+			return reparent(f, x.ID, c.ID), func(tx pgx.Tx) error {
+				_, err := f.s.bound(tx).Merge(f.ctx, []Merge{{From: a.ID, Into: b.ID}})
+				return err
+			}
+		},
+		"create under a parent being deleted": func(f *fixture) (first, second func(pgx.Tx) error) {
+			p := f.create(GroupInput{Kind: "series", Slug: "p"})[0]
+			return func(tx pgx.Tx) error {
+					_, err := f.s.bound(tx).DeleteGroups(f.ctx, []GroupID{p.ID})
+					return err
+				}, func(tx pgx.Tx) error {
+					_, err := f.s.bound(tx).CreateGroups(f.ctx, []GroupInput{{Kind: "series", Slug: "child", ParentID: p.ID}})
+					return err
+				}
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			first, second := setup(f)
+			if err := f.raceAfter(first, second); !errors.Is(err, ErrInvalid) {
+				t.Errorf("second writer: %v", err)
+			}
+			if faults := f.hierarchyFaults(); len(faults) > 0 {
+				t.Errorf("committed hierarchy faults %v", faults)
+			}
+		})
+	}
+}
+
+// Cycle detection has no depth cutoff.
+func TestDeepHierarchy(t *testing.T) {
+	f := newFixture(t)
+	chain := make([]GroupInput, 100)
+	for i := range chain {
+		chain[i] = GroupInput{ID: GroupID(contentref.NewID()), Kind: "series", Slug: fmt.Sprintf("s%d", i)}
+		if i > 0 {
+			chain[i].ParentID = chain[i-1].ID
+		}
+	}
+	f.create(chain...)
+	top, bottom := chain[0].ID, chain[len(chain)-1].ID
+	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: top, ParentID: &bottom}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("closing a 100-group cycle: %v", err)
+	}
+	root := f.create(GroupInput{Kind: "series", Slug: "root"})[0].ID
+	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: top, ParentID: &root}}); err != nil {
+		t.Fatalf("deepening an acyclic chain: %v", err)
+	}
+	if faults := f.hierarchyFaults(); len(faults) > 0 {
+		t.Fatalf("hierarchy faults %v", faults)
+	}
+}
