@@ -50,10 +50,26 @@ func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	// Access edits and version mutations take the parent before any version.
+	// Claim parents first so deriving facets cannot overwrite a later access
+	// edit, and skip parents another writer already owns rather than waiting
+	// while this batch holds other item/version locks.
+	rows, err = tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1
+ AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
+  AND v.state = 'published' AND v.published_at IS NULL AND v.publish_at <= $2)
+ ORDER BY c.id LIMIT 500 FOR UPDATE OF c SKIP LOCKED`, s.tenant, now)
+	if err != nil {
+		return 0, err
+	}
+	parents, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, err
+	}
 	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = v.publish_at, updated_at = clock_timestamp(), revision = v.revision + 1
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
-  AND publish_at <= $2 ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- RETURNING v.content_id, v.id, c.kind`, s.tenant, now)
+  AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
+ AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
+ RETURNING v.content_id, v.id, c.kind`, s.tenant, now, parents)
 	if err != nil {
 		return 0, err
 	}
@@ -162,6 +178,49 @@ func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// ReconcileFacets explicitly rebuilds every item's facets, access history and
+// search-document marks from current catalog state. Use it to repair stale
+// projections after upgrading a writer; ordinary publication does not revisit
+// already-published versions. Each transaction locks at most 200 parents in
+// ID order before refreshing them. It returns the number of items processed.
+func (s *Store) ReconcileFacets(ctx context.Context) (int, error) {
+	total, after := 0, ""
+	for {
+		ids, err := s.reconcileFacets(ctx, after)
+		total += len(ids)
+		if err != nil || len(ids) < 200 {
+			return total, err
+		}
+		after = ids[len(ids)-1]
+	}
+}
+
+func (s *Store) reconcileFacets(ctx context.Context, after string) ([]string, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	// Unlike periodic jobs, an explicit repair must not skip busy parents and
+	// then move its cursor past rows that still need reconciliation.
+	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.items+`
+ WHERE tenant_id = $1 AND id > $2 ORDER BY id LIMIT 200 FOR UPDATE`, s.tenant, after)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // purgeBatch bounds one erasing transaction; purgeBudget bounds one job run,
@@ -279,10 +338,24 @@ func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT v.id, v.content_id, c.kind FROM `+s.t.versions+` v
+	// ever_sold belongs to the parent. Fence the first offer before reading
+	// its value, in the same parent-before-version order as catalog edits.
+	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
+ WHERE c.tenant_id = $1 AND c.state <> 'deleted' AND NOT c.ever_sold
+ AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
+  AND v.state = 'deleted' AND v.deleted_at < $2)
+ ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	parents, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(parents) == 0 {
+		return 0, err
+	}
+	rows, err = tx.Query(ctx, `SELECT v.id, v.content_id, c.kind FROM `+s.t.versions+` v
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
- WHERE v.tenant_id = $1 AND v.state = 'deleted' AND v.deleted_at < $2 AND c.state <> 'deleted' AND NOT c.ever_sold
- ORDER BY v.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff)
+ WHERE v.tenant_id = $1 AND v.content_id = ANY($3) AND v.state = 'deleted' AND v.deleted_at < $2
+ ORDER BY v.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff, parents)
 	if err != nil {
 		return 0, err
 	}
