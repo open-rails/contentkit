@@ -488,6 +488,9 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string
@@ -638,6 +641,9 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err := c.rt.guardErasedSubject(ctx, tx, deref(target.ownerID)); err != nil {
 		return Comment{}, err
 	}
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return Comment{}, err
+	}
 	var before string
 	var revision int64
 	var k contentref.ContentKey
@@ -689,6 +695,9 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string

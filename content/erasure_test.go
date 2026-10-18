@@ -683,3 +683,95 @@ func TestCommentReactionErasureLooksUpCommentsByKey(t *testing.T) {
 		}
 	}
 }
+
+func TestReplyCountWritesAndErasureLockCommentsInIDOrder(t *testing.T) {
+	author, fan, reviewer := access.Actor{ID: "author"}, access.Actor{ID: "fan"}, access.Actor{ID: "reviewer"}
+	revision := func(ctx context.Context, rt *Runtime, id string) int64 {
+		var n int64
+		if err := rt.store.pool.QueryRow(ctx, `SELECT moderation_revision FROM `+rt.store.t.comments+` WHERE id=$1`, id).Scan(&n); err != nil {
+			t.Error(err)
+		}
+		return n
+	}
+	held := func(ctx context.Context, rt *Runtime, reply string) error {
+		_, err := rt.comments.edit(ctx, author, reply, "iffy reply")
+		return err
+	}
+	for _, tc := range []struct {
+		name    string
+		prep    func(ctx context.Context, rt *Runtime, reply string) error
+		write   func(ctx context.Context, rt *Runtime, reply string) error
+		replies int
+	}{
+		{name: "delete", write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.softDelete(ctx, author, reply)
+		}},
+		{name: "restore", replies: 1, prep: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.softDelete(ctx, author, reply)
+		}, write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.restore(ctx, reply)
+		}},
+		{name: "edit", write: held},
+		{name: "hold", write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.hold(ctx, rt.as(reviewer), reply)
+		}},
+		{name: "approve", replies: 1, prep: held, write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.Resolve(ctx, KindComment, reply, ReviewDecision{Revision: revision(ctx, rt, reply), Decision: DecisionApprove, Reviewer: reviewer.ID})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rt := moderatedRuntime(t, &fakeModerator{})
+			parent := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "parent"})
+			// Comment ids are UUIDv7: a later millisecond orders the reply
+			// after its parent, so erasure locks the parent first.
+			time.Sleep(time.Millisecond)
+			reply := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "reply", ReplyToID: parent.ID})
+			if parent.ID >= reply.ID {
+				t.Fatalf("reply %s does not sort after parent %s", reply.ID, parent.ID)
+			}
+			for _, id := range []string{parent.ID, reply.ID} {
+				if _, err := rt.comments.reactTx(ctx, fan, id, 1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.prep != nil {
+				if err := tc.prep(ctx, rt, reply.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			// Erasure queues on the held parent first and the reply write
+			// behind it; releasing the parent lets both proceed.
+			holder, err := rt.store.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback(context.Background())
+			if _, err := holder.Exec(ctx, `SELECT 1 FROM `+rt.store.t.comments+` WHERE id=$1 FOR UPDATE`, parent.ID); err != nil {
+				t.Fatal(err)
+			}
+			errs := make(chan error, 2)
+			go func() { errs <- rt.EraseSubjects(ctx, []string{fan.ID}) }()
+			waitLockWaiters(t, ctx, rt, 1)
+			go func() { errs <- tc.write(ctx, rt, reply.ID) }()
+			waitLockWaiters(t, ctx, rt, 2)
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := <-errs; err != nil {
+					t.Fatal(err)
+				}
+			}
+			var replies, likes, replyLikes int
+			if err := rt.store.pool.QueryRow(ctx, `SELECT p.reply_count, p.likes, r.likes FROM `+rt.store.t.comments+` p, `+rt.store.t.comments+` r WHERE p.id=$1 AND r.id=$2`, parent.ID, reply.ID).Scan(&replies, &likes, &replyLikes); err != nil {
+				t.Fatal(err)
+			}
+			if replies != tc.replies || likes != 0 || replyLikes != 0 {
+				t.Fatalf("reply_count=%d likes=%d reply likes=%d, want %d 0 0", replies, likes, replyLikes, tc.replies)
+			}
+		})
+	}
+}
