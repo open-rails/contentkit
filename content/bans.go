@@ -135,18 +135,28 @@ func (rt *Runtime) banCommenter(ctx context.Context, by, scope, userID string, i
 		return CommentBan{}, err
 	}
 	defer tx.Rollback(ctx)
-	// The row names the banned user and, in an owner scope, the owner: take
-	// both subject fences (sorted, as erasure does) so an erased subject's
-	// data is never written again.
-	subjects := []string{userID}
+	// The row names the banned user, in an owner scope the owner, and the
+	// moderator: take their subject fences (sorted, as erasure does) so an
+	// erased subject's id is never written again. An erased target refuses
+	// the ban; an erased moderator's ban stands without their id.
+	targets := []string{userID}
 	if owner, ok := strings.CutPrefix(scope, ownerScope); ok {
-		subjects = append(subjects, owner)
+		targets = append(targets, owner)
 	}
+	subjects := append([]string{by}, targets...)
 	sort.Strings(subjects)
 	for _, s := range subjects {
-		if err := rt.guardErasedSubject(ctx, tx, s); err != nil {
+		if err := rt.lockErasureSubject(ctx, tx, s); err != nil {
 			return CommentBan{}, err
 		}
+	}
+	for _, s := range targets {
+		if err := rt.checkSubjectNotErased(ctx, tx, s); err != nil {
+			return CommentBan{}, err
+		}
+	}
+	if by, err = rt.provenance(ctx, tx, by); err != nil {
+		return CommentBan{}, err
 	}
 	b := CommentBan{UserID: userID, Scope: scope, Reason: reason, BannedBy: by}
 	err = tx.QueryRow(ctx, `INSERT INTO `+rt.store.t.commentBans+` (tenant_id, user_id, scope, reason, until, banned_by)
