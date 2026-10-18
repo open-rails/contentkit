@@ -126,6 +126,9 @@ func (s *Store) ImportGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, pr
 
 func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, ids []string, rows []importRow, names map[string][]nameRow,
 	texts map[string][]textRow, edges map[string][]edgeRow, keep map[codes.Key]string, provision bool) error {
+	if err := s.lockHierarchy(ctx, q); err != nil {
+		return err
+	}
 	stored := map[string]Group{}
 	res, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR UPDATE`,
 		groupColumns, s.table("content_groups")), s.tenant, ids)

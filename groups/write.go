@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -232,11 +233,13 @@ func (s *Store) checkLinks(ctx context.Context, q Querier, ids []string) error {
 		return err
 	}
 	var cycle string
-	err = q.QueryRow(ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id, depth) AS (
- SELECT g.id, g.parent_id, 1 FROM %[1]s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND g.parent_id IS NOT NULL
- UNION ALL
- SELECT up.start, g.parent_id, up.depth + 1 FROM up JOIN %[1]s g ON g.tenant_id = $1 AND g.id = up.id
- WHERE g.parent_id IS NOT NULL AND up.id <> up.start AND up.depth < 64)
+	// Topology writers hold lockHierarchy, so the stored graph is acyclic and
+	// the walk ends; UNION also ends it on a cycle no writer here created.
+	err = q.QueryRow(ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id) AS (
+ SELECT g.id, g.parent_id FROM %[1]s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND g.parent_id IS NOT NULL
+ UNION
+ SELECT up.start, g.parent_id FROM up JOIN %[1]s g ON g.tenant_id = $1 AND g.id = up.id
+ WHERE g.parent_id IS NOT NULL AND up.id <> up.start)
 SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("content_groups")), s.tenant, ids).Scan(&cycle)
 	if err != nil {
 		return err
@@ -245,6 +248,15 @@ SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("
 		return fmt.Errorf("%w: group %s would be its own ancestor", ErrInvalid, cycle)
 	}
 	return nil
+}
+
+// lockHierarchy serializes the writers that change a group's parent or state
+// for the transaction's rest. Taken before any group row lock, it lets each
+// validate parents and cycles against the others' committed changes rather
+// than each against a graph the other is changing.
+func (s *Store) lockHierarchy(ctx context.Context, q Querier) error {
+	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:group-hierarchy:"+s.schema+":"+s.tenant)
+	return err
 }
 
 // CreateGroups creates groups with their names and text in one transaction.
@@ -329,7 +341,15 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		return nil, err
 	}
 	out := make([]Group, len(inputs))
+	parented := slices.ContainsFunc(rows, func(r groupRow) bool { return r.ParentID != nil })
 	err = s.run(ctx, func(q Querier) error {
+		// Only a parent can race a delete of that parent; name-linked creates,
+		// which run under content locks, take no parent and skip the lock.
+		if parented {
+			if err := s.lockHierarchy(ctx, q); err != nil {
+				return err
+			}
+		}
 		if err := s.lockOwners(ctx, q, rows); err != nil {
 			return err
 		}
@@ -466,9 +486,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 	if len(list) != len(updates) {
 		return nil, fmt.Errorf("%w: a group is updated twice", ErrInvalid)
 	}
+	topology := slices.ContainsFunc(updates, func(u GroupUpdate) bool { return u.ParentID != nil || u.State != nil })
 	out := make([]Group, len(updates))
 	var changed []string
 	err = s.run(ctx, func(q Querier) error {
+		if topology {
+			if err := s.lockHierarchy(ctx, q); err != nil {
+				return err
+			}
+		}
 		locked, err := s.lock(ctx, q, list)
 		if err != nil {
 			return err

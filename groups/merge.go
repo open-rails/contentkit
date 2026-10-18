@@ -55,6 +55,9 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 				return err
 			}
 		}
+		if err := s.lockHierarchy(ctx, q); err != nil {
+			return err
+		}
 		locked, err := s.lock(ctx, q, list)
 		if err != nil {
 			return err
