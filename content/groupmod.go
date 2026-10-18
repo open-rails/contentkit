@@ -75,6 +75,9 @@ func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) err
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = 'held', published_body = NULL, moderation_reason = 'held by a moderator',

@@ -3,6 +3,8 @@ package content
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -172,22 +174,26 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 // ordering across concurrent erasures of different subjects on shared content.
 func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []string) error {
 	s := rt.store
-	rows, err := tx.Query(ctx, `SELECT id::text FROM `+s.t.comments+` WHERE tenant_id=$1 AND (
-   (user_id=ANY($2) AND moderation IN ('held','rejected')) OR id::text IN (
-    SELECT content_id FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) AND content_kind=$3 AND content_version_id IS NULL))
-   ORDER BY id FOR UPDATE`, rt.tenant, ids, KindComment)
+	rows, err := tx.Query(ctx, `SELECT DISTINCT content_id FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) AND content_kind=$3 AND content_version_id IS NULL`, rt.tenant, ids, KindComment)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
+	reactedIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	// A reaction key is text: only a canonical UUID names a comment. Casting
+	// any other key would match a spelling the comment's key never had, or
+	// abort the erasure on a malformed one.
+	reacted := map[string]bool{}
+	for _, k := range reactedIDs {
+		if uuidRe.MatchString(k) && k == strings.ToLower(k) {
+			reacted[k] = true
 		}
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.comments+` WHERE tenant_id=$1 AND (
+   (user_id=ANY($2) AND moderation IN ('held','rejected')) OR id=ANY($3::uuid[]))
+   ORDER BY id FOR UPDATE`, rt.tenant, ids, slices.Collect(maps.Keys(reacted))); err != nil {
 		return err
 	}
 	type delta struct{ likes, dislikes, favorites int }
@@ -245,19 +251,24 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 		}
 		return a.ContentVersionID < b.ContentVersionID
 	})
+	var commentIDs []string
+	var commentLikes, commentDislikes []int
 	for _, k := range keys {
 		d := changes[k]
 		// UPDATE only: lifecycle deletion may already have removed a rollup.
 		if _, err := tx.Exec(ctx, `UPDATE `+s.t.counts+` SET likes=GREATEST(likes-$5,0),dislikes=GREATEST(dislikes-$6,0),favorites=GREATEST(favorites-$7,0),updated_at=clock_timestamp() WHERE `+keyPred(1), append(keyArgs(k), d.likes, d.dislikes, d.favorites)...); err != nil {
 			return err
 		}
-		if k.ContentVersionID != "" || d.likes == 0 && d.dislikes == 0 {
-			continue
+		if k.ContentKind == KindComment && k.ContentVersionID == "" && reacted[k.ContentID] && (d.likes != 0 || d.dislikes != 0) {
+			commentIDs = append(commentIDs, k.ContentID)
+			commentLikes = append(commentLikes, d.likes)
+			commentDislikes = append(commentDislikes, d.dislikes)
 		}
-		if k.ContentKind == KindComment {
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.comments+` SET likes=GREATEST(likes-$3,0),dislikes=GREATEST(dislikes-$4,0) WHERE tenant_id=$1 AND id::text=$2`, rt.tenant, k.ContentID, d.likes, d.dislikes); err != nil {
-				return err
-			}
+	}
+	if len(commentIDs) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.comments+` c SET likes=GREATEST(c.likes-d.likes,0),dislikes=GREATEST(c.dislikes-d.dislikes,0)
+ FROM unnest($2::uuid[],$3::int[],$4::int[]) AS d(id,likes,dislikes) WHERE c.tenant_id=$1 AND c.id=d.id`, rt.tenant, commentIDs, commentLikes, commentDislikes); err != nil {
+			return err
 		}
 	}
 	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.pollVotes+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING option_id::text`, rt.tenant, ids)

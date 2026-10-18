@@ -3,10 +3,13 @@ package content
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
@@ -579,5 +582,196 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	}
 	if body != "legacy publication" || published != nil || user != "u1" {
 		t.Fatalf("legacy published data altered: %q %v %q", body, published, user)
+	}
+}
+
+// commentStatements records the statements a pool sends against one table.
+type commentStatements struct {
+	table string
+	mu    sync.Mutex
+	got   []pgx.TraceQueryStartData
+}
+
+func (l *commentStatements) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(d.SQL, l.table) {
+		l.mu.Lock()
+		l.got = append(l.got, d)
+		l.mu.Unlock()
+	}
+	return ctx
+}
+
+func (*commentStatements) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestCommentReactionErasureLooksUpCommentsByKey(t *testing.T) {
+	ctx := context.Background()
+	rt := moderatedRuntime(t, &fakeModerator{})
+	author, fan, keep := access.Actor{ID: "author"}, access.Actor{ID: "fan"}, access.Actor{ID: "keep"}
+	var ids []string
+	for i := range 3 {
+		cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: fmt.Sprintf("comment %d", i)})
+		if _, err := rt.comments.reactTx(ctx, fan, cm.ID, 1); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, cm.ID)
+	}
+	if _, err := rt.comments.reactTx(ctx, keep, ids[0], 1); err != nil {
+		t.Fatal(err)
+	}
+	// Historical keys no comment id equals as text: erasure removes them
+	// without casting, which would abort it on the malformed one.
+	for _, key := range []string{"not-a-uuid", strings.ReplaceAll(ids[1], "-", "")} {
+		if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,$2,$3,NULL,$4,1,`+rt.store.nextRevision()+`)`, rt.tenant, KindComment, key, fan.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Enough other comments that the planner's choice reflects a real thread
+	// population rather than a three-row table.
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id,content_kind,content_id,user_id,body) SELECT $1,'gallery',$2,'other','filler' FROM generate_series(1,5000)`, rt.tenant, cid(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.pool.Exec(ctx, `ANALYZE `+rt.store.t.comments); err != nil {
+		t.Fatal(err)
+	}
+	log := &commentStatements{table: rt.store.t.comments}
+	pool := pgtest.Pool(t, func(c *pgxpool.Config) { c.ConnConfig.Tracer = log })
+	traced, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.got = nil
+	if err := traced.EraseSubjects(ctx, []string{fan.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range ids {
+		var likes int
+		if err := rt.store.pool.QueryRow(ctx, `SELECT likes FROM `+rt.store.t.comments+` WHERE id=$1`, id).Scan(&likes); err != nil || likes != b2i(i == 0) {
+			t.Fatalf("comment %d likes=%d err=%v", i, likes, err)
+		}
+	}
+	var left int
+	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions+` WHERE user_id=$1`, fan.ID).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("erased reactions left=%d err=%v", left, err)
+	}
+	// With sequential scans priced out, a comment access bounded only by
+	// tenant is a scan of every comment, not a lookup by key.
+	tenantOnly := "Index Cond: (tenant_id = '" + rt.tenant + "'::text)"
+	tx, err := rt.store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+	if len(log.got) == 0 {
+		t.Fatal("erasure sent no comment statements")
+	}
+	for _, q := range log.got {
+		rows, err := tx.Query(ctx, `EXPLAIN (COSTS OFF) `+q.SQL, q.Args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range plan {
+			if line = strings.TrimSpace(line); line == tenantOnly || strings.Contains(line, "Seq Scan on content_comments") {
+				t.Fatalf("erasure scans comments:\n%s\n%s", q.SQL, strings.Join(plan, "\n"))
+			}
+		}
+	}
+}
+
+func TestReplyCountWritesAndErasureLockCommentsInIDOrder(t *testing.T) {
+	author, fan, reviewer := access.Actor{ID: "author"}, access.Actor{ID: "fan"}, access.Actor{ID: "reviewer"}
+	revision := func(ctx context.Context, rt *Runtime, id string) int64 {
+		var n int64
+		if err := rt.store.pool.QueryRow(ctx, `SELECT moderation_revision FROM `+rt.store.t.comments+` WHERE id=$1`, id).Scan(&n); err != nil {
+			t.Error(err)
+		}
+		return n
+	}
+	held := func(ctx context.Context, rt *Runtime, reply string) error {
+		_, err := rt.comments.edit(ctx, author, reply, "iffy reply")
+		return err
+	}
+	for _, tc := range []struct {
+		name    string
+		prep    func(ctx context.Context, rt *Runtime, reply string) error
+		write   func(ctx context.Context, rt *Runtime, reply string) error
+		replies int
+	}{
+		{name: "delete", write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.softDelete(ctx, author, reply)
+		}},
+		{name: "restore", replies: 1, prep: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.softDelete(ctx, author, reply)
+		}, write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.restore(ctx, reply)
+		}},
+		{name: "edit", write: held},
+		{name: "hold", write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.comments.hold(ctx, rt.as(reviewer), reply)
+		}},
+		{name: "approve", replies: 1, prep: held, write: func(ctx context.Context, rt *Runtime, reply string) error {
+			return rt.Resolve(ctx, KindComment, reply, ReviewDecision{Revision: revision(ctx, rt, reply), Decision: DecisionApprove, Reviewer: reviewer.ID})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rt := moderatedRuntime(t, &fakeModerator{})
+			parent := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "parent"})
+			// Comment ids are UUIDv7: a later millisecond orders the reply
+			// after its parent, so erasure locks the parent first.
+			time.Sleep(time.Millisecond)
+			reply := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "reply", ReplyToID: parent.ID})
+			if parent.ID >= reply.ID {
+				t.Fatalf("reply %s does not sort after parent %s", reply.ID, parent.ID)
+			}
+			for _, id := range []string{parent.ID, reply.ID} {
+				if _, err := rt.comments.reactTx(ctx, fan, id, 1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.prep != nil {
+				if err := tc.prep(ctx, rt, reply.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			// Erasure queues on the held parent first and the reply write
+			// behind it; releasing the parent lets both proceed.
+			holder, err := rt.store.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback(context.Background())
+			if _, err := holder.Exec(ctx, `SELECT 1 FROM `+rt.store.t.comments+` WHERE id=$1 FOR UPDATE`, parent.ID); err != nil {
+				t.Fatal(err)
+			}
+			errs := make(chan error, 2)
+			go func() { errs <- rt.EraseSubjects(ctx, []string{fan.ID}) }()
+			waitLockWaiters(t, ctx, rt, 1)
+			go func() { errs <- tc.write(ctx, rt, reply.ID) }()
+			waitLockWaiters(t, ctx, rt, 2)
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := <-errs; err != nil {
+					t.Fatal(err)
+				}
+			}
+			var replies, likes, replyLikes int
+			if err := rt.store.pool.QueryRow(ctx, `SELECT p.reply_count, p.likes, r.likes FROM `+rt.store.t.comments+` p, `+rt.store.t.comments+` r WHERE p.id=$1 AND r.id=$2`, parent.ID, reply.ID).Scan(&replies, &likes, &replyLikes); err != nil {
+				t.Fatal(err)
+			}
+			if replies != tc.replies || likes != 0 || replyLikes != 0 {
+				t.Fatalf("reply_count=%d likes=%d reply likes=%d, want %d 0 0", replies, likes, replyLikes, tc.replies)
+			}
+		})
 	}
 }
