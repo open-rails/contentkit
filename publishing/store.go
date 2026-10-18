@@ -349,6 +349,13 @@ func (s *Store) Put(ctx context.Context, actor access.Actor, id string, in Reque
 			return Operation{}, failure("source_conflict", "source", "source already has a publishing operation")
 		}
 	}
+	// The memberships written below wait out a hierarchy change before the
+	// entities are locked, not after.
+	if len(in.Entities) > 0 {
+		if err = s.o.Groups.LockHierarchyShared(ctx, tx); err != nil {
+			return Operation{}, err
+		}
+	}
 	groupIDs, entities, err := s.resolveGroups(ctx, tx, groupWriter, in.Entities, in.CreateMissingEntities)
 	if err != nil {
 		return Operation{}, err

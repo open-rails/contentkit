@@ -487,6 +487,9 @@ func (s *Store) ImportMemberships(ctx context.Context, q pgx.Tx, sets []ContentG
 	if len(sets) == 0 {
 		return nil
 	}
+	if err := s.LockHierarchyShared(ctx, q); err != nil {
+		return err
+	}
 	b := s.bound(q)
 	stored, err := b.MembershipsOf(ctx, contentIDs)
 	if err != nil {

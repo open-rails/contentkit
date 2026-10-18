@@ -319,6 +319,70 @@ func TestMembershipRemovalAndPublicationUseOneLockOrder(t *testing.T) {
 	}
 }
 
+// A publication naming an existing entity waits out a hierarchy change
+// before it locks that entity, so a merge holding the hierarchy lock and then
+// locking the entity's row cannot deadlock with it.
+func TestPublicationWaitsOutHierarchyChangeBeforeLockingEntities(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	in := request()
+	in.CreateMissingEntities = true
+	in.Entities = []EntityReference{{Kind: "tag", Name: "Merged"}}
+	op, err := f.s.Put(ctx, f.actor, uuid.NewString(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var group string
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT group_id FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE content_id=$1`, op.ContentID).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	// The publishing fixture deliberately has one connection; the merge and
+	// the wait check run on their own.
+	pc := f.s.o.Pool.Config()
+	pc.MaxConns = 2
+	otherPool, err := pgxpool.NewWithConfig(ctx, pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherPool.Close()
+	merge, err := otherPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer merge.Rollback(ctx)
+	// A merge's lock order: the hierarchy lock, then the groups' rows.
+	if _, err = merge.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:group-hierarchy:"+f.schema+":"+f.s.o.Tenant); err != nil {
+		t.Fatal(err)
+	}
+	in = request()
+	in.Entities = []EntityReference{{ID: group}}
+	put := make(chan error, 1)
+	go func() {
+		_, err := f.s.Put(ctx, f.actor, uuid.NewString(), in)
+		put <- err
+	}()
+	for blocked := false; !blocked; {
+		if err = otherPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))`, merge.Conn().PgConn().PID()).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-put:
+			t.Fatalf("publication did not wait for the hierarchy change: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err = merge.Exec(ctx, `SELECT 1 FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, f.s.o.Tenant, group); err != nil {
+		t.Fatalf("merge locking the entity: %v", err)
+	}
+	if err = merge.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-put; err != nil {
+		t.Fatalf("publication: %v", err)
+	}
+}
+
 func TestExpiredMultipartCanBeResumedWithoutAnotherDraft(t *testing.T) {
 	f := newFixture(t)
 	ring, err := token.NewRing(token.Key{ID: "test", Secret: bytes.Repeat([]byte("t"), 32)}, nil)
