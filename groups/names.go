@@ -198,7 +198,19 @@ func (s *Store) touch(ctx context.Context, q Querier, groups []Group) error {
 	if err := s.syncCodes(ctx, q, ids); err != nil {
 		return err
 	}
+	if err := s.namesChanged(ctx, q, ids); err != nil {
+		return err
+	}
 	return s.markDirty(ctx, q, groups)
+}
+
+// namesChanged tells Options.NamesChanged that the groups' names or slugs
+// changed.
+func (s *Store) namesChanged(ctx context.Context, q Querier, ids []string) error {
+	if s.renamed == nil || len(ids) == 0 {
+		return nil
+	}
+	return s.renamed(ctx, q, ids)
 }
 
 // lock takes the groups' row locks in id order, so concurrent writers never

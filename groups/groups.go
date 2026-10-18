@@ -162,6 +162,11 @@ type Options struct {
 	// already re-derived), so the engine can rebuild what else depends on
 	// them, such as search documents. Optional.
 	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
+	// NamesChanged runs in the writing transaction after the names or slugs
+	// of groups changed, so the engine can requeue the documents of content
+	// that shows them, such as search documents keyed by group names. Their
+	// facets are unchanged; it must not lock content. Optional.
+	NamesChanged func(ctx context.Context, q Querier, groupIDs []string) error
 	// DocumentsChanged runs in the writing transaction after a write queued
 	// search documents, so the engine can sync them at once. Optional.
 	DocumentsChanged func(ctx context.Context, q Querier) error
@@ -220,6 +225,7 @@ type Store struct {
 	tenant     string
 	cfg        kinds.Config
 	changed    func(ctx context.Context, q Querier, contentIDs []string) error
+	renamed    func(ctx context.Context, q Querier, groupIDs []string) error
 	documents  func(ctx context.Context, q Querier) error
 	references References
 	covers     CoverResolver
@@ -262,7 +268,7 @@ func New(opts Options) (*Store, error) {
 	if keep <= 0 {
 		keep = DefaultDeletedRetention
 	}
-	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, documents: opts.DocumentsChanged, references: opts.References,
+	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, references: opts.References,
 		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, log: log,
 		river: &riverBinding{}}, nil
 }
