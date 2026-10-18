@@ -144,12 +144,16 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 	if s.media == nil {
 		return InlineImage{}, errMediaNotConfigured
 	}
+	g, err := s.grantsFor(ctx, actor, []string{contentID})
+	if err != nil {
+		return InlineImage{}, err
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return InlineImage{}, err
 	}
 	defer tx.Rollback(ctx)
-	got, err := s.authorize(ctx, tx, actor, []string{contentID})
+	got, err := s.authorize(ctx, tx, actor, []string{contentID}, g)
 	if err == nil && got[contentID].state == StateDeleted {
 		err = ErrNotFound
 	}

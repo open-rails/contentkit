@@ -141,12 +141,16 @@ type effects struct {
 // bumps their revisions, refreshes facets and documents, re-codes, emits
 // events and queues media exposure before committing.
 func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
+	g, err := s.grantsFor(ctx, actor, ids)
+	if err != nil {
+		return err
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	got, err := s.authorize(ctx, tx, actor, ids)
+	got, err := s.authorize(ctx, tx, actor, ids, g)
 	if err != nil {
 		return err
 	}
@@ -756,13 +760,6 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) e
 // runs after ordinary authorization and content locks, before any publication
 // mutation. It must use tx for database reads and must not open transactions.
 func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Publish, check func(context.Context, pgx.Tx) error) error {
-	// Resolve provider authority before reserving a pool connection: AuthKit
-	// may share this pool. The private context memo lasts only this operation.
-	rights, err := s.staffRights(ctx, actor)
-	if err != nil {
-		return err
-	}
-	ctx = context.WithValue(ctx, checkedStaffKey{}, checkedStaff{store: s, rights: rights})
 	ids := make([]string, len(in))
 	byID := map[string][]TextPut{}
 	for i, p := range in {
