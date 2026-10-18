@@ -252,6 +252,65 @@ func TestPurgeVersionsPreservesFirstOfferIntegration(t *testing.T) {
 	}
 }
 
+func TestPurgeVersionsSerializesBeforeFirstOfferIntegration(t *testing.T) {
+	b := newCatalogJobBarrier(t, `SELECT v.id, v.content_id, c.kind`, true)
+	f := catalogJobFixture(t, b)
+	id := f.create("staff", gallery("Purge before first offer", "en", "ja"))
+	vid := f.read("staff", "main.test", id)[0].Versions[1].ID
+	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: vid}}); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(DefaultDeletedRetention + time.Hour)
+	seller, err := offers.New(offers.Options{Pool: f.s.pool, Schema: f.schema, Tenant: tenant, Kinds: config(),
+		Billing: catalogOfferBilling{}, Gate: f.s.accessG})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	purged := make(chan error, 1)
+	go func() {
+		_, err := f.s.eraseVersions(context.WithValue(ctx, catalogJobTraceKey{}, "job"), f.now().Add(-DefaultDeletedRetention))
+		purged <- err
+	}()
+	select {
+	case <-b.reached:
+	case <-ctx.Done():
+		t.Fatal("purger did not lock its selected version")
+	}
+	offered := make(chan error, 1)
+	go func() {
+		_, err := seller.Put(context.WithValue(ctx, catalogJobTraceKey{}, "writer"), []offers.Put{{
+			Target: offers.Target{Kind: offers.ContentTarget, ID: id}, Terms: offers.Terms{Amount: 1_000_000, Currency: "USD"},
+		}})
+		offered <- err
+	}()
+	committed := waitCatalogWriter(t, f, b, offered)
+	b.release()
+	if err := <-purged; err != nil {
+		t.Fatal(err)
+	}
+	if !committed {
+		if err := <-offered; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if committed {
+		t.Error("first offer committed before the purger released its parent lock")
+	}
+	var sold bool
+	var versions, activeOffers int
+	if err := f.pool.QueryRow(ctx, `SELECT ever_sold,
+ (SELECT count(*) FROM `+f.table("content_versions")+` WHERE tenant_id=$1 AND id=$3),
+ (SELECT count(*) FROM `+f.table("content_offers")+` WHERE tenant_id=$1 AND target_id=$2 AND state='active')
+ FROM `+f.table("content_items")+` WHERE tenant_id=$1 AND id=$2`, tenant, id, vid).Scan(&sold, &versions, &activeOffers); err != nil {
+		t.Fatal(err)
+	}
+	if !sold || versions != 0 || activeOffers != 1 {
+		t.Fatalf("purge-first serialization: sold=%t retained versions=%d active offers=%d", sold, versions, activeOffers)
+	}
+}
+
 func TestPublishDueSkipsConcurrentVersionEditIntegration(t *testing.T) {
 	b := newCatalogJobBarrier(t, `SELECT languages, traits, label, state`, false)
 	f := catalogJobFixture(t, b)
@@ -348,6 +407,53 @@ func TestPurgeVersionsBoundsBatchIntegration(t *testing.T) {
 	}
 	if n, err := f.s.eraseVersions(f.ctx, f.now()); err != nil || n != 1 {
 		t.Fatalf("remaining version purge batch: %d %v", n, err)
+	}
+}
+
+func TestCatalogJobsSkipLockedVersionParentBatchesIntegration(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		limit int
+		state string
+	}{
+		{name: "publish", limit: 500, state: "published"},
+		{name: "purge", limit: purgeBatch, state: "deleted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t, nil)
+			at := f.now().Add(-DefaultDeletedRetention - time.Hour)
+			if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_items")+` (tenant_id,id,kind,state,publish_at,published_at)
+ SELECT $1,'batch-parent-' || lpad(n::text,4,'0'),'gallery','published',$2,$2 FROM generate_series(1,$3) n`, tenant, at, test.limit+1); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_versions")+` (tenant_id,id,content_id,languages,state,publish_at,deleted_at)
+ SELECT $1,'batch-version-' || lpad(n::text,4,'0'),'batch-parent-' || lpad(n::text,4,'0'),ARRAY['en'],$2,$3,$3
+ FROM generate_series(1,$4) n`, tenant, test.state, at, test.limit+1); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+			defer cancel()
+			locked, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer locked.Rollback(f.ctx)
+			// Lock exactly one full candidate-parent batch's versions while
+			// keeping the next parent's work available.
+			if _, err := locked.Exec(ctx, `SELECT id FROM `+f.table("content_versions")+`
+ WHERE tenant_id=$1 AND id IN (SELECT 'batch-version-' || lpad(n::text,4,'0') FROM generate_series(1,$2) n) FOR UPDATE`, tenant, test.limit); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if test.name == "publish" {
+				n, err = f.s.PublishDue(ctx)
+			} else {
+				n, err = f.s.eraseVersions(ctx, f.now().Add(-DefaultDeletedRetention))
+			}
+			if err != nil || n != 1 {
+				t.Fatalf("locked versions in the first %d parents hid later available work: processed=%d err=%v", test.limit, n, err)
+			}
+		})
 	}
 }
 

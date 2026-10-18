@@ -180,11 +180,12 @@ func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-// ReconcileFacets explicitly rebuilds every item's facets, access history and
-// search-document marks from current catalog state. Use it to repair stale
-// projections after upgrading a writer; ordinary publication does not revisit
-// already-published versions. Each transaction locks at most 200 parents in
-// ID order before refreshing them. It returns the number of items processed.
+// ReconcileFacets explicitly refreshes every item's facets and search-document
+// marks from current catalog state, recording the current access snapshot.
+// Use it to repair stale projections after upgrading a writer; ordinary
+// publication does not revisit already-published versions. Each transaction
+// locks at most 200 parents in ID order before refreshing them. It returns the
+// number of items processed.
 func (s *Store) ReconcileFacets(ctx context.Context) (int, error) {
 	total, after := 0, ""
 	for {
