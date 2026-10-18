@@ -107,29 +107,50 @@ func TestReleaseDatesSettleAccess(t *testing.T) {
 }
 
 func TestReleaseDatesUsePreferredEdition(t *testing.T) {
-	billing := &dateBilling{releaseBilling: releaseBilling{held: map[string]bool{}}}
-	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
-	f.now = time.Date(2020, 3, 2, 12, 0, 0, 0, time.UTC)
-	f.seed(item{n: 1, titles: map[string]string{"en": "Denied preferred", "ja": "Allowed sibling"}, age: time.Hour, rule: `{"level":"ppv"}`,
-		versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}, rule: strp(`{"level":"public"}`)}}})
-	for _, tc := range []struct {
-		language string
-		mode     access.Mode
-		want     []DateCount
-	}{
-		{"en", access.Hide, []DateCount{}},
-		{"ja", access.Hide, []DateCount{{Date: "2020-03-02", Count: 1, Free: 1}}},
-		{"en", access.Lock, []DateCount{{Date: "2020-03-02", Count: 1, Free: 0}}},
-	} {
-		reader := Reader{Actor: access.Actor{ID: "reader"}, Host: "main.test", DisplayLanguage: tc.language, Mode: tc.mode}
-		page, err := f.svc.List(f.ctx, ListOptions{Reader: reader})
-		if err != nil || len(page.Contents) != len(tc.want) {
-			t.Fatalf("%s %s List = %+v: %v", tc.language, tc.mode, page, err)
-		}
-		out, err := f.svc.ReleaseDates(f.ctx, ReleaseDatesOptions{Reader: reader, By: "day"})
-		if err != nil || !reflect.DeepEqual(out.Dates, tc.want) {
-			t.Errorf("%s %s dates = %+v, want %+v: %v", tc.language, tc.mode, out, tc.want, err)
-		}
+	for _, state := range []string{"incomplete", "complete"} {
+		t.Run(state, func(t *testing.T) {
+			billing := &dateBilling{releaseBilling: releaseBilling{held: map[string]bool{}}, complete: state == "complete"}
+			f := newFixtureBilling(t, nil, "", siteConfig(), billing)
+			f.now = time.Date(2020, 3, 2, 12, 0, 0, 0, time.UTC)
+			f.seed(item{n: 1, titles: map[string]string{"en": "Denied preferred", "ja": "Allowed sibling"}, age: time.Hour, rule: `{"level":"ppv"}`,
+				versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}, rule: strp(`{"level":"public"}`)}}})
+			// A later sibling must not move the preferred edition's bucket.
+			f.exec(`UPDATE {s}.content_facets SET published_at = $2 WHERE version_id = $1`, f.vid(1, 1), time.Date(2020, 4, 1, 12, 0, 0, 0, time.UTC))
+			englishHidden := []DateCount{}
+			if billing.complete {
+				englishHidden = []DateCount{{Date: "2020-04-01", Count: 1, Free: 1}}
+			}
+			for _, tc := range []struct {
+				language string
+				mode     access.Mode
+				want     []DateCount
+			}{
+				{"en", access.Hide, englishHidden},
+				{"ja", access.Hide, []DateCount{{Date: "2020-04-01", Count: 1, Free: 1}}},
+				{"en", access.Lock, []DateCount{{Date: "2020-03-02", Count: 1, Free: 0}}},
+			} {
+				reader := Reader{Actor: access.Actor{ID: "reader"}, Host: "main.test", DisplayLanguage: tc.language, Mode: tc.mode}
+				page, err := f.svc.List(f.ctx, ListOptions{Reader: reader})
+				if err != nil || len(page.Contents) != len(tc.want) {
+					t.Fatalf("%s %s List = %+v: %v", tc.language, tc.mode, page, err)
+				}
+				if len(tc.want) > 0 && page.Contents[0].PublishedAt.Format(time.DateOnly) != tc.want[0].Date {
+					t.Fatalf("%s %s List selected publication: %+v", tc.language, tc.mode, page.Contents[0])
+				}
+				for _, by := range []string{"day", "month"} {
+					want := slices.Clone(tc.want)
+					if by == "month" {
+						for i := range want {
+							want[i].Date = want[i].Date[:7]
+						}
+					}
+					out, err := f.svc.ReleaseDates(f.ctx, ReleaseDatesOptions{Reader: reader, By: by})
+					if err != nil || !reflect.DeepEqual(out.Dates, want) {
+						t.Errorf("%s %s %s dates = %+v, want %+v: %v", tc.language, tc.mode, by, out, want, err)
+					}
+				}
+			}
+		})
 	}
 }
 
