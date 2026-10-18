@@ -3,10 +3,13 @@ package content
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
@@ -579,5 +582,104 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	}
 	if body != "legacy publication" || published != nil || user != "u1" {
 		t.Fatalf("legacy published data altered: %q %v %q", body, published, user)
+	}
+}
+
+// commentStatements records the statements a pool sends against one table.
+type commentStatements struct {
+	table string
+	mu    sync.Mutex
+	got   []pgx.TraceQueryStartData
+}
+
+func (l *commentStatements) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(d.SQL, l.table) {
+		l.mu.Lock()
+		l.got = append(l.got, d)
+		l.mu.Unlock()
+	}
+	return ctx
+}
+
+func (*commentStatements) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestCommentReactionErasureLooksUpCommentsByKey(t *testing.T) {
+	ctx := context.Background()
+	rt := moderatedRuntime(t, &fakeModerator{})
+	author, fan, keep := access.Actor{ID: "author"}, access.Actor{ID: "fan"}, access.Actor{ID: "keep"}
+	var ids []string
+	for i := range 3 {
+		cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: fmt.Sprintf("comment %d", i)})
+		if _, err := rt.comments.reactTx(ctx, fan, cm.ID, 1); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, cm.ID)
+	}
+	if _, err := rt.comments.reactTx(ctx, keep, ids[0], 1); err != nil {
+		t.Fatal(err)
+	}
+	// Historical keys no comment id equals as text: erasure removes them
+	// without casting, which would abort it on the malformed one.
+	for _, key := range []string{"not-a-uuid", strings.ReplaceAll(ids[1], "-", "")} {
+		if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,$2,$3,NULL,$4,1,`+rt.store.nextRevision()+`)`, rt.tenant, KindComment, key, fan.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Enough other comments that the planner's choice reflects a real thread
+	// population rather than a three-row table.
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id,content_kind,content_id,user_id,body) SELECT $1,'gallery',$2,'other','filler' FROM generate_series(1,5000)`, rt.tenant, cid(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.pool.Exec(ctx, `ANALYZE `+rt.store.t.comments); err != nil {
+		t.Fatal(err)
+	}
+	log := &commentStatements{table: rt.store.t.comments}
+	pool := pgtest.Pool(t, func(c *pgxpool.Config) { c.ConnConfig.Tracer = log })
+	traced, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.got = nil
+	if err := traced.EraseSubjects(ctx, []string{fan.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range ids {
+		var likes int
+		if err := rt.store.pool.QueryRow(ctx, `SELECT likes FROM `+rt.store.t.comments+` WHERE id=$1`, id).Scan(&likes); err != nil || likes != b2i(i == 0) {
+			t.Fatalf("comment %d likes=%d err=%v", i, likes, err)
+		}
+	}
+	var left int
+	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions+` WHERE user_id=$1`, fan.ID).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("erased reactions left=%d err=%v", left, err)
+	}
+	// With sequential scans priced out, a comment access bounded only by
+	// tenant is a scan of every comment, not a lookup by key.
+	tenantOnly := "Index Cond: (tenant_id = '" + rt.tenant + "'::text)"
+	tx, err := rt.store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+	if len(log.got) == 0 {
+		t.Fatal("erasure sent no comment statements")
+	}
+	for _, q := range log.got {
+		rows, err := tx.Query(ctx, `EXPLAIN (COSTS OFF) `+q.SQL, q.Args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range plan {
+			if line = strings.TrimSpace(line); line == tenantOnly || strings.Contains(line, "Seq Scan on content_comments") {
+				t.Fatalf("erasure scans comments:\n%s\n%s", q.SQL, strings.Join(plan, "\n"))
+			}
+		}
 	}
 }
