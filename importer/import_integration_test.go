@@ -1043,3 +1043,76 @@ func TestImportExternalIDs(t *testing.T) {
 		t.Fatalf("another source's ids: %+v %v", other, err)
 	}
 }
+
+// An import deleting content and a group, racing a reparent of a group the
+// content is in, takes the group hierarchy lock before the content row, as
+// the reparent does, so neither deadlocks.
+func TestImportDeletesRacingReparent(t *testing.T) {
+	f := newEngine(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	b := catalogBatch()
+	b.Groups = append(b.Groups, importer.GroupRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"})
+	if res := f.importBatch(t, b); len(res.Failed) > 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	q := func(sql string) string {
+		return strings.ReplaceAll(sql, "$s.", pgx.Identifier{f.schema}.Sanitize()+".")
+	}
+	blockedBy := func(pid uint32) uint32 {
+		t.Helper()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			var waiter uint32
+			err := f.pool.QueryRow(ctx, `SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter)
+			if err == nil {
+				return waiter
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatal(err)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("nothing blocked on backend %d", pid)
+			case <-tick.C:
+			}
+		}
+	}
+	// hold pauses the import inside its content delete, after it has the
+	// content row, so the reparent reaches that row while the import waits.
+	hold, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback(ctx)
+	if _, err := hold.Exec(ctx, q(`SELECT 1 FROM $s.content_facets WHERE content_id = $1 FOR UPDATE`), id("gallery", 1)); err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		res importer.Result
+		err error
+	}
+	imported := make(chan outcome, 1)
+	go func() {
+		res, err := f.e.Client().PostImport(ctx, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
+			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}}})
+		imported <- outcome{res, err}
+	}()
+	importPID := blockedBy(hold.Conn().PgConn().PID())
+	reparented := make(chan error, 1)
+	go func() {
+		_, err := f.e.Client().PatchEntity(ctx, id("series", 2), groups.GroupUpdate{ParentID: ptr(groups.GroupID(""))})
+		reparented <- err
+	}()
+	blockedBy(importPID)
+	if err := hold.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-reparented; err != nil {
+		t.Errorf("reparent: %v", err)
+	}
+	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 2 || len(o.res.Failed) > 0 {
+		t.Errorf("import: %+v %v", o.res, o.err)
+	}
+}
