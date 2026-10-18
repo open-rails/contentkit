@@ -1052,12 +1052,19 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	b := catalogBatch()
-	b.Groups = append(b.Groups, importer.GroupRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"})
+	b.Groups = append(b.Groups, importer.GroupRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"},
+		importer.GroupRecord{ExternalID: "series:6", ID: id("series", 6), Kind: "series", Slug: "orphaned"},
+		importer.GroupRecord{ExternalID: "series:7", Kind: "series", Slug: "orphan", Parent: &importer.Ref{ExternalID: "series:6"}})
 	if res := f.importBatch(t, b); len(res.Failed) > 0 {
 		t.Fatalf("failures: %+v", res.Failed)
 	}
 	q := func(sql string) string {
 		return strings.ReplaceAll(sql, "$s.", pgx.Identifier{f.schema}.Sanitize()+".")
+	}
+	// series:7's parent is deleted under it, so deleting series:7 fails at
+	// write time and the chunk retries record by record.
+	if _, err := f.pool.Exec(ctx, q(`UPDATE $s.content_groups SET state = 'deleted' WHERE id = $1`), id("series", 6)); err != nil {
+		t.Fatal(err)
 	}
 	blockedBy := func(pid uint32) uint32 {
 		t.Helper()
@@ -1096,7 +1103,7 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	imported := make(chan outcome, 1)
 	go func() {
 		res, err := f.e.Client().PostImport(ctx, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
-			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}}})
+			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}, {Entity: "group", ExternalID: "series:7"}}})
 		imported <- outcome{res, err}
 	}()
 	importPID := blockedBy(hold.Conn().PgConn().PID())
@@ -1112,7 +1119,7 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	if err := <-reparented; err != nil {
 		t.Errorf("reparent: %v", err)
 	}
-	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 2 || len(o.res.Failed) > 0 {
+	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 2 || len(o.res.Failed) != 1 || o.res.Failed[0].Index != 2 {
 		t.Errorf("import: %+v %v", o.res, o.err)
 	}
 }
