@@ -643,7 +643,12 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		return nil
 	})
 	if err == nil {
-		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.recordFacts(ctx, tx, k, t, m) }); err != nil {
+		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+			if err := s.lockTarget(ctx, tx, t); err != nil {
+				return err
+			}
+			return s.recordFacts(ctx, tx, k, t, m)
+		}); err != nil {
 			return err
 		}
 		if changed && s.m.Jobs != nil {

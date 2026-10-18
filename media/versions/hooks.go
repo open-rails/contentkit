@@ -290,6 +290,11 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 		return nil
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
+	// Read the manifest only once v is locked: a delayed callback then
+	// records the newest snapshot, not the one current when it was called.
+	if err := s.lockTarget(ctx, tx, v); err != nil {
+		return err
+	}
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
@@ -319,14 +324,18 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
 	vk := k
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
 	withdraw := false
 	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		// As in itemReady: lock v, then read the newest manifest.
+		if err := s.lockTarget(ctx, tx, v); err != nil {
+			return err
+		}
+		m, _, err := s.m.Manifests.Get(ctx, ref)
+		if errors.Is(err, media.ErrNotFound) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 		if err := s.recordFacts(ctx, tx, vk, v, m); err != nil {
 			return err
 		}

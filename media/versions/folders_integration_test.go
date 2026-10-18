@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -198,6 +200,83 @@ func TestDerivedFacts(t *testing.T) {
 			s.tenant, v.Version).Scan(&f.pages, &f.w)
 		return *f.pages == 1 && f.w != nil && *f.w == 50
 	})
+}
+
+// A delayed facts callback records the manifest current once it holds the
+// version, never the older one current when it was called, so it cannot
+// overwrite a newer commit's facts.
+func TestDelayedCallbackKeepsNewerFacts(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	hooks := s.svc.Hooks()
+	for _, c := range []struct {
+		name string
+		call func(contentref.ContentRef) error
+	}{
+		{"ItemCommitted", func(ref contentref.ContentRef) error { return hooks.ItemCommitted(s.ctx, ref) }},
+		{"ItemReady", func(ref contentref.ContentRef) error {
+			return pgx.BeginFunc(s.ctx, s.pool, func(tx pgx.Tx) error {
+				return hooks.ItemReady(s.ctx, tx, ref, media.Readiness{State: media.StateReady})
+			})
+		}},
+	} {
+		v := s.version(s.content("gallery", `{"level":"public"}`))
+		ref := s.ref("gallery", v)
+		// Hold off the publications the callbacks queue: they record facts too.
+		unlock, err := versions.LockSource(s.ctx, s.pool, s.tenant, v.Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(unlock)
+		blob, err := s.ms.NewBlobs(s.ctx, ref, layout.AreaPrivate, [][]byte{make([]byte, 32)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := func(w int) {
+			t.Helper()
+			if _, err := s.ms.Edit(s.ctx, ref, func(m *media.Manifest) error {
+				m.Files = []media.File{{Path: "originals/001.png", Blob: blob[0], Type: "image/png", W: w, H: w}}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		width := func() int {
+			t.Helper()
+			var w *int
+			if err := s.pool.QueryRow(s.ctx, `SELECT width FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, v.Version).Scan(&w); err != nil || w == nil {
+				t.Fatalf("%s: width %v %v", c.name, w, err)
+			}
+			return *w
+		}
+		page(10)
+		if err := c.call(ref); err != nil || width() != 10 {
+			t.Fatalf("%s: first callback: %v", c.name, err)
+		}
+
+		// The old callback is delayed behind a newer one, which holds the
+		// version while its commit lands and records that commit's facts.
+		newer, pid := s.lockVersion(v, true)
+		done := make(chan error, 1)
+		go func() { done <- c.call(ref) }()
+		if !s.waitBlocked(pid, done) {
+			t.Fatalf("%s: the delayed callback did not wait for the newer one", c.name)
+		}
+		page(20)
+		if _, err := newer.Exec(s.ctx, `UPDATE `+s.table("content_versions")+` SET width = 20, height = 20 WHERE tenant_id = $1 AND id = $2`,
+			s.tenant, v.Version); err != nil {
+			t.Fatal(err)
+		}
+		if err := newer.Commit(s.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatalf("%s: delayed callback: %v", c.name, err)
+		}
+		if w := width(); w != 20 {
+			t.Errorf("%s: the delayed callback recorded width %d over the newer 20", c.name, w)
+		}
+	}
 }
 
 // A movie's versions each carry their own ladder, subtitles and poster, and
