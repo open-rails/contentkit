@@ -279,6 +279,81 @@ func TestDelayedCallbackKeepsNewerFacts(t *testing.T) {
 	}
 }
 
+// Page selection records the manifest current once it holds the version,
+// not the one its own edit wrote, so a commit landing in between keeps its
+// facts.
+func TestPageSelectionKeepsNewerFacts(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 1))
+	width := func() int {
+		t.Helper()
+		var w *int
+		if err := s.pool.QueryRow(s.ctx, `SELECT width FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND id = $2`,
+			s.tenant, v.Version).Scan(&w); err != nil {
+			t.Fatal(err)
+		}
+		if w == nil {
+			return 0
+		}
+		return *w
+	}
+	eventually(t, "facts", time.Minute, func() bool { return width() == 30 })
+	// Background publications record facts too; start once none is queued
+	// (delayed sweeps record none).
+	idle := func() bool {
+		t.Helper()
+		var n int
+		if err := s.pool.QueryRow(s.ctx, `SELECT (SELECT count(*) FROM `+pgx.Identifier{s.workers, "river_job"}.Sanitize()+` WHERE state NOT IN ('completed', 'cancelled', 'discarded') AND kind <> 'contentkit_media_sweep')
+ + (SELECT count(*) FROM `+pgx.Identifier{s.host, "river_job"}.Sanitize()+` WHERE state NOT IN ('completed', 'cancelled', 'discarded') AND kind <> 'contentkit_media_sweep')`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 0
+	}
+	eventually(t, "the queues to drain", 2*time.Minute, idle)
+
+	// A newer commit's callback holds the version while that commit lands,
+	// after page selection wrote its edit and before it records facts.
+	newer, pid := s.lockVersion(v, true)
+	done := make(chan error, 1)
+	go func() { done <- versions.Publish(s.svc, s.ctx, v) }()
+	if !s.waitBlocked(pid, done) {
+		t.Fatal("page selection did not wait for the newer callback")
+	}
+	var waiting string
+	if err := s.pool.QueryRow(s.ctx, `SELECT query FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, pid).Scan(&waiting); err != nil ||
+		!strings.Contains(waiting, "content_items") || !strings.Contains(waiting, "FOR UPDATE") {
+		t.Fatalf("waiting elsewhere than recording facts: %q %v", waiting, err)
+	}
+	if !idle() {
+		t.Fatal("a queued job, not this page selection, may be the one waiting")
+	}
+	if _, err := s.ms.EditExisting(s.ctx, ref, func(m *media.Manifest) error {
+		for i := range m.Files {
+			if m.Files[i].IsUpload() && strings.HasPrefix(m.Files[i].Path, "originals/001") {
+				m.Files[i].W, m.Files[i].H = 60, 80
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newer.Exec(s.ctx, `UPDATE `+s.table("content_versions")+` SET width = 60, height = 80 WHERE tenant_id = $1 AND id = $2`,
+		s.tenant, v.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := newer.Commit(s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil && !errors.Is(err, versions.ErrNotReady) {
+		t.Fatal(err)
+	}
+	if w := width(); w != 60 {
+		t.Errorf("page selection recorded width %d over the newer 60", w)
+	}
+}
+
 // A movie's versions each carry their own ladder, subtitles and poster, and
 // open like their version: a kind that publishes nothing grants its
 // versions' items.
