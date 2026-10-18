@@ -362,13 +362,13 @@ func (s *Store) handleGetVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	got, err := s.Contents(r.Context(), v, []string{r.PathValue("id")})
+	vid := r.PathValue("vid")
+	got, err := s.contents(r.Context(), v, []string{r.PathValue("id")}, vid)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	if c := got[0]; c != nil {
-		vid := r.PathValue("vid")
 		code, _ := contenturl.ParseVersionCode(vid)
 		i := slices.IndexFunc(c.Versions, func(v Version) bool { return v.ID == vid })
 		if i < 0 && code != "" {
