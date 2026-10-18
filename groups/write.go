@@ -255,8 +255,21 @@ SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("
 // validate parents and cycles against the others' committed changes rather
 // than each against a graph the other is changing.
 func (s *Store) lockHierarchy(ctx context.Context, q Querier) error {
-	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:group-hierarchy:"+s.schema+":"+s.tenant)
+	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, s.hierarchyKey())
 	return err
+}
+
+// LockHierarchyShared holds off hierarchy changes for the transaction's rest
+// while letting other membership writers through. A membership writer takes
+// it before any content or group lock, so a hierarchy change either sees its
+// membership or is seen by its facets.
+func (s *Store) LockHierarchyShared(ctx context.Context, q Querier) error {
+	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`, s.hierarchyKey())
+	return err
+}
+
+func (s *Store) hierarchyKey() string {
+	return "contentkit:group-hierarchy:" + s.schema + ":" + s.tenant
 }
 
 // CreateGroups creates groups with their names and text in one transaction.

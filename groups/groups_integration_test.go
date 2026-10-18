@@ -1209,3 +1209,80 @@ func TestDeepHierarchy(t *testing.T) {
 		t.Fatalf("hierarchy faults %v", faults)
 	}
 }
+
+// A membership write and a hierarchy change racing either way leave the
+// stored facets equal to the effective groups, and neither deadlocks.
+func TestMembershipsRaceHierarchyChanges(t *testing.T) {
+	update := func(f *fixture, u GroupUpdate) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).UpdateGroups(f.ctx, []GroupUpdate{u})
+			return err
+		}
+	}
+	add := func(f *fixture, g GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			return f.s.bound(tx).AddMemberships(f.ctx, []Membership{{GroupID: g, ContentID: cid(1)}})
+		}
+	}
+	merge := func(f *fixture, from, into GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).Merge(f.ctx, []Merge{{From: from, Into: into}})
+			return err
+		}
+	}
+	deleted := StateDeleted
+	tests := map[string]func(f *fixture) (first, second func(pgx.Tx) error){
+		"ancestor deleted then membership added": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, State: &deleted}), add(f, c.ID)
+		},
+		"membership added then ancestor deleted": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return add(f, c.ID), update(f, GroupUpdate{ID: a.ID, State: &deleted})
+		},
+		"ancestor reparented then content groups set": func(f *fixture) (first, second func(pgx.Tx) error) {
+			r := f.create(GroupInput{Kind: "series", Slug: "r1"}, GroupInput{Kind: "series", Slug: "r2"})
+			a := f.create(GroupInput{Kind: "series", Slug: "a", ParentID: r[0].ID})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, ParentID: &r[1].ID}), func(tx pgx.Tx) error {
+				return f.s.bound(tx).SetContentGroups(f.ctx, []ContentGroups{{ContentID: cid(1), Kinds: []string{"series"}, Memberships: []Membership{{GroupID: c.ID}}}})
+			}
+		},
+		"ancestor deleted then memberships imported": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, State: &deleted}), func(tx pgx.Tx) error {
+				return f.s.ImportMemberships(f.ctx, tx, []ContentGroups{{ContentID: cid(1), Kinds: []string{"series"}, Memberships: []Membership{{GroupID: c.ID, ContentID: cid(1)}}}})
+			}
+		},
+		"membership on a child then its parent merged": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: g[0].ID})[0]
+			return add(f, c.ID), merge(f, g[0].ID, g[1].ID)
+		},
+		"parent merged then membership on its child": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: g[0].ID})[0]
+			return merge(f, g[0].ID, g[1].ID), add(f, c.ID)
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.content("gallery", 1, live("en"))
+			first, second := setup(f)
+			if err := f.raceAfter(first, second); err != nil {
+				t.Fatalf("second writer: %v", err)
+			}
+			want, err := f.s.EffectiveGroups(f.ctx, f.pool, []string{vid(1, 0)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := f.facetGroups()[vid(1, 0)]; !slices.Equal(got, want[vid(1, 0)]) {
+				t.Errorf("stored facets %v, effective %v", got, want[vid(1, 0)])
+			}
+		})
+	}
+}
