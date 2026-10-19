@@ -1,4 +1,4 @@
-import { ContentKitError, throwIfAborted, toContentKitError } from "../errors.js";
+import { ContentKitError, aborted, throwIfAborted, toContentKitError } from "../errors.js";
 import type { FileInfo, Op, RefBody } from "../generated/wire.js";
 import { fill } from "../public.js";
 import { samePath, stem, type MediaClient, type Progress, type UploadedFile, type UploadState } from "./client.js";
@@ -192,33 +192,38 @@ export class ItemUploadQueue {
     const batchIDs = new Set((o.head ? uploadedHead(this.items) : this.items).filter((i) => i.status === "uploaded").map((i) => i.id));
     const staging = [...batchIDs].flatMap((id) => this.staging.get(id) ?? []);
     if (staging.length) {
-      await Promise.all(staging);
+      await untilAborted(Promise.all(staging), signal);
       throwIfAborted(signal);
     }
-    const fixed = this.items.filter((i) => batchIDs.has(i.id));
-    // A batch item whose staging failed meanwhile ends a head batch, as before.
-    let ready = (o.head ? uploadedHead(fixed) : fixed).filter((i) => i.status === "uploaded");
+    // Re-read the order: a failed staging or an upload moved in front ends a head batch.
+    const current = () => (o.head ? uploadedHead(this.items) : this.items).filter((i) => batchIDs.has(i.id) && i.status === "uploaded");
     // A staging whose reply was lost may still have landed under a path the
-    // queue never learned; find it by its create ID, else put as before.
-    const unknown = ready.filter((i) => i.result?.processOnUpload && !i.unattached);
+    // queue never learned; find it by its create ID. Without a read, it waits
+    // for the next commit rather than guess a path.
+    const unknown = current().filter((i) => i.result?.processOnUpload && !i.unattached);
     if (unknown.length) {
       const listed = await this.client.read(this.o.ref, { editor: true, signal }).then(
         (r) => r.files,
         (e: unknown) => {
           if (toContentKitError(e).code === "aborted") throw e;
-          return [];
+          return undefined;
         },
       );
-      let found = false;
       for (const i of unknown) {
-        const f = listed.find((x) => x.unattached && x.create_id === i.id);
-        if (f) found = this.set(i.id, { unattached: true, path: f.path, result: { ...i.result!, path: f.path } }) || found;
+        const f = listed?.find((x) => x.create_id === i.id);
+        if (!listed) batchIDs.delete(i.id);
+        else if (f?.unattached) this.set(i.id, { unattached: true, path: f.path, result: { ...i.result!, path: f.path } });
+        else if (f) this.set(i.id, { status: "committed", unattached: false, path: f.path, result: { ...i.result!, path: f.path } });
       }
-      if (found) {
-        this.changed();
-        ready = ready.map((i) => this.find(i.id) ?? i);
+      if (!listed && o.head) {
+        // Stop the head batch before the first page it could not place.
+        const order = this.items.filter((i) => i.status === "uploaded");
+        const first = order.findIndex((i) => unknown.some((u) => u.id === i.id));
+        for (const i of order.slice(first)) batchIDs.delete(i.id);
       }
+      this.changed();
     }
+    const ready = current();
     // A stray read before its staging reply arrived is a queued upload: it
     // attaches in queue order, not here.
     const strays = (o.attach ?? []).filter((path) => !this.items.some((i) => stem(i.path) === stem(path)));
@@ -226,9 +231,7 @@ export class ItemUploadQueue {
     const ops = ready.flatMap((i): Op[] => {
       const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
       if (i.unattached) return [attach];
-      const put: Op = { op: "put", path: i.path, source_name: i.result!.sourceName, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) };
-      // A lost staging response may hide a successful unattached create.
-      return i.result!.processOnUpload ? [put, attach] : [put];
+      return [{ op: "put", path: i.path, source_name: i.result!.sourceName, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) }];
     });
     for (const path of strays) ops.push({ op: "attach", path, index: END });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
@@ -410,4 +413,15 @@ export class ItemUploadQueue {
         },
       );
   }
+}
+
+/** Settles with promise, or rejects once signal aborts. */
+function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(aborted(signal));
+    if (signal.aborted) return stop();
+    signal.addEventListener("abort", stop, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
 }
