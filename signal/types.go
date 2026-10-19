@@ -542,8 +542,8 @@ type CoEngagedOptions struct {
 	ContentKinds []string
 	// Window bounds the event scan. Zero = all time.
 	Window Window
-	// MaxSubjects caps the engaged-subject set read from the anchor
-	// (defaults to 10000).
+	// MaxSubjects caps the anchor's qualified readers (defaults to 10000).
+	// Readers are selected by a stable identity hash, with identity tie-breakers.
 	MaxSubjects int
 	// SkipRollup forces the query-time event scan even when the content_pairs
 	// rollup has rows (e.g. for freshness-critical reads).

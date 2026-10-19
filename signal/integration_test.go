@@ -3,10 +3,13 @@ package signal
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/signaltest"
 )
@@ -527,6 +530,97 @@ func TestIntegrationCoEngaged(t *testing.T) {
 	}
 	if co[1].ContentID != Z || co[1].Strength != 1 {
 		t.Fatalf("Z should follow with strength 1: %+v", co)
+	}
+}
+
+func TestIntegrationCoEngagedReaderSample(t *testing.T) {
+	st, conn := freshStore(t)
+	ctx := t.Context()
+	anchor := cid(80)
+	var kinds, keys, ids []string
+	var subjects []Subject
+	for i := range 24 {
+		key := fmt.Sprintf("reader-%02d", i/2)
+		subject := Subject{UserID: key}
+		if i%2 != 0 {
+			subject = Subject{AnonKey: key}
+		}
+		subjects = append(subjects, subject)
+		kinds, keys, ids = append(kinds, subject.Kind()), append(keys, subject.Key()), append(ids, cid(100+i))
+	}
+	// The expected sample comes from the input identities, not receipt order,
+	// duplicate editions, or the query's aggregation pipeline.
+	var ordered []string
+	rows, err := conn.Query(ctx, `SELECT identity.3 FROM
+ (SELECT arrayJoin(arrayZip(?,?,?)) AS identity)
+ ORDER BY cityHash64(identity.1,identity.2),identity.1,identity.2`, kinds, keys, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		ordered = append(ordered, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []string{"forward", "reverse"} {
+		var events []readingFixture
+		for i, subject := range subjects {
+			first := view(tenant, anchor, subject, 1, 10, 1, 2, 0, false)
+			edition := first
+			edition.ContentRef = edition.ContentRef.WithVersion("second-edition")
+			events = append(events, first, edition, view(tenant, ids[i], subject, 1, 10, 1, 2, 0, false))
+		}
+		if tenant == "reverse" {
+			slices.Reverse(events)
+		}
+		if err := recordFixtureSignals(st, ctx, tenant, events); err != nil {
+			t.Fatal(err)
+		}
+		for _, cap := range []int{1, 7, 24, 0} {
+			n := cap
+			if n == 0 {
+				n = len(subjects)
+			}
+			want := slices.Clone(ordered[:n])
+			slices.Sort(want)
+			for _, threads := range []int{1, 4} {
+				call := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"max_threads": threads}))
+				hits, err := st.CoEngaged(call, tenant, gallery(tenant, anchor), CoEngagedOptions{MaxSubjects: cap})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got []string
+				for _, hit := range hits {
+					if hit.Strength != 1 || hit.TenantID != tenant {
+						t.Fatalf("reader kind, tenant or edition isolation failed: %+v", hit)
+					}
+					got = append(got, hit.ContentID)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("%s cap=%d threads=%d: %v, want %v", tenant, cap, threads, got, want)
+				}
+			}
+		}
+	}
+	for _, tc := range []struct {
+		tenant, anchor string
+		kinds          []string
+	}{
+		{"forward", anchor, []string{"video"}},
+		{"forward", cid(999), nil},
+		{"missing", anchor, nil},
+	} {
+		hits, err := st.CoEngaged(ctx, tc.tenant, gallery(tc.tenant, tc.anchor), CoEngagedOptions{ContentKinds: tc.kinds})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("empty selection %+v: %+v, %v", tc, hits, err)
+		}
 	}
 }
 

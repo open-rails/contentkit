@@ -8,6 +8,27 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
+func TestIntegrationCoEngagedLargeReaderQueryLimit(t *testing.T) {
+	st, conn := queryLimitStore(t)
+	ctx := clickhouse.Context(t.Context(), clickhouse.WithSettings(clickhouse.Settings{"max_query_size": 262144}))
+	anchor, candidate := gallery("readers", cid(1)), gallery("readers", cid(2))
+	// The default 10,000-reader sample is larger than the SQL text limit when
+	// identities are interpolated. Query-local data must keep it out of SQL.
+	seed := `SELECT 'readers' AS tenant,if(number%2=0,?,?) AS content_id,
+ 'edition' AS version_id,concat('reader-',leftPad(toString(intDiv(number,2)),36,'0')) AS subject,
+ toString(number) AS event_id,toDateTime64('2026-10-01',6,'UTC') AS at FROM numbers(22000)`
+	if err := seedMeasured(ctx, conn, st, seed, anchor.ContentID, candidate.ContentID); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := st.CoEngaged(ctx, "readers", anchor, CoEngagedOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ContentID != candidate.ContentID || hits[0].Strength != 10000 {
+		t.Fatalf("default sample must cap 11,000 readers at 10,000: %+v", hits)
+	}
+}
+
 func TestIntegrationMetricsLargeReferenceQueryLimit(t *testing.T) {
 	st, _ := queryLimitStore(t)
 	ctx := clickhouse.Context(context.Background(),

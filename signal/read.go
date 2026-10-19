@@ -499,18 +499,35 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, o
 	if maxSubjects <= 0 {
 		maxSubjects = 10000
 	}
-	measured, args := st.measuredSubjectWorks(tenant, opts.Window)
-	var candidates strings.Builder
-	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
-		candidates.WriteString(" AND content_kind IN ?")
-		args = append(args, kinds)
+	readers, err := st.coEngagedReaders(ctx, tenant, ref, opts.Window, maxSubjects)
+	if err != nil {
+		return nil, err
 	}
-	args = append(args, ref.ContentKind, ref.ContentID, ref.ContentKind, ref.ContentID, maxSubjects, limit)
-	q := fmt.Sprintf(`WITH readers AS (%s)
- SELECT content_kind,content_id,toInt64(countIf(net_value>=0))-toInt64(countIf(net_value<0)) AS strength
- FROM readers WHERE 1%s AND NOT(content_kind=? AND content_id=?)
- AND (subject_kind,subject) IN (SELECT subject_kind,subject FROM readers WHERE content_kind=? AND content_id=? LIMIT ?)
- GROUP BY content_kind,content_id HAVING strength>0 ORDER BY strength DESC,content_kind,content_id LIMIT ?%s`, measured, candidates.String(), finalSettings)
+	if readers.Block().Rows() == 0 {
+		return []CoEngagedHit{}, nil
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(readers))
+	window, windowArgs := opts.Window.predicate("c.1")
+	scope := "(subject_kind,subject) IN (SELECT subject_kind,subject FROM contentkit_coengaged_readers) AND NOT(content_kind=? AND content_id=?)"
+	scopeArgs := []any{ref.ContentKind, ref.ContentID}
+	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
+		scope += " AND content_kind IN ?"
+		scopeArgs = append(scopeArgs, kinds)
+	}
+	candidates := "SELECT * FROM (" + st.measuredCanonical(scope) + ") WHERE 1" + window
+	args := []any{tenant}
+	args = append(args, scopeArgs...)
+	args = append(args, windowArgs...)
+	args = append(args, tenant)
+	args = append(args, scopeArgs...)
+	args = append(args, limit)
+	q := fmt.Sprintf(`SELECT content_kind,content_id,toInt64(countIf(net_value>=0))-toInt64(countIf(net_value<0)) AS strength
+ FROM (SELECT m.content_kind,m.content_id,coalesce(f.net_value,0.) AS net_value FROM (%s
+ SELECT content_kind,content_id,subject_kind,subject FROM scored
+ GROUP BY content_kind,content_id,subject_kind,subject HAVING max(qualified)) m
+ LEFT JOIN (%s) f USING(content_kind,content_id,subject_kind,subject))
+ GROUP BY content_kind,content_id HAVING strength>0 ORDER BY strength DESC,content_kind,content_id LIMIT ?%s`,
+		measuredVersions(candidates), st.feedbackState("tenant=? AND "+scope+" AND content_version_id=''"), finalSettings)
 
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -518,6 +535,37 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, o
 	}
 	defer rows.Close()
 	return scanCoEngaged(rows, tenant, limit)
+}
+
+// Send the bounded sample as query-local data, not SQL literals or a CTE that
+// ClickHouse would evaluate again for each candidate source.
+func (st *Store) coEngagedReaders(ctx context.Context, tenant string, ref ContentRef, window Window, limit int) (*ext.Table, error) {
+	pred, windowArgs := window.predicate("c.1")
+	canonical := "SELECT * FROM (" + st.measuredCanonical("content_kind=? AND content_id=?") + ") WHERE 1" + pred
+	args := append([]any{tenant, ref.ContentKind, ref.ContentID}, windowArgs...)
+	args = append(args, limit)
+	q := measuredVersions(canonical) + `
+ SELECT subject_kind,subject FROM scored GROUP BY subject_kind,subject HAVING max(qualified)
+ ORDER BY cityHash64(subject_kind,subject),subject_kind,subject LIMIT ?` + finalSettings
+	rows, err := st.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("signal: co-engaged readers: %w", err)
+	}
+	defer rows.Close()
+	table, err := ext.NewTable("contentkit_coengaged_readers", ext.Column("subject_kind", "String"), ext.Column("subject", "String"))
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var kind, subject string
+		if err := rows.Scan(&kind, &subject); err != nil {
+			return nil, fmt.Errorf("signal: co-engaged reader scan: %w", err)
+		}
+		if err := table.Append(kind, subject); err != nil {
+			return nil, err
+		}
+	}
+	return table, rows.Err()
 }
 
 func scanCoEngaged(rows driver.Rows, tenant string, limit int) ([]CoEngagedHit, error) {
