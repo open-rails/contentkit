@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // effectiveSQL derives eff(version_id, group_ids) for the versions source
@@ -91,17 +89,12 @@ UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff
 	return s.changed(ctx, q, contentIDs)
 }
 
-// A group write refreshes up to inlineRefresh reached contents in its own
-// transaction. A larger reach is refreshed after it commits by a queued job,
-// refreshBatch contents per transaction, so one write never locks a whole tag.
-var (
-	inlineRefresh = 500
-	refreshBatch  = 200
-)
+var refreshBatch = 200
 
 // refreshGroupFacets re-derives the facets of every content a change to the
 // given groups can reach: members of them or of their descendants, and
-// content whose facets name any of them.
+// content whose facets name any of them. These groups grant access, so the
+// facets must change in the same transaction as the group mutation.
 func (s *Store) refreshGroupFacets(ctx context.Context, q Querier, groupIDs []string) error {
 	if len(groupIDs) == 0 {
 		return nil
@@ -109,11 +102,6 @@ func (s *Store) refreshGroupFacets(ctx context.Context, q Querier, groupIDs []st
 	contentIDs, err := s.groupReach(ctx, q, groupIDs)
 	if err != nil {
 		return err
-	}
-	if len(contentIDs) > inlineRefresh {
-		if queued, err := s.queueRefresh(ctx, q, groupIDs); err != nil || queued {
-			return err
-		}
 	}
 	return s.refreshFacets(ctx, q, contentIDs)
 }
@@ -132,18 +120,6 @@ ORDER BY 1`,
 		return nil, err
 	}
 	return collectStrings(rows)
-}
-
-// queueRefresh queues the groups' member refresh in the writing transaction,
-// when River is bound; false leaves it to the caller.
-func (s *Store) queueRefresh(ctx context.Context, q Querier, groupIDs []string) (bool, error) {
-	client := s.river.bound()
-	tx, ok := q.(pgx.Tx)
-	if client == nil || !ok {
-		return false, nil
-	}
-	_, err := client.InsertTx(ctx, tx, refreshArgs{Tenant: s.tenant, Groups: groupIDs}, refreshOpts(s.queue))
-	return err == nil, err
 }
 
 // RefreshGroupMembers re-derives the facets of the contents the groups reach

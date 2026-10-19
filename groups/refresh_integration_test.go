@@ -2,10 +2,10 @@ package groups
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -14,70 +14,72 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
-// A write that reaches more than inlineRefresh contents commits without
-// rewriting them, and a queued job refreshes them in batches.
-func TestLargeGroupRefreshRunsAfterTheWriteInBatches(t *testing.T) {
-	inline, batch := inlineRefresh, refreshBatch
-	inlineRefresh, refreshBatch = 2, 2
-	t.Cleanup(func() { inlineRefresh, refreshBatch = inline, batch })
-
+// Group facets grant access and must match the hierarchy when a write commits,
+// even above the former asynchronous threshold and with River bound.
+func TestLargeGroupRefreshCommitsWithTheWrite(t *testing.T) {
 	f := newFixture(t)
-	g := f.create(GroupInput{Kind: "tag", Slug: "big"})[0]
-	for n := 1; n <= 5; n++ {
+	parent := f.create(GroupInput{Kind: "series", Slug: "parent"})[0]
+	g := f.create(GroupInput{Kind: "series", Slug: "child", ParentID: parent.ID})[0]
+	for n := 1; n <= 501; n++ {
 		f.content("gallery", n, live("en"))
 		f.add(Membership{GroupID: g.ID, ContentID: cid(n)})
 	}
-	named := func() int {
-		n := 0
-		for _, ids := range f.facetGroups() {
-			if slices.Contains(ids, string(g.ID)) {
-				n++
+	check := func(want []string) {
+		t.Helper()
+		facets := f.facetGroups()
+		if len(facets) != 501 {
+			t.Fatalf("facets = %d, want 501", len(facets))
+		}
+		for version, got := range facets {
+			if !slices.Equal(got, want) {
+				t.Fatalf("version %s groups = %v, want %v", version, got, want)
 			}
 		}
-		return n
 	}
-	if got := named(); got != 5 {
-		t.Fatalf("facets naming the tag before = %d, want 5", got)
-	}
+	check(ids(parent, g))
 
 	schema := pgtest.EmptySchema(t, f.ctx, f.pool)
 	if err := riverhelpers.ApplyMigrations(f.ctx, f.pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(f.ctx, f.pool, &river.Config{Schema: schema, FetchPollInterval: 50 * time.Millisecond, FetchCooldown: 20 * time.Millisecond}, f.s.RiverJobs())
+	_, err := riverhelpers.New(f.ctx, f.pool, &river.Config{Schema: schema}, f.s.RiverJobs())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Not started yet: the write queues the refresh and leaves the facets.
+	// Leave River stopped. A failed refresh rolls back both hierarchy and facets.
+	changed := f.s.changed
+	failure := errors.New("refresh failed")
+	f.s.changed = func(context.Context, Querier, []string) error { return failure }
+	empty := GroupID("")
+	_, err = f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: g.ID, ParentID: &empty}})
+	f.s.changed = changed
+	if !errors.Is(err, failure) {
+		t.Fatalf("update with failed refresh = %v, want %v", err, failure)
+	}
+	check(ids(parent, g))
+	var storedParent string
+	if err := f.pool.QueryRow(f.ctx, `SELECT parent_id FROM `+f.s.table("content_groups")+` WHERE tenant_id=$1 AND id=$2`, tenant, string(g.ID)).Scan(&storedParent); err != nil {
+		t.Fatal(err)
+	}
+	if storedParent != string(parent.ID) {
+		t.Fatalf("failed update changed parent to %q", storedParent)
+	}
+
+	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: g.ID, ParentID: &empty}}); err != nil {
+		t.Fatal(err)
+	}
+	check(ids(g))
 	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{g.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if got := named(); got != 5 {
-		t.Fatalf("facets naming the deleted tag right after the write = %d, want 5 (left to the job)", got)
-	}
+	check(nil)
 	var queued int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+pgx.Identifier{schema}.Sanitize()+`.river_job WHERE kind = 'contentkit_group_refresh'`).Scan(&queued); err != nil {
 		t.Fatal(err)
 	}
-	if queued != 1 {
-		t.Fatalf("queued refresh jobs = %d, want 1", queued)
-	}
-
-	if err := client.Start(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.StopAndCancel(ctx)
-	})
-	deadline := time.Now().Add(10 * time.Second)
-	for named() != 0 {
-		if time.Now().After(deadline) {
-			t.Fatalf("facets still naming the deleted tag after the job: %d", named())
-		}
-		time.Sleep(50 * time.Millisecond)
+	if queued != 0 {
+		t.Fatalf("queued refresh jobs = %d, want 0", queued)
 	}
 }
 
