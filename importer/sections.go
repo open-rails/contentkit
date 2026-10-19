@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -309,6 +310,11 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 		return nil, "", fmt.Errorf("%w: a delete names an external_id", errInvalid)
 	}
 	id, err := r.ref(d.Entity, Ref{ExternalID: d.ExternalID})
+	// Only an absent import mapping makes this delete a no-op. Store errors
+	// (including other not-found failures) still fail the record normally.
+	if errors.Is(err, errNotFound) {
+		return deletion{entity: d.Entity}, d.ExternalID, nil
+	}
 	return deletion{entity: d.Entity, id: id}, d.ExternalID, err
 }
 
@@ -321,6 +327,9 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 	by := map[string][]string{}
 	for _, d := range in {
+		if d.id == "" {
+			continue
+		}
 		by[d.entity] = append(by[d.entity], d.id)
 	}
 	gs := make([]groups.GroupID, len(by[EntityGroup]))
