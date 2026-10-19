@@ -978,10 +978,11 @@ func TestImportDeletes(t *testing.T) {
 	}
 	b := importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
 		del("content", "gallery:3"), del("version", "version:2"), del("group", "tag:2"), del("comment", "comment:2"), del("poll", "poll:2"),
-		del("content", "gallery:2"), del("content", "gallery:99"), del("poll_option", "answer:1"),
+		del("content", "gallery:2"), del("content", "gallery:99"), del("version", "version:99"), del("group", "tag:99"),
+		del("comment", "comment:99"), del("poll", "poll:99"), del("poll_option", "answer:1"), del("content", ""),
 	}}
 	res := f.importBatch(t, b)
-	if res.Written["deletes"] != 6 || len(res.Failed) != 2 || res.Failed[0].ExternalID != "gallery:99" || res.Failed[0].Code != importer.CodeNotFound ||
+	if res.Written["deletes"] != 11 || len(res.Failed) != 2 || res.Failed[0].ExternalID != "answer:1" || res.Failed[0].Code != importer.CodeInvalid ||
 		res.Failed[1].Code != importer.CodeInvalid {
 		t.Fatalf("deletes: %+v", res)
 	}
@@ -1004,7 +1005,7 @@ func TestImportDeletes(t *testing.T) {
 		}
 	}
 	before := f.fingerprint(t)
-	if again := f.importBatch(t, b); again.Written["deletes"] != 6 || len(again.Failed) != 2 {
+	if again := f.importBatch(t, b); again.Written["deletes"] != 11 || len(again.Failed) != 2 {
 		t.Fatalf("re-sent deletes: %+v", again)
 	}
 	after := f.fingerprint(t)
@@ -1013,8 +1014,36 @@ func TestImportDeletes(t *testing.T) {
 			t.Errorf("re-sent deletes changed %s", table)
 		}
 	}
-	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{del("version", id("version", 9))}}); len(res.Failed) != 1 {
-		t.Errorf("a delete names an external id: %+v", res)
+	// A canonical ID is still interpreted only as an external ID, never as
+	// permission to delete that record directly.
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{del("version", id("version", 1))}}); len(res.Failed) != 0 || res.Written["deletes"] != 1 {
+		t.Errorf("unmapped external id: %+v", res)
+	}
+	if got := f.scalar(t, `SELECT state FROM $s.content_versions WHERE id = $1`, id("version", 1)); got != "published" {
+		t.Fatalf("unmapped external id deleted a canonical id: %s", got)
+	}
+	if res := f.importBatch(t, importer.Batch{Source: "another-source", Deletes: []importer.DeleteRecord{del("content", "gallery:1")}}); len(res.Failed) != 0 || res.Written["deletes"] != 1 {
+		t.Fatalf("another source's absent mapping: %+v", res)
+	}
+	if got := f.scalar(t, `SELECT state FROM $s.content_items WHERE id = $1`, g1); got != "published" {
+		t.Fatalf("another source deleted the content: %s", got)
+	}
+	other := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
+		cfg.Tenant = "other-site"
+		cfg.Database.Schema = f.schema
+		deps.Postgres = f.pool
+	})
+	if res := other.importBatch(t, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{del("content", "gallery:1")}}); len(res.Failed) != 0 || res.Written["deletes"] != 1 {
+		t.Fatalf("another tenant's absent mapping: %+v", res)
+	}
+	if got := f.scalar(t, `SELECT state FROM $s.content_items WHERE id = $1`, g1); got != "published" {
+		t.Fatalf("another tenant deleted the content: %s", got)
+	}
+	// Absence is special only for deletes, not references in other records.
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Comments: []importer.CommentRecord{{
+		ExternalID: "missing-target", Target: importer.TargetRef{Content: &importer.Ref{ExternalID: "gallery:99"}}, UserID: "u-1", Body: "hello",
+	}}}); len(res.Failed) != 1 || res.Failed[0].Code != importer.CodeNotFound {
+		t.Fatalf("ordinary missing reference: %+v", res)
 	}
 }
 
@@ -1137,7 +1166,8 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	imported := make(chan outcome, 1)
 	go func() {
 		res, err := f.e.Client().PostImport(ctx, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
-			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}, {Entity: "group", ExternalID: "series:7"}}})
+			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}, {Entity: "group", ExternalID: "series:7"},
+			{Entity: "group", ExternalID: "never-imported"}}})
 		imported <- outcome{res, err}
 	}()
 	importPID := blockedBy(hold.Conn().PgConn().PID())
@@ -1153,7 +1183,7 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	if err := <-reparented; err != nil {
 		t.Errorf("reparent: %v", err)
 	}
-	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 2 || len(o.res.Failed) != 1 || o.res.Failed[0].Index != 2 {
+	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 3 || len(o.res.Failed) != 1 || o.res.Failed[0].Index != 2 {
 		t.Errorf("import: %+v %v", o.res, o.err)
 	}
 }
