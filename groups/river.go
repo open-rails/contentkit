@@ -41,7 +41,7 @@ const (
 )
 
 func refreshOpts(queue string) *river.InsertOpts {
-	return &river.InsertOpts{Queue: queue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true}}
+	return &river.InsertOpts{Queue: queue, MaxAttempts: 10}
 }
 
 type refreshWorker struct {
