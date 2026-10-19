@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -109,6 +110,224 @@ func newFixture(t *testing.T) fixture {
 func request() Request {
 	sum := sha256.Sum256([]byte("zip"))
 	return Request{Content: catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "A gallery"}}}, Archive: Archive{Name: "gallery.zip", Size: 3, SHA256: hex.EncodeToString(sum[:])}}
+}
+
+// Stage the durable post-upload state without running archive conversion.
+func stageUpload(t *testing.T, f fixture, in Request) Operation {
+	t.Helper()
+	op, err := f.s.Put(t.Context(), f.actor, uuid.NewString(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := f.s.o.Registry.VersionRef("gallery", op.ContentID, op.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.s.o.Manifests.Edit(t.Context(), ref, func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Path: op.Upload.Path, Staged: op.Upload.Blob, Meta: map[string]any{versions.ArchiveOperation: op.ID, versions.ArchiveSHA256: in.Archive.SHA256}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.o.Pool.Exec(t.Context(), `UPDATE `+f.s.table+` SET state='processing' WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	return op
+}
+
+type manifestReadStore struct {
+	media.Store
+	beforeGet func(context.Context, string) error
+}
+
+func (s manifestReadStore) Get(ctx context.Context, key string, opts media.GetOptions) (io.ReadCloser, media.Object, error) {
+	if err := s.beforeGet(ctx, key); err != nil {
+		return nil, media.Object{}, err
+	}
+	return s.Store.Get(ctx, key, opts)
+}
+
+func interceptManifestReads(t *testing.T, f fixture, beforeGet func(context.Context, string) error) {
+	t.Helper()
+	journal, err := media.NewPGJournal(f.s.o.Pool, f.schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(manifestReadStore{f.s.o.Manifests.Store(), beforeGet}, f.s.o.Registry, media.ManifestOptions{Locker: media.PGLocker(f.s.o.Pool), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.o.Versions.Bind(versions.Media{Manifests: manifests, Uploads: f.s.o.Uploads, Jobs: &media.Jobs{}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileRotatesErrorsAndWaitingOperations(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("waiting=%t", waiting), func(t *testing.T) {
+			f := newFixture(t)
+			f.s.o.Authority = testDelegation{f.actor}
+			ctx := t.Context()
+			before := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+			var operations []Operation
+			for i := range 26 {
+				in := request()
+				if waiting && i < 25 {
+					in.Publish = WhenReady
+					in.PublishAt = &before
+				}
+				op := stageUpload(t, f, in)
+				operations = append(operations, op)
+				_, err := f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.table+` SET updated_at=$3,reconcile_at=$3 WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, before.Add(time.Duration(i)*time.Second))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if waiting && i < 25 {
+					// Catalog activation owns this wait; reconciliation must not
+					// publish it or change the intended date just to rotate it.
+					if _, err := f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.items+` SET state='published',moderation='approved',published_at=NULL WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ContentID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.table+` SET state='scheduled',publish_at=$3 WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, before); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			recovered := false
+			if !waiting {
+				interceptManifestReads(t, f, func(_ context.Context, key string) error {
+					if !recovered {
+						for _, op := range operations[:25] {
+							if strings.Contains(key, op.VersionID) {
+								return media.ErrUnavailable
+							}
+						}
+					}
+					return nil
+				})
+			}
+			for pass := range 2 {
+				err := f.s.Reconcile(ctx)
+				if waiting && err != nil || !waiting && !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("pass %d: %v", pass, err)
+				}
+				tail, err := f.s.Get(ctx, f.actor, operations[25].ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "upload"
+				if pass == 1 {
+					want = "rendering"
+				}
+				if tail.Progress.Stage != want {
+					t.Fatalf("pass %d: tail stage=%q, want %q", pass, tail.Progress.Stage, want)
+				}
+			}
+			for i, op := range operations[:25] {
+				var updated, queued time.Time
+				var at *time.Time
+				if err := f.s.o.Pool.QueryRow(ctx, `SELECT updated_at,reconcile_at,publish_at FROM `+f.s.table+` WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID).Scan(&updated, &queued, &at); err != nil {
+					t.Fatal(err)
+				}
+				if !updated.Equal(before.Add(time.Duration(i)*time.Second)) || !queued.After(before.Add(time.Minute)) {
+					t.Fatalf("attempt changed visible time or did not rotate: updated=%s queued=%s", updated, queued)
+				}
+				if waiting && (at == nil || !at.Equal(before)) {
+					t.Fatalf("wait changed publication date: %v", at)
+				}
+			}
+			if !waiting {
+				recovered = true
+				for range 2 {
+					if err := f.s.Reconcile(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, op := range operations {
+					got, err := f.s.Get(ctx, f.actor, op.ID)
+					if err != nil || got.Progress.Stage != "rendering" {
+						t.Fatalf("recovery: stage=%q error=%v", got.Progress.Stage, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestReconcileCancellationAndLeaseRecovery(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	op := stageUpload(t, f, request())
+	before := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.table+` SET updated_at=$3,reconcile_at=$3 WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, before); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{}, 2)
+	pause := true
+	interceptManifestReads(t, f, func(ctx context.Context, _ string) error {
+		if pause {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	})
+	attempt, stop := context.WithCancel(ctx)
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- f.s.reconcile(attempt, op.ID) }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var lease string
+	var claimed time.Time
+	if err := f.s.o.Pool.QueryRow(ctx, `SELECT lease_id::text,reconcile_at FROM `+f.s.table+` WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID).Scan(&lease, &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if !claimed.After(before) {
+		t.Fatal("claim did not rotate before external work")
+	}
+	// A competing claim must not rotate or release the active attempt.
+	if err := f.s.reconcile(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	var unchanged bool
+	if err := f.s.o.Pool.QueryRow(ctx, `SELECT lease_id=$3 AND reconcile_at=$4 AND updated_at=$5 FROM `+f.s.table+` WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, lease, claimed, before).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("competing claim changed active attempt: %v", err)
+	}
+	stop()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled attempt: %v", err)
+	}
+	pause = false
+	if err := f.s.o.Pool.QueryRow(ctx, `SELECT lease_id IS NULL AND reconcile_at=$3 AND updated_at=$4 FROM `+f.s.table+` WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, claimed, before).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("cancellation lost rotation or failed to release: %v", err)
+	}
+	// Model a replacement worker dying after its claim commits. Its expired
+	// lease must be recoverable, and an old worker cannot release that lease.
+	replacement := uuid.NewString()
+	if _, err := f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.table+` SET lease_id=$3,lease_until=now()-interval '1 second' WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, replacement); err != nil {
+		t.Fatal(err)
+	}
+	f.s.release(ctx, op.ID, lease)
+	if err := f.s.o.Pool.QueryRow(ctx, `SELECT lease_id=$3 FROM `+f.s.table+` WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ID, replacement).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("stale release removed replacement lease: %v", err)
+	}
+	restarted, err := New(f.s.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := restarted.Get(ctx, f.actor, op.ID)
+	if err != nil || got.Progress.Stage != "rendering" {
+		t.Fatalf("restart did not recover: stage=%q error=%v", got.Progress.Stage, err)
+	}
 }
 
 func TestPublishingAtomicMetadataAndReplay(t *testing.T) {

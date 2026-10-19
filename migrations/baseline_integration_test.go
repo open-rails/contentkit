@@ -2,8 +2,10 @@ package migrations_test
 
 import (
 	"context"
+	"io/fs"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -12,6 +14,73 @@ import (
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/migratekit"
 )
+
+func TestPublishingReconcileOrderUpgrade(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	pgtest.EnsureExtensions(t, ctx, pool)
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	steps, err := migratekit.Load(migrations.Postgres, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := slices.IndexFunc(steps, func(step migratekit.Migration) bool {
+		return step.Name == "0021_publishing_reconcile_order.up.sql"
+	})
+	if boundary < 0 {
+		t.Fatal("publishing reconcile migration is missing")
+	}
+	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:boundary]); err != nil {
+		t.Fatal(err)
+	}
+	table := pgx.Identifier{schema, "content_publishing_operations"}.Sanitize()
+	if _, err := pool.Exec(ctx, `INSERT INTO `+table+`(tenant_id,id,owner_key,request_hash,request,content_id,version_id,content_revision,version_revision,commit_id,state,publish_at,updated_at)
+ VALUES('test','01920000-0000-7000-8000-000000000001','owner',repeat('a',64),'{}','content','version',1,1,'01920000-0000-7000-8000-000000000002','scheduled','2026-10-01','2026-09-30')`); err != nil {
+		t.Fatal(err)
+	}
+	var before string
+	if err := pool.QueryRow(ctx, `SELECT to_jsonb(op)::text FROM `+table+` op`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var after string
+	var queued time.Time
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(op)-'reconcile_at')::text,reconcile_at FROM `+table+` op`).Scan(&after, &queued); err != nil || after != before || queued.IsZero() {
+		t.Fatalf("upgrade changed the receipt or omitted scheduling: before=%s after=%s queued=%s error=%v", before, after, queued, err)
+	}
+	var indexes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=$1 AND indexname IN ('content_publishing_reconcile_idx','content_publishing_scheduled_idx')`, schema).Scan(&indexes); err != nil || indexes != 2 {
+		t.Fatalf("publishing indexes: %d %v", indexes, err)
+	}
+	// Exercise the actual rollback SQL without changing the migration ledger.
+	down, err := fs.ReadFile(migrations.Postgres, "0021_publishing_reconcile_order.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL search_path TO `+pgx.Identifier{schema}.Sanitize()+`,public`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(down)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT to_jsonb(op)::text FROM `+table+` op`).Scan(&after); err != nil || after != before {
+		t.Fatalf("rollback changed the receipt: after=%s error=%v", after, err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=$1 AND indexname='content_publishing_pending_idx'`, schema).Scan(&indexes); err != nil || indexes != 1 {
+		t.Fatalf("rollback did not restore pending index: %d %v", indexes, err)
+	}
+}
 
 func TestNamePrefixIndexUpgrade(t *testing.T) {
 	ctx := t.Context()
@@ -102,7 +171,7 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql"}
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql"}
 	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}

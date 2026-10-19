@@ -100,7 +100,7 @@ func (s *Store) release(ctx context.Context, id, lease string) {
 // Reconcile advances a bounded batch independently of HTTP traffic. Repeating
 // it after a crash is safe; River's periodic contribution supplies recovery.
 func (s *Store) Reconcile(ctx context.Context) error {
-	rows, err := s.o.Pool.Query(ctx, `SELECT id::text FROM `+s.table+` WHERE tenant_id=$1 AND (state IN ('processing','publishing','review_required') OR state='blocked' AND failure->>'retryable'='true' OR state='scheduled' AND publish_at<=$2) AND (lease_until IS NULL OR lease_until<now()) ORDER BY updated_at LIMIT 25`, s.o.Tenant, s.o.Clock())
+	rows, err := s.o.Pool.Query(ctx, `SELECT operations.id::text FROM `+s.table+` operations WHERE tenant_id=$1 AND (state IN ('processing','publishing','review_required') OR state='blocked' AND failure->>'retryable'='true' OR state='scheduled' AND publish_at<=$2) AND (lease_until IS NULL OR lease_until<now()) ORDER BY operations.reconcile_at,operations.id LIMIT 25`, s.o.Tenant, s.o.Clock())
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,9 @@ func (s *Store) Reconcile(ctx context.Context) error {
 
 func (s *Store) reconcile(ctx context.Context, id string) error {
 	lease := uuid.NewString()
-	tag, err := s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET lease_id=$3,lease_until=now()+interval '2 minutes' WHERE tenant_id=$1 AND id=$2 AND (lease_until IS NULL OR lease_until<now())`, s.o.Tenant, id, lease)
+	// Rotate at claim time so errors, no-op waits and interrupted attempts do
+	// not hold the front of the queue. Keep user-visible updated_at unchanged.
+	tag, err := s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET lease_id=$3,lease_until=now()+interval '2 minutes',reconcile_at=now() WHERE tenant_id=$1 AND id=$2 AND (lease_until IS NULL OR lease_until<now())`, s.o.Tenant, id, lease)
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
