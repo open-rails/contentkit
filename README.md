@@ -491,6 +491,9 @@ Reader page identity is the SHA-256 digest of the original source image.
 are display/path metadata. The manifest's ordered source list determines page
 numbers and consecutive ZIP entry names, without renaming source blobs when
 pages move. Reader metadata and chapter starts refer to source hashes.
+Upload commits remain asynchronous: a staged file has no verified `page_id`
+until placement finishes. Wait for placement before saving reader metadata or
+chapter starts that reference that source; a filename is not a fallback ID.
 
 Reader chapters accept `start_page` and derive their end from the next start,
 or the end of the version. Inserting or reordering unmarked pages does not

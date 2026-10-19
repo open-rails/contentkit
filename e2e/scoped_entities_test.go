@@ -66,7 +66,7 @@ func TestScopedEntityEditsPreserveParentAndSibling(t *testing.T) {
 	check(got, map[groups.GroupID]string{after: "", replacement: a, sibling: b})
 	f.want(http.StatusBadRequest, staff, "PUT", versionPath, groups.ContentGroups{Kinds: []string{"tag"},
 		Memberships: []groups.Membership{{GroupID: first, VersionID: b}}}, nil)
-	f.want(http.StatusNotFound, staff, "PUT", "/contents/"+c.ID+"/versions/"+uuid.NewString()+"/entities",
+	f.want(http.StatusNotFound, staff, "PUT", "/contents/"+c.ID+"/versions/"+uuid.Must(uuid.NewV7()).String()+"/entities",
 		groups.ContentGroups{Kinds: []string{"tag"}}, nil)
 	f.want(http.StatusOK, staff, "GET", path, nil, &got)
 	check(got, map[groups.GroupID]string{after: "", replacement: a, sibling: b})

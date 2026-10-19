@@ -37,6 +37,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -677,6 +678,7 @@ func TestImportGroupScopes(t *testing.T) {
 // in-process client.
 func TestImportThenIngestMedia(t *testing.T) {
 	env := mediatest.Open(t)
+	var registry *media.Registry
 	f := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
 		cfg.Tenant = env.Tenant
 		pngs := []string{"image/png"}
@@ -690,6 +692,14 @@ func TestImportThenIngestMedia(t *testing.T) {
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
 		deps.Store = env.Store
+		model, err := cfg.MediaKinds()
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err = media.NewRegistry(model)
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 	if err := f.e.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -743,6 +753,28 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if _, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
 		[]contentkit.MediaFile{{Path: "audio/0001.mp3", Type: "audio/mpeg", Body: bytes.NewReader([]byte("ID3 page one"))}}); err != nil {
 		t.Fatal(err)
+	}
+	// The upload commit is intentionally asynchronous. This fixture runs no
+	// image/audio worker; perform only its placement step so the source hashes
+	// are verified before authoring metadata that refers to them.
+	queue, err := workqueue.New(f.pool, registry, f.schema+"_media_worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := media.NewPGJournal(f.pool, f.schema, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(env.Store, registry, media.ManifestOptions{Locker: media.PGLocker(f.pool), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionRef, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placed, err := manifests.Place(t.Context(), versionRef); err != nil || placed != 4 {
+		t.Fatalf("place three pages and their audio: %d %v", placed, err)
 	}
 	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr(fmt.Sprintf("%x", sha256.Sum256(firstPage)))}}}
 	for range 2 {
