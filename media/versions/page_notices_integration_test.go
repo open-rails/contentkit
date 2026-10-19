@@ -62,6 +62,18 @@ func notices(t *testing.T, s *site, who access.Actor, v versions.Target) (int, v
 	return resp.StatusCode, out
 }
 
+func TestPageNoticesBeforeFirstUpload(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	status, got := notices(t, s, s.creator, v)
+	if status != http.StatusOK || got.Notices == nil || len(got.Notices) != 0 {
+		t.Fatalf("new version without a manifest: status %d, notices %+v", status, got)
+	}
+	if status, _ := notices(t, s, s.stranger, v); status != http.StatusForbidden {
+		t.Fatalf("non-editor new version notices: status %d", status)
+	}
+}
+
 func TestPageNoticesRestoreAndDismiss(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	_, v := gallery(t, s)
