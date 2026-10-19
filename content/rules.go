@@ -233,9 +233,23 @@ func (rt *Runtime) addBannedWords(ctx context.Context, by string, in []BannedWor
 		actions[i] = string(w.Action)
 	}
 	s := rt.store
-	_, err := s.pool.Exec(ctx, `INSERT INTO `+s.t.bannedWords+` (tenant_id, word, action, created_by)
+	tx, err := s.beginMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := rt.lockErasureSubject(ctx, tx, by); err != nil {
+		return err
+	}
+	if by, err = rt.provenance(ctx, tx, by); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.bannedWords+` (tenant_id, word, action, created_by)
 		SELECT DISTINCT ON (w) $1, w, a, $4 FROM unnest($2::text[], $3::text[]) AS x(w, a)
-		ON CONFLICT (tenant_id, word) DO UPDATE SET action = EXCLUDED.action`, s.tenant, words, actions, by)
+		ON CONFLICT (tenant_id, word) DO UPDATE SET action = EXCLUDED.action`, s.tenant, words, actions, by); err != nil {
+		return err
+	}
+	err = tx.Commit(ctx)
 	rt.rules.invalidate()
 	return err
 }
@@ -300,11 +314,24 @@ func (rt *Runtime) banIPs(ctx context.Context, by string, in []IPBanInput) error
 		nets[i], reasons[i], untils[i] = p.String(), reason, b.Until
 	}
 	s := rt.store
-	_, err := s.pool.Exec(ctx, `INSERT INTO `+s.t.ipBans+` (tenant_id, network, reason, until, banned_by)
+	tx, err := s.beginMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := rt.lockErasureSubject(ctx, tx, by); err != nil {
+		return err
+	}
+	if by, err = rt.provenance(ctx, tx, by); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.ipBans+` (tenant_id, network, reason, until, banned_by)
 		SELECT DISTINCT ON (n) $1, n::cidr, r, u, $5 FROM unnest($2::text[], $3::text[], $4::timestamptz[]) AS x(n, r, u)
 		ON CONFLICT (tenant_id, network) DO UPDATE SET reason = EXCLUDED.reason, until = EXCLUDED.until,
-		 banned_by = EXCLUDED.banned_by, banned_at = now()`, s.tenant, nets, reasons, untils, by)
-	return err
+		 banned_by = EXCLUDED.banned_by, banned_at = now()`, s.tenant, nets, reasons, untils, by); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (rt *Runtime) liftIPBans(ctx context.Context, networks []string) error {
