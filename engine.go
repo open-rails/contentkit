@@ -708,7 +708,7 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 }
 
 // Start starts ContentKit's background work: search indexing, preference
-// sync, co-engagement, projection repair, erasure and the media jobs. With no
+// sync, projection repair, erasure and the media jobs. With no
 // options it builds and runs ContentKit's own River client in
 // Config.Database.RiverSchema; with WithRiverClient the jobs run on the host's
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start

@@ -524,7 +524,8 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND 
 			}
 		}
 		var state string
-		if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1`, id).Scan(&state); err != nil {
+		// Serialize reopening with other planners before inspecting or resetting chunks.
+		if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1 FOR UPDATE`, id).Scan(&state); err != nil {
 			return err
 		}
 		if i < done && state != "complete" {

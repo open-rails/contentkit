@@ -2,9 +2,11 @@ package video
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
@@ -73,7 +75,8 @@ func (replanArgs) Kind() string { return "test_replan" }
 // A rung adopted from existing outputs has no chunks; a forced regeneration
 // reopening it plans them, and a reopened run keeps the chunks it has.
 func TestReopenedRunGetsChunks(t *testing.T) {
-	ctx := context.Background()
+	ctx, stop := context.WithTimeout(t.Context(), 30*time.Second)
+	defer stop()
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.EmptySchema(t, ctx, pool)
 	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
@@ -81,8 +84,8 @@ func TestReopenedRunGetsChunks(t *testing.T) {
 	}
 	c := WorkerConfig{Pool: pool, Schema: schema}
 	stages := []rung{{n: 240, w: 426, h: 240}, {n: 480, w: 854, h: 480}}
-	bounds := [][][2]int64{{{0, 8000}, {8000, 16000}, {16000, 20000}}, {{0, 20000}}}
-	rechunked := [][][2]int64{{{0, 4000}, {4000, 8000}, {8000, 12000}, {12000, 16000}, {16000, 20000}}, bounds[1]}
+	bounds := [][][2]int64{{{0, 16000}, {16000, 32000}, {32000, 40000}}, {{0, 40000}}}
+	rechunked := [][][2]int64{{{0, 8000}, {8000, 16000}, {16000, 24000}, {24000, 32000}, {32000, 40000}}, bounds[1]}
 	// insertRuns takes its River client from the job context, as in planning.
 	workers := river.NewWorkers()
 	river.AddWorker(workers, river.WorkFunc(func(ctx context.Context, job *river.Job[replanArgs]) error {
@@ -177,13 +180,66 @@ FROM `+c.runTable()+` r WHERE r.ref->>'content_id' = $1 AND r.rung = $2`, id, ru
 	plan(racing, 1)
 	complete("racing")
 	racing.Done = 0
-	plan(racing, 2)
-	var chunks, queued int
-	if err := pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE ch.state = 'queued') FROM `+c.chunkTable()+` ch
-JOIN `+c.runTable()+` r ON r.id = ch.run_id WHERE r.ref->>'content_id' = 'racing' AND r.rung = 240`).Scan(&chunks, &queued); err != nil {
+	// Hold the run so both planners reach the same reopen concurrently.
+	// Without locking the state read they both see complete and no chunks,
+	// then block at the chunk foreign key instead.
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if chunks != 3 || queued != 2 {
-		t.Fatalf("competing planners left %d chunks, %d queued", chunks, queued)
+	defer blocker.Rollback(context.Background())
+	if _, err := blocker.Exec(ctx, `SELECT id FROM `+c.runTable()+` WHERE ref->>'content_id' = 'racing' AND rung = 240 FOR UPDATE`); err != nil {
+		t.Fatal(err)
 	}
+	for _, rechunk := range []bool{false, true} {
+		racing.Rechunk = rechunk
+		if _, err := client.Insert(ctx, racing, &river.InsertOpts{MaxAttempts: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+WHERE wait_event_type = 'Lock' AND position($1 in query) > 0`, schema).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 2 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("both planners did not reach the blocked run")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		select {
+		case ev := <-events:
+			if ev.Kind == river.EventKindJobFailed {
+				t.Fatalf("competing planner failed: %+v", ev.Job.Errors)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	rows, err := pool.Query(ctx, `SELECT ch.start_ms, ch.end_ms FROM `+c.chunkTable()+` ch
+JOIN `+c.runTable()+` r ON r.id = ch.run_id WHERE r.ref->>'content_id' = 'racing' AND r.rung = 240 ORDER BY ch.ordinal`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) ([2]int64, error) {
+		var bound [2]int64
+		err := row.Scan(&bound[0], &bound[1])
+		return bound, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, bounds[0]) && !slices.Equal(got, rechunked[0]) {
+		t.Fatalf("competing planners mixed chunk bounds: %v", got)
+	}
+	check("racing", 240, run{state: "encoding", chunks: len(got), queued: 2, jobs: 2})
 }

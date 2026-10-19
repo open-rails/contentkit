@@ -19,8 +19,8 @@ changes. Do not rewind preference revisions against a retained sink: send
 
 After restoring ClickHouse, replay every subject deletion newer than the
 backup from the host's deletion ledger, then run `EnforceErasures` for each
-tenant. Run `RepairProjections` and `RefreshCoEngagement` as needed to rebuild
-derived state from canonical signals. `signal.CheckSchema` must pass before
+tenant. Run `RepairProjections` as needed to rebuild derived state from
+canonical signals. `signal.CheckSchema` must pass before
 serving analytics.
 
 Erasures never roll back. Replay post-backup deletions and permanent source

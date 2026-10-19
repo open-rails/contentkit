@@ -59,18 +59,23 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 	s.mustUpload(s.creator, ref, "originals/100", "image/png", second)
 	index := 0
 	s.commit(s.creator, ref, media.Op{Op: media.OpMove, Path: "originals/900.jpg", Index: &index})
-	eventually(t, "original-format archive", time.Minute, func() bool {
-		f, ok := s.manifest(ref).Get("download/pages.zip")
-		return ok && f.Blob != ""
-	})
+
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/download"
-	response, data := s.call(s.fan, "GET", path, nil)
 	var download versions.FileDownload
-	if response.StatusCode != 200 || json.Unmarshal(data, &download) != nil || !strings.HasPrefix(download.URL, "archive?") {
-		t.Fatalf("download: %d %s", response.StatusCode, data)
-	}
+	// The ZIP may finish before the independently queued pages publication.
+	// Wait for the real download grant, retaining failures other than pending.
+	eventually(t, "ready archive download", time.Minute, func() bool {
+		response, data := s.call(s.fan, "GET", path, nil)
+		if response.StatusCode == 202 {
+			return false
+		}
+		if response.StatusCode != 200 || json.Unmarshal(data, &download) != nil || !strings.HasPrefix(download.URL, "archive?") {
+			t.Fatalf("download: %d %s", response.StatusCode, data)
+		}
+		return true
+	})
 	for range 2 {
-		response, data = s.call(access.Actor{}, "GET", strings.TrimSuffix(path, "download")+download.URL, nil)
+		response, data := s.call(access.Actor{}, "GET", strings.TrimSuffix(path, "download")+download.URL, nil)
 		if response.StatusCode != 200 || response.Header.Get("Cache-Control") != "private, no-store" {
 			t.Fatalf("private fresh archive: %d %s", response.StatusCode, response.Header.Get("Cache-Control"))
 		}
@@ -90,5 +95,12 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 	}
 	if policy.calls.Load() != 2 {
 		t.Fatalf("personalized output reused: %d marks", policy.calls.Load())
+	}
+	item, _ := s.reg.Item(ref)
+	for _, err := range s.Store.List(s.ctx, item.TempPrefix()+"zip-cache-") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("personalized archive was cached")
 	}
 }

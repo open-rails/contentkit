@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -56,6 +57,16 @@ func (rt *Runtime) guardErasedSubject(ctx context.Context, tx pgx.Tx, actorID st
 		return err
 	}
 	return rt.checkSubjectNotErased(ctx, tx, actorID)
+}
+
+// provenance is by, or "" once by is erased: a moderation rule set by an
+// erased moderator stands without their id. Lock by's subject fence first.
+func (rt *Runtime) provenance(ctx context.Context, tx pgx.Tx, by string) (string, error) {
+	err := rt.checkSubjectNotErased(ctx, tx, by)
+	if errors.Is(err, ErrSubjectErased) {
+		return "", nil
+	}
+	return by, err
 }
 func (rt *Runtime) erasedSubjectsTable() string {
 	return pgx.Identifier{rt.schema, "content_erased_subjects"}.Sanitize()

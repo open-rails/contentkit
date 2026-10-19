@@ -131,6 +131,9 @@ type Version struct {
 	// Access is the version's own rule; nil inherits the content's.
 	Access     *access.Rule   `json:"access,omitempty"`
 	Attributes map[string]any `json:"attributes"`
+	// Groups are entities attached specifically to this version. Combine them
+	// with Content.Groups when presenting the selected version's credits.
+	Groups     []GroupSummary `json:"entities"`
 	Pages      *int           `json:"pages,omitempty"`
 	DurationMS *int64         `json:"duration_ms,omitempty"`
 	Width      *int           `json:"width,omitempty"`
@@ -224,8 +227,10 @@ type Content struct {
 	// cover) while it is active.
 	Owner    *groups.GroupCard `json:"owner,omitempty"`
 	Creators []Creator         `json:"creators"`
-	Groups   []GroupSummary    `json:"entities"`
-	Versions []Version         `json:"versions"`
+	// Groups are shared/null-version memberships. Version-specific entities
+	// are carried by each Version.Groups, never merged across editions here.
+	Groups   []GroupSummary `json:"entities"`
+	Versions []Version      `json:"versions"`
 	// Viewer is the signed-in reader's standing with the item, to resume
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`

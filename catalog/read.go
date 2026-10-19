@@ -148,6 +148,10 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
+	scopes, err := s.entityScopes(ctx, visible, v.now)
+	if err != nil {
+		return nil, err
+	}
 	for id, c := range built {
 		// Body images are the opened version's private files, signed for its openers.
 		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
@@ -164,25 +168,16 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			}
 		}
 		c.Body = resolveBody(c.Body, c.Images)
-		var gs []string
-		for _, r := range views[id].versions {
-			for _, g := range r.groupIDs {
-				if !slices.Contains(gs, g) {
-					gs = append(gs, g)
-				}
+		if s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
+			c.Groups = scopedEntities(scopes[entityScope{content: id}], names)
+		}
+		for i := range c.Versions {
+			ver := &c.Versions[i]
+			ver.Groups = []GroupSummary{}
+			if s.shows(c.Kind, ver.Decision, kinds.ShowGroups) {
+				ver.Groups = scopedEntities(scopes[entityScope{content: id, version: ver.ID}], names)
 			}
 		}
-		for _, g := range gs {
-			if n, ok := names[g]; ok && s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
-				c.Groups = append(c.Groups, n)
-			}
-		}
-		slices.SortFunc(c.Groups, func(a, b GroupSummary) int {
-			if a.Kind != b.Kind {
-				return compare(a.Kind, b.Kind)
-			}
-			return compare(a.Slug, b.Slug)
-		})
 	}
 	if err := s.fillOffers(ctx, v, built); err != nil {
 		return nil, err
