@@ -247,6 +247,9 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
+	count := "coalesce(cc.n, 0)"
+	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %s gc
+  WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%s) cc ON true`, s.table("content_group_counts"), countKind)
 	from := s.table("content_groups") + " g"
 	predicate := "WHERE " + strings.Join(where, " AND ")
 	paging := " LIMIT @limit OFFSET @offset"
@@ -256,8 +259,15 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		from = "(SELECT g.* FROM " + from + " " + predicate + " ORDER BY " + order + paging + ") g"
 		predicate, paging = "", ""
 	}
+	if c.sort == SortCount && strings.TrimSpace(opts.Letter) == "" {
+		// Counts select the page; localized display fields do not. Carry the
+		// selected counts outward instead of aggregating them a second time.
+		from = "(SELECT g.*, " + count + " AS content_count FROM " + from + " " + counts + " " + predicate + " ORDER BY " + order + paging + ") g"
+		count, counts, predicate, paging = "g.content_count", "", "", ""
+		order = count + " DESC, g.id"
+	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
@@ -265,11 +275,10 @@ LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   LIMIT 1) nm ON true
 LEFT JOIN %[3]s t ON t.tenant_id = g.tenant_id AND t.group_id = g.id AND t.language = @language
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
-LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %[5]s gc
-  WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%[7]s) cc ON true
+%[7]s
 %[8]s`,
 		from, s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		s.table("content_group_counts"), sortName, countKind, predicate, scope, parent)
+		count, sortName, counts, predicate, scope, parent)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
