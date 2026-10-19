@@ -93,7 +93,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	}
 
 	if got, page := f.list(host, "", q("/contents", "kind", "gallery", "sort", "popular:all")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3)}) ||
-		page.Ranking == nil || page.Ranking.Mode != "population_normalized" {
+		page.Ranking == nil || page.Ranking.Mode != "measured_then_standing" {
 		t.Fatalf("popular:all = %v %+v", got, page.Ranking)
 	}
 
@@ -170,5 +170,30 @@ func TestRecommendationsFillPastRecentPopularity(t *testing.T) {
 	}
 	if got, _ := f.list(host, "u1", q("/recommendations", "kind", "gallery")); !reflect.DeepEqual(got, []string{f.cid(9), f.cid(8)}) {
 		t.Fatalf("recommendations = %v, want all-time popular then newest unseen", got)
+	}
+}
+
+// An import chunk larger than the store's batch cap is written in batches the
+// store accepts rather than rejected whole, and replaying it adds no events.
+func TestImportSignalsSplitsAtStoreBatchLimit(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	ch := env.Fresh(t, signalCHDB)
+	f := seededOn(t, ch, signalCHDB)
+	at := time.Now().UTC().Add(-time.Hour)
+	in := make([]ImportSignal, 2*signal.MaxSignalsPerBatch+1)
+	for i := range in {
+		in[i] = ImportSignal{ContentID: f.cid(1), Subject: signal.Subject{UserID: fmt.Sprintf("u%d", i)}, Type: TypeClick, EventID: fmt.Sprintf("import-%d", i), OccurredAt: at}
+	}
+	for range 2 {
+		if err := f.svc.ImportSignals(f.ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got uint64
+	if err := ch.QueryRow(f.ctx, "SELECT count() FROM signals FINAL WHERE tenant = ? AND signal_type = ?", tenant, TypeClick).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != uint64(len(in)) {
+		t.Fatalf("stored %d imported clicks, want %d", got, len(in))
 	}
 }

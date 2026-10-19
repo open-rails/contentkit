@@ -17,7 +17,7 @@ const version = (id: string, code: string, languages: string[], traits: string[]
   languages,
   traits,
   live: true,
-  has_audio: false,
+  has_audio: false, entities: [],
   attributes: {},
   segments: [],
   decision: { allowed: true },

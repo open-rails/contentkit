@@ -154,6 +154,25 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 	return s.documents(ctx, q)
 }
 
+// GroupsRenamed is groups.Options.NamesChanged: it queues, in one statement,
+// the search documents of every item whose facets name one of the groups
+// (ancestors included), since their keywords are those groups' names. It
+// locks no content and leaves facets and revisions alone.
+func (s *Store) GroupsRenamed(ctx context.Context, q groups.Querier, groupIDs []string) error {
+	tag, err := q.Exec(ctx, `INSERT INTO `+s.qs+`.content_search_dirty (tenant_id, content_kind, content_id, language, reason)
+ SELECT c.tenant_id, c.kind, c.id, l.language, 'catalog' FROM `+s.t.items+` c CROSS JOIN LATERAL (
+ SELECT t.language FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
+ UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
+ WHERE c.tenant_id = $1 AND c.id IN (SELECT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.group_ids && $2::text[])
+ ORDER BY c.kind, c.id, l.language
+ ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, language) DO UPDATE SET is_deleted = false, reason = EXCLUDED.reason, updated_at = now()`,
+		s.tenant, groupIDs)
+	if err != nil || tag.RowsAffected() == 0 || s.documents == nil {
+		return err
+	}
+	return s.documents(ctx, q)
+}
+
 // ContentChanged is groups.Options.ContentChanged: after the groups module
 // re-derived the items' group_ids in q's transaction, it re-derives their
 // decorative paths (a path entity may have changed), queues their search

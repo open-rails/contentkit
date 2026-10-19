@@ -2,6 +2,7 @@ package contentkit
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -38,7 +40,11 @@ func (w *forgetContentsWorker) Timeout(*river.Job[forgetContentsArgs]) time.Dura
 }
 
 func (w *forgetContentsWorker) Work(ctx context.Context, job *river.Job[forgetContentsArgs]) error {
-	return ignoreDisabled(w.e.hub.ForgetContents(ctx, job.Args.Contents))
+	err := w.e.hub.ForgetContents(ctx, job.Args.Contents)
+	if errors.Is(err, hub.ErrSignalPlaneDown) {
+		return err // configured but unreachable: retry rather than drop the erasure
+	}
+	return ignoreDisabled(err)
 }
 
 // forgetPurged queues the signal erasure of purged items and versions from the

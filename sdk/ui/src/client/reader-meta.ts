@@ -1,14 +1,14 @@
 import type { ForegroundCue, ReaderMeta, ReaderPlan } from "./generated/wire.js";
 
-/** What a version's reader metadata may name: its pages in reading order and its audio tracks. */
+/** Page hashes and display labels in reading order, plus audio track names. */
 export interface ReaderNames {
-  pages: string[];
+  pages: { id: string; label: string }[];
   files: string[];
 }
 
 /** The names an editor's reader plan lists: every page of every segment, in order, and the playback tracks. */
 export function readerNames(plan: ReaderPlan): ReaderNames {
-  return { pages: plan.segments.flatMap((s) => (s.pages ?? []).map((p) => p.name)), files: (plan.playback?.tracks ?? []).map((t) => t.name) };
+  return { pages: plan.segments.flatMap((s) => (s.pages ?? []).map((p) => ({ id: p.id, label: p.name }))), files: (plan.playback?.tracks ?? []).map((t) => t.name) };
 }
 
 /** An empty schema-1 reader metadata. */
@@ -26,7 +26,7 @@ export interface AudioMatch {
   unmatchedFiles: string[];
 }
 
-/** One foreground cue per audio file whose stem names an anchor (first) or a page, case-insensitively ("0002.mp3" plays at page "0002"). */
+/** Match audio against display labels, but store only the source hash in page cues. */
 export function matchAudio(names: ReaderNames, anchors: readonly string[] = []): AudioMatch {
   const byStem = new Map<string, string>();
   for (const f of names.files) if (!byStem.has(stem(f))) byStem.set(stem(f), f);
@@ -40,12 +40,20 @@ export function matchAudio(names: ReaderNames, anchors: readonly string[] = []):
     }
   }
   const unmatchedPages: string[] = [];
+  const pageCounts = new Map<string, number>();
+  const labelCounts = new Map<string, number>();
   for (const page of names.pages) {
-    const file = byStem.get(stem(page));
-    if (file && !used.has(file)) {
-      foreground.push({ file, page });
+    pageCounts.set(page.id, (pageCounts.get(page.id) ?? 0) + 1);
+    const label = stem(page.label);
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  for (const page of names.pages) {
+    const file = byStem.get(stem(page.label));
+    const unique = pageCounts.get(page.id) === 1 && labelCounts.get(stem(page.label)) === 1;
+    if (unique && file && !used.has(file)) {
+      foreground.push({ file, page: page.id });
       used.add(file);
-    } else unmatchedPages.push(page);
+    } else unmatchedPages.push(page.label);
   }
   return { foreground, unmatchedPages, unmatchedFiles: names.files.filter((f) => !used.has(f)) };
 }
@@ -61,7 +69,13 @@ export interface ReaderMetaProblem {
 /** What the server refuses, and a foreground cue without a place: so an editor sees it before saving. */
 export function readerMetaProblems(meta: ReaderMeta, names: ReaderNames): ReaderMetaProblem[] {
   const out: ReaderMetaProblem[] = [];
-  const pages = new Set(names.pages);
+  const pages = new Set<string>();
+  const ambiguous = new Set<string>();
+  for (const page of names.pages) {
+    if (pages.has(page.id)) ambiguous.add(page.id);
+    pages.add(page.id);
+  }
+  for (const id of ambiguous) pages.delete(id);
   const files = new Set(names.files);
   const ids = new Set<string>();
   const auto = meta.defaults?.auto_advance_seconds;

@@ -96,9 +96,10 @@ func TestReaderMeta(t *testing.T) {
 		t.Fatalf("placements %v for %d commits: want at most one per commit and none for publication", n, commits)
 	}
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/reader"
-	page, anchor := "001", "a1"
+	page, anchor := sourcePageID(t, s, s.ref("gallery", v), "originals/001.png"), "a1"
+	last := sourcePageID(t, s, s.ref("gallery", v), "originals/005.png")
 	meta := versions.ReaderMeta{SchemaVersion: 1,
-		Anchors:    []versions.Anchor{{ID: "a1", Page: "001", OffsetPercent: 50}, {ID: "a5", Page: "005", OffsetPercent: 10}},
+		Anchors:    []versions.Anchor{{ID: "a1", Page: page, OffsetPercent: 50}, {ID: "a5", Page: last, OffsetPercent: 10}},
 		Background: []versions.BackgroundCue{{File: "theme", FromPage: &page}},
 		Foreground: []versions.ForegroundCue{{File: "theme", Anchor: &anchor}}}
 	if resp, _ := s.call(s.stranger, "PUT", path, meta); resp.StatusCode != 403 {
@@ -122,7 +123,7 @@ func TestReaderMeta(t *testing.T) {
 	}
 }
 
-// Downloads serve the prepared archive, or stream a copy with the pages the
+// Downloads stream a cached archive, or a fresh copy with the pages the
 // host's policy names marked, to viewers who open every page, within their
 // bucket's quota.
 func TestDownload(t *testing.T) {
@@ -135,10 +136,10 @@ func TestDownload(t *testing.T) {
 	for i, seed := range []uint8{1, 2, 3} {
 		s.mustUpload(s.creator, ref, "originals/"+string(rune('a'+i)), "image/png", pngOf(t, 20, 20, seed))
 	}
-	eventually(t, "the archive", 2*time.Minute, func() bool {
-		f, ok := s.manifest(ref).Get("download/pages.zip")
-		return ok && f.Blob != ""
-	})
+	s.plan(s.creator, v, func(*versions.ReaderPlan) bool { return true })
+	if _, ok := s.manifest(ref).Get("download/pages.zip"); ok {
+		t.Fatal("reader ZIP was eagerly produced")
+	}
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/download"
 	if resp, _ := s.call(access.Actor{}, "GET", path, nil); resp.StatusCode != 403 {
 		t.Fatalf("anonymous download of a premium version: %d", resp.StatusCode)
@@ -166,7 +167,7 @@ func TestDownload(t *testing.T) {
 	}
 	archive := strings.TrimSuffix(path, "download") + granted.URL
 	resp, b = s.call(access.Actor{}, "GET", archive, nil)
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" {
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Disposition") == "" || resp.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("marked archive: %d %s", resp.StatusCode, b)
 	}
 	marked := entries(b)
@@ -181,15 +182,15 @@ func TestDownload(t *testing.T) {
 	if resp, _ := s.call(s.fan, "GET", path, nil); resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("a download past the premium quota: %d", resp.StatusCode)
 	}
-	// A version no longer locked behind premium is unmarked: the prepared
-	// archive at the media host, here an editor's in the user bucket.
+	// A version no longer locked behind premium is unmarked: the archive
+	// route lazily caches the source bytes, here an editor's in the user bucket.
 	s.exec(`UPDATE `+s.table("content_items")+` SET access = '{"level":"public"}' WHERE tenant_id = $1 AND id = $2`, s.tenant, c)
 	d, err := s.svc.Download(s.ctx, s.creator, v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Name != "A Title.zip" || d.Size == 0 || !strings.Contains(d.URL, "/download/") || !strings.Contains(d.URL, "t=") {
-		t.Fatalf("prepared archive %+v", d)
+	if d.Name != "A Title.zip" || d.Size != 0 || !strings.HasPrefix(d.URL, "archive?") || !strings.Contains(d.URL, "revision=") {
+		t.Fatalf("lazy archive %+v", d)
 	}
 	s.exec(`INSERT INTO `+s.table("content_segments")+` (tenant_id, version_id, position, start_index, end_index, release_at)
 VALUES ($1, $2, 1, 2, 3, now() + interval '1 hour')`, s.tenant, v.Version)

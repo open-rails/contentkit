@@ -3,6 +3,7 @@ package importer_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -485,6 +487,24 @@ func TestImportPartialFailureResumes(t *testing.T) {
 	}
 }
 
+// A record that fails after naming an identity does not take that identity's
+// mapping with it: a later record of the chunk with the same identity is
+// written and mapped.
+func TestImportMapsIdentityAfterFailedFirstOccurrence(t *testing.T) {
+	f := newEngine(t)
+	gallery := func(state string) importer.ContentRecord {
+		return importer.ContentRecord{ExternalID: "gallery:5", ID: id("gallery", 5), Kind: "gallery", State: state,
+			Text: map[string]catalog.Text{"en": {Title: "G"}}, Versions: []importer.VersionRecord{{ExternalID: "version:gallery:5", Languages: []string{"en"}}}}
+	}
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Contents: []importer.ContentRecord{gallery("live"), gallery("published")}})
+	if len(res.Failed) != 1 || res.Written["contents"] != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	if got := f.scalar(t, `SELECT string_agg(id, ',') FROM $s.content_external_ids WHERE entity = 'content' AND external_id = $1`, "gallery:5"); got != id("gallery", 5) {
+		t.Fatalf("mapping for the written record = %q, want %q", got, id("gallery", 5))
+	}
+}
+
 // Every imported version has a code, unique within its content: a given one
 // is kept, the others assigned; re-importing keeps them, and a code another
 // version holds, or a different one for a stored version, is a conflict.
@@ -658,6 +678,7 @@ func TestImportGroupScopes(t *testing.T) {
 // in-process client.
 func TestImportThenIngestMedia(t *testing.T) {
 	env := mediatest.Open(t)
+	var registry *media.Registry
 	f := newEngineWith(t, func(cfg *contentkit.Config, deps *contentkit.Deps) {
 		cfg.Tenant = env.Tenant
 		pngs := []string{"image/png"}
@@ -671,6 +692,14 @@ func TestImportThenIngestMedia(t *testing.T) {
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
 		deps.Store = env.Store
+		model, err := cfg.MediaKinds()
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err = media.NewRegistry(model)
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 	if err := f.e.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -680,8 +709,9 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res.Failed)
 	}
-	pages := []contentkit.MediaFile{{Path: "originals/0001.png", Type: "image/png", Body: bytes.NewReader(png(t, 8))},
-		{Path: "originals/0002.png", Type: "image/png", Body: bytes.NewReader(png(t, 9))}}
+	firstPage, secondPage := png(t, 8), png(t, 9)
+	pages := []contentkit.MediaFile{{Path: "originals/0001.png", Type: "image/png", Body: bytes.NewReader(firstPage)},
+		{Path: "originals/0002.png", Type: "image/png", Body: bytes.NewReader(secondPage)}}
 	ref := media.RefBody{Kind: "gallery", ID: id("gallery", 1), Version: id("version", 1)}
 	op := uuid.NewString()
 	out, err := f.e.Client().IngestMedia(t.Context(), nil, ref, op, pages)
@@ -724,13 +754,35 @@ func TestImportThenIngestMedia(t *testing.T) {
 		[]contentkit.MediaFile{{Path: "audio/0001.mp3", Type: "audio/mpeg", Body: bytes.NewReader([]byte("ID3 page one"))}}); err != nil {
 		t.Fatal(err)
 	}
-	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr("001")}}}
+	// The upload commit is intentionally asynchronous. This fixture runs no
+	// image/audio worker; perform only its placement step so the source hashes
+	// are verified before authoring metadata that refers to them.
+	queue, err := workqueue.New(f.pool, registry, f.schema+"_media_worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := media.NewPGJournal(f.pool, f.schema, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(env.Store, registry, media.ManifestOptions{Locker: media.PGLocker(f.pool), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionRef, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placed, err := manifests.Place(t.Context(), versionRef); err != nil || placed != 4 {
+		t.Fatalf("place three pages and their audio: %d %v", placed, err)
+	}
+	cue := versions.ReaderMeta{SchemaVersion: 1, Foreground: []versions.ForegroundCue{{File: "0001", Page: ptr(fmt.Sprintf("%x", sha256.Sum256(firstPage)))}}}
 	for range 2 {
 		if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); err != nil {
 			t.Fatalf("set reader metadata: %v", err)
 		}
 	}
-	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr("002")})
+	cue.Foreground = append(cue.Foreground, versions.ForegroundCue{File: "0002", Page: ptr(fmt.Sprintf("%x", sha256.Sum256(secondPage)))})
 	var ce *contentkit.Error
 	if err := f.e.Client().PutContentVersionReader(t.Context(), ref.ID, ref.Version, cue); !errors.As(err, &ce) || ce.Status != http.StatusBadRequest {
 		t.Fatalf("a cue on missing audio: %v", err)
@@ -1023,5 +1075,85 @@ func TestImportExternalIDs(t *testing.T) {
 	other, err := f.e.Client().PostImportExternalIds(t.Context(), importer.ExternalIDsQuery{Source: "other-legacy", Lists: []importer.ExternalIDList{{Entity: "poll_option"}}})
 	if err != nil || len(other.Lists) != 1 || len(other.Lists[0].IDs) != 0 {
 		t.Fatalf("another source's ids: %+v %v", other, err)
+	}
+}
+
+// An import deleting content and a group, racing a reparent of a group the
+// content is in, takes the group hierarchy lock before the content row, as
+// the reparent does, so neither deadlocks.
+func TestImportDeletesRacingReparent(t *testing.T) {
+	f := newEngine(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	b := catalogBatch()
+	b.Groups = append(b.Groups, importer.GroupRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"},
+		importer.GroupRecord{ExternalID: "series:6", ID: id("series", 6), Kind: "series", Slug: "orphaned"},
+		importer.GroupRecord{ExternalID: "series:7", Kind: "series", Slug: "orphan", Parent: &importer.Ref{ExternalID: "series:6"}})
+	if res := f.importBatch(t, b); len(res.Failed) > 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	q := func(sql string) string {
+		return strings.ReplaceAll(sql, "$s.", pgx.Identifier{f.schema}.Sanitize()+".")
+	}
+	// series:7's parent is deleted under it, so deleting series:7 fails at
+	// write time and the chunk retries record by record.
+	if _, err := f.pool.Exec(ctx, q(`UPDATE $s.content_groups SET state = 'deleted' WHERE id = $1`), id("series", 6)); err != nil {
+		t.Fatal(err)
+	}
+	blockedBy := func(pid uint32) uint32 {
+		t.Helper()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			var waiter uint32
+			err := f.pool.QueryRow(ctx, `SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter)
+			if err == nil {
+				return waiter
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatal(err)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("nothing blocked on backend %d", pid)
+			case <-tick.C:
+			}
+		}
+	}
+	// hold pauses the import inside its content delete, after it has the
+	// content row, so the reparent reaches that row while the import waits.
+	hold, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback(ctx)
+	if _, err := hold.Exec(ctx, q(`SELECT 1 FROM $s.content_facets WHERE content_id = $1 FOR UPDATE`), id("gallery", 1)); err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		res importer.Result
+		err error
+	}
+	imported := make(chan outcome, 1)
+	go func() {
+		res, err := f.e.Client().PostImport(ctx, importer.Batch{Source: "test-legacy", Deletes: []importer.DeleteRecord{
+			{Entity: "content", ExternalID: "gallery:1"}, {Entity: "group", ExternalID: "tag:9"}, {Entity: "group", ExternalID: "series:7"}}})
+		imported <- outcome{res, err}
+	}()
+	importPID := blockedBy(hold.Conn().PgConn().PID())
+	reparented := make(chan error, 1)
+	go func() {
+		_, err := f.e.Client().PatchEntity(ctx, id("series", 2), groups.GroupUpdate{ParentID: ptr(groups.GroupID(""))})
+		reparented <- err
+	}()
+	blockedBy(importPID)
+	if err := hold.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-reparented; err != nil {
+		t.Errorf("reparent: %v", err)
+	}
+	if o := <-imported; o.err != nil || o.res.Written["deletes"] != 2 || len(o.res.Failed) != 1 || o.res.Failed[0].Index != 2 {
+		t.Errorf("import: %+v %v", o.res, o.err)
 	}
 }

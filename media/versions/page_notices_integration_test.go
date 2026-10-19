@@ -62,6 +62,18 @@ func notices(t *testing.T, s *site, who access.Actor, v versions.Target) (int, v
 	return resp.StatusCode, out
 }
 
+func TestPageNoticesBeforeFirstUpload(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	status, got := notices(t, s, s.creator, v)
+	if status != http.StatusOK || got.Notices == nil || len(got.Notices) != 0 {
+		t.Fatalf("new version without a manifest: status %d, notices %+v", status, got)
+	}
+	if status, _ := notices(t, s, s.stranger, v); status != http.StatusForbidden {
+		t.Fatalf("non-editor new version notices: status %d", status)
+	}
+}
+
 func TestPageNoticesRestoreAndDismiss(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	_, v := gallery(t, s)
@@ -77,7 +89,7 @@ func TestPageNoticesRestoreAndDismiss(t *testing.T) {
 		t.Fatalf("notices: %d %+v", status, got)
 	}
 	page := got.Notices[0].Pages[0]
-	if page.ID != "002" || page.Reason != "blank" || page.PreviewURL == "" {
+	if page.ID != sourcePageID(t, s, ref, "originals/002.png") || page.Reason != "blank" || page.PreviewURL == "" {
 		t.Fatalf("removed page: %+v", page)
 	}
 	if status, _ := notices(t, s, s.stranger, v); status != 403 {
@@ -185,14 +197,15 @@ func TestPageNoticePreviewsCollectEveryURLWindow(t *testing.T) {
 	views := map[string]string{}
 	for _, i := range []int{2, 3, 4, 5} {
 		id := fmt.Sprintf("%03d", i)
-		want[id] = pngOf(t, 20, 25, uint8(100+i))
-		sum := sha256.Sum256(want[id])
+		hash := sourcePageID(t, s, ref, "originals/"+id+".png")
+		want[hash] = pngOf(t, 20, 25, uint8(100+i))
+		sum := sha256.Sum256(want[hash])
 		names, err := s.ms.NewBlobs(s.ctx, ref, layout.AreaPrivate, [][]byte{sum[:]})
 		if err != nil {
 			t.Fatal(err)
 		}
 		key, _ := item.Blob(names[0])
-		if _, err := s.Store.Put(s.ctx, key, bytes.NewReader(want[id]), int64(len(want[id])), media.PutOptions{ContentType: "image/png"}); err != nil {
+		if _, err := s.Store.Put(s.ctx, key, bytes.NewReader(want[hash]), int64(len(want[hash])), media.PutOptions{ContentType: "image/png"}); err != nil {
 			t.Fatal(err)
 		}
 		views["originals/"+id+".png"] = names[0]

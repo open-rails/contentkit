@@ -51,7 +51,6 @@ const (
 	searchSyncEvery     = 30 * time.Second // documents trail their writes by at most this
 	preferenceSyncEvery = 30 * time.Second
 	resyncEvery         = 24 * time.Hour
-	coEngagementEvery   = 24 * time.Hour
 	repairEvery         = time.Hour
 	erasureEvery        = 24 * time.Hour
 	reclassifyEvery     = 10 * time.Minute
@@ -79,7 +78,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &coEngagementWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
@@ -111,7 +109,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{}, true)
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true}, false)
-			periodic("contentkit_coengagement", coEngagementEvery, coEngagementArgs{}, false)
 			periodic("contentkit_projection_repair", repairEvery, repairArgs{}, true)
 			periodic("contentkit_erasure", erasureEvery, erasureArgs{}, false)
 		}
@@ -261,22 +258,6 @@ func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferen
 	}
 	_, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
 	return err
-}
-
-type coEngagementArgs struct{}
-
-func (coEngagementArgs) Kind() string { return "contentkit_coengagement" }
-
-// coEngagementWorker rematerializes the co-engagement rollup.
-type coEngagementWorker struct {
-	river.WorkerDefaults[coEngagementArgs]
-	e *Engine
-}
-
-func (w *coEngagementWorker) Timeout(*river.Job[coEngagementArgs]) time.Duration { return time.Hour }
-
-func (w *coEngagementWorker) Work(ctx context.Context, _ *river.Job[coEngagementArgs]) error {
-	return ignoreDisabled(w.e.hub.RefreshCoEngagement(ctx, signal.RefreshCoEngagementOptions{}))
 }
 
 type repairArgs struct{}

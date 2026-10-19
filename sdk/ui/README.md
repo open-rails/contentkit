@@ -93,6 +93,9 @@ operation. This does not change the operation's result or its authentication.
   counts what is open; staff lists are `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `entities.members(id)` pages
   an entity's memberships, `entities.ofContent(id)` / `setOfContent` a content's,
+  `setSharedOfContent` only the parent links and `setOfVersion` only one version's
+  links. These replacements are atomic and preserve other versions; their `create`
+  entries also attach to that same scope.
   `entities.uploadImage(entity, "cover", file)` its cover; `client.kinds()` the content model.
   `contents.manage({kind: "gallery"})` uses `/manage/gallery`; omitting `kind`
   lists manageable content across kinds at `/manage`.
@@ -720,6 +723,13 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   <PollManager client={contentkit} basePath="/admin/polls" navigation={nav} languages={["en", "ja"]} />
   ```
 
+For reader content, each version has a canonical editor URL under the manager:
+`<basePath>/<contentCode>/versions/<versionCode>`. An older content-only URL
+opens its first version. Shared gallery text and entities are explicitly marked;
+version traits, credits, files, chapters and reading metadata edit only the
+selected version. Version navigation warns before discarding unsaved changes.
+The host still owns navigation outside the flow, including browser Back handling.
+
 - **`ContentManager`**: the items of one `kind` the caller manages, by
   state and text, deleted ones to restore; title, slug, description,
   schedule, cover and body with inline images per language; publish or
@@ -736,9 +746,11 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   A `reader` kind uses one gallery workspace: localized metadata, configured
   entities, access, cover, ZIP/pages, ordering and publication are available
   together. A new draft is allocated internally on the first save or upload;
-  its URL change keeps the current fields and upload queue mounted. Versions,
-  chapter ranges, audio and reading anchors remain available in expandable
-  tools. **Publish** saves the visible edits and any dirty tools first and
+  its URL change keeps the current fields and upload queue mounted. Each version
+  has its own page, with a separate chapter section and optional audio/reading
+  tools. A chapter selects its starting page; its end follows the next chapter.
+  Page references use original source hashes, while page numbers follow manifest
+  order. **Publish** saves the visible edits and any dirty tools first and
   checks every media window; failed uploads, processing or refused saves keep
   the work unpublished. **Save draft** can save metadata while files upload.
 
@@ -909,6 +921,20 @@ are available from `/react` for a custom presentation. Keep provider viewer and
 access revision current; signed-out viewers do not fetch an inbox.
 
 ### Reader header controls
+
+`SearchDialog` is a controlled search modal with a visible title, a separate
+close control, and suggestions that contribute to its height rather than being
+clipped by its container. The field and close control stay visible while long
+result lists scroll. It closes when a query or navigable suggestion is chosen,
+and returns focus to the opener. Hosts supply `open`, `onOpenChange`, and
+`onSearch`; title, description, placeholder, appearance and `returnFocus` can
+be customized. Use `SearchBox presentation="dialog"` when a host already owns
+the dialog shell and only needs the in-flow search layout.
+
+```tsx
+<SearchDialog open={searchOpen} onOpenChange={setSearchOpen}
+  onSearch={(query) => navigate(`/search?q=${encodeURIComponent(query)}`)} />
+```
 
 `SearchBox` is an inline input with a downward suggestions/recent-search panel,
 including loading and empty states. Set `presentation="header"` for a portal

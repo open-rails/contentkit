@@ -48,7 +48,7 @@ func (s *Store) MatchName(ctx context.Context, q Querier, kind, scopeID, languag
 }
 
 // linkNames resolves set.Create in q, creating missing entities of creatable
-// kinds, and adds a whole-content membership for each to set.Memberships.
+// kinds, and adds a membership in the set's ownership scope for each.
 // The caller holds the content's lock; this takes the catalog's name lock.
 func (s *Store) linkNames(ctx context.Context, q pgx.Tx, contentKind string, set *ContentGroups) error {
 	if len(set.Create) == 0 {
@@ -94,8 +94,12 @@ func (s *Store) linkNames(ctx context.Context, q pgx.Tx, contentKind string, set
 				return err
 			}
 		}
-		if !slices.ContainsFunc(set.Memberships, func(m Membership) bool { return m.GroupID == GroupID(id) && m.VersionID == "" && m.Role == "" }) {
-			set.Memberships = append(set.Memberships, Membership{GroupID: GroupID(id), ContentID: set.ContentID})
+		version := ""
+		if set.VersionScope != nil {
+			version = *set.VersionScope
+		}
+		if !slices.ContainsFunc(set.Memberships, func(m Membership) bool { return m.GroupID == GroupID(id) && m.VersionID == version && m.Role == "" }) {
+			set.Memberships = append(set.Memberships, Membership{GroupID: GroupID(id), ContentID: set.ContentID, VersionID: version})
 		}
 	}
 	return nil

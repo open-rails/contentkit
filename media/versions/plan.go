@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ type PlanSegment struct {
 // PlanPage is one page of an open segment: its name, reading size and the
 // path of each rendition in the segment's item.
 type PlanPage struct {
+	ID    string            `json:"id"` // original image SHA-256; the canonical page identity
 	Name  string            `json:"name"`
 	Span  *PageSpan         `json:"span,omitempty"`
 	W     int               `json:"w"`
@@ -59,6 +61,7 @@ type PlanPage struct {
 
 // PlanPreview is a public preview of a leading page.
 type PlanPreview struct {
+	ID    string `json:"id"` // original image SHA-256
 	Index int    `json:"index"`
 	Name  string `json:"name"`
 	URL   string `json:"url"`
@@ -81,11 +84,12 @@ type PlanTrack struct {
 // decision is one viewer's verdict on a span of a version's pages: the
 // resolver's on the version, its segments' release and its rule's preview.
 type decision struct {
-	res     resolve.Resolution
-	preview access.Preview
-	segs    []segment
-	pages   int
-	now     time.Time
+	res      resolve.Resolution
+	preview  access.Preview
+	segs     []segment
+	pages    int
+	anchored bool
+	now      time.Time
 }
 
 // shows reports pages [start, end) shown: released, or to an editor.
@@ -106,7 +110,7 @@ func (d decision) whole() bool {
 }
 
 // decisions are actor's decisions on versions of kind, each over pages.
-func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string, vs []Target, pages map[Target]int) (map[Target]decision, error) {
+func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string, vs []Target, snapshots map[Target]pagesSnapshot) (map[Target]decision, error) {
 	res, err := s.decide(ctx, actor, kind, vs)
 	if err != nil {
 		return nil, err
@@ -125,7 +129,26 @@ func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string
 	}
 	out := make(map[Target]decision, len(vs))
 	for _, v := range vs {
-		out[v] = decision{res: res[v], preview: previews[v.Version], segs: segs[v.Version], pages: pages[v], now: s.o.Now()}
+		chapters := segs[v.Version]
+		anchored := slices.ContainsFunc(chapters, func(g segment) bool { return g.StartPage != "" })
+		snap, haveSnapshot := snapshots[v]
+		if anchored && !haveSnapshot {
+			p, err := s.current(ctx, s.o.Pool, v, kindPages)
+			if err != nil {
+				return nil, err
+			}
+			if p == nil {
+				return nil, ErrNotReady
+			}
+			if err := json.Unmarshal(p.Source, &snap); err != nil {
+				return nil, err
+			}
+		}
+		chapters, err = resolveChapterStarts(chapters, snap.Pages)
+		if err != nil {
+			return nil, err
+		}
+		out[v] = decision{res: res[v], preview: previews[v.Version], segs: chapters, pages: len(snap.Pages), anchored: anchored, now: s.o.Now()}
 	}
 	return out, nil
 }
@@ -145,12 +168,14 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		return nil, err
 	}
 	var snap pagesSnapshot
+	snapshots := map[Target]pagesSnapshot{}
 	if p != nil {
 		if err := json.Unmarshal(p.Source, &snap); err != nil {
 			return nil, err
 		}
+		snapshots[t] = snap
 	}
-	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, map[Target]int{t: len(snap.Pages)})
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, snapshots)
 	if err != nil {
 		return nil, err
 	}
@@ -190,11 +215,11 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 				if name == "" {
 					name = k.NameOf(pg.Path)
 				}
-				pp := PlanPage{Name: name, Span: pg.Span, W: pg.Files[0].W, H: pg.Files[0].H, Files: map[string]string{}}
+				pp := PlanPage{ID: sourcePageHash(pg), Name: name, Span: pg.Span, W: pg.Files[0].W, H: pg.Files[0].H, Files: map[string]string{}}
 				for _, r := range pg.Files {
 					pp.Files[r.Preset] = r.Path
 				}
-				readable[pp.Name] = true
+				readable[pp.ID] = true
 				seg.Pages = append(seg.Pages, pp)
 			}
 		}
@@ -221,8 +246,8 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 			if name == "" {
 				name = k.NameOf(pg.Path)
 			}
-			plan.Previews = append(plan.Previews, PlanPreview{Index: n - 1, Name: name, URL: r.URL, W: r.W, H: r.H})
-			readable[name] = true
+			plan.Previews = append(plan.Previews, PlanPreview{ID: sourcePageHash(pg), Index: n - 1, Name: name, URL: r.URL, W: r.W, H: r.H})
+			readable[sourcePageHash(pg)] = true
 		}
 	}
 	files := map[string]bool{}
@@ -252,7 +277,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	}
 	if m != nil {
 		if rm, ok := readerMetaOf(m); ok {
-			kept := rm.filter(readable, files)
+			kept := rm.hashPages(snap.Pages).filter(readable, files)
 			plan.Reader = &kept
 		}
 	}

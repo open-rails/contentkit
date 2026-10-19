@@ -102,6 +102,10 @@ var routes = []httpapi.Route[handler]{
 		httpapi.H(handler.contentGroups), nil, language),
 	staff(httpapi.PUT, "/contents/{id}/entities", "Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).",
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setContentGroups), writes, language),
+	staff(httpapi.PUT, "/contents/{id}/entities/shared", "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.",
+		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setSharedContentGroups), writes, language),
+	staff(httpapi.PUT, "/contents/{id}/versions/{vid}/entities", "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.",
+		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setVersionContentGroups), writes, language),
 }
 
 func editor(method, path, doc string, request any, reply httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string) httpapi.Route[handler] {
@@ -450,12 +454,27 @@ func (h handler) contentGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handler) setContentGroups(w http.ResponseWriter, r *http.Request) {
+	h.setContentGroupsScoped(w, r, nil)
+}
+
+func (h handler) setSharedContentGroups(w http.ResponseWriter, r *http.Request) {
+	shared := ""
+	h.setContentGroupsScoped(w, r, &shared)
+}
+
+func (h handler) setVersionContentGroups(w http.ResponseWriter, r *http.Request) {
+	version := r.PathValue("vid")
+	h.setContentGroupsScoped(w, r, &version)
+}
+
+func (h handler) setContentGroupsScoped(w http.ResponseWriter, r *http.Request, versionScope *string) {
 	var set ContentGroups
 	if err := decode(r, &set); err != nil {
 		fail(w, err)
 		return
 	}
 	set.ContentID = r.PathValue("id")
+	set.VersionScope = versionScope
 	if err := h.s.SetContentGroups(r.Context(), []ContentGroups{set}); err != nil {
 		fail(w, err)
 		return

@@ -15,7 +15,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
@@ -139,8 +138,9 @@ type importSegmentRow struct {
 	VersionID string     `json:"version_id"`
 	Position  int        `json:"position"`
 	Title     string     `json:"title"`
-	Start     int        `json:"start_index"`
-	End       int        `json:"end_index"`
+	Start     *int       `json:"start_index"`
+	End       *int       `json:"end_index"`
+	StartPage *string    `json:"start_page"`
 	ReleaseAt *time.Time `json:"release_at"`
 }
 
@@ -370,8 +370,11 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			if v.Segments != nil {
 				b.segIDs = append(b.segIDs, v.ID)
 				for _, sg := range v.Segments {
-					b.segments = append(b.segments, importSegmentRow{VersionID: v.ID, Position: sg.Position, Title: sg.Title, Start: sg.Start, End: sg.End,
-						ReleaseAt: sg.ReleaseAt})
+					row := importSegmentRow{VersionID: v.ID, Position: sg.Position, Title: sg.Title, Start: &sg.Start, End: &sg.End, ReleaseAt: sg.ReleaseAt}
+					if sg.StartPage != "" {
+						row.Start, row.End, row.StartPage = nil, nil, &sg.StartPage
+					}
+					b.segments = append(b.segments, row)
 				}
 			}
 		}
@@ -485,12 +488,12 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			s.tenant, b.segIDs, data(b.segments)); err != nil {
 			return nil, nil, err
 		}
-		if err := run(changed, content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at)
- SELECT $1, r.version_id, r.position, coalesce(r.title, ''), r.start_index, r.end_index, r.release_at
- FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, position int, title text, start_index int, end_index int, release_at timestamptz)
+		if err := run(changed, content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page)
+ SELECT $1, r.version_id, r.position, coalesce(r.title, ''), r.start_index, r.end_index, r.release_at, r.start_page
+ FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, position int, title text, start_index int, end_index int, release_at timestamptz, start_page text)
  ON CONFLICT (tenant_id, version_id, position) DO UPDATE SET title = EXCLUDED.title, start_index = EXCLUDED.start_index, end_index = EXCLUDED.end_index,
-  release_at = EXCLUDED.release_at
- WHERE (g.title, g.start_index, g.end_index, g.release_at) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.start_index, EXCLUDED.end_index, EXCLUDED.release_at)`),
+  release_at = EXCLUDED.release_at, start_page = EXCLUDED.start_page
+ WHERE (g.title, g.start_index, g.end_index, g.release_at, g.start_page) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.start_index, EXCLUDED.end_index, EXCLUDED.release_at, EXCLUDED.start_page)`),
 			s.tenant, data(b.segments)); err != nil {
 			return nil, nil, err
 		}
@@ -624,18 +627,30 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 		return err
 	}
 	if c.Comments == "" {
-		c.Comments = content.CommentsOpen
+		c.Comments = s.defaultComments(c.Kind)
 	}
 	if err := checkComments(c.Comments); err != nil {
 		return err
 	}
+	// Deleted records preserve historical settings. Restore applies the
+	// current policy before the retained item can become live again.
+	if c.State != StateDeleted {
+		if err := s.checkKindComments(c.Kind, c.Comments); err != nil {
+			return err
+		}
+	}
 
-	rule := access.Rule{Level: access.Public}
+	rule := s.defaultRule(c.Kind)
 	if c.Access != nil {
 		rule = *c.Access
 	}
 	if rule, err = s.checkRule(rule); err != nil {
 		return err
+	}
+	if c.State != StateDeleted {
+		if err := s.checkKindRule(c.Kind, rule); err != nil {
+			return err
+		}
 	}
 	c.Access = &rule
 	if c.Restrictions, err = s.checkRestrictions(c.Restrictions); err != nil {
@@ -673,14 +688,14 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 		return invalid("a content item needs at least one version")
 	}
 	for i := range c.Versions {
-		if err := s.checkImportVersion(c.Kind, &c.Versions[i]); err != nil {
+		if err := s.checkImportVersion(c.Kind, c.State == StateDeleted, &c.Versions[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
+func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
@@ -719,6 +734,14 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 		if err != nil {
 			return err
 		}
+		// Deleted imports preserve historical access, including versions whose
+		// parent is deleted while their own state remains published. Restoring
+		// either the item or version applies the current kind policy.
+		if !parentDeleted && v.State != StateDeleted {
+			if err := s.checkKindRule(kind, r); err != nil {
+				return err
+			}
+		}
 		v.Access = &r
 	}
 	if v.Attributes, err = checkAttributes(k.Attributes, v.Attributes); err != nil {
@@ -741,6 +764,9 @@ func (s *Store) checkImportVersion(kind string, v *ImportVersion) error {
 		segs, err := checkSegments(v.Segments)
 		if err != nil {
 			return err
+		}
+		if len(segs) > 0 && segs[0].StartPage != "" && k.Presentation != "reader" {
+			return invalid("page-anchored chapters require reader content")
 		}
 		for i := range segs {
 			segs[i].Title = strings.TrimSpace(segs[i].Title)
@@ -836,10 +862,10 @@ func (s *Store) republishImported(ctx context.Context, tx pgx.Tx, stored map[str
  JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id
  JOIN jsonb_to_recordset($3::jsonb) AS i(id text, access jsonb) ON i.id = r.content_id
  WHERE coalesce(v.access, c.access) IS DISTINCT FROM coalesce(r.access, i.access)
-  OR (r.id = ANY($4) AND (SELECT coalesce(jsonb_agg(jsonb_build_array(g.position, g.start_index, g.end_index, g.release_at) ORDER BY g.position), '[]')
+  OR (r.id = ANY($4) AND (SELECT coalesce(jsonb_agg(jsonb_build_array(g.position, g.start_index, g.end_index, g.release_at, g.start_page) ORDER BY g.position), '[]')
    FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = r.id) IS DISTINCT FROM
-   (SELECT coalesce(jsonb_agg(jsonb_build_array(n.position, n.start_index, n.end_index, n.release_at) ORDER BY n.position), '[]')
-   FROM jsonb_to_recordset($5::jsonb) AS n(version_id text, position int, start_index int, end_index int, release_at timestamptz) WHERE n.version_id = r.id))
+   (SELECT coalesce(jsonb_agg(jsonb_build_array(n.position, n.start_index, n.end_index, n.release_at, n.start_page) ORDER BY n.position), '[]')
+   FROM jsonb_to_recordset($5::jsonb) AS n(version_id text, position int, start_index int, end_index int, release_at timestamptz, start_page text) WHERE n.version_id = r.id))
  ORDER BY r.id`, s.tenant, data(had), data(b.items), append([]string{}, b.segIDs...), data(append([]importSegmentRow{}, b.segments...)))
 	if err != nil {
 		return nil, err

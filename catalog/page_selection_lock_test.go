@@ -15,7 +15,7 @@ func TestSegmentUpdatesSharePageSelectionLock(t *testing.T) {
 	f := newFixture(t, nil)
 	id := f.create("staff", gallery("Locked page selection", "en"))
 	v := f.read("staff", "main.test", id)[0].Versions[0]
-	segments := []Segment{{Title: "First", Start: 0, End: 2}}
+	segments := []SegmentInput{{Title: "First", Start: 0, End: 2}}
 	input := []VersionPut{{ContentID: id, VersionID: v.ID, VersionInput: VersionInput{Segments: &segments}}}
 	release, err := media.PGLocker(f.pool).Lock(f.ctx, "contentkit:versions:"+tenant+":"+v.ID)
 	if err != nil {

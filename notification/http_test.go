@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/notification"
@@ -140,5 +142,62 @@ func TestHandlerArchivesReceiptWithoutResolvingWork(t *testing.T) {
 	w = request("PUT", "/"+task.ID+"/read", "alice")
 	if json.Unmarshal(w.Body.Bytes(), &again) != nil || again.Revision != read.Revision || !again.ReadAt.Equal(*read.ReadAt) {
 		t.Fatalf("read retry changed receipt %s", w.Body)
+	}
+}
+
+// Batches lock their recipients in one order, so two batches cannot
+// deadlock: while one waits on a recipient, another batch for a recipient it
+// names earlier still completes.
+func TestPublishBatchLocksRecipientsInOneOrder(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	s, err := notification.New(notification.Options{Pool: pool, Schema: schema, Tenant: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := func(recipient, origin string) notify.Input {
+		return notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: recipient},
+			Origin: notify.Origin{System: "host", Scope: "site", ID: origin}, Kind: "future.kind", CreatedAt: time.Now()}
+	}
+	if _, err := s.PublishBatch(ctx, []notify.Input{notice("alice", "seed-a"), notice("bob", "seed-b")}); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := holder.Exec(ctx, `SELECT 1 FROM `+pgx.Identifier{schema, "notify_recipients"}.Sanitize()+`
+ WHERE scope = $1 AND audience = $2 AND recipient = $3 FOR UPDATE`, "contentkit:a", notify.AudienceUser, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.PublishBatch(ctx, []notify.Input{notice("bob", "b1"), notice("alice", "a1")})
+		done <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted)`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the batch never waited on the held recipient")
+		}
+	}
+	short, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := s.PublishBatch(short, []notify.Input{notice("bob", "b2")}); err != nil {
+		t.Fatalf("a batch for a recipient the waiting batch names earlier: %v", err)
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

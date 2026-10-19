@@ -200,6 +200,7 @@ func MarkDirty(ctx context.Context, db Executor, schema string, marks []DirtyMar
 	_, err = db.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,is_deleted,reason)
    SELECT r.tenant_id,r.content_kind,r.content_id,r.content_version_id,r.language,r.deleted,r.reason
    FROM jsonb_to_recordset($1::jsonb) AS r(tenant_id text,content_kind text,content_id text,content_version_id text,language text,deleted boolean,reason text)
+   ORDER BY r.tenant_id,r.content_kind,r.content_id,r.content_version_id NULLS FIRST,r.language
    ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET is_deleted=EXCLUDED.is_deleted,reason=EXCLUDED.reason,updated_at=now()`, qs), data)
 	return err
 }

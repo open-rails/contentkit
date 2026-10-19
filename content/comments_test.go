@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -501,6 +502,72 @@ func TestComments_ReplyCountDecrementsOnDelete(t *testing.T) {
 	list, _ = rt.comments.list(ctx, author, rt.Ref("gallery", cid(1)), "", "", 10, 0)
 	if got := list[indexOfComment(list, top.ID)].ReplyCount; got != 1 {
 		t.Fatalf("reply_count after reply delete = %d, want 1", got)
+	}
+}
+
+// Comments sharing created_at (and likes) page one at a time with neither
+// repeats nor omissions: id breaks the tie in the thread, replies and feed.
+func TestComments_TiedTimestampsPageByID(t *testing.T) {
+	rt := commentsRuntime(t, Options{Kinds: testKinds("gallery")})
+	ctx := context.Background()
+	a := access.Actor{ID: "author"}
+	root := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "root"})
+	tops, reps := []string{root.ID}, []string{}
+	for i := range 3 {
+		tops = append(tops, mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "top " + strconv.Itoa(i)}).ID)
+		reps = append(reps, mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "reply " + strconv.Itoa(i), ReplyToID: root.ID}).ID)
+	}
+	// One timestamp for all, rewritten out of id order so storage order is
+	// no accidental tie-break.
+	for _, ids := range [][]string{tops, reps} {
+		slices.Sort(ids)
+		for _, id := range append(slices.Clone(ids[1:]), ids[0]) {
+			if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET created_at = '2026-01-01T00:00:00Z' WHERE id = $1`, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	desc := func(ids ...string) []string {
+		out := slices.Clone(ids)
+		slices.Sort(out)
+		slices.Reverse(out)
+		return out
+	}
+	list := func(sort string) func(int, int) ([]string, error) {
+		return func(limit, offset int) ([]string, error) {
+			got, err := rt.comments.list(ctx, a, rt.Ref("gallery", cid(1)), "", sort, limit, offset)
+			return commentIDs(got), err
+		}
+	}
+	cases := []struct {
+		name string
+		read func(limit, offset int) ([]string, error)
+		want []string
+	}{
+		{"newest", list(""), desc(tops...)},
+		{"likes", list("likes"), desc(tops...)},
+		{"best", list("best"), desc(tops...)},
+		{"replies", func(limit, offset int) ([]string, error) {
+			got, err := rt.comments.replies(ctx, a, root.ID, limit, offset)
+			return commentIDs(got), err
+		}, reps},
+		{"latest", func(limit, offset int) ([]string, error) {
+			got, err := rt.comments.latest(ctx, a, "", limit, offset)
+			return commentFeedIDs(got), err
+		}, desc(append(slices.Clone(tops), reps...)...)},
+	}
+	for _, c := range cases {
+		var got []string
+		for offset := range len(c.want) + 1 {
+			ids, err := c.read(1, offset)
+			if err != nil {
+				t.Fatalf("%s offset %d: %v", c.name, offset, err)
+			}
+			got = append(got, ids...)
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s paged %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package versions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -139,6 +140,7 @@ type pubItem struct {
 	current               bool
 	start, end            int
 	pages                 int
+	source                []byte
 }
 
 func (s *Service) resolvePublished(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
@@ -154,16 +156,22 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 		return err
 	}
 	byKind := map[string][]Target{}
-	pages := map[Target]int{}
+	snapshots := map[Target]pagesSnapshot{}
 	for _, it := range items {
 		if it.current {
 			byKind[it.contentKind] = append(byKind[it.contentKind], it.version)
-			pages[it.version] = max(pages[it.version], it.pages)
+			if it.kind == kindPages {
+				var snapshot pagesSnapshot
+				if err := json.Unmarshal(it.source, &snapshot); err != nil {
+					return err
+				}
+				snapshots[it.version] = snapshot
+			}
 		}
 	}
 	ds := map[Target]decision{}
 	for kind, vs := range byKind {
-		got, err := s.decisions(ctx, actor, kind, vs, pages)
+		got, err := s.decisions(ctx, actor, kind, vs, snapshots)
 		if err != nil {
 			return err
 		}
@@ -191,13 +199,13 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 // (a playback publication's id).
 func (s *Service) pubItems(ctx context.Context, ids []string) (map[string]pubItem, error) {
 	rows, err := s.o.Pool.Query(ctx, `SELECT i.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', i.start_index, i.end_index,
-	jsonb_array_length(p.source->'pages')
+	jsonb_array_length(p.source->'pages'), p.source
 FROM `+s.t.pubItems+` i JOIN `+s.t.publications+` p ON p.tenant_id = i.tenant_id AND p.id = i.publication_id
 JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE i.tenant_id = $1 AND i.id = ANY($2)
 UNION ALL
-SELECT p.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', 0, 0, 0
+SELECT p.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', 0, 0, 0, p.source
 FROM `+s.t.publications+` p JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, ids)
@@ -209,7 +217,7 @@ WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, 
 	for rows.Next() {
 		var it pubItem
 		if err := rows.Scan(&it.id, &it.publication, &it.kind, &it.contentKind, &it.version.Content, &it.version.Version, &it.current,
-			&it.start, &it.end, &it.pages); err != nil {
+			&it.start, &it.end, &it.pages, &it.source); err != nil {
 			return nil, err
 		}
 		out[it.id] = it
@@ -290,6 +298,11 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 		return nil
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
+	// Read the manifest only once v is locked: a delayed callback then
+	// records the newest snapshot, not the one current when it was called.
+	if err := s.lockTarget(ctx, tx, v); err != nil {
+		return err
+	}
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
@@ -319,14 +332,18 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
 	vk := k
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
 	withdraw := false
 	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		// As in itemReady: lock v, then read the newest manifest.
+		if err := s.lockTarget(ctx, tx, v); err != nil {
+			return err
+		}
+		m, _, err := s.m.Manifests.Get(ctx, ref)
+		if errors.Is(err, media.ErrNotFound) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 		if err := s.recordFacts(ctx, tx, vk, v, m); err != nil {
 			return err
 		}

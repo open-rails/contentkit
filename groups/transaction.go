@@ -19,6 +19,8 @@ func (s *Store) CreateGroupsTx(ctx context.Context, tx pgx.Tx, in []GroupInput) 
 
 // SetContentGroupsTx is SetContentGroups in a caller-owned transaction. Like
 // SetContentGroups, its caller must first authorize editing those contents.
+// It takes LockHierarchyShared; a tx that already holds group or content row
+// locks must take that first, or it can deadlock with a hierarchy change.
 func (s *Store) SetContentGroupsTx(ctx context.Context, tx pgx.Tx, in []ContentGroups) error {
 	if tx == nil {
 		return errors.New("groups: transaction is required")

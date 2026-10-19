@@ -93,7 +93,8 @@ type Options struct {
 	// paywalls' offers; nil when nothing is sold.
 	Offers Offers
 	// Groups answers effective group ids for content_facets; nil: none. Wire
-	// its Options.ContentChanged to Store.ContentChanged.
+	// its Options.ContentChanged to Store.ContentChanged and its
+	// Options.NamesChanged to Store.GroupsRenamed.
 	Groups Groups
 	// Moderation screens text of content that is or goes live; nil approves
 	// unless contentkit.NewRuntime binds its content runtime (BindModeration).

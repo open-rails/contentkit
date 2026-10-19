@@ -55,7 +55,7 @@ export function Poll(p: PollProps) {
   // Signed out where the server takes no anonymous votes.
   const mustSignIn = signedOut && config?.anonymous.votes === false;
   const root = (children: ReactNode) => (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground", p.className)} data-ckui="poll">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid content-start gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground", p.className)} data-ckui="poll">
       {children}
     </ContentKitUiRoot>
   );
@@ -95,7 +95,7 @@ export function Poll(p: PollProps) {
   const header = (
     <>
       {poll.image_url && <img src={poll.image_url} alt="" className="aspect-video w-full rounded-lg object-cover" loading="lazy" />}
-      <h3 className="text-base font-semibold" id={`poll-${poll.id}`}>
+      <h3 className="border-b border-border pb-2 text-base font-semibold" id={`poll-${poll.id}`}>
         {poll.question}
       </h3>
       {poll.closed ? (
@@ -117,7 +117,12 @@ export function Poll(p: PollProps) {
           }
         />
       ) : (
-        <Choices poll={poll} results={p.results === "always" || poll.voted || poll.closed} canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)} onVote={vote} />
+        <Choices
+          poll={poll}
+          results={p.results === "always" || poll.voted || poll.closed}
+          canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)}
+          onVote={vote}
+        />
       )}
       <ErrorLine error={error} />
       {!poll.voted && !poll.closed && mustSignIn && poll.kind !== "free_text" && <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>}
@@ -131,56 +136,52 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   const options = [...poll.options].sort((a, b) => a.position - b.position);
   const images = options.some((o) => o.image_url);
   const total = poll.total_votes || options.reduce((n, o) => n + o.vote_count, 0);
+  // Bars scale to the leading option, which spans the full width.
   const lead = Math.max(1, ...options.map((o) => o.vote_count));
   return (
     <>
-      <ul className={cn("grid gap-2", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
+      <ul className={cn("grid gap-3", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
         {options.map((o) => {
           const mine = poll.my_option === o.id;
           const percent = total ? Math.round((o.vote_count / total) * 100) : 0;
+          const choose = canVote ? () => onVote(o.id) : undefined;
+          const meter = results && !choose ? { role: "meter", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": percent, "aria-label": o.label } : {};
           const body = (
             <>
               {o.image_url && <img src={o.image_url} alt="" className="aspect-[4/3] w-full rounded-md bg-muted object-contain" loading="lazy" />}
-              <span className="relative flex w-full items-center gap-2">
+              <span className="flex w-full items-baseline gap-2">
+                {mine && <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4 shrink-0 self-center text-primary" aria-label={t("poll.yourVote")} />}
+                <span className="min-w-0 flex-1 break-words text-start font-medium">{o.label}</span>
                 {results && (
-                  <span
-                    aria-hidden
-                    className={cn("absolute inset-y-0 start-0 rounded-md transition-[width] duration-500 motion-reduce:transition-none", mine ? "bg-primary/25" : "bg-muted")}
-                    style={{ width: `${(o.vote_count / lead) * 100}%` }}
-                  />
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    <span className="font-semibold text-foreground">{percent}%</span> · {m.plural("poll.votes", o.vote_count)}
+                  </span>
                 )}
-                <span className="relative flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5">
-                  {mine && <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4 shrink-0 text-primary" aria-label={t("poll.yourVote")} />}
-                  <span className="min-w-0 flex-1 break-words text-start">{o.label}</span>
-                  {results && <span className="shrink-0 tabular-nums font-medium">{percent}%</span>}
-                </span>
               </span>
-              {results && <span className="sr-only">{m.plural("poll.votes", o.vote_count)}</span>}
+              {results && (
+                <span aria-hidden className="block h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <span className={cn("block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none", mine ? "bg-primary" : "bg-foreground/40")} style={{ width: `${(o.vote_count / lead) * 100}%` }} />
+                </span>
+              )}
             </>
           );
           return (
-            <li key={o.id} data-option={o.id} data-mine={mine || undefined}>
-              {canVote ? (
-                <Button variant="outline" className="h-auto w-full flex-col items-stretch gap-1.5 p-1 whitespace-normal" onClick={() => onVote(o.id)}>
+            <li key={o.id} data-option={o.id} data-mine={mine || undefined} {...meter}>
+              {choose ? (
+                <button type="button" className="grid w-full gap-1.5 rounded-md p-1.5 text-start hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
                   {body}
-                </Button>
+                </button>
               ) : (
-                <div
-                  className="grid gap-1.5 rounded-md border border-border p-1"
-                  role="meter"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={percent}
-                  aria-label={o.label}
-                >
-                  {body}
-                </div>
+                <div className="grid gap-1.5 p-1.5">{body}</div>
               )}
             </li>
           );
         })}
       </ul>
-      {results && <p className="text-xs text-muted-foreground">{m.plural("poll.votes", total)}</p>}
+      <p className="flex justify-between gap-2 border-t border-border pt-2 text-xs tabular-nums text-muted-foreground">
+        <time dateTime={poll.live_at}>{formatDate(m, poll.live_at, false)}</time>
+        {results && <span>{m.plural("poll.votes", total)}</span>}
+      </p>
     </>
   );
 }

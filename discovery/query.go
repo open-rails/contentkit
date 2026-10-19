@@ -451,9 +451,9 @@ type order struct {
 	args     pgx.NamedArgs
 	ranking  *popularity.RankingInfo
 	rankings map[string]ContentRanking
-	// perVersion keys can differ between a content's versions for a while
-	// (copied counts): a content sorts by its greatest.
-	perVersion bool
+	// edition keys can differ between a content's versions (version
+	// memberships, copied counts): a content sorts by its shown edition's.
+	edition bool
 }
 
 // titleKey is a content's title sort key in the display language's text.
@@ -483,7 +483,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
-			o.expr, o.perVersion = "f.rating", true
+			o.expr, o.edition = "f.rating", true
 			break
 		}
 		window, err := popularity.WindowForPeriod(period, s.now())
@@ -492,7 +492,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
-		o.expr, o.cast, o.perVersion = "f.favorites::bigint", "bigint", true
+		o.expr, o.cast, o.edition = "f.favorites::bigint", "bigint", true
 
 	case SortPosition:
 		if len(f.Groups) == 0 {
@@ -509,8 +509,9 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 			return o, fmt.Errorf("%w: sort position needs an ordered group first; %s groups have no order", ErrInvalid, kind)
 		}
 		o.expr = fmt.Sprintf(`coalesce((SELECT min(m.position) FROM %s m WHERE m.tenant_id = f.tenant_id AND m.group_id = @d_pgroup
- AND m.content_id = f.content_id AND m.state = 'active'), 2147483647)::bigint`, s.t.memberships)
-		o.cast, o.desc, o.args["d_pgroup"] = "bigint", false, group
+ AND m.content_id = f.content_id AND (m.version_id IS NULL OR m.version_id = f.version_id) AND m.state = 'active'
+ AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())), 2147483647)::bigint`, s.t.memberships)
+		o.cast, o.desc, o.edition, o.args["d_pgroup"] = "bigint", false, true, group
 	case SortRandom:
 		o.expr, o.cast, o.desc = "md5(f.content_id || @d_seed::text)", "text", false
 	default:
@@ -601,10 +602,6 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	for k, v := range o.args {
 		args[k] = v
 	}
-	ordered := q
-	if name, _, _ := strings.Cut(o.raw, ":"); name == SortPopular {
-		ordered = q.with("("+o.expr+") > 0", nil)
-	}
 	if o.raw == SortRandom && cur.Seed == "" {
 		cur.Seed = newSeed()
 	}
@@ -615,22 +612,39 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	}
 	// Order the contents first, then pick each one's version. A key every
 	// version shares groups in the sort's order, so an index can end the scan
-	// at the page; a per-version key takes the content's greatest.
-	key, group, having := "("+o.expr+")", "("+o.expr+"), f.content_id", "true"
-	if o.perVersion {
-		key, group = "max("+o.expr+")", "f.content_id"
-	}
+	// at the page; an edition's key is read from the edition the card shows.
 	if cur.ID != "" {
-		after := fmt.Sprintf("(%s, f.content_id) %s (@d_cv::%s, @d_cid::text)", key, cmp, o.cast)
-		if o.perVersion {
-			having = after
-		} else {
-			ordered = ordered.with(after, nil)
-		}
 		args["d_cv"], args["d_cid"] = cur.Value, cur.ID
 	}
-	sql := fmt.Sprintf(`SELECT f.content_id, %[1]s::text FROM %[2]s f %[3]s WHERE %[4]s
- GROUP BY %[5]s HAVING %[6]s ORDER BY %[1]s %[7]s, f.content_id %[7]s LIMIT @d_limit OFFSET @d_offset`, key, s.t.facets, o.join, ordered.predicate(), group, having, dir)
+	var sql string
+	switch {
+	case o.join != "":
+		// A joined score is per content: take each content once, then score it.
+		where := "true"
+		if name, _, _ := strings.Cut(o.raw, ":"); name == SortPopular {
+			where = "(" + o.expr + ") > 0"
+		}
+		if cur.ID != "" {
+			where += fmt.Sprintf(" AND ((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast)
+		}
+		sql = fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM (SELECT DISTINCT f.tenant_id, f.kind, f.content_id FROM %[2]s f WHERE %[3]s) f %[4]s
+ WHERE %[5]s ORDER BY (%[1]s) %[6]s, f.content_id %[6]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, q.predicate(), o.join, where, dir)
+	case o.edition:
+		after := "true"
+		if cur.ID != "" {
+			after = fmt.Sprintf("(c.sk, c.content_id) %s (@d_cv::%s, @d_cid::text)", cmp, o.cast)
+		}
+		sql = fmt.Sprintf(`SELECT c.content_id, c.sk::text FROM (
+ SELECT DISTINCT ON (f.content_id) f.content_id, (%s) AS sk FROM %s f WHERE %s ORDER BY f.content_id, %s) c
+WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, q.predicate(), preference, after, dir, dir)
+	default:
+		ordered := q
+		if cur.ID != "" {
+			ordered = q.with(fmt.Sprintf("((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast), nil)
+		}
+		sql = fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM %[2]s f WHERE %[3]s
+ GROUP BY (%[1]s), f.content_id ORDER BY (%[1]s) %[4]s, f.content_id %[4]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, ordered.predicate(), dir)
+	}
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", err

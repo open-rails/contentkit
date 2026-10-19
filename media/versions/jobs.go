@@ -227,26 +227,40 @@ func (w *recoverWorker) Work(ctx context.Context, _ *river.Job[recoverArgs]) err
 	return w.s.recoverPublications(ctx)
 }
 
+// recoveryBatch bounds each kind of work one recovery pass requeues.
+var recoveryBatch = 500
+
 // recoverPublications requeues builds a minute old and current pages whose
-// previews a segment's release since outdated.
+// previews a segment's release since outdated. Each kind has its own bound, so
+// builds that stay blocked cannot crowd out preview refreshes, which have no
+// other trigger.
 func (s *Service) recoverPublications(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT v.content_id, v.id FROM `+s.t.publications+` p
+		seen := map[Target]bool{}
+		for _, pending := range []string{
+			`p.state = 'building' AND p.created_at < now() - interval '1 minute'`,
+			`p.kind = 'pages' AND p.state = 'current' AND (p.previews_at IS NULL OR EXISTS (SELECT 1 FROM ` + s.t.segments + ` g
+		WHERE g.tenant_id = p.tenant_id AND g.version_id = p.version_id AND g.release_at <= now() AND g.release_at > p.previews_at))`,
+		} {
+			rows, err := tx.Query(ctx, `SELECT DISTINCT v.content_id, v.id FROM `+s.t.publications+` p
 JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
-WHERE p.tenant_id = $1 AND (p.state = 'building' AND p.created_at < now() - interval '1 minute'
-	OR p.kind = 'pages' AND p.state = 'current' AND (p.previews_at IS NULL OR EXISTS (SELECT 1 FROM `+s.t.segments+` g
-		WHERE g.tenant_id = p.tenant_id AND g.version_id = p.version_id AND g.release_at <= now() AND g.release_at > p.previews_at)))
-LIMIT 500`, s.o.Tenant)
-		if err != nil {
-			return err
-		}
-		due, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Target])
-		if err != nil {
-			return err
-		}
-		for _, t := range due {
-			if err := s.enqueueTx(ctx, tx, publishArgs{Content: t.Content, Version: t.Version}); err != nil {
+WHERE p.tenant_id = $1 AND `+pending+`
+LIMIT $2`, s.o.Tenant, recoveryBatch)
+			if err != nil {
 				return err
+			}
+			due, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Target])
+			if err != nil {
+				return err
+			}
+			for _, t := range due {
+				if seen[t] {
+					continue
+				}
+				seen[t] = true
+				if err := s.enqueueTx(ctx, tx, publishArgs{Content: t.Content, Version: t.Version}); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

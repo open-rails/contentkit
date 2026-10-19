@@ -347,9 +347,12 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // and renames offers' products after titles.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
+	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.GroupReferences,
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
+		},
+		NamesChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return e.catalog.GroupsRenamed(ctx, q, ids)
 		},
 		DocumentsChanged: func(ctx context.Context, q groups.Querier) error { return e.syncDocuments(ctx, q) },
 		Owned:            ownedContent{e}}
@@ -705,7 +708,7 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 }
 
 // Start starts ContentKit's background work: search indexing, preference
-// sync, co-engagement, projection repair, erasure and the media jobs. With no
+// sync, projection repair, erasure and the media jobs. With no
 // options it builds and runs ContentKit's own River client in
 // Config.Database.RiverSchema; with WithRiverClient the jobs run on the host's
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start

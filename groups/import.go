@@ -64,6 +64,11 @@ func (s *Store) ImportGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, pr
 	if len(in) == 0 {
 		return nil
 	}
+	if s.references != nil {
+		if err := checkReferenceTransaction(ctx, q); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	ids := make([]string, 0, len(in))
 	rows := make([]importRow, 0, len(in))
@@ -121,6 +126,9 @@ func (s *Store) ImportGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, pr
 
 func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, ids []string, rows []importRow, names map[string][]nameRow,
 	texts map[string][]textRow, edges map[string][]edgeRow, keep map[codes.Key]string, provision bool) error {
+	if err := s.lockHierarchy(ctx, q); err != nil {
+		return err
+	}
 	stored := map[string]Group{}
 	res, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR UPDATE`,
 		groupColumns, s.table("content_groups")), s.tenant, ids)
@@ -190,11 +198,34 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 	if err != nil {
 		return err
 	}
+	// Check after the upsert: a concurrent creator may have inserted an
+	// initially absent group and bound host references before ON CONFLICT
+	// acquires its lock. The callback sees those committed links and can roll
+	// this state change back in the caller's transaction.
+	if s.references != nil {
+		persisted, err := s.byIDs(ctx, q, ids)
+		if err != nil {
+			return err
+		}
+		var unavailable []Ref
+		for _, id := range ids {
+			g := persisted[GroupID(id)]
+			if g.State == StateDeleted || g.Internal {
+				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
+			}
+		}
+		if len(unavailable) > 0 {
+			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
+				return err
+			}
+		}
+	}
 	changed := map[string]bool{}
 	for _, id := range changedIDs {
 		changed[id] = true
 	}
-	if err := s.replaceNames(ctx, q, names, changed); err != nil {
+	relabeled, err := s.replaceNames(ctx, q, names, changed)
+	if err != nil {
 		return err
 	}
 	if err := s.replaceText(ctx, q, texts, changed); err != nil {
@@ -218,6 +249,9 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		if changed[id] {
 			list, renamed = append(list, id), append(renamed, Ref{Kind: rows[i].Kind, ID: GroupID(id)})
 		}
+		if g, ok := stored[id]; ok && g.Slug != rows[i].Slug {
+			relabeled = append(relabeled, id)
+		}
 	}
 	if len(list) == 0 {
 		return nil
@@ -229,6 +263,9 @@ func (s *Store) importGroups(ctx context.Context, q pgx.Tx, in []ImportGroup, id
 		return err
 	}
 	if err := s.refreshGroupFacets(ctx, q, moved); err != nil {
+		return err
+	}
+	if err := s.namesChanged(ctx, q, relabeled); err != nil {
 		return err
 	}
 	written, err := s.byIDs(ctx, q, list)
@@ -316,10 +353,10 @@ func (s *Store) checkImport(g *ImportGroup) (importRow, error) {
 }
 
 // replaceNames replaces the names of groups whose given names differ from
-// the stored ones, marking them changed.
-func (s *Store) replaceNames(ctx context.Context, q Querier, given map[string][]nameRow, changed map[string]bool) error {
+// the stored ones, marking them changed, and returns those groups.
+func (s *Store) replaceNames(ctx context.Context, q Querier, given map[string][]nameRow, changed map[string]bool) ([]string, error) {
 	if len(given) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([]string, 0, len(given))
 	for id := range given {
@@ -327,25 +364,12 @@ func (s *Store) replaceNames(ctx context.Context, q Querier, given map[string][]
 	}
 	stored, err := s.names(ctx, q, ids)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	type name struct{ language, kind, name string }
 	var replace []string
 	var rows []nameRow
 	for _, id := range ids {
-		var want, have []name
-		for _, r := range given[id] {
-			want = append(want, name{r.Language, r.Kind, r.Name})
-		}
-		for _, n := range stored[GroupID(id)] {
-			have = append(have, name{n.Language, string(n.Kind), n.Name})
-		}
-		cmp := func(a, b name) int {
-			return strings.Compare(a.language+"\x00"+a.kind+"\x00"+a.name, b.language+"\x00"+b.kind+"\x00"+b.name)
-		}
-		slices.SortFunc(want, cmp)
-		slices.SortFunc(have, cmp)
-		if slices.Equal(slices.Compact(want), have) {
+		if sameNames(given[id], stored[GroupID(id)]) {
 			continue
 		}
 		replace, changed[id] = append(replace, id), true
@@ -355,12 +379,31 @@ func (s *Store) replaceNames(ctx context.Context, q Querier, given map[string][]
 		}
 	}
 	if len(replace) == 0 {
-		return nil
+		return nil, nil
 	}
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_names")), s.tenant, replace); err != nil {
-		return err
+		return nil, err
 	}
-	return s.insertNames(ctx, q, rows)
+	return replace, s.insertNames(ctx, q, rows)
+}
+
+// sameNames reports whether given names, duplicates aside, are the stored
+// ones.
+func sameNames(given []nameRow, stored []Name) bool {
+	type name struct{ language, kind, name string }
+	var want, have []name
+	for _, r := range given {
+		want = append(want, name{r.Language, r.Kind, r.Name})
+	}
+	for _, n := range stored {
+		have = append(have, name{n.Language, string(n.Kind), n.Name})
+	}
+	cmp := func(a, b name) int {
+		return strings.Compare(a.language+"\x00"+a.kind+"\x00"+a.name, b.language+"\x00"+b.kind+"\x00"+b.name)
+	}
+	slices.SortFunc(want, cmp)
+	slices.SortFunc(have, cmp)
+	return slices.Equal(slices.Compact(want), have)
 }
 
 // replaceText replaces the text of groups whose given text differs from the
@@ -457,6 +500,9 @@ func (s *Store) ImportMemberships(ctx context.Context, q pgx.Tx, sets []ContentG
 	if len(sets) == 0 {
 		return nil
 	}
+	if err := s.LockHierarchyShared(ctx, q); err != nil {
+		return err
+	}
 	b := s.bound(q)
 	stored, err := b.MembershipsOf(ctx, contentIDs)
 	if err != nil {
@@ -498,11 +544,16 @@ func (s *Store) sameMemberships(f facts, set ContentGroups, stored []Membership)
 			have[key(m)] = m
 		}
 	}
-	if len(have) != len(set.Memberships) {
+	// Duplicates collapse as the write keeps them: the last one wins.
+	want := map[string]Membership{}
+	for _, m := range set.Memberships {
+		want[key(m)] = m
+	}
+	if len(have) != len(want) {
 		return false
 	}
-	for _, m := range set.Memberships {
-		h, ok := have[key(m)]
+	for k, m := range want {
+		h, ok := have[k]
 		state := m.State
 		if state == "" {
 			state = MembershipActive

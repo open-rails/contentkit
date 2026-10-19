@@ -75,6 +75,27 @@ func TestStandingOrderRanksCurrentPeopleInWindow(t *testing.T) {
 	if page.Summary == nil || page.Summary.FilteredCount != 1 {
 		t.Fatalf("window summary %+v", page.Summary)
 	}
+	// Alpha has two editions: it ranks once, on the edition other sorts pick.
+	edition := func(page ContentPage) string {
+		var ids []string
+		for _, c := range page.Contents {
+			if c.ID == f.cid(1) {
+				ids = append(ids, c.Version.ID)
+			}
+		}
+		if len(ids) != 1 {
+			t.Fatalf("Alpha editions %v", ids)
+		}
+		return ids[0]
+	}
+	for _, lang := range []string{"en", "ja"} {
+		_, newest := f.list("main.test", "", q("/contents", "kind", "gallery", "language", lang))
+		for _, sort := range []string{"popular:30d", "top_rated:30d"} {
+			if _, ranked := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", sort, "language", lang)); edition(ranked) != edition(newest) {
+				t.Fatalf("%s in %s picks another edition", sort, lang)
+			}
+		}
+	}
 	_, month := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", "popular:30d", "summary", "true"))
 	if month.Summary == nil || month.Summary.FilteredCount != 2 {
 		t.Fatalf("30-day summary %+v", month.Summary)

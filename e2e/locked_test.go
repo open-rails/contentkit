@@ -67,7 +67,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 		t.Helper()
 		v := catalog.VersionInput{Languages: []string{"en"}}
 		if kind == "book" {
-			v.Segments = &[]catalog.Segment{{Start: 0, End: 10, Title: "One"}}
+			v.Segments = &[]catalog.SegmentInput{{Start: 0, End: 10, Title: "One"}}
 		}
 		var c catalog.Content
 		f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: kind, Access: &premiumRule, Attributes: map[string]any{"format": "manga"},

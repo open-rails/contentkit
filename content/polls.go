@@ -968,7 +968,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, o)
 }
 
-// handleDeleteOption removes an option (its votes cascade). Refuses to shrink a
+// handleDeleteOption removes an option and its votes. Refuses to shrink a
 // poll below 2 options — that would break voting. root:polls:write-gated.
 func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
@@ -981,27 +981,50 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	// Single statement: delete only when >= 3 siblings exist, so a poll never
-	// shrinks below 2 votable options.
-	tag, err := p.s.pool.Exec(req.Context(), `DELETE FROM `+p.s.t.pollOptions+` o
-		WHERE o.id = $1 AND o.question_id = $2 AND o.tenant_id = $3 AND (
-			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.tenant_id = $3 AND s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
-	if err != nil {
+	if err := p.deleteOption(req.Context(), pollID, oid); err != nil {
 		writeErr(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		// Missing option and too-few-options both land here; disambiguate.
-		var exists bool
-		if err := p.s.pool.QueryRow(req.Context(), `SELECT true FROM `+p.s.t.pollOptions+`
-			WHERE id = $1 AND question_id = $2 AND tenant_id = $3`, oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
-			writeErr(w, badRequest("a poll needs at least 2 options"))
-			return
-		}
-		writeErr(w, ErrNotFound)
-		return
-	}
 	writeJSON(w, http.StatusNoContent, nil)
+}
+
+// deleteOption deletes an option and its votes while the poll keeps at least
+// two. The poll row lock serializes deletes, which otherwise could each see
+// three options and leave one; FOR NO KEY UPDATE does not block voting. Votes
+// go before their option, the order account erasure locks them in.
+func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
+	tx, err := p.s.beginMutation(ctx) // the count must see a delete committed during the lock wait
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 FOR NO KEY UPDATE`,
+		p.s.tenant, pollID).Scan(new(int))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var options int
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT count(*), coalesce(bool_or(id = $3), false) FROM `+p.s.t.pollOptions+`
+		WHERE tenant_id = $1 AND question_id = $2`, p.s.tenant, pollID, oid).Scan(&options, &exists); err != nil {
+		return err
+	}
+	switch {
+	case !exists:
+		return ErrNotFound
+	case options < 3:
+		return badRequest("a poll needs at least 2 options")
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+p.s.t.pollVotes+` WHERE tenant_id = $1 AND option_id = $2`, p.s.tenant, oid); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+p.s.t.pollOptions+` WHERE tenant_id = $1 AND id = $2`, p.s.tenant, oid); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // handleQuestionImage sets (or with "" clears) the question image to an

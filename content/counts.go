@@ -48,15 +48,16 @@ func RatingSQL(likes, dislikes string) string {
 
 // orderBy builds an ORDER BY clause for a count-sortable list from a `sort`
 // query value: "likes" = most likes; "best" = Wilson lower bound; else newest.
-// Column names are trusted (kit-internal), never user input.
-func orderBy(sort, likes, dislikes, created string) string {
+// id breaks ties so offset pages neither repeat nor skip rows. Column names
+// are trusted (kit-internal), never user input.
+func orderBy(sort, likes, dislikes, created, id string) string {
 	switch sort {
 	case "likes":
-		return "ORDER BY " + likes + " DESC, " + created + " DESC"
+		return "ORDER BY " + likes + " DESC, " + created + " DESC, " + id + " DESC"
 	case "best":
-		return "ORDER BY " + RatingSQL(likes, dislikes) + " DESC, " + created + " DESC"
+		return "ORDER BY " + RatingSQL(likes, dislikes) + " DESC, " + created + " DESC, " + id + " DESC"
 	default:
-		return "ORDER BY " + created + " DESC"
+		return "ORDER BY " + created + " DESC, " + id + " DESC"
 	}
 }
 

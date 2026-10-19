@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -122,6 +123,70 @@ func TestReactions_TransactionErrorRollsBack(t *testing.T) {
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("reaction rows after rollback = %d err=%v, want 0", n, err)
+	}
+}
+
+// An import recount waiting behind a live reaction counts that reaction once
+// it commits, instead of writing the totals it saw before.
+func TestReactions_ImportRecountCountsLiveReactionItWaitedOn(t *testing.T) {
+	for _, kind := range []string{"gallery", KindComment} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			rt := moderatedRuntime(t, &fakeModerator{})
+			target := rt.Ref("gallery", cid(1))
+			if kind == KindComment {
+				target = rt.Ref(KindComment, mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "liked"}).ID)
+			}
+			ctx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			// The live like, as reactTx writes it, held open before commit.
+			live, err := rt.store.beginMutation(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer live.Rollback(context.Background())
+			if kind == KindComment {
+				if _, err := live.Exec(ctx, `SELECT 1 FROM `+rt.store.t.comments+` WHERE id=$1 FOR UPDATE`, target.ContentID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := rt.reactions.applyTx(ctx, live, access.Actor{ID: "live"}, target.Key(), 1); err != nil {
+				t.Fatal(err)
+			}
+			if kind == KindComment {
+				if _, err := live.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET likes = likes + 1 WHERE id=$1`, target.ContentID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := make(chan error, 1)
+			go func() {
+				tx, err := rt.store.beginMutation(ctx)
+				if err == nil {
+					defer tx.Rollback(context.Background())
+					err = rt.ImportReactions(ctx, tx, []ImportReaction{{Ref: target, UserID: "imported", Value: 1}})
+				}
+				if err == nil {
+					err = tx.Commit(ctx)
+				}
+				done <- err
+			}()
+			waitLockWaiters(t, ctx, rt, 1)
+			if err := live.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if got := countsOf(t, rt, target); got.Likes != 2 {
+				t.Fatalf("rollup likes=%d, want 2", got.Likes)
+			}
+			if kind == KindComment {
+				var likes int
+				if err := rt.store.pool.QueryRow(ctx, `SELECT likes FROM `+rt.store.t.comments+` WHERE id=$1`, target.ContentID).Scan(&likes); err != nil || likes != 2 {
+					t.Fatalf("comment likes=%d err=%v, want 2", likes, err)
+				}
+			}
+		})
 	}
 }
 

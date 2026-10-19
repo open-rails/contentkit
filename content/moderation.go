@@ -427,6 +427,9 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 	if err := c.rt.guardErasedSubject(ctx, tx, subject); err != nil {
 		return err
 	}
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var deletedAt *time.Time
 	var k contentref.ContentKey
@@ -450,6 +453,17 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// lockThread locks a comment and the comment it replies to in id order, the
+// order erasure locks comments in, before a write changes the reply's state
+// and its parent's reply_count. reply_to_id never changes, so the parent is
+// known up front; imported comments keep explicit ids, so it need not sort
+// first.
+func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, cid string) error {
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = $1 OR id = (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1))
+		ORDER BY id FOR UPDATE`, cid, c.s.tenant)
+	return err
 }
 
 // count applies a published-comment delta: the replied-to comment's

@@ -281,7 +281,7 @@ func (c *comments) list(ctx context.Context, actor access.Actor, target contentr
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
 		WHERE `+threadPred()+`
-		`+orderBy(sort, "likes", "dislikes", "created_at")+`
+		`+orderBy(sort, "likes", "dislikes", "created_at", "id")+`
 		LIMIT $7 OFFSET $8`, append(keyArgs(ref.Key()), viewerID(actor), language, limit, offset)...)
 	if err != nil {
 		return nil, err
@@ -304,7 +304,7 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 		return []Comment{}, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
-		WHERE tenant_id = $5 AND reply_to_id = $1 AND `+visiblePred(2)+` ORDER BY created_at ASC LIMIT $3 OFFSET $4`, replyToID, viewerID(actor), limit, offset, c.s.tenant)
+		WHERE tenant_id = $5 AND reply_to_id = $1 AND `+visiblePred(2)+` ORDER BY created_at ASC, id ASC LIMIT $3 OFFSET $4`, replyToID, viewerID(actor), limit, offset, c.s.tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +336,7 @@ type FeedItem struct {
 func (c *comments) latest(ctx context.Context, actor access.Actor, language string, limit, offset int) ([]FeedItem, error) {
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
 		FROM `+c.s.t.comments+` WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved' AND ($4 = '' OR language = $4)
-		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, c.s.tenant, limit, offset, language)
+		ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`, c.s.tenant, limit, offset, language)
 	if err != nil {
 		return nil, err
 	}
@@ -488,6 +488,9 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string
@@ -638,6 +641,9 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err := c.rt.guardErasedSubject(ctx, tx, deref(target.ownerID)); err != nil {
 		return Comment{}, err
 	}
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return Comment{}, err
+	}
 	var before string
 	var revision int64
 	var k contentref.ContentKey
@@ -689,6 +695,9 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string

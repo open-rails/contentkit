@@ -33,13 +33,14 @@ function fixture({ viewer = null, enabled = true, analytics = true, idleAfter = 
   const local = vi.fn();
   Object.assign(client.discovery, { engagement: submit });
   Object.assign(client, { guestHistory: { record: local } });
-  let owner = viewer;
+  let owner = viewer, on = enabled;
   const wrapper = ({ children }: { children: ReactNode }) => {
     const provider = <ContentKitProvider client={client} viewer={owner}>{children}</ContentKitProvider>;
     return strict ? <StrictMode>{provider}</StrictMode> : provider;
   };
-  const hook = renderHook(({ mode: _mode }) => useReadingEngagement("gallery", "version", { enabled, idleAfter, checkpointInterval, kind: "gallery" }), { wrapper, initialProps: { mode: "horizontal" } });
-  return { ...hook, client, receipts, submit, local, changeOwner: (next: string | null) => { owner = next; hook.rerender({ mode: "horizontal" }); } };
+  const hook = renderHook(({ mode: _mode }) => useReadingEngagement("gallery", "version", { enabled: on, idleAfter, checkpointInterval, kind: "gallery" }), { wrapper, initialProps: { mode: "horizontal" } });
+  return { ...hook, client, receipts, submit, local, changeOwner: (next: string | null) => { owner = next; hook.rerender({ mode: "horizontal" }); },
+    setEnabled: (next: boolean) => { on = next; hook.rerender({ mode: "horizontal" }); } };
 }
 
 function image({ loaded = true, top = 0, height = 1000 }: { loaded?: boolean; top?: number; height?: number } = {}) {
@@ -88,6 +89,17 @@ it("does not credit hidden time and flushes with keepalive on hide and exit", as
   await act(async () => f.unmount());
   const last = f.submit.mock.calls.at(-1);
   expect(last?.[1]?.keepalive).toBe(true); expect(last?.[0][0]?.active_ms).toBe(2000);
+});
+
+it("sends the visit when tracking is disabled, as when the reader closes, instead of discarding it", async () => {
+  const f = fixture(), page = image();
+  act(() => f.result.current.page(0, "001.png")(page.element)); await advance(3000);
+  expect(f.submit).not.toHaveBeenCalled();
+  act(() => f.setEnabled(false));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(f.submit).toHaveBeenCalledTimes(1);
+  expect(f.submit.mock.calls[0]?.[1]?.keepalive).toBe(true);
+  expect(f.submit.mock.calls[0]?.[0][0]).toMatchObject({ active_ms: 3000, pages: [{ index: 0, active_ms: 3000 }] });
 });
 
 it("stops idle attention until genuine input renews it", async () => {

@@ -2,6 +2,15 @@ import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
   readerEditor: {
+    sharedEntities: "Entidades de la galería",
+    sharedHint: "Compartidas por todas las versiones de esta galería.",
+    versionDetails: "Detalles de la versión",
+    versionEntities: "Créditos de la versión",
+    versionHint: "Solo para la versión que estás editando.",
+    versionMissing: "No se encontró esta versión.",
+    leaveVersion: "¿Salir de esta versión?",
+    discardVersionEdits: "¿Descartar los cambios sin guardar y abrir otra versión?",
+    discard: "Descartar cambios",
     thumbnail: "Miniatura",
     editThumbnail: "Recortar la miniatura",
     setThumbnail: "Usar como miniatura",

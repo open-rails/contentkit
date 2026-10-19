@@ -105,7 +105,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   is the catalog's: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  co-engagement, projection repair, erasure, groups' counts and windows,
+  projection repair, erasure, groups' counts and windows,
   the catalog's scheduled publishing, event delivery, counts and purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
@@ -236,6 +236,33 @@ unset) with the request method, path, status and duration. Postgres constraint
 names, driver text and stack traces are logged, never served.
 
 ## Access and offers (`access`, `offers`)
+
+An app can restrict each content kind's editorial and sales policy in its
+ContentKit model. The same policy is returned by `/kinds` and used by the admin
+UI; it is enforced for content creation, updates, version overrides, imports
+and individual offer creation. Omitting a policy retains the full feature set.
+For example, a subscription-only gallery app can set:
+
+```yaml
+kinds:
+  gallery:
+    # Other kind settings omitted.
+    access_levels: [public, tier]
+    comment_modes: [open]
+```
+
+This permits free and tier-gated content, disables individual content/version
+sales and keeps comments open. Tier names still come from `tiers`; the host's
+OpenRails catalog supplies those subscriptions. Allowed access levels are
+`public`, `tier`, `ppv`, `group`, `group_ppv`. Allowed comment modes are `open`,
+`closed`, `hidden`. An omitted or empty list permits all modes. Entity sales
+remain independently controlled by each entity kind's `sellable` setting.
+Changing policy does not rewrite previously stored content access rules;
+migrate those deliberately before applying a stricter policy. Disallowed
+individual offers stop appearing as sales immediately and the normal offer
+reconciliation withdraws them from billing, retaining their purchase history.
+A restored item adopts a fixed comment mode where the kind declares one.
+
 
 ContentKit gives entitlement keys meaning; OpenRails grants them and never
 parses one. Keys are constructed, never typed:
@@ -456,8 +483,58 @@ images, thumbnails and editor previews continue to use WebP.
 
 Deploy media workers and gateways that understand the source-format registry
 before an app starts declaring it. When replacing an existing download
-preset, queue `Regenerate` for existing items so their new download files and
-ZIPs are generated; changing configuration alone does not enqueue every item.
+preset, queue `Regenerate` for existing items so their new download renditions
+are generated; changing configuration alone does not enqueue every item.
+Reader ZIPs are not generated during placement. Their download grant returns an
+`archive?...` URL that streams the selected source-format pages in virtual
+sequential order. Ordinary archives are spooled to a temporary disk file as they
+stream, then atomically cached only after the complete ZIP succeeds. One cache
+builder and a 512 MiB spool limit bound temporary storage per process. Busy or
+oversized transfers stream without caching; they never wait for another builder.
+The full
+SHA-256 cache key covers the ordered blobs, output extensions, types and archive
+recipe; reorder, exclusion, replacement and output-policy changes select a new
+key. Cached objects stay under the version's never-public `temp/` folder and
+expire with `JobsConfig.TempTTL` (48 hours by default). Each transfer, including
+a cache hit, repeats current visibility, access, chapter-release and host-policy
+checks, and refuses stale tickets or a draft source order that differs from its
+frozen publication. Personalized watermarked archives are generated fresh with
+`private, no-store` and never share this cache. Generic non-reader ZIP presets
+still produce their declared processing outputs. An editor's signed archive
+URL delegates only that exact transfer for its short lifetime (five minutes by
+default), matching private media URLs. It carries no reusable session or global
+permission; role revocation takes effect when an already-issued editor URL
+expires. Soft deletion, source edits and invalid chapter markers revoke access
+even before expiry. Verified token tiers explicitly configured in `TokenClaims`
+travel as signed entitlement context for this exact archive and its short
+download-ticket lifetime, as a presigned download did before. The archive never
+replays the JWT or creates a session or general permission credential. Ordinary
+audience grants still recheck current access and billing-backed entitlements.
+Both editor and token-tier delegation last until the download ticket expires,
+even if the original JWT expires sooner, matching prior presigned URLs. The
+verified-entitlement contract exposes no credential-expiry accessor; keep
+`Downloads.TTL` short. Current gate configuration, policy, source and deletion
+checks still apply to each transfer.
+
+Reader page identity is the SHA-256 digest of the original source image.
+`FileInfo.page_id` and reader-plan page `id` expose that digest; logical names
+are display/path metadata. The manifest's ordered source list determines page
+numbers and consecutive ZIP entry names, without renaming source blobs when
+pages move. Reader metadata and chapter starts refer to source hashes.
+Upload commits remain asynchronous: a staged file has no verified `page_id`
+until placement finishes. Wait for placement before saving reader metadata or
+chapter starts that reference that source; a filename is not a fallback ID.
+
+Reader chapters accept `start_page` and derive their end from the next start,
+or the end of the version. Inserting or reordering unmarked pages does not
+require renumbering markers. Missing, duplicated or out-of-order starts require
+repair; authorization resolves them against the exact published snapshot.
+Legacy numeric ranges remain supported for non-reader content.
+
+Personalized, watermarked archives stream per request with
+`Cache-Control: private, no-store`; they are never placed in a shared cache.
+Ordinary reader archives use the bounded, on-demand private cache described
+above; only non-reader ZIP processing presets are generated ahead of time.
 
 **Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's
@@ -478,8 +555,10 @@ period old, unexpected public names at once, `temp/` by age); folder
 deletion (with a late-upload second pass and quota release); `Expose`;
 `Regenerate`; `SweepOrphans`; and the worker's relays.
 
-**Paywalls**: media gates each item through `Hooks.Resolver`; one item read
-is one billing read, and its token covers every file and segment.
+**Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
+cover a permitted span of an immutable publication, limited by chapter release
+and access rules; source originals remain editor-only. Existing signed URLs
+retain their normal expiry and revocation-window semantics.
 
 **Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version
 per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
@@ -490,6 +569,18 @@ content URLs, React hooks and styled components. See
 
 Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
 owner, sellable, auth_scope, windows, version_level, roles, attributes).
+Reader editors use one page per stable version code. Shared entity edits use
+`PUT /contents/{id}/entities/shared`; per-version credits use
+`PUT /contents/{id}/versions/{vid}/entities`. Catalog responses keep the same
+separation: `Content.entities` contains shared associations only, while each
+`Version.entities` contains that version's own associations. The UI SDK's
+`entitiesForVersion(content, version)` combines and deduplicates the two for
+public display without mixing credits from sibling versions.
+These routes replace only their
+own scope in a transaction, including newly created entity names, and preserve
+sibling versions. The older all-scopes entity replacement remains available
+for imports and callers deliberately replacing the entire work.
+
 Writes are batches in one transaction; memberships keep
 `content_facets.group_ids` current, `Recount` (an engine job) rebuilds
 per-language counts and automatic covers from the facets, and

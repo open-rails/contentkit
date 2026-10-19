@@ -22,7 +22,7 @@ export interface ReadingEngagement {
   video: (element: HTMLVideoElement | null) => void;
   /** Attach to a text post's body: one unit covered by its visible share. */
   text: (element: HTMLElement | null) => void;
-  /** Existing filename/anchor selector to restore, independent of page index. */
+  /** Stable source-hash/anchor selector to restore, independent of page index. */
   setResume: (resume: string | undefined) => void;
   flush: () => Promise<void>;
 }
@@ -83,7 +83,9 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     const intersections = new WeakMap<Element, boolean>();
     let observer: IntersectionObserver | undefined;
     let active = false, hidden = false, buffering = false, video: HTMLVideoElement | null = null, resume: string | undefined;
-    const owns = () => permitted && current.current.permitted && current.current.owner === owner && client.preferences.identity() === owner;
+    // A visit belongs to its owner; disabling tracking (e.g. closing the reader) ends it, an owner change discards it.
+    const sameOwner = () => current.current.owner === owner && client.preferences.identity() === owner;
+    const owns = () => permitted && current.current.permitted && sameOwner();
     let session: string | undefined;
     const getSession = () => owner === null ? (session ??= readerSession()) : undefined;
     const tracker = new EngagementTracker({
@@ -95,11 +97,11 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
         return result.contexts.find((receipt) => receipt.content_id === contentId && (!versionId || receipt.version_id === versionId)) ?? null;
       },
       submit: async (snapshot, submitOptions) => {
-        if (!owns()) return;
+        if (!sameOwner()) return;
         await client.discovery.engagement([snapshot], { session: getSession(), ...submitOptions });
       },
       onSnapshot: (snapshot) => {
-        if (owns() && owner === null && explicitGuest) client.guestHistory.record({ ...snapshot, ...(kind.current ? { kind: kind.current } : {}) });
+        if (sameOwner() && owner === null && explicitGuest) client.guestHistory.record({ ...snapshot, ...(kind.current ? { kind: kind.current } : {}) });
       },
     });
     const sample = () => {
@@ -156,9 +158,9 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
       for (const event of mediaEvents) video?.addEventListener(event, mediaEvent);
       sample();
     };
-    const flush = () => { sample(); return owns() ? tracker.flush() : Promise.resolve(); };
+    const flush = () => { sample(); return sameOwner() ? tracker.flush() : Promise.resolve(); };
     return {
-      tracker, sample, owns, page, bindVideo, flush,
+      tracker, sample, owns, sameOwner, page, bindVideo, flush,
       setResume: (value: string | undefined) => { resume = value; sample(); },
       start: () => {
         active = true;
@@ -187,7 +189,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
   }, [client, contentId, versionId, owner, explicitGuest, permitted, options.idleAfter, options.checkpointInterval]);
 
   useLayoutEffect(() => client.preferences.subscribeIdentity(() => {
-    if (!state.owns()) state.tracker.discard();
+    if (!state.sameOwner()) state.tracker.discard();
   }), [client, state]);
 
   useEffect(() => {
@@ -221,7 +223,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
       queueMicrotask(() => {
         if (state.isActive()) return;
         state.cleanup();
-        if (!state.owns()) { state.tracker.discard(); return; }
+        if (!state.sameOwner()) { state.tracker.discard(); return; }
         state.tracker.attention(false);
         void state.tracker.flush(true).finally(() => state.tracker.discard());
       });

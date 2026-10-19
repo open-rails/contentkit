@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/media"
@@ -14,8 +16,8 @@ import (
 const readerMeta = "reader"
 
 // ReaderMeta is a version's reader metadata, kept in its item's manifest:
-// scroll anchors on its pages and audio cues on pages or anchors. Pages and
-// audio files are named by their uploads' {name}.
+// scroll anchors on its pages and audio cues on pages or anchors. Pages use
+// original-image hashes; audio files retain their upload names.
 type ReaderMeta struct {
 	SchemaVersion int             `json:"schema_version"` // 1
 	Defaults      *ReaderDefaults `json:"defaults,omitempty"`
@@ -84,6 +86,71 @@ func (rm ReaderMeta) filter(pages, files map[string]bool) ReaderMeta {
 	return out
 }
 
+// hashPages upgrades old stored page-name references to their unique original
+// hash in this publication. It never accepts names on new writes or changes
+// stored source metadata; the next explicit save writes only canonical hashes.
+func (rm ReaderMeta) hashPages(source []page) ReaderMeta {
+	counts := map[string]int{}
+	for _, page := range source {
+		counts[sourcePageHash(page)]++
+	}
+	aliases := map[string]string{}
+	for hash, count := range counts {
+		if hash != "" && count == 1 {
+			aliases[hash] = hash
+		} else {
+			aliases[hash] = ""
+		}
+	}
+	for _, page := range source {
+		name := page.Name
+		if name == "" {
+			name = strings.TrimSuffix(path.Base(page.Path), path.Ext(page.Path))
+		}
+		if name == "" || counts[name] > 0 {
+			continue
+		}
+		hash := sourcePageHash(page)
+		if hash == "" || counts[hash] != 1 {
+			aliases[name] = ""
+			continue
+		}
+		if previous, exists := aliases[name]; exists && previous != hash {
+			aliases[name] = ""
+		} else {
+			aliases[name] = hash
+		}
+	}
+	lookup := func(value string) string {
+		if hash, exists := aliases[value]; exists {
+			return hash
+		}
+		return value
+	}
+	pointer := func(value *string) *string {
+		if value == nil {
+			return nil
+		}
+		hash := lookup(*value)
+		return &hash
+	}
+	out := rm
+	out.Anchors = slices.Clone(rm.Anchors)
+	for i := range out.Anchors {
+		out.Anchors[i].Page = lookup(out.Anchors[i].Page)
+	}
+	out.Background = slices.Clone(rm.Background)
+	for i := range out.Background {
+		out.Background[i].FromPage = pointer(out.Background[i].FromPage)
+		out.Background[i].ToPage = pointer(out.Background[i].ToPage)
+	}
+	out.Foreground = slices.Clone(rm.Foreground)
+	for i := range out.Foreground {
+		out.Foreground[i].Page = pointer(out.Foreground[i].Page)
+	}
+	return out
+}
+
 // SetReaderMeta stores v's reader metadata for an editor: every page,
 // anchor and file it names must exist.
 func (s *Service) SetReaderMeta(ctx context.Context, actor access.Actor, t Target, rm ReaderMeta) error {
@@ -137,6 +204,7 @@ func (s *Service) SetReaderMeta(ctx context.Context, actor access.Actor, t Targe
 // names are the {name}s of m's attached pages and audio uploads.
 func names(k *media.Kind, m *media.Manifest) (pages, files map[string]bool) {
 	pages, files = map[string]bool{}, map[string]bool{}
+	duplicates := map[string]bool{}
 	var audio string
 	if k.Publish.Playback != "" {
 		audio = private(k, k.Publish.Playback).From
@@ -145,10 +213,21 @@ func names(k *media.Kind, m *media.Manifest) (pages, files map[string]bool) {
 		switch {
 		case !f.IsUpload() || f.Unattached:
 		case inPattern(k.Publish.Pages, f.Path):
-			pages[pageID(k, f)] = true
+			if !media.PageIncluded(f) {
+				continue
+			}
+			id := pageID(k, f)
+			if id == "" || pages[id] {
+				duplicates[id] = true
+			} else {
+				pages[id] = true
+			}
 		case audio != "" && inPattern(audio, f.Path):
 			files[k.NameOf(f.Path)] = true
 		}
+	}
+	for id := range duplicates {
+		delete(pages, id)
 	}
 	return pages, files
 }

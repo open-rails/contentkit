@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -167,6 +168,27 @@ func countsOf(t *testing.T, rt *Runtime, r contentref.ContentRef) Counts {
 		t.Fatalf("Counts: %v", err)
 	}
 	return m[r.Key()]
+}
+
+// waitLockWaiters blocks until n sessions wait on a row or table lock in a
+// statement against rt's schema, so a test orders transactions by observed
+// lock waits rather than sleeps.
+func waitLockWaiters(t *testing.T, ctx context.Context, rt *Runtime, n int) {
+	t.Helper()
+	for {
+		var waiting int
+		if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event <> 'advisory' AND position($1 in query) > 0`, rt.schema).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= n {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for %d lock waiters: %v", n, ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
 
 // --- fake ports ---

@@ -8,10 +8,13 @@ import { useMessages } from "../../i18n/context.js";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
 
-/** One choosable page: its name, 1-based number and thumbnail when signed. */
+/** One choosable page: its original source hash, display label and thumbnail. */
 export interface PickerPage {
-  name: string;
+  id: string;
+  label: string;
   url?: string;
+  /** Visible but unavailable as a selection, for example an ambiguous chapter anchor. */
+  disabled?: boolean;
 }
 
 /** A non-page choice shown above the grid (an anchor, "start"). */
@@ -33,7 +36,7 @@ const dir = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
 
 /** A reader plan's pages with thumbnails and its audio with URLs, read once per plan (thumbnails are a convenience: names work without them). */
 export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient): PlanMedia {
-  const names = (plan?.segments ?? []).flatMap((s) => (s.pages ?? []).map((p) => p.name));
+  const allPages = (plan?.segments ?? []).flatMap((s) => s.pages ?? []);
   const [urls, setUrls] = useState<{ plan: ReaderPlan | null; pages: Map<string, string>; audio: Map<string, string> }>({ plan: null, pages: new Map(), audio: new Map() });
   useEffect(() => {
     if (!plan) return;
@@ -48,7 +51,7 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
           const byPath = new Map(r.files.flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
           for (const p of s.pages ?? []) {
             const url = byPath.get(thumbOf(p.files) ?? "");
-            if (url) pages.set(p.name, url);
+            if (url) pages.set(p.id, url);
           }
         }),
       ];
@@ -68,12 +71,14 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
     return () => ctrl.abort();
   }, [plan, client]);
   const ready = urls.plan === plan;
-  return { pages: names.map((name) => ({ name, url: ready ? urls.pages.get(name) : undefined })), audio: ready ? urls.audio : new Map() };
+  const counts = new Map<string, number>();
+  for (const p of allPages) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
+  return { pages: allPages.map((p) => ({ id: p.id, label: p.name, disabled: counts.get(p.id) !== 1, url: ready ? urls.pages.get(p.id) : undefined })), audio: ready ? urls.audio : new Map() };
 }
 
 /**
  * Picks one page from thumbnails: the trigger shows the current page, the
- * dialog the whole version in reading order. value is a page name or one of
+ * dialog the whole version in reading order. value is a source hash or one of
  * extras' values.
  */
 export function PagePicker({ label, pages, value, extras = [], onChange, className }: {
@@ -86,7 +91,7 @@ export function PagePicker({ label, pages, value, extras = [], onChange, classNa
 }) {
   const { t } = useMessages();
   const [open, setOpen] = useState(false);
-  const index = pages.findIndex((p) => p.name === value);
+  const index = pages.findIndex((p) => p.id === value && !p.disabled);
   const current = index >= 0 ? pages[index] : undefined;
   const extra = extras.find((e) => e.value === value);
   const choose = (v: string) => {
@@ -117,16 +122,17 @@ export function PagePicker({ label, pages, value, extras = [], onChange, classNa
           )}
           <ul className="grid max-h-[60vh] grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-2 overflow-y-auto p-1">
             {pages.map((p, i) => (
-              <li key={p.name}>
+              <li key={`${p.id}:${i}`}>
                 <button
                   type="button"
-                  aria-label={t("pagePicker.pageNamed", { n: i + 1, name: p.name })}
-                  aria-pressed={p.name === value}
+                  aria-label={t("pagePicker.pageNamed", { n: i + 1, name: p.label })}
+                  aria-pressed={p.id === value}
+                  disabled={p.disabled}
                   className={cn(
-                    "grid w-full gap-1 rounded-md p-1 text-center text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
-                    p.name === value && "bg-muted ring-2 ring-primary",
+                    "grid w-full gap-1 rounded-md p-1 text-center text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
+                    p.id === value && "bg-muted ring-2 ring-primary",
                   )}
-                  onClick={() => choose(p.name)}
+                  onClick={() => choose(p.id)}
                 >
                   <span className="flex aspect-[7071/10000] items-center justify-center overflow-hidden rounded-sm bg-muted text-muted-foreground">
                     {p.url ? <img src={p.url} alt="" loading="lazy" className="size-full object-cover" /> : i + 1}
