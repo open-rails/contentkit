@@ -262,10 +262,10 @@ it("uses the input as a header fallback and offers the archived clear/close cont
   expect(input).toHaveAttribute("aria-expanded", "false");
 });
 
-it("renders one flat header list with entities before titles, colored type icons, and clickable portal results", async () => {
+it("renders one flat header list with titles first, title covers, colored entity icons, and clickable portal results", async () => {
   const navigate = vi.fn();
   const contents = [
-    { id: "g", kind: "gallery", title: "Gallery result", path: "/gallery" },
+    { id: "g", kind: "gallery", title: "Gallery result", path: "/gallery", cover: [{ url: "https://media.test/g.webp", w: 300, h: 400 }] },
     { id: "p", kind: "post", title: "Post result", path: "/post" },
   ];
   const entities = ["artist", "series", "tag", "character"].map((kind) => ({ id: kind, kind, name: `${kind} result`, path: `/${kind}` }));
@@ -275,11 +275,11 @@ it("renders one flat header list with entities before titles, colored type icons
   await user.type(screen.getByRole("combobox", { name: "Search" }), "result");
   await screen.findByRole("option", { name: /Gallery result/ });
   const panel = document.querySelector<HTMLDivElement>('[data-ckui="search-panel"]')!;
-  expect(panel.querySelectorAll("img")).toHaveLength(0);
-  expect([...panel.querySelectorAll("[data-search-kind]")].map((icon) => icon.getAttribute("data-search-kind"))).toEqual(["artist", "series", "tag", "character", "gallery", "post"]);
+  expect([...panel.querySelectorAll('[data-ckui="suggestion"]')].map((option) => option.getAttribute("data-type"))).toEqual(["content", "content", "group", "group", "group", "group"]);
+  expect(panel.querySelector("img")).toHaveAttribute("src", "https://media.test/g.webp");
+  expect([...panel.querySelectorAll("[data-search-kind]")].map((icon) => icon.getAttribute("data-search-kind"))).toEqual(["artist", "series", "tag", "character"]);
   expect(panel.querySelector('[data-search-kind="artist"]')).toHaveClass("text-blue-500");
   expect(panel.querySelector('[data-search-kind="series"]')).toHaveClass("text-yellow-600");
-  expect(panel.querySelector('[data-search-kind="gallery"]')).toHaveClass("text-green-600");
   expect(panel.querySelector('[data-search-kind="tag"]')).toHaveClass("text-orange-500");
   await user.click(within(panel).getByRole("option", { name: /artist result/ }));
   expect(navigate).toHaveBeenCalledExactlyOnceWith("/artist");

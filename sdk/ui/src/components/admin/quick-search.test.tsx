@@ -29,7 +29,7 @@ it("only navigates a chosen result to its actual editor, with no history or publ
  const input=screen.getByRole("combobox",{name:"Search"});await user.type(input,"Bleach");
  await screen.findByRole("option",{name:/Series Bleach/});
  await user.keyboard("{Enter}");expect(navigate).not.toHaveBeenCalled();
- await user.keyboard("{ArrowDown}{Enter}");expect(navigate).toHaveBeenCalledWith("/admin/entities/series/series-1");
+ await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");expect(navigate).toHaveBeenCalledWith("/admin/entities/series/series-1");
  expect(s.requests).toHaveLength(1);expect(s.requests[0]?.pathname).toBe("/v1/manage/search-suggestions");
  expect(s.requests[0]?.searchParams.get("include_contents")).toBe("true");
  expect(s.requests[0]?.searchParams.get("include_entities")).toBe("true");
