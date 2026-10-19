@@ -2074,12 +2074,16 @@ func (c *Client) GetContentVersionDownload(ctx context.Context, id string, versi
 type GetContentVersionArchiveQuery struct {
 	// the viewer the ticket is for
 	For string
-	// the viewer account in this tenant
+	// the bound account in this tenant
 	Account string
+	// signed tenant membership presence: true or false
+	AccountSet string
 	// the viewer subject kind
 	Kind string
 	// signed exact-transfer editor capability: true or false
 	Editor string
+	// signed configured token-tier claims as a JSON string array
+	Claims string
 	// the pages to mark, from 1: 3,5,7
 	Mark string
 	// the zip's file name
@@ -2098,11 +2102,17 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	if q.Account != "" {
 		v.Set("account", q.Account)
 	}
+	if q.AccountSet != "" {
+		v.Set("account_set", q.AccountSet)
+	}
 	if q.Kind != "" {
 		v.Set("kind", q.Kind)
 	}
 	if q.Editor != "" {
 		v.Set("editor", q.Editor)
+	}
+	if q.Claims != "" {
+		v.Set("claims", q.Claims)
 	}
 	if q.Mark != "" {
 		v.Set("mark", q.Mark)
@@ -2119,7 +2129,7 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. A signed editor grant delegates only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }

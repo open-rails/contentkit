@@ -8956,7 +8956,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. A signed editor grant delegates only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+        "summary": "Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
         "parameters": [
           {
             "name": "id",
@@ -8985,7 +8985,15 @@
           {
             "name": "account",
             "in": "query",
-            "description": "the viewer account in this tenant",
+            "description": "the bound account in this tenant",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_set",
+            "in": "query",
+            "description": "signed tenant membership presence: true or false",
             "schema": {
               "type": "string"
             }
@@ -9002,6 +9010,14 @@
             "name": "editor",
             "in": "query",
             "description": "signed exact-transfer editor capability: true or false",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "claims",
+            "in": "query",
+            "description": "signed configured token-tier claims as a JSON string array",
             "schema": {
               "type": "string"
             }

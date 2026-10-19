@@ -212,12 +212,15 @@ type FileDownload struct {
 
 // ArchiveRequest is the signed download grant's selectors. Editor delegates
 // only this exact transfer until ticket expiry, like a private media URL. It
-// never creates a session, Verified credential or reusable permission checker.
+// never creates a session or reusable permission checker. Claims retain only
+// configured token-tier entitlements for this verified transfer.
 type ArchiveRequest struct {
 	Target
 	Viewer, Account              string
+	AccountSet                   bool
 	Kind                         auth.SubjectKind
 	Editor                       bool
+	Claims                       []string
 	Mark, Name, Revision, Ticket string
 }
 
@@ -245,15 +248,9 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if err != nil {
 		return nil, err
 	}
-	item, m, err := s.downloadItem(ctx, k, t)
-	if err != nil {
-		return nil, err
-	}
-	snapshots, err := s.downloadSnapshot(ctx, k, t, m)
-	if err != nil {
-		return nil, err
-	}
-	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, snapshots)
+	// Authorization and an empty source keep their established errors even
+	// before the first publication is prepared.
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -264,15 +261,38 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	case !d.whole():
 		return nil, ErrForbidden
 	}
+	item, m, err := s.downloadItem(ctx, k, t)
+	if err != nil {
+		return nil, err
+	}
 
 	z := private(k, k.Download)
 	var pages []media.File
-	if z != nil && z.Zip != "" {
+	if z != nil && k.LazyZip(z) {
 		if pages, err = zipPages(k, z, m); err != nil {
 			return nil, err
 		}
 		if len(pages) == 0 {
 			return nil, ErrNoDownload
+		}
+	}
+	if k.Publish != nil {
+		snapshots, err := s.downloadSnapshot(ctx, k, t, m)
+		if err != nil {
+			return nil, err
+		}
+		// Recheck chapters against this exact frozen source, rather than an
+		// earlier publication that may have changed during authorization.
+		ds, err = s.decisions(ctx, actor, v.Kind, []Target{t}, snapshots)
+		if err != nil {
+			return nil, err
+		}
+		d = ds[t]
+		if !d.res.Visible {
+			return nil, ErrNotFound
+		}
+		if !d.whole() {
+			return nil, ErrForbidden
 		}
 	}
 	title, code := s.title(ctx, v)
@@ -283,16 +303,24 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	ttl := cmp.Or(s.o.Downloads.TTL, DefaultDownloadTTL)
 	var f media.File
 	var name string
-	if z != nil && z.Zip != "" {
+	if z != nil && k.LazyZip(z) {
 		name = fileName(".zip", g.name, archiveStem(title, z), v.Content)
 		if err := s.charge(ctx, actor); err != nil {
 			return nil, err
 		}
 		exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
 		marks, revision := joinPages(g.mark), archiveRevision(pages)
-		r := ArchiveRequest{Target: t, Viewer: actor.ID, Account: actor.AccountID(), Kind: actor.Kind, Editor: d.res.Editor, Mark: marks, Name: name, Revision: revision}
-		q := url.Values{"for": {r.Viewer}, "account": {r.Account}, "kind": {string(r.Kind)}, "editor": {strconv.FormatBool(r.Editor)}, "mark": {marks}, "name": {name}, "revision": {revision},
+		r := ArchiveRequest{Target: t, Viewer: actor.ID, AccountSet: actor.Account != nil, Kind: actor.Kind, Editor: d.res.Editor, Mark: marks, Name: name, Revision: revision}
+		if actor.Account != nil {
+			r.Account = actor.Account.ID
+		}
+		r.Claims = archiveTokenClaims(actor, s.o.Kinds.TokenClaims)
+		q := url.Values{"for": {r.Viewer}, "account": {r.Account}, "account_set": {strconv.FormatBool(r.AccountSet)}, "kind": {string(r.Kind)}, "editor": {strconv.FormatBool(r.Editor)}, "mark": {marks}, "name": {name}, "revision": {revision},
 			"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, r), exp)}}
+		if len(r.Claims) > 0 {
+			encoded, _ := json.Marshal(r.Claims)
+			q.Set("claims", string(encoded))
+		}
 		return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 	} else {
 		var state media.DownloadState
@@ -342,7 +370,15 @@ func (s *Service) Archive(ctx context.Context, request ArchiveRequest) (*Archive
 	if err != nil {
 		return nil, err
 	}
-	actor := access.Actor{ID: viewer, Kind: request.Kind, Account: &access.AccountMembership{ID: request.Account}, Anonymous: viewer == ""}
+	actor := access.Actor{ID: viewer, Kind: request.Kind, Anonymous: viewer == ""}
+	if request.AccountSet {
+		actor.Account = &access.AccountMembership{ID: request.Account}
+	}
+	if !actor.Anonymous && len(request.Claims) > 0 {
+		// The ticket above verifies these claims for this target and revision.
+		// This request-local proof carries no roles or permission checker.
+		actor.Verified = archiveClaimProof{identity: auth.Identity{Subject: viewer, SubjectKind: request.Kind}, claims: slices.Clone(request.Claims)}
+	}
 	ds, err := s.decisions(ctx, actor, k.Name, []Target{t}, snapshots)
 	if err != nil {
 		return nil, err
@@ -370,7 +406,7 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 		return nil, ErrForbidden
 	}
 	z := private(k, k.Download)
-	if z == nil || z.Zip == "" {
+	if z == nil || !k.LazyZip(z) {
 		return nil, ErrNotFound
 	}
 	files, err := zipPages(k, z, m)
@@ -525,7 +561,11 @@ ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kind
 // archiveScope binds identity, tenant membership, delegated editor authority
 // and every output selector without ambiguous delimiter concatenation.
 func archiveScope(tenant string, r ArchiveRequest) string {
-	b, _ := json.Marshal([]any{tenant, r.Content, r.Version, r.Viewer, r.Account, r.Kind, r.Editor, r.Mark, r.Name, r.Revision})
+	claims := r.Claims
+	if len(claims) == 0 {
+		claims = nil
+	}
+	b, _ := json.Marshal([]any{tenant, r.Content, r.Version, r.Viewer, r.Account, r.AccountSet, r.Kind, r.Editor, r.Mark, r.Name, r.Revision, claims})
 	return "archive:" + string(b)
 }
 

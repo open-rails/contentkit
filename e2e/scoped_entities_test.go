@@ -32,7 +32,7 @@ func TestScopedEntityEditsPreserveParentAndSibling(t *testing.T) {
 	before, after, first, sibling, replacement := made[0].ID, made[1].ID, made[2].ID, made[3].ID, made[4].ID
 	path := "/contents/" + c.ID + "/entities"
 	f.want(http.StatusOK, staff, "PUT", path, groups.ContentGroups{Memberships: []groups.Membership{
-		{GroupID: before}, {GroupID: first, VersionID: a}, {GroupID: sibling, VersionID: b},
+		{GroupID: before}, {GroupID: first}, {GroupID: first, VersionID: a}, {GroupID: sibling, VersionID: b},
 	}}, nil)
 	sharedPath := path + "/shared"
 	versionPath := "/contents/" + c.ID + "/versions/" + a + "/entities"
@@ -45,32 +45,83 @@ func TestScopedEntityEditsPreserveParentAndSibling(t *testing.T) {
 		f.want(http.StatusUnauthorized, "", "PUT", route.path, route.body, nil)
 		f.want(http.StatusForbidden, user, "PUT", route.path, route.body, nil)
 	}
-	check := func(got groups.ContentMemberships, want map[groups.GroupID]string) {
+	type member struct {
+		group   groups.GroupID
+		version string
+	}
+	check := func(got groups.ContentMemberships, want map[member]bool) {
 		t.Helper()
 		if len(got.Memberships) != len(want) {
 			t.Fatalf("scoped edit changed another scope: %+v", got.Memberships)
 		}
+		seen := map[member]bool{}
 		for _, m := range got.Memberships {
-			version, ok := want[m.GroupID]
-			if !ok || m.ContentID != c.ID || m.VersionID != version {
-				t.Fatalf("unexpected scoped membership: %+v", m)
+			key := member{m.GroupID, m.VersionID}
+			if m.ContentID != c.ID || !want[key] || seen[key] {
+				t.Fatalf("unexpected scoped membership: %+v; want %+v", m, want)
+			}
+			seen[key] = true
+		}
+	}
+	read := func(method, path string, body any) groups.ContentMemberships {
+		t.Helper()
+		// Omitted version_id means shared. Decoding over a prior response's
+		// slice can retain its old struct fields when row order changes.
+		var got groups.ContentMemberships
+		f.want(http.StatusOK, staff, method, path, body, &got)
+		return got
+	}
+	publicScopes := func(wantA, wantB []groups.GroupID) {
+		t.Helper()
+		var detail catalog.Content
+		f.want(http.StatusOK, "", "GET", "/contents/"+c.ID, nil, &detail)
+		entities := func(got []catalog.GroupSummary, want []groups.GroupID) {
+			t.Helper()
+			seen := map[groups.GroupID]bool{}
+			for _, g := range got {
+				seen[groups.GroupID(g.ID)] = true
+			}
+			if len(got) != len(want) || len(seen) != len(want) {
+				t.Fatalf("entity scope: got %+v, want %v", got, want)
+			}
+			for _, id := range want {
+				if !seen[id] {
+					t.Fatalf("entity scope is missing %s: %+v", id, got)
+				}
+			}
+		}
+		entities(detail.Groups, []groups.GroupID{after, first})
+		if len(detail.Versions) != 2 {
+			t.Fatalf("visible versions: %+v", detail.Versions)
+		}
+		for _, version := range detail.Versions {
+			switch version.ID {
+			case a:
+				entities(version.Groups, wantA)
+			case b:
+				entities(version.Groups, wantB)
+			default:
+				t.Fatalf("unexpected version %s", version.ID)
 			}
 		}
 	}
-	var got groups.ContentMemberships
-	f.want(http.StatusOK, staff, "PUT", sharedPath, shared, &got)
-	check(got, map[groups.GroupID]string{after: "", first: a, sibling: b})
+	got := read("PUT", sharedPath, shared)
+	check(got, map[member]bool{{after, ""}: true, {first, ""}: true, {first, a}: true, {sibling, b}: true})
+	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
+	// A real legacy tag attached to both parent and A remains in both scopes.
+	publicScopes([]groups.GroupID{first}, []groups.GroupID{sibling})
 	// The route supplies the version ID; callers do not need to repeat it in
 	// every membership, and may not use it to write a sibling instead.
-	f.want(http.StatusOK, staff, "PUT", versionPath, version, &got)
-	check(got, map[groups.GroupID]string{after: "", replacement: a, sibling: b})
+	got = read("PUT", versionPath, version)
+	check(got, map[member]bool{{after, ""}: true, {first, ""}: true, {replacement, a}: true, {sibling, b}: true})
+	publicScopes([]groups.GroupID{replacement}, []groups.GroupID{sibling})
 	f.want(http.StatusBadRequest, staff, "PUT", versionPath, groups.ContentGroups{Kinds: []string{"tag"},
 		Memberships: []groups.Membership{{GroupID: first, VersionID: b}}}, nil)
 	f.want(http.StatusNotFound, staff, "PUT", "/contents/"+c.ID+"/versions/"+uuid.Must(uuid.NewV7()).String()+"/entities",
 		groups.ContentGroups{Kinds: []string{"tag"}}, nil)
-	f.want(http.StatusOK, staff, "GET", path, nil, &got)
-	check(got, map[groups.GroupID]string{after: "", replacement: a, sibling: b})
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/versions/"+b+"/entities",
-		groups.ContentGroups{Kinds: []string{"tag"}}, &got)
-	check(got, map[groups.GroupID]string{after: "", replacement: a})
+	got = read("GET", path, nil)
+	check(got, map[member]bool{{after, ""}: true, {first, ""}: true, {replacement, a}: true, {sibling, b}: true})
+	got = read("PUT", "/contents/"+c.ID+"/versions/"+b+"/entities", groups.ContentGroups{Kinds: []string{"tag"}})
+	check(got, map[member]bool{{after, ""}: true, {first, ""}: true, {replacement, a}: true})
+	publicScopes([]groups.GroupID{replacement}, nil)
 }

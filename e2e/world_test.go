@@ -69,7 +69,7 @@ type world struct {
 	queue   *workqueue.Queue
 }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T, options ...authtest.Option) *world {
 	t.Helper()
 	ctx := t.Context()
 	w := &world{t: t}
@@ -92,7 +92,8 @@ func newWorld(t *testing.T) *world {
 	w.channelEditor = channel.Role("editor", editing...)
 	w.channelWriter = channel.Role("writer", perms[0])
 	w.channelModerator = channel.Role("moderator", perms[slices.Index(access.GroupPermissions("channel"), access.GroupCommentsModerate("channel"))])
-	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
+	options = append([]authtest.Option{authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac })}, options...)
+	w.ak, _ = authtest.New(t, options...)
 	var err error
 	if w.scope, err = w.ak.Scope(ctx, iam.RootGroup()); err != nil {
 		t.Fatal(err)

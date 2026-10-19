@@ -505,7 +505,16 @@ URL delegates only that exact transfer for its short lifetime (five minutes by
 default), matching private media URLs. It carries no reusable session or global
 permission; role revocation takes effect when an already-issued editor URL
 expires. Soft deletion, source edits and invalid chapter markers revoke access
-even before expiry. Ordinary audience grants still recheck current access.
+even before expiry. Verified token tiers explicitly configured in `TokenClaims`
+travel as signed entitlement context for this exact archive and its short
+download-ticket lifetime, as a presigned download did before. The archive never
+replays the JWT or creates a session or general permission credential. Ordinary
+audience grants still recheck current access and billing-backed entitlements.
+Both editor and token-tier delegation last until the download ticket expires,
+even if the original JWT expires sooner, matching prior presigned URLs. The
+verified-entitlement contract exposes no credential-expiry accessor; keep
+`Downloads.TTL` short. Current gate configuration, policy, source and deletion
+checks still apply to each transfer.
 
 Reader page identity is the SHA-256 digest of the original source image.
 `FileInfo.page_id` and reader-plan page `id` expose that digest; logical names
