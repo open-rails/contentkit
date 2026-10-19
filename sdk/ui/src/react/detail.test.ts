@@ -9,7 +9,7 @@ const v = (id: string, position: number, languages: string[], live = true): Vers
   languages,
   traits: [],
   live,
-  has_audio: false,
+  has_audio: false, entities: [],
   attributes: {},
   segments: [],
   decision: { allowed: true },

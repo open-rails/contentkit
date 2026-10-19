@@ -28,6 +28,7 @@ const edition: Version = {
   state: "published",
   live: false,
   has_audio: false,
+  entities: [],
   attributes: {},
   segments: [],
   decision: { allowed: true },
