@@ -13,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/access"
+
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -613,5 +616,97 @@ func TestPolls_ClosesAtClearsWithNull(t *testing.T) {
 		if rec := doPollReq(t, mux, "PATCH", "/polls/"+poll.ID, c.in, pollAdmin); rec.Code != http.StatusOK {
 			t.Fatalf("PATCH %s: %d %s", c.want, rec.Code, rec.Body)
 		}
+	}
+}
+
+func threeOptionPoll(t *testing.T, p *polls) Poll {
+	t.Helper()
+	in := twoOptionPoll("")
+	in.Options = append(in.Options, PollOptionInput{Label: "Misato", Position: 2})
+	created, err := p.create(context.Background(), pollAdmin, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return created
+}
+
+// Two admins deleting different options of a three-option poll at once must
+// not leave it with one: the poll lock makes the second see two and refuse,
+// whatever isolation the host's sessions default to.
+func TestPolls_ConcurrentOptionDeletesKeepTwo(t *testing.T) {
+	for _, isolation := range []string{"read committed", "repeatable read"} {
+		t.Run(isolation, func(t *testing.T) {
+			_, p := newPollTest(t, Options{})
+			ctx := context.Background()
+			p.s.pool = pgtest.Pool(t, func(c *pgxpool.Config) {
+				c.ConnConfig.RuntimeParams["default_transaction_isolation"] = isolation
+			})
+			created := threeOptionPoll(t, p)
+			holder, err := p.s.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback(ctx)
+			if _, err := holder.Exec(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE id = $1 FOR NO KEY UPDATE`, created.ID); err != nil {
+				t.Fatal(err)
+			}
+			errs := make(chan error, 2)
+			for _, o := range created.Options[:2] {
+				go func() { errs <- p.deleteOption(ctx, created.ID, o.ID) }()
+			}
+			time.Sleep(200 * time.Millisecond) // both deletes queue behind the held poll
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var refused int
+			for range 2 {
+				var he httpError
+				switch err := <-errs; {
+				case errors.As(err, &he) && he.status == http.StatusBadRequest:
+					refused++
+				case err != nil:
+					t.Fatalf("delete: %v", err)
+				}
+			}
+			got, err := p.get(ctx, pollAdmin, created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if refused != 1 || len(got.Options) != 2 {
+				t.Fatalf("refused %d, options left %d; want 1 and 2", refused, len(got.Options))
+			}
+		})
+	}
+}
+
+// Deleting an option while account erasure removes a vote on it and then
+// adjusts the option's count must not deadlock: both take the vote first.
+func TestPolls_OptionDeleteAndErasureDoNotDeadlock(t *testing.T) {
+	_, p := newPollTest(t, Options{})
+	ctx := context.Background()
+	created := threeOptionPoll(t, p)
+	opt := created.Options[0].ID
+	if _, err := p.vote(ctx, access.Actor{ID: "erased", Kind: "user"}, created.ID, opt); err != nil {
+		t.Fatal(err)
+	}
+	erasure, err := p.s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer erasure.Rollback(ctx)
+	if _, err := erasure.Exec(ctx, `DELETE FROM `+p.s.t.pollVotes+` WHERE user_id = 'erased'`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.deleteOption(ctx, created.ID, opt) }()
+	time.Sleep(200 * time.Millisecond) // the delete now waits on the erased vote
+	if _, err := erasure.Exec(ctx, `UPDATE `+p.s.t.pollOptions+` SET vote_count = GREATEST(vote_count - 1, 0) WHERE id = $1`, opt); err != nil {
+		t.Fatalf("erasure: %v", err)
+	}
+	if err := erasure.Commit(ctx); err != nil {
+		t.Fatalf("erasure commit: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("option delete: %v", err)
 	}
 }

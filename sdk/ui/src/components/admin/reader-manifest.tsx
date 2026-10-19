@@ -29,7 +29,7 @@ export interface ReaderManifestEditorProps {
 
 const NONE = "__none__";
 
-/** A page (its name) or an anchor ("anchor:id") as one picker value. */
+/** A page (its source hash) or an anchor ("anchor:id") as one picker value. */
 const placeOf = (page?: string, anchor?: string) => (anchor !== undefined ? `anchor:${anchor}` : page !== undefined ? page : NONE);
 const fromPlace = (v: string): { page?: string; anchor?: string } => (v.startsWith("anchor:") ? { anchor: v.slice(7) } : v === NONE ? {} : { page: v });
 
@@ -101,14 +101,14 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
         <p className="text-muted-foreground">{t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })}</p>
         <Defaults meta={meta} edit={edit} />
         <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
-          onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!, offset_percent: 0 }] }))}>
+          onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!.id, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
             <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
         </Group>
         <Group title={t("readerManifest.foreground")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
-          onAdd={() => edit((m) => ({ ...m, foreground: [...(m.foreground ?? []), { file: names.files[0]!, page: names.pages[0]! }] }))}
+          onAdd={() => edit((m) => ({ ...m, foreground: [...(m.foreground ?? []), { file: names.files[0]!, page: names.pages[0]!.id }] }))}
           extra={
             <Button type="button" size="sm" variant="outline" disabled={!names.files.length} onClick={() => {
               const r = matchAudio(names, anchorIds);

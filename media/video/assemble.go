@@ -50,7 +50,8 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	fp := progress.file(run.File)
 	defer progress.done(run.File)
 	fp.set(media.PhaseMuxing)
-	if !w.published(e, k) {
+	published := w.published(e, k)
+	if !published {
 		chunks, err := c.chunks(ctx, run.ID)
 		if err != nil {
 			return err
@@ -88,7 +89,42 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	if err != nil {
 		return err
 	}
+	if published && k == len(w.stages)-1 {
+		if err := e.clearSettled(ctx, w); err != nil {
+			return err
+		}
+	}
 	return c.finishRun(ctx, run, w.stages, k)
+}
+
+// clearSettled clears the run's preset pending mark when its outputs from
+// the run's upload are all current: a plan whose snapshot predated the
+// publish that settled them may have marked them again.
+func (e *Encoder) clearSettled(ctx context.Context, w runWork) error {
+	_, err := e.ms.EditExisting(ctx, w.item.Ref(), func(m *media.Manifest) error {
+		g, err := current(m, w.f.Path, w.f.Blob)
+		if err != nil || e.fp(w.p, g) != w.fp {
+			return nil
+		}
+		if w.settled(e, m) {
+			m.ClearPending(g.Path, w.p.Name)
+		}
+		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// settled reports every stage of the run's preset published in m with the
+// run's fingerprint.
+func (w runWork) settled(e *Encoder, m *media.Manifest) bool {
+	outs := m.Outputs(w.f.Path, w.p.Name)
+	if w.p.MP4 != nil {
+		return len(outs) == 1 && outs[0].FP == w.fp
+	}
+	return stagesDone(outs, w.to(), w.fp, w.stages, e.c.Codecs) == len(w.stages)
 }
 
 // published reports a stage already recorded (an assemble retried after
@@ -219,6 +255,10 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 			if k+1 < len(w.stages) {
 				m.AddPending(g.Path, w.p.Name)
 			}
+		}
+		// A later stage published already (done > k) leaves the mark alone above.
+		if w.settled(e, m) {
+			m.ClearPending(g.Path, w.p.Name)
 		}
 		return setMP4s(m, g.Path, mp4Files)
 	})

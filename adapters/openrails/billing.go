@@ -178,21 +178,40 @@ func (a adapter) ArchivePrices(ctx context.Context, ids []string) error {
 	return nil
 }
 
-func (a adapter) Grant(ctx context.Context, grants []access.Grant) error {
+func (a adapter) Grant(ctx context.Context, key string, grants []access.Grant) ([]string, error) {
 	items := make([]billing.CreateProductAccessParams, 0, len(grants))
 	for _, g := range grants {
 		customer, product, err := ids(g)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		items = append(items, billing.CreateProductAccessParams{CustomerID: customer, ProductID: product, Reason: billing.GrantReasonComp})
 	}
-	for len(items) > 0 {
-		n := min(len(items), billing.MaxBatchItems)
-		if _, err := a.c.CreateProductAccess(ctx, billing.CreateProductAccessBatchParams{Items: items[:n]}); err != nil {
+	var granted []string
+	for offset := 0; offset < len(items); offset += billing.MaxBatchItems {
+		end := min(offset+billing.MaxBatchItems, len(items))
+		windows, err := a.c.CreateProductAccess(ctx, billing.CreateProductAccessBatchParams{
+			IdempotencyKey: fmt.Sprintf("%s:%d", key, offset), Items: items[offset:end],
+		})
+		if err != nil {
+			return granted, err
+		}
+		for _, window := range windows {
+			granted = append(granted, window.ID.String())
+		}
+	}
+	return granted, nil
+}
+
+func (a adapter) RevokeGrants(ctx context.Context, ids []string) error {
+	for _, raw := range ids {
+		id, err := billing.ParseProductAccessID(raw)
+		if err != nil {
 			return err
 		}
-		items = items[n:]
+		if err := a.c.RevokeProductAccess(ctx, id, billing.RevokeProductAccessParams{Reason: "join offer changed"}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

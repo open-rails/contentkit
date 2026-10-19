@@ -215,7 +215,7 @@ export function useContent(
     (t: CatalogText) => run(() => client.contents.putText(need(), language, t.body === undefined ? t : { ...t, body: storedBody(t.body) })),
     [client, run, need, language, storedBody],
   );
-  const publish = useCallback((at?: string) => run(() => client.contents.publish(need(), at)), [client, run, need]);
+  const publish = useCallback((at?: string) => run(() => client.contents.publishWhenReady(need(), at)), [client, run, need]);
   const unpublish = useCallback(() => run(() => client.contents.unpublish(need())), [client, run, need]);
   const remove = useCallback(() => run(() => client.contents.remove(need())), [client, run, need]);
   const restore = useCallback(() => run(() => client.contents.restore(need())), [client, run, need]);

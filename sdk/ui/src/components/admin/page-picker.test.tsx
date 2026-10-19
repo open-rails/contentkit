@@ -8,10 +8,11 @@ import { createContentKitClient } from "../../client/index.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { PagePicker } from "./page-picker.js";
 
-const pages = [{ name: "001", url: "https://media.test/t/001.webp" }, { name: "002" }, { name: "003", url: "https://media.test/t/003.webp" }];
+const hash = (name: string) => name.padStart(64, "0");
+const pages = [{ id: hash("001"), label: "001", url: "https://media.test/t/001.webp" }, { id: hash("002"), label: "002" }, { id: hash("003"), label: "003", url: "https://media.test/t/003.webp" }];
 
 function Harness({ onChange }: { onChange: (v: string) => void }) {
-  const [value, setValue] = useState("001");
+  const [value, setValue] = useState(hash("001"));
   return (
     <PagePicker
       label="Chapter 1 starts"
@@ -42,7 +43,7 @@ it("PagePicker shows the current page and picks another by thumbnail or an extra
   // A page without a signed thumbnail still shows and picks by number.
   expect(screen.getByRole("button", { name: "Page 2: 002" })).toHaveTextContent("2");
   await user.click(screen.getByRole("button", { name: "Page 3: 003" }));
-  expect(onChange).toHaveBeenLastCalledWith("003");
+  expect(onChange).toHaveBeenLastCalledWith(hash("003"));
   expect(screen.getByRole("button", { name: "Chapter 1 starts" })).toHaveTextContent("Page 3");
   await user.click(screen.getByRole("button", { name: "Chapter 1 starts" }));
   await user.click(screen.getByRole("button", { name: "Anchor intro" }));

@@ -2,7 +2,9 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,7 +60,7 @@ func pageOffset(page, limit int, cursor, sort string) (int, error) {
 		return 0, fmt.Errorf("%w: page and cursor are exclusive", ErrInvalid)
 	case sort == SortRandom:
 		return 0, fmt.Errorf("%w: random lists page by cursor", ErrInvalid)
-	case page*limit > maxPageOffset:
+	case page > maxPageOffset/limit: // page*limit could overflow
 		return 0, fmt.Errorf("%w: page × limit is at most %d", ErrInvalid, maxPageOffset)
 	}
 	return (page - 1) * limit, nil
@@ -159,6 +161,7 @@ type ReleaseDates struct {
 // ReleaseDates counts the contents the reader's listing shows by the day or
 // month they were published, newest first.
 func (s *Service) ReleaseDates(ctx context.Context, o ReleaseDatesOptions) (ReleaseDates, error) {
+	ctx = access.WithMemo(ctx)
 	out := ReleaseDates{Dates: []DateCount{}}
 	unit, layout, format := "month", "2006-01", "YYYY-MM"
 	switch o.By {
@@ -188,18 +191,29 @@ func (s *Service) ReleaseDates(ctx context.Context, o ReleaseDatesOptions) (Rele
 		}
 		before, args["d_before"] = "d.date < @d_before::text", o.Cursor
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT d.date, count(*)::int, count(*) FILTER (WHERE d.free)::int FROM (
- SELECT to_char(date_trunc(@d_unit::text, max(f.published_at) AT TIME ZONE @d_tz::text), @d_format::text) AS date,
-  bool_or(f.access_level = 'public' OR f.access_free_after <= now()) AS free
- FROM %s f WHERE %s AND f.published_at IS NOT NULL GROUP BY f.content_id) d
-WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.predicate(), before), args)
-	if err != nil {
+	filter, err := s.o.Gate.Filter(ctx, q.reader.Actor)
+	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return out, err
 	}
-	dates, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (DateCount, error) {
-		var d DateCount
-		return d, r.Scan(&d.Date, &d.Count, &d.Free)
-	})
+	var dates []DateCount
+	if filter.Complete() {
+		// Pick the edition a card would show before assigning its date and
+		// free count. A sibling cannot move it to another bucket or open it.
+		rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT d.date, count(*)::int, count(*) FILTER (WHERE d.free)::int FROM (
+ SELECT to_char(date_trunc(@d_unit::text, p.published_at AT TIME ZONE @d_tz::text), @d_format::text) AS date, p.free FROM (
+  SELECT DISTINCT ON (f.content_id) f.published_at, (f.access_level = 'public' OR f.access_free_after <= now()) AS free
+  FROM %s f WHERE %s AND f.published_at IS NOT NULL ORDER BY f.content_id, %s) p) d
+WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.predicate(), preference, before), args)
+		if err != nil {
+			return out, err
+		}
+		dates, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (DateCount, error) {
+			var d DateCount
+			return d, r.Scan(&d.Date, &d.Count, &d.Free)
+		})
+	} else {
+		dates, err = s.settledReleaseDates(ctx, q, layout, o.Cursor)
+	}
 	if err != nil {
 		return out, err
 	}
@@ -209,4 +223,35 @@ WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.pre
 	}
 	out.Dates = append(out.Dates, dates...)
 	return out, nil
+}
+
+// settledReleaseDates counts after the same preferred-edition selection and
+// access settlement as List. All candidates must be settled before limiting
+// buckets: a denied-only date must not consume a page or become its cursor.
+func (s *Service) settledReleaseDates(ctx context.Context, q *sel, layout, before string) ([]DateCount, error) {
+	counts := map[string]DateCount{}
+	err := s.summaryRows(ctx, q.with("f.published_at IS NOT NULL", nil), order{}, func(row cardRow) {
+		if row.PublishedAt == nil {
+			return
+		}
+		date := row.PublishedAt.In(q.loc).Format(layout)
+		if before != "" && date >= before {
+			return
+		}
+		d := counts[date]
+		d.Date, d.Count = date, d.Count+1
+		if row.Access.Level == access.Public {
+			d.Free++
+		}
+		counts[date] = d
+	})
+	if err != nil {
+		return nil, err
+	}
+	dates := make([]DateCount, 0, len(counts))
+	for _, d := range counts {
+		dates = append(dates, d)
+	}
+	slices.SortFunc(dates, func(a, b DateCount) int { return strings.Compare(b.Date, a.Date) })
+	return dates, nil
 }

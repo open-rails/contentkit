@@ -75,13 +75,34 @@ func (s *Service) syncTarget(ctx context.Context, t Target) (err error) {
 				active = &rows[i]
 			}
 		}
-		if !pending {
+		if !pending && active == nil {
 			return nil
 		}
 		if t.Kind == VersionTarget {
 			if err := tx.QueryRow(ctx, `SELECT content_id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = $2`, s.tenant, t.ID).Scan(&t.Content); err != nil {
 				return err
 			}
+		}
+		if active != nil && t.Kind != GroupTarget {
+			var kind string
+			if err := tx.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, orID(t)).Scan(&kind); err != nil {
+				return err
+			}
+			if spec, exists := s.kinds.Kinds[kind]; !exists || !spec.Sellable() {
+				// A stricter host policy withdraws an old offer through the same
+				// revision lifecycle as an editor's withdrawal. Keep the offer and
+				// buyers' entitlements; the sync below archives only the product.
+				var revision int64
+				if err := tx.QueryRow(ctx, `UPDATE `+s.t.offers+` SET state = 'withdrawn', revision = revision + 1, updated_at = now()
+ WHERE tenant_id = $1 AND id = $2 AND revision = $3 AND state = 'active' RETURNING revision`, s.tenant, active.id, active.revision).Scan(&revision); err != nil {
+					return err
+				}
+				active.state, active.revision = Withdrawn, revision
+				active, pending = nil, true
+			}
+		}
+		if !pending {
+			return nil
 		}
 		productID, priceID, err := s.push(ctx, tx, t, active)
 		if err != nil {

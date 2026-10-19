@@ -2,6 +2,15 @@ import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
   readerEditor: {
+    sharedEntities: "ギャラリーの関連情報",
+    sharedHint: "このギャラリーのすべてのバージョンで共有されます。",
+    versionDetails: "バージョンの詳細",
+    versionEntities: "バージョンのクレジット",
+    versionHint: "編集中のバージョンのみに適用されます。",
+    versionMissing: "このバージョンが見つかりません。",
+    leaveVersion: "このバージョンを離れますか？",
+    discardVersionEdits: "未保存の変更を破棄して別のバージョンを開きますか？",
+    discard: "変更を破棄",
     thumbnail: "サムネイル",
     editThumbnail: "サムネイルを切り抜く",
     setThumbnail: "サムネイルに設定",

@@ -55,7 +55,7 @@ func TestRoutesIntegration(t *testing.T) {
 		t.Fatalf("version %+v", v)
 	}
 	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+id+"/versions/"+v.ID, VersionInput{Traits: &[]string{"colored"}, State: StatePublished}, &v)
-	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/versions/"+v.ID+"/segments", SegmentsInput{Segments: []Segment{{Start: 0, End: 4}, {Start: 4, End: 9, Title: "Two"}}}, &v)
+	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/versions/"+v.ID+"/segments", SegmentsInput{Segments: []SegmentInput{{Start: 0, End: 4}, {Start: 4, End: 9, Title: "Two"}}}, &v)
 	if len(v.Segments) != 2 || v.Segments[1].Title != "Two" || !v.Segments[1].Released {
 		t.Fatalf("segments %+v", v.Segments)
 	}
@@ -88,6 +88,11 @@ func TestRoutesIntegration(t *testing.T) {
 		t.Fatalf("one version %+v", one)
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id+"/versions/"+id, nil, nil)
+	// A version code selects that version alone, with its segments.
+	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+id+"/versions/"+strings.ToLower(ja.Versions[0].Code), nil, &one)
+	if one.ID != v.ID || len(one.Segments) != 2 {
+		t.Fatalf("version by code %+v", one)
+	}
 	f.want(http.StatusBadRequest, anon, "GET", "/v1/contents/"+id+"?language=xx", nil, nil)
 	// The site's default language is prefixed however it is asked for.
 	var en Content
@@ -277,6 +282,15 @@ func TestModerationHoldIntegration(t *testing.T) {
 	if live == nil || !live.Live || live.Body != "first draft is iffy" {
 		t.Fatalf("approved %+v", live)
 	}
+	published := func(id string) (n int) {
+		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_events")+` WHERE entity_id = $1 AND type = $2`, id, EventContentPublished).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := published(id); n != 1 {
+		t.Fatalf("approving a due held item emitted %d published events, want 1", n)
+	}
 
 	// A rejected edit writes nothing; a held edit keeps the approved text public.
 	f.want(http.StatusUnprocessableEntity, "staff", "PUT", "/v1/contents/"+id+"/text/en", Text{Title: "Post", Body: "buy spam"}, nil)
@@ -314,6 +328,27 @@ func TestModerationHoldIntegration(t *testing.T) {
 	}
 	if got := f.read(anon, "main.test", id)[0]; got.Title != "Post v3" || got.Body != "clean" {
 		t.Fatalf("after the race %+v", got)
+	}
+
+	// Deciding on a held item that never went live publishes nothing: a
+	// rejection, and an approval of one scheduled for later.
+	at := f.now().Add(time.Hour).UTC().Truncate(time.Second)
+	for name, c := range map[string]struct {
+		publish  PublishInput
+		decision content.Decision
+	}{"rejected": {decision: content.DecisionReject}, "approved for later": {publish: PublishInput{PublishAt: &at}, decision: content.DecisionApprove}} {
+		id := f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: name, Body: "iffy"}}})
+		f.want(http.StatusAccepted, "staff", "POST", "/v1/contents/"+id+"/publish", c.publish, nil)
+		page, err := rt.ListHeld(f.ctx, HeldKind, "", 10)
+		if err != nil || len(page.Items) != 1 || page.Items[0].ID != id {
+			t.Fatalf("%s: held queue %+v %v", name, page, err)
+		}
+		if err := rt.Resolve(f.ctx, HeldKind, id, content.ReviewDecision{Revision: page.Items[0].Revision, Decision: c.decision, Reviewer: "staff"}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := f.read(anon, "main.test", id)[0]; got != nil || published(id) != 0 {
+			t.Fatalf("%s: public %+v, %d published events", name, got, published(id))
+		}
 	}
 }
 

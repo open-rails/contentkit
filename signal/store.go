@@ -100,8 +100,14 @@ func projectionKeyContext(ctx context.Context, keys []ProjectionKey) (context.Co
 // incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
 // process stops between the insert and the projections, the events are durable
 // and RepairProjections restores the projections.
-// insertChunk bounds the rows of one signals INSERT.
-const insertChunk = 200
+// insertChunk bounds the rows of one inlined INSERT ... SELECT, and
+// insertBytes the bytes those rows take once the driver inlines their
+// arguments: ClickHouse rejects a statement over max_query_size (256 KiB by
+// default), and the remainder covers the statement around the rows.
+const (
+	insertChunk = 200
+	insertBytes = 240 << 10
+)
 
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
@@ -141,8 +147,10 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if err != nil {
 		return err
 	}
-	args := make([]any, 0, len(signals)*12)
+	const perRow = 12
+	args := make([]any, 0, len(signals)*perRow)
 	rows := make([]string, 0, len(signals))
+	sizes := make([]int, 0, len(signals))
 	for i := range signals {
 		s := signals[i]
 		if s.Type == "view" || s.Type == "preview" {
@@ -165,16 +173,15 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 			strings.TrimSpace(s.EventID), s.Revision, s.OccurredAt.UTC(),
 			s.Value, payload,
 		)
+		sizes = append(sizes, inlinedSize(rows[len(rows)-1], args[len(args)-perRow:]))
 	}
 	if len(rows) == 0 {
 		return nil
 	}
-	// The driver inlines arguments, so chunks keep each statement well under
-	// ClickHouse's max_query_size (256 KiB). Events are idempotent by
-	// event_id, so a retry after a partial insert converges.
-	const perRow = 12
-	for start := 0; start < len(rows); start += insertChunk {
-		end := min(start+insertChunk, len(rows))
+	// Events are idempotent by event_id, so a retry after a partial insert
+	// converges.
+	for start, end := 0, 0; start < len(rows); start = end {
+		end = insertEnd(sizes, start)
 		insert := fmt.Sprintf(`INSERT INTO %s.signals
 (tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
  value, payload)
@@ -444,6 +451,39 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []F
 		return err
 	}
 	return forget(versions, tables, func(in string) string { return "(content_kind, content_id, content_version_id) IN " + in })
+}
+
+// inlinedSize bounds the bytes a row's SELECT takes once the driver inlines
+// args into it: quoting and escaping at most double a string plus its
+// separator, and no other value renders in more than 64 bytes.
+func inlinedSize(row string, args []any) int {
+	n := len(row)
+	for _, a := range args {
+		switch v := a.(type) {
+		case string:
+			n += 2*len(v) + 4
+		case []string:
+			for _, s := range v {
+				n += 2*len(s) + 4
+			}
+		case []uint32:
+			n += 12*len(v) + 2
+		default:
+			n += 64
+		}
+	}
+	return n
+}
+
+// insertEnd returns the end of the INSERT whose rows start at sizes[start]: at
+// most insertChunk rows and, past the first, insertBytes.
+func insertEnd(sizes []int, start int) int {
+	end, total := start, 0
+	for end < len(sizes) && end-start < insertChunk && (end == start || total+sizes[end] <= insertBytes) {
+		total += sizes[end]
+		end++
+	}
+	return end
 }
 
 // escapeCHString escapes a string for inline use in a ClickHouse literal.

@@ -198,6 +198,7 @@ type FileInfo struct {
 	URL      string  `json:"url,omitempty"`
 
 	// Editors (editor reads and commit replies):
+	PageID     string          `json:"page_id,omitempty"` // original page bytes' SHA-256, not filename, position or rendition hash
 	CreateID   string          `json:"create_id,omitempty"`
 	Upload     bool            `json:"upload,omitempty"`
 	Staged     bool            `json:"staged,omitempty"` // uploaded, not yet placed by the worker: no blob, views or frames yet

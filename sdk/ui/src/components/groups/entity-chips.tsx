@@ -26,6 +26,8 @@ export interface EntityChipsProps {
   spec: GroupKind;
   labels?: Labels;
   versions?: readonly VersionChoice[];
+  /** False when the enclosing editor already fixes the shared/version scope. */
+  allowVersionChange?: boolean;
   versionLabel: (id: string) => string;
   language?: string;
   /** Staff lookup, including internal entities. */
@@ -98,11 +100,11 @@ export function EntityChips(p: EntityChipsProps) {
     return card ? card.name || card.slug : (m.group_id ?? "");
   };
   // A whole-content link without a role is the one duplicate to skip.
-  const plain = useMemo(() => new Set(p.memberships.filter((m) => !m.version_id && !m.role).map((m) => m.group_id)), [p.memberships]);
+  const plain = useMemo(() => new Set(p.memberships.filter((m) => (p.allowVersionChange === false || !m.version_id) && !m.role).map((m) => m.group_id)), [p.memberships, p.allowVersionChange]);
   const suggestions = useMemo(() => found.entities.filter((g) => g.kind === p.kind && !plain.has(g.id)).slice(0, 6), [found.entities, p.kind, plain]);
   const listOpen = fragment !== "" && suggestions.length > 0;
   useEffect(() => setActive(0), [fragment]);
-  const detailed = (m: Membership) => !!p.spec.version_level || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
+  const detailed = (m: Membership) => (!!p.spec.version_level && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
   const add = (card: GroupCard) => {
     if (plain.has(card.id)) return false;
     p.onAdd(card);
@@ -166,7 +168,7 @@ export function EntityChips(p: EntityChipsProps) {
         <ul className="contents" aria-label={p.label}>
           {p.memberships.map((m, i) => {
             const n = name(m);
-            const extra = [m.role && labelOf(p.labels, m.role), m.version_id && p.versionLabel(m.version_id), m.position != null && `#${m.position}`].filter(Boolean).join(" · ");
+            const extra = [m.role && labelOf(p.labels, m.role), m.version_id && p.allowVersionChange !== false && p.versionLabel(m.version_id), m.position != null && `#${m.position}`].filter(Boolean).join(" · ");
             return (
               <li key={`${m.group_id}:${i}`} className={cn("inline-flex max-w-full items-center gap-1 rounded-md bg-muted py-0.5 ps-2 pe-1 text-sm", m.state === "proposed" && "border border-dashed border-primary", open === i && "ring-2 ring-ring")} data-ckui="entity-chip" data-group={p.cards.get(m.group_id ?? "")?.slug}>
                 {detailed(m) ? (
@@ -289,6 +291,7 @@ export function EntityChips(p: EntityChipsProps) {
             spec={p.spec}
             labels={p.labels}
             versions={p.versions}
+            allowVersionChange={p.allowVersionChange}
             versionLabel={p.versionLabel}
             onChange={(patch) => p.onChange(open, patch)}
             onRemove={() => {
@@ -316,6 +319,7 @@ export function MembershipRow({
   spec,
   labels,
   versions,
+  allowVersionChange = true,
   versionLabel,
   onChange,
   onRemove,
@@ -325,6 +329,7 @@ export function MembershipRow({
   spec: GroupKind;
   labels?: Labels;
   versions?: readonly VersionChoice[];
+  allowVersionChange?: boolean;
   versionLabel: (id: string) => string;
   onChange: (patch: Partial<Membership>) => void;
   onRemove: () => void;
@@ -344,7 +349,7 @@ export function MembershipRow({
           </Button>
         </>
       )}
-      {spec.version_level && versionIds.length > 0 && (
+      {allowVersionChange && spec.version_level && versionIds.length > 0 && (
         <Select value={x.version_id ?? NONE} onValueChange={(v) => onChange({ version_id: v === NONE ? undefined : String(v) })}>
           <SelectTrigger size="sm" aria-label={t("memberships.versionOf", { name })}>
             <SelectValue>{(v: string) => (v === NONE ? t("memberships.wholeContent") : versionLabel(v))}</SelectValue>

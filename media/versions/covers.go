@@ -109,7 +109,11 @@ func (s *Service) coverSource(ctx context.Context, t Target, m *media.Manifest) 
 	if err != nil {
 		return nil, err
 	}
-	if len(snap.Pages) == 0 || released(segs[t.Version], len(snap.Pages), s.o.Now()) == 0 {
+	chapters, err := resolveChapterStarts(segs[t.Version], snap.Pages)
+	if err != nil {
+		return nil, err
+	}
+	if len(snap.Pages) == 0 || released(chapters, len(snap.Pages), s.o.Now()) == 0 {
 		return nil, nil
 	}
 	f, ok := m.Get(snap.Pages[0].Path)

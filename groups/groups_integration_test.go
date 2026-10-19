@@ -1,15 +1,379 @@
 package groups
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 )
+
+// hostReferences models a host-owned relation, using only the transaction
+// supplied by ContentKit. Failure after its writes verifies atomic rollback.
+type hostReferences struct {
+	table     string
+	kind      string
+	failMerge bool
+}
+
+func (h *hostReferences) CheckUnavailable(ctx context.Context, q Querier, tenant string, refs []Ref) error {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if h.kind == "" || ref.Kind == h.kind {
+			ids = append(ids, string(ref.ID))
+		}
+	}
+	var used bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+h.table+` WHERE tenant_id=$1 AND group_id=ANY($2::text[]))`, tenant, ids).Scan(&used); err != nil {
+		return err
+	}
+	if used {
+		return fmt.Errorf("%w: host references remain", ErrConflict)
+	}
+	return nil
+}
+
+func (h *hostReferences) Merge(ctx context.Context, q Querier, tenant string, from, into Ref) error {
+	if _, err := q.Exec(ctx, `INSERT INTO `+h.table+` (tenant_id, candidate, group_id)
+ SELECT tenant_id, candidate, $3 FROM `+h.table+` WHERE tenant_id=$1 AND group_id=$2 ON CONFLICT DO NOTHING`, tenant, string(from.ID), string(into.ID)); err != nil {
+		return err
+	}
+	if _, err := q.Exec(ctx, `DELETE FROM `+h.table+` WHERE tenant_id=$1 AND group_id=$2`, tenant, string(from.ID)); err != nil {
+		return err
+	}
+	if h.failMerge {
+		return fmt.Errorf("%w: host write failed", ErrConflict)
+	}
+	return nil
+}
+
+func (f *fixture) hostReferences() *hostReferences {
+	f.t.Helper()
+	f.exec(`CREATE TABLE {s}.host_links (tenant_id text NOT NULL, candidate text NOT NULL, group_id text NOT NULL,
+ PRIMARY KEY (tenant_id,candidate,group_id), FOREIGN KEY (tenant_id,group_id) REFERENCES {s}.content_groups(tenant_id,id))`)
+	h := &hostReferences{table: f.s.table("host_links")}
+	f.s.references = h
+	return h
+}
+
+func (f *fixture) waitGroupReferenceBlocked(ctx context.Context, pid uint32) {
+	f.t.Helper()
+	timer := time.NewTicker(10 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		var blocked bool
+		if err := f.pool.QueryRow(ctx, "SELECT cardinality(pg_blocking_pids($1)) > 0", pid).Scan(&blocked); err != nil {
+			f.t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			f.t.Fatal("competing transaction never blocked")
+		case <-timer.C:
+		}
+	}
+}
+
+func TestGroupReferencesIntegration(t *testing.T) {
+	f := newFixture(t)
+	h := f.hostReferences()
+	g := f.create(GroupInput{Kind: "artist", Slug: "old"}, GroupInput{Kind: "artist", Slug: "new"}, GroupInput{Kind: "tag", Slug: "tag"})
+	from, into, tag := g[0], g[1], g[2]
+	f.exec(`INSERT INTO {s}.host_links VALUES ($1,'one',$2),($1,'one',$3),($1,'two',$2)`, tenant, string(from.ID), string(into.ID))
+	checkLinks := func(fromCount, intoCount int) {
+		t.Helper()
+		var a, b int
+		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FILTER (WHERE group_id=$2),count(*) FILTER (WHERE group_id=$3) FROM `+h.table+` WHERE tenant_id=$1`, tenant, string(from.ID), string(into.ID)).Scan(&a, &b); err != nil {
+			t.Fatal(err)
+		}
+		if a != fromCount || b != intoCount {
+			t.Fatalf("host links: got %d/%d, want %d/%d", a, b, fromCount, intoCount)
+		}
+	}
+	h.failMerge = true
+	if _, err := f.s.Merge(f.ctx, []Merge{{From: from.ID, Into: into.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("merge failure: %v", err)
+	}
+	checkLinks(2, 1)
+	h.failMerge = false
+	if _, err := f.s.Merge(f.ctx, []Merge{{From: from.ID, Into: into.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	checkLinks(0, 2)
+
+	deleted := StateDeleted
+	internal := true
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{"delete", func() error { _, err := f.s.DeleteGroups(f.ctx, []GroupID{tag.ID, into.ID}); return err }},
+		{"internal", func() error {
+			_, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: into.ID, Internal: &internal}})
+			return err
+		}},
+		{"import delete", func() error {
+			return pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
+				return f.s.ImportGroups(f.ctx, tx, []ImportGroup{{ID: into.ID, Kind: into.Kind, Slug: into.Slug, State: deleted}}, false)
+			})
+		}},
+		{"import internal", func() error {
+			return pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
+				return f.s.ImportGroups(f.ctx, tx, []ImportGroup{{ID: into.ID, Kind: into.Kind, Slug: into.Slug, Internal: &internal}}, false)
+			})
+		}},
+		{"import deletes", func() error {
+			return pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error { return f.s.ImportDeletes(f.ctx, tx, []GroupID{into.ID}) })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); !errors.Is(err, ErrConflict) {
+				t.Fatalf("referenced group must be protected: %v", err)
+			}
+			checkLinks(0, 2)
+			var state string
+			var hidden bool
+			if err := f.pool.QueryRow(f.ctx, `SELECT state,internal FROM `+f.s.table("content_groups")+` WHERE tenant_id=$1 AND id=$2`, tenant, string(into.ID)).Scan(&state, &hidden); err != nil {
+				t.Fatal(err)
+			}
+			if state != "active" || hidden {
+				t.Fatalf("failed mutation persisted: %s/%t", state, hidden)
+			}
+		})
+	}
+
+	other, err := New(Options{Pool: f.pool, Schema: f.schema, Tenant: "other", Kinds: config()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := other.CreateGroups(f.ctx, []GroupInput{{Kind: "artist", Slug: "foreign"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		refs []Ref
+		want error
+	}{
+		{"valid", []Ref{{Kind: "artist", ID: into.ID}, {Kind: "tag", ID: tag.ID}}, nil},
+		{"empty", nil, nil},
+		{"wrong kind", []Ref{{Kind: "tag", ID: into.ID}}, ErrInvalid},
+		{"conflicting duplicate", []Ref{{Kind: "artist", ID: into.ID}, {Kind: "tag", ID: into.ID}}, ErrInvalid},
+		{"merged", []Ref{{Kind: "artist", ID: from.ID}}, ErrConflict},
+		{"foreign tenant", []Ref{{Kind: "artist", ID: foreign[0].ID}}, ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error { return f.s.LockReferencesTx(f.ctx, tx, tc.refs) })
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("lock: %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if err := f.s.LockReferencesTx(f.ctx, nil, nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("nil transaction: %v", err)
+	}
+	f.exec(`DELETE FROM {s}.host_links`)
+	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{into.ID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGroupReferencesConcurrentBinding(t *testing.T) {
+	for _, operation := range []string{"merge", "delete", "import"} {
+		for _, bindFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/bind-first=%t", operation, bindFirst), func(t *testing.T) {
+				f := newFixture(t)
+				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+				defer cancel()
+				f.ctx = ctx
+				h := f.hostReferences()
+				g := f.create(GroupInput{Kind: "artist", Slug: "old"}, GroupInput{Kind: "artist", Slug: "new"})
+				bind, err := f.pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer bind.Rollback(ctx)
+				write, err := f.pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer write.Rollback(ctx)
+				lock := func() error { return f.s.LockReferencesTx(ctx, bind, []Ref{{Kind: "artist", ID: g[0].ID}}) }
+				mutate := func() error {
+					if operation == "import" {
+						return f.s.ImportGroups(ctx, write, []ImportGroup{{ID: g[0].ID, Kind: "artist", Slug: "old", State: StateDeleted}}, false)
+					}
+					if operation == "merge" {
+						_, err := f.s.bound(write).Merge(ctx, []Merge{{From: g[0].ID, Into: g[1].ID}})
+						return err
+					}
+					_, err := f.s.bound(write).DeleteGroups(ctx, []GroupID{g[0].ID})
+					return err
+				}
+				result := make(chan error, 1)
+				done := make(chan struct{})
+				if bindFirst {
+					if err := lock(); err != nil {
+						t.Fatal(err)
+					}
+					pid := write.Conn().PgConn().PID()
+					go func() {
+						defer close(done)
+						err := mutate()
+						if err == nil {
+							err = write.Commit(ctx)
+						} else {
+							_ = write.Rollback(ctx)
+						}
+						result <- err
+					}()
+					defer func() { cancel(); <-done }()
+					f.waitGroupReferenceBlocked(ctx, pid)
+					if _, err := bind.Exec(ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID)); err != nil {
+						t.Fatal(err)
+					}
+					if err := bind.Commit(ctx); err != nil {
+						t.Fatal(err)
+					}
+					err = <-result
+					if operation != "merge" {
+						if !errors.Is(err, ErrConflict) {
+							t.Fatalf("delete after bind: %v", err)
+						}
+					} else if err != nil {
+						t.Fatal(err)
+					}
+					want := g[0].ID
+					if operation == "merge" {
+						want = g[1].ID
+					}
+					var got string
+					if err := f.pool.QueryRow(ctx, `SELECT group_id FROM `+h.table+` WHERE candidate='one'`).Scan(&got); err != nil {
+						t.Fatal(err)
+					}
+					if got != string(want) {
+						t.Fatalf("link %s, want %s", got, want)
+					}
+				} else {
+					if err := mutate(); err != nil {
+						t.Fatal(err)
+					}
+					pid := bind.Conn().PgConn().PID()
+					go func() { defer close(done); result <- lock() }()
+					defer func() { cancel(); <-done }()
+					f.waitGroupReferenceBlocked(ctx, pid)
+					if err := write.Commit(ctx); err != nil {
+						t.Fatal(err)
+					}
+					if err := <-result; !errors.Is(err, ErrConflict) {
+						t.Fatalf("bind after mutation: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestGroupReferencesConcurrentImportCreation(t *testing.T) {
+	f := newFixture(t)
+	h := f.hostReferences()
+	h.kind = "tag"
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	create, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer create.Rollback(ctx)
+	g, err := f.s.bound(create).CreateGroups(ctx, []GroupInput{{Kind: "tag", Slug: "new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := create.Exec(ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID)); err != nil {
+		t.Fatal(err)
+	}
+	importTx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer importTx.Rollback(ctx)
+	pid := importTx.Conn().PgConn().PID()
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// The initial SELECT cannot see the tag yet. The upsert waits for its
+		// creator, retaining its actual kind rather than this input's kind.
+		result <- f.s.ImportGroups(ctx, importTx, []ImportGroup{{ID: g[0].ID, Kind: "artist", Slug: "imported", State: StateDeleted}}, false)
+	}()
+	defer func() { cancel(); <-done }()
+	f.waitGroupReferenceBlocked(ctx, pid)
+	if err := create.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrConflict) {
+		t.Fatalf("concurrently created tag must be protected: %v", err)
+	}
+	if err := importTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.pool.QueryRow(ctx, `SELECT state FROM `+f.s.table("content_groups")+` WHERE tenant_id=$1 AND id=$2`, tenant, string(g[0].ID)).Scan(&state); err != nil || state != "active" {
+		t.Fatalf("import rollback state %q: %v", state, err)
+	}
+}
+
+func TestGroupReferencesRejectStaleSnapshots(t *testing.T) {
+	f := newFixture(t)
+	h := f.hostReferences()
+	g := f.create(GroupInput{Kind: "artist", Slug: "old"}, GroupInput{Kind: "artist", Slug: "new"})
+	for _, operation := range []string{"bind", "delete", "merge", "import"} {
+		t.Run(operation, func(t *testing.T) {
+			f.exec(`DELETE FROM {s}.host_links`)
+			tx, err := f.pool.BeginTx(f.ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(f.ctx)
+			// Fix this transaction's snapshot before a host link is committed.
+			var count int
+			if err := tx.QueryRow(f.ctx, `SELECT count(*) FROM `+h.table).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("initial references %d: %v", count, err)
+			}
+			err = pgx.BeginFunc(f.ctx, f.pool, func(bind pgx.Tx) error {
+				if err := f.s.LockReferencesTx(f.ctx, bind, []Ref{{Kind: "artist", ID: g[0].ID}}); err != nil {
+					return err
+				}
+				_, err := bind.Exec(f.ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID))
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch operation {
+			case "bind":
+				err = f.s.LockReferencesTx(f.ctx, tx, []Ref{{Kind: "artist", ID: g[0].ID}})
+			case "delete":
+				_, err = f.s.bound(tx).DeleteGroups(f.ctx, []GroupID{g[0].ID})
+			case "merge":
+				_, err = f.s.bound(tx).Merge(f.ctx, []Merge{{From: g[0].ID, Into: g[1].ID}})
+			case "import":
+				err = f.s.ImportGroups(f.ctx, tx, []ImportGroup{{ID: g[0].ID, Kind: "artist", Slug: "old", State: StateDeleted}}, false)
+			}
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("stale snapshot accepted: %v", err)
+			}
+		})
+	}
+}
 
 // Groups are created against their kind's rules: scope, parent, owner, auth
 // scope, declared attributes and cover; slugs are unique per kind and scope.
@@ -293,6 +657,30 @@ func TestMembershipRules(t *testing.T) {
 	if held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2), cid(3)}); len(held[cid(2)]) != 1 || len(held[cid(3)]) != 1 {
 		t.Fatalf("after remove %+v", held)
 	}
+
+	// An import naming one membership twice is still a change: the duplicate
+	// collapses as a write keeps it, so the stored artist membership goes.
+	f.add(Membership{GroupID: tag.ID, ContentID: cid(2)}, Membership{GroupID: artist.ID, ContentID: cid(2)})
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if err := f.s.ImportMemberships(f.ctx, tx, []ContentGroups{{ContentID: cid(2), Kinds: []string{"artist", "tag"},
+		Memberships: []Membership{{GroupID: tag.ID}, {GroupID: tag.ID}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	held, _ = f.s.MembershipsOf(f.ctx, []string{cid(2)})
+	kept := map[GroupID]bool{}
+	for _, m := range held[cid(2)] {
+		kept[m.GroupID] = true
+	}
+	if !kept[tag.ID] || kept[artist.ID] {
+		t.Fatalf("after importing a duplicated set %+v", held[cid(2)])
+	}
 }
 
 // Merging moves memberships (an accepted one wins over a proposed duplicate),
@@ -560,10 +948,14 @@ func TestList(t *testing.T) {
 		t.Fatalf("cursor page total %+v", page.Total)
 	}
 	for name, opts := range map[string]ListOptions{"kind": {Kind: "studio"}, "sort": {Sort: "random"}, "letter": {Letter: "ab"}, "cursor": {Cursor: "!"}, "parent": {Parent: "x"},
-		"page": {Page: -1}, "page and cursor": {Page: 2, Cursor: "x"}, "deep page": {Page: 51, Limit: 200}} {
+		"page": {Page: -1}, "page and cursor": {Page: 2, Cursor: "x"}, "deep page": {Page: 51, Limit: 200},
+		"overflowing page": {Page: 92233720368547759, Limit: 100}} {
 		if _, err := f.s.List(f.ctx, opts); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	if _, err := f.s.List(f.ctx, ListOptions{Kind: "tag", Page: 50, Limit: 200}); err != nil {
+		t.Errorf("last allowed page: %v", err)
 	}
 
 	// Parent and scope filters; detail carries parent, scope and children.
@@ -615,5 +1007,282 @@ func TestKeywordDocuments(t *testing.T) {
 	listed, _, done, err = f.s.ListDocuments(f.ctx, "tag", "en", "", 1)
 	if err != nil || len(listed) != 1 || done {
 		t.Fatalf("tag page %v %v %v", listed, done, err)
+	}
+}
+
+// An edge added while a merge retires one of its groups waits for the merge
+// and is refused, rather than staying attached to the retired group.
+func TestEdgeToAGroupBeingMergedIsRefused(t *testing.T) {
+	f := newFixture(t)
+	g := f.create(GroupInput{Kind: "series", Slug: "from"}, GroupInput{Kind: "series", Slug: "into"}, GroupInput{Kind: "series", Slug: "peer"})
+	from, into, peer := g[0], g[1], g[2]
+	merge, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer merge.Rollback(f.ctx)
+	groups := pgx.Identifier{f.schema, "content_groups"}.Sanitize()
+	if _, err := merge.Exec(f.ctx, `SELECT 1 FROM `+groups+` WHERE id = $1 FOR UPDATE`, string(from.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := merge.Exec(f.ctx, `UPDATE `+groups+` SET state = 'merged', merged_into = $2 WHERE id = $1`, string(from.ID), string(into.ID)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.s.AddEdges(f.ctx, []Edge{{From: from.ID, Relation: "related", To: peer.ID}}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("the edge did not wait for the merge: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := merge.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("edge to a merged group: %v", err)
+	}
+}
+
+// raceAfter runs first in one transaction and, while it is open, second in
+// another. Once second has either returned or is waiting on first's locks,
+// first commits; second commits if it succeeded. It returns second's error.
+func (f *fixture) raceAfter(first, second func(pgx.Tx) error) error {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	a, err := f.pool.Begin(ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer a.Rollback(ctx)
+	if err := first(a); err != nil {
+		f.t.Fatal(err)
+	}
+	b, err := f.pool.Begin(ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer b.Rollback(ctx)
+	pid := b.Conn().PgConn().PID()
+	done := make(chan error, 1)
+	go func() { done <- second(b) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		default:
+		}
+	}()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	returned := false
+wait:
+	for {
+		select {
+		case err = <-done:
+			returned = true
+			break wait
+		case <-tick.C:
+			var blocked bool
+			if err := f.pool.QueryRow(ctx, "SELECT cardinality(pg_blocking_pids($1)) > 0", pid).Scan(&blocked); err != nil {
+				f.t.Fatal(err)
+			}
+			if blocked {
+				break wait
+			}
+		case <-ctx.Done():
+			f.t.Fatal("second transaction neither returned nor blocked")
+		}
+	}
+	if err := a.Commit(ctx); err != nil {
+		f.t.Fatal(err)
+	}
+	if !returned {
+		err = <-done
+	}
+	if err == nil {
+		if err := b.Commit(ctx); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return err
+}
+
+// hierarchyFaults lists groups on a parent cycle and active groups under a
+// parent that is not active.
+func (f *fixture) hierarchyFaults() []string {
+	f.t.Helper()
+	rows, err := f.pool.Query(f.ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id) AS (
+ SELECT id, parent_id FROM %[1]s WHERE parent_id IS NOT NULL
+ UNION
+ SELECT up.start, g.parent_id FROM up JOIN %[1]s g ON g.id = up.id WHERE g.parent_id IS NOT NULL)
+SELECT 'cycle ' || start FROM up WHERE start = id
+UNION ALL
+SELECT 'orphan ' || c.id FROM %[1]s c JOIN %[1]s p ON p.id = c.parent_id WHERE c.state = 'active' AND p.state <> 'active'`,
+		pgx.Identifier{f.schema, "content_groups"}.Sanitize()))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	faults, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return faults
+}
+
+// Topology writers serialize: the second validates against the first's
+// committed change instead of the state both started from.
+func TestConcurrentHierarchyChangesStayValid(t *testing.T) {
+	reparent := func(f *fixture, id, parent GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).UpdateGroups(f.ctx, []GroupUpdate{{ID: id, ParentID: &parent}})
+			return err
+		}
+	}
+	tests := map[string]func(f *fixture) (first, second func(pgx.Tx) error){
+		"opposite reparents": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			return reparent(f, g[0].ID, g[1].ID), reparent(f, g[1].ID, g[0].ID)
+		},
+		"import against a reparent": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			return reparent(f, g[0].ID, g[1].ID), func(tx pgx.Tx) error {
+				return f.s.ImportGroups(f.ctx, tx, []ImportGroup{{ID: g[1].ID, Kind: "series", Slug: "b", ParentID: g[0].ID}}, false)
+			}
+		},
+		// Merging a into b moves c under b while x, b's parent, moves under c.
+		"merge against a reparent": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "x"})
+			a, x := g[0], g[1]
+			g = f.create(GroupInput{Kind: "series", Slug: "b", ParentID: x.ID}, GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})
+			b, c := g[0], g[1]
+			return reparent(f, x.ID, c.ID), func(tx pgx.Tx) error {
+				_, err := f.s.bound(tx).Merge(f.ctx, []Merge{{From: a.ID, Into: b.ID}})
+				return err
+			}
+		},
+		"create under a parent being deleted": func(f *fixture) (first, second func(pgx.Tx) error) {
+			p := f.create(GroupInput{Kind: "series", Slug: "p"})[0]
+			return func(tx pgx.Tx) error {
+					_, err := f.s.bound(tx).DeleteGroups(f.ctx, []GroupID{p.ID})
+					return err
+				}, func(tx pgx.Tx) error {
+					_, err := f.s.bound(tx).CreateGroups(f.ctx, []GroupInput{{Kind: "series", Slug: "child", ParentID: p.ID}})
+					return err
+				}
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			first, second := setup(f)
+			if err := f.raceAfter(first, second); !errors.Is(err, ErrInvalid) {
+				t.Errorf("second writer: %v", err)
+			}
+			if faults := f.hierarchyFaults(); len(faults) > 0 {
+				t.Errorf("committed hierarchy faults %v", faults)
+			}
+		})
+	}
+}
+
+// Cycle detection has no depth cutoff.
+func TestDeepHierarchy(t *testing.T) {
+	f := newFixture(t)
+	chain := make([]GroupInput, 100)
+	for i := range chain {
+		chain[i] = GroupInput{ID: GroupID(contentref.NewID()), Kind: "series", Slug: fmt.Sprintf("s%d", i)}
+		if i > 0 {
+			chain[i].ParentID = chain[i-1].ID
+		}
+	}
+	f.create(chain...)
+	top, bottom := chain[0].ID, chain[len(chain)-1].ID
+	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: top, ParentID: &bottom}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("closing a 100-group cycle: %v", err)
+	}
+	root := f.create(GroupInput{Kind: "series", Slug: "root"})[0].ID
+	if _, err := f.s.UpdateGroups(f.ctx, []GroupUpdate{{ID: top, ParentID: &root}}); err != nil {
+		t.Fatalf("deepening an acyclic chain: %v", err)
+	}
+	if faults := f.hierarchyFaults(); len(faults) > 0 {
+		t.Fatalf("hierarchy faults %v", faults)
+	}
+}
+
+// A membership write and a hierarchy change racing either way leave the
+// stored facets equal to the effective groups, and neither deadlocks.
+func TestMembershipsRaceHierarchyChanges(t *testing.T) {
+	update := func(f *fixture, u GroupUpdate) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).UpdateGroups(f.ctx, []GroupUpdate{u})
+			return err
+		}
+	}
+	add := func(f *fixture, g GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			return f.s.bound(tx).AddMemberships(f.ctx, []Membership{{GroupID: g, ContentID: cid(1)}})
+		}
+	}
+	merge := func(f *fixture, from, into GroupID) func(pgx.Tx) error {
+		return func(tx pgx.Tx) error {
+			_, err := f.s.bound(tx).Merge(f.ctx, []Merge{{From: from, Into: into}})
+			return err
+		}
+	}
+	deleted := StateDeleted
+	tests := map[string]func(f *fixture) (first, second func(pgx.Tx) error){
+		"ancestor deleted then membership added": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, State: &deleted}), add(f, c.ID)
+		},
+		"membership added then ancestor deleted": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return add(f, c.ID), update(f, GroupUpdate{ID: a.ID, State: &deleted})
+		},
+		"ancestor reparented then content groups set": func(f *fixture) (first, second func(pgx.Tx) error) {
+			r := f.create(GroupInput{Kind: "series", Slug: "r1"}, GroupInput{Kind: "series", Slug: "r2"})
+			a := f.create(GroupInput{Kind: "series", Slug: "a", ParentID: r[0].ID})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, ParentID: &r[1].ID}), func(tx pgx.Tx) error {
+				return f.s.bound(tx).SetContentGroups(f.ctx, []ContentGroups{{ContentID: cid(1), Kinds: []string{"series"}, Memberships: []Membership{{GroupID: c.ID}}}})
+			}
+		},
+		"ancestor deleted then memberships imported": func(f *fixture) (first, second func(pgx.Tx) error) {
+			a := f.create(GroupInput{Kind: "series", Slug: "a"})[0]
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: a.ID})[0]
+			return update(f, GroupUpdate{ID: a.ID, State: &deleted}), func(tx pgx.Tx) error {
+				return f.s.ImportMemberships(f.ctx, tx, []ContentGroups{{ContentID: cid(1), Kinds: []string{"series"}, Memberships: []Membership{{GroupID: c.ID, ContentID: cid(1)}}}})
+			}
+		},
+		"membership on a child then its parent merged": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: g[0].ID})[0]
+			return add(f, c.ID), merge(f, g[0].ID, g[1].ID)
+		},
+		"parent merged then membership on its child": func(f *fixture) (first, second func(pgx.Tx) error) {
+			g := f.create(GroupInput{Kind: "series", Slug: "a"}, GroupInput{Kind: "series", Slug: "b"})
+			c := f.create(GroupInput{Kind: "series", Slug: "c", ParentID: g[0].ID})[0]
+			return merge(f, g[0].ID, g[1].ID), add(f, c.ID)
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.content("gallery", 1, live("en"))
+			first, second := setup(f)
+			if err := f.raceAfter(first, second); err != nil {
+				t.Fatalf("second writer: %v", err)
+			}
+			want, err := f.s.EffectiveGroups(f.ctx, f.pool, []string{vid(1, 0)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := f.facetGroups()[vid(1, 0)]; !slices.Equal(got, want[vid(1, 0)]) {
+				t.Errorf("stored facets %v, effective %v", got, want[vid(1, 0)])
+			}
+		})
 	}
 }

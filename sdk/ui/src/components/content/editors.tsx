@@ -2,7 +2,9 @@ import { cn } from "cn";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
-import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Listing, Rule, Segment, SegmentInput, Version } from "../../client/generated/wire.js";
+import { ruleFor } from "../../client/media/rules.js";
+import { pageRemoved } from "../../client/media/windows.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/groups.js";
@@ -43,6 +45,19 @@ const COMMENTS = ["open", "closed", "hidden"] as const;
 type Comments = (typeof COMMENTS)[number];
 const LEVELS: readonly Rule["level"][] = ["public", "tier", "ppv", "group", "group_ppv"];
 const grouped = (l: Rule["level"]) => l === "group" || l === "group_ppv";
+
+/** Prefer public access, otherwise the kind's first allowed level. */
+export function defaultAccessRule(model: ContentModel, kind: string): Rule {
+  const levels = model.kinds[kind]?.access_levels;
+  const level = (!levels?.length || levels.includes("public") ? "public" : levels[0]) as Rule["level"];
+  return { level, ...(level === "tier" ? { tiers: model.tiers.slice(0, 1) } : {}) };
+}
+
+/** The host's content model controls individual sale controls everywhere. */
+export function allowsIndividualSales(model: ContentModel | null, kind: string): boolean {
+  const spec = model?.kinds[kind];
+  return !!spec && (!spec.access_levels?.length || spec.access_levels.some((level) => level === "ppv" || level === "group_ppv"));
+}
 
 function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
   return (
@@ -157,21 +172,23 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
             </SelectContent>
           </Select>
         </div>
-        <div className="grid gap-1.5 sm:max-w-xs">
-          <Label>{t("contentEditor.comments")}</Label>
-          <Select value={comments} onValueChange={(v) => { fields.edit((f) => ({ ...f, comments: v as Comments })); setSaved(false); }}>
-            <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
-              <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {COMMENTS.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {t(`contentEditor.comments_${c}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {spec?.comment_modes?.length !== 1 && (
+          <div className="grid gap-1.5 sm:max-w-xs">
+            <Label>{t("contentEditor.comments")}</Label>
+            <Select value={comments} onValueChange={(v) => { fields.edit((f) => ({ ...f, comments: v as Comments })); setSaved(false); }}>
+              <SelectTrigger size="sm" aria-label={t("contentEditor.comments")}>
+                <SelectValue>{(v: string) => t(`contentEditor.comments_${v as Comments}`)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {COMMENTS.filter((mode) => !spec?.comment_modes?.length || spec.comment_modes.includes(mode)).map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {t(`contentEditor.comments_${c}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <AttributeFields declared={declared} form={attrs.value} onChange={(n, v) => { attrs.edit((a) => ({ ...a, [n]: v })); setSaved(false); }} labels={p.labels} />
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
@@ -202,6 +219,9 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const id = useId();
   const tiers = model?.tiers ?? [];
   const spec = model?.kinds[kind];
+  const declaredLevels = spec?.access_levels;
+  const fixedTier = !!declaredLevels?.length && tiers.length === 1;
+  const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
   const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
@@ -221,14 +241,14 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           value={value.level}
           onValueChange={(v) => {
             const level = v as Rule["level"];
-            onChange({ level, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
+            onChange({ level, tiers: level === "tier" ? (fixedTier ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
           }}
         >
           <SelectTrigger size="sm" aria-label={t("contentEditor.access")}>
             <SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {LEVELS.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || groupKinds.length)).map((l) => (
+            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || groupKinds.length)).map((l) => (
               <SelectItem key={l} value={l}>
                 {t(`contentEditor.level_${l}`)}
               </SelectItem>
@@ -236,7 +256,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           </SelectContent>
         </Select>
       </div>
-      {value.level === "tier" && (
+      {value.level === "tier" && !fixedTier && (
         <fieldset className="flex flex-wrap gap-3">
           <legend className="sr-only">{t("contentEditor.tiers")}</legend>
           {tiers.map((tier) => (
@@ -345,7 +365,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const save = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
   return (
-    <Section title={t("contentEditor.accessTitle")} ckui="access-editor">
+    <Section title={t(allowsIndividualSales(model, content.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")} ckui="access-editor">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -372,12 +392,12 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
           <Saved show={saved} />
         </div>
       </form>
-      <OfferFields
+      {allowsIndividualSales(model, content.kind) && <OfferFields
         offer={content.offer}
         pending={offer.pending}
         onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id }))}
-      />
+      />}
       <ErrorLine error={offer.error} />
     </Section>
   );
@@ -494,7 +514,7 @@ function LanguageFields({ languages, value, many, onChange }: { languages: reado
   );
 }
 
-function AddVersion({ languages, many, pending, onAdd }: { languages: readonly string[]; many: boolean; pending: boolean; onAdd: (v: { languages: string[] }) => void }) {
+export function AddVersion({ languages, many, pending, onAdd }: { languages: readonly string[]; many: boolean; pending: boolean; onAdd: (v: { languages: string[] }) => void }) {
   const { t } = useMessages();
   const [langs, setLangs] = useState<string[]>([]);
   return (
@@ -516,7 +536,27 @@ function AddVersion({ languages, many, pending, onAdd }: { languages: readonly s
   );
 }
 
-function VersionForm({ content, version: v, model, media, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean }) {
+export interface VersionEditorProps extends Common {
+  content: Content;
+  version: Version;
+  /** Render the edition's media tools (default true). */
+  media?: boolean;
+  /** Render chapter ranges with the edition settings (default true). */
+  chapters?: boolean;
+  /** Let the host confirm discarding other unsaved fields before deleting this edition. */
+  beforeDelete?: () => boolean | Promise<boolean>;
+  onDeleted?: (version: Version) => void;
+}
+
+/** One edition's settings, reusable independently of the all-editions manager. */
+export function VersionEditor({ content, version, media = true, chapters = true, ...p }: VersionEditorProps) {
+  const { client, scope } = useContentScope(p.client);
+  const key = useEditorKey(`${content.id}:${version.id}`, client, scope);
+  const { model } = useKind(content.kind, client);
+  return <VersionForm key={key} content={content} version={version} model={model} media={media} chapters={chapters} {...p} client={client} />;
+}
+
+function VersionForm({ content, version: v, model, media, chapters = true, beforeDelete, onDeleted, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean; chapters?: boolean; beforeDelete?: () => boolean | Promise<boolean>; onDeleted?: (version: Version) => void }) {
   const { t } = useMessages();
   const id = useId();
   const client = useContentKitClient(p.client);
@@ -582,20 +622,24 @@ function VersionForm({ content, version: v, model, media, ...p }: Common & { con
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
           <Saved show={saved} />
-          <Button type="button" size="sm" variant="destructive" className="ms-auto" disabled={remove.pending} onClick={() => void remove.run(() => client.contents.removeVersion(content.id, v.id))}>
+          <Button type="button" size="sm" variant="destructive" className="ms-auto" disabled={remove.pending} onClick={() => void remove.run(async () => {
+            if (beforeDelete && !(await beforeDelete())) return false;
+            await client.contents.removeVersion(content.id, v.id);
+            return true;
+          }).then((removed) => { if (removed) onDeleted?.(v); })}>
             {t("contentEditor.deleteVersion")}
           </Button>
         </div>
         <ErrorLine error={remove.error} />
       </form>
-      <OfferFields
+      {allowsIndividualSales(model, content.kind) && <OfferFields
         offer={v.offer}
         pending={offer.pending}
         onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
         onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
-      />
+      />}
       <ErrorLine error={offer.error} />
-      {spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
+      {chapters && spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
       {media && <VersionCover content={content} version={v} {...p} />}
       {media && <VersionMedia content={content} version={v} model={model} {...p} />}
       {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
@@ -682,8 +726,103 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
 type Row = { title: string; start: string; end: string; release: string };
 const segmentRows=(version:Version):Row[]=>version.segments.map((s)=>({title:s.title??"",start:String(s.start),end:String(s.end),release:toLocalInput(s.release_at)}));
 
-/** A version's segments (chapters): page ranges with titles and release times. */
-export function SegmentsEditor({ content, version, ...p }: Common & { content: Content; version: Version }) {
+type SegmentsEditorProps = Common & { content: Content; version: Version; heading?: boolean };
+
+/** Reader chapters use stable start-page identities; other presentations retain their numeric ranges. */
+export function SegmentsEditor(p: SegmentsEditorProps) {
+  const { spec } = useKind(p.content.kind, p.client);
+  if (!spec) return <Skeleton className="h-24 w-full" />;
+  return spec.presentation === "reader" ? <ReaderChaptersEditor {...p} /> : <NumericSegmentsEditor {...p} />;
+}
+
+type ChapterRow = { title: string; startPage: string; release: string };
+const ALL_EDITOR_FILES = { start: 0, end: Number.MAX_SAFE_INTEGER, chunk: 200 };
+
+function ReaderChaptersEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
+  const { t } = useMessages();
+  const client = useContentKitClient(p.client);
+  const read = useMediaRead({ kind: content.kind, id: content.id, version: version.id }, { editor: true, window: ALL_EDITOR_FILES, client });
+  const pages = useMemo(() => {
+    const files = read.read?.files ?? [], rules = read.read?.uploads ?? [];
+    const sources = files.filter((file) => file.upload && !file.unattached && file.page_id && ruleFor(rules, file.path)?.page && !pageRemoved(file));
+    const counts = new Map<string, number>();
+    for (const file of sources) counts.set(file.page_id!, (counts.get(file.page_id!) ?? 0) + 1);
+    const previews = new Map<string, (typeof files)[number]>();
+    for (const file of files) {
+      if (file.upload || !file.from || !file.url || !file.type.startsWith("image/")) continue;
+      const previous = previews.get(file.from);
+      if (!previous || (file.w ?? Infinity) * (file.h ?? Infinity) < (previous.w ?? Infinity) * (previous.h ?? Infinity)) previews.set(file.from, file);
+    }
+    return sources.map((file) => {
+      return { id: file.page_id!, label: file.path.split("/").at(-1) ?? file.path, url: previews.get(file.path)?.url, disabled: counts.get(file.page_id!)! > 1 };
+    });
+  }, [read.read]);
+  const rowsOf = useCallback((value: Version): ChapterRow[] => value.segments.map((segment) => ({
+    title: segment.title ?? "",
+    startPage: segment.start_page || pages[segment.start]?.id || "",
+    release: toLocalInput(segment.release_at),
+  })), [pages]);
+  const fields = useDraft(useMemo(() => ({ rows: rowsOf(version) }), [rowsOf, version]));
+  const rows = fields.value.rows;
+  const starts = rows.map((row) => pages.findIndex((page) => page.id === row.startPage && !page.disabled));
+  const unselected = rows.some((row) => !row.startPage);
+  const missing = rows.some((row) => !!row.startPage && !pages.some((page) => page.id === row.startPage));
+  const ambiguous = rows.some((row) => pages.some((page) => page.id === row.startPage && page.disabled));
+  const ordered = starts.every((start, i) => i === 0 || start > starts[i - 1]!);
+  const valid = !unselected && !missing && !ambiguous && ordered;
+  const [saved, setSaved] = useState(false);
+  const save = useAction("content.save", p.onError);
+  const edit = (index: number, patch: Partial<ChapterRow>) => {
+    setSaved(false);
+    fields.edit((previous) => ({ rows: previous.rows.map((row, i) => i === index ? { ...row, ...patch } : row) }));
+  };
+  const submit = async () => {
+    if (!valid) return false;
+    setSaved(false);
+    const settle = fields.checkpoint();
+    const segments: SegmentInput[] = rows.map((row, i) => ({ position: i + 1, title: row.title.trim() || undefined, start_page: row.startPage, release_at: fromLocalInput(row.release) }));
+    const out = await save.run(() => client.contents.setSegments(content.id, version.id, segments));
+    if (!out) return false;
+    const clean = settle({ rows: rowsOf(out) });
+    setSaved(clean);
+    return clean;
+  };
+  useEditorSaveTask(`segments:${version.id}`, { label: t("contentEditor.segments"), dirty: fields.dirty.length > 0, pending: save.pending, valid, save: submit, order: 20 });
+  if (read.loading && !read.read) return <Skeleton className="h-24 w-full" />;
+  return <div className="grid gap-3" data-ckui="segments-editor">
+    {heading && <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>}
+    {rows.length === 0 && <p className="text-muted-foreground">{t("contentEditor.noSegments")}</p>}
+    {rows.map((row, i) => {
+      const start = starts[i]!, end = starts[i + 1] ?? pages.length;
+      return <div key={i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
+        <span className="w-6 text-xs tabular-nums text-muted-foreground">{i + 1}</span>
+        <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={row.title} onChange={(e) => edit(i, { title: e.target.value })} />
+        <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={row.startPage} onChange={(startPage) => edit(i, { startPage })} />
+        <output className="text-sm tabular-nums text-muted-foreground" data-ckui="chapter-range">{start >= 0 && end > start ? t("contentEditor.chapterRange", { from: start + 1, to: end }) : "—"}</output>
+        <Input className="h-8 w-48" type="datetime-local" aria-label={t("contentEditor.segmentRelease", { n: i + 1 })} value={row.release} onChange={(e) => edit(i, { release: e.target.value })} />
+        <Button type="button" size="xs" variant="ghost" onClick={() => { setSaved(false); fields.edit((previous) => ({ rows: previous.rows.filter((_, j) => j !== i) })); }}>{t("common.remove")}</Button>
+      </div>;
+    })}
+    {unselected && <ErrorLine>{t("contentEditor.chapterStartRequired")}</ErrorLine>}
+    {missing && <ErrorLine>{t("contentEditor.chapterStartMissing")}</ErrorLine>}
+    {ambiguous && <ErrorLine>{t("contentEditor.chapterStartAmbiguous")}</ErrorLine>}
+    {!unselected && !missing && !ambiguous && !ordered && <ErrorLine>{t("contentEditor.chapterStartsOrdered")}</ErrorLine>}
+    <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" size="sm" variant="outline" onClick={() => {
+        const next = starts.length ? starts[starts.length - 1]! + 1 : 0;
+        setSaved(false);
+        fields.edit((previous) => ({ rows: [...previous.rows, { title: "", startPage: pages[next]?.id ?? "", release: "" }] }));
+      }}>{t("contentEditor.addSegment")}</Button>
+      <Button type="button" size="sm" disabled={save.pending || !valid} onClick={() => void submit()}>{t("contentEditor.saveSegments")}</Button>
+      <Saved show={saved} />
+    </div>
+    <ErrorLine error={read.error} />
+    <ErrorLine error={save.error} />
+  </div>;
+}
+
+/** Numeric ranges for presentations without reader pages. */
+function NumericSegmentsEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const fields=useDraft(useMemo(()=>({rows:segmentRows(version)}),[version]));
@@ -709,7 +848,7 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
   useEditorSaveTask(`segments:${version.id}`,{label:t("contentEditor.segments"),dirty:fields.dirty.length>0,pending:save.pending,valid,save:submit,order:20});
   return (
     <div className="grid gap-2" data-ckui="segments-editor">
-      <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>
+      {heading && <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>}
       {rows.length === 0 && <p className="text-muted-foreground">{t("contentEditor.noSegments")}</p>}
       {rows.map((r, i) => (
         <div key={i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
@@ -717,12 +856,12 @@ export function SegmentsEditor({ content, version, ...p }: Common & { content: C
           <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={r.title} onChange={(e) => set(i, { title: e.target.value })} />
           {pages.length ? (
             <>
-              <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={pages[Number(r.start)]?.name ?? ""}
-                onChange={(name) => set(i, { start: String(pages.findIndex((x) => x.name === name)) })} />
+              <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={pages[Number(r.start)]?.id ?? ""}
+                onChange={(name) => set(i, { start: String(pages.findIndex((x) => x.id === name)) })} />
               <span aria-hidden>–</span>
               {/* end is exclusive: the picker names the segment's last page. */}
-              <PagePicker label={t("contentEditor.segmentEnd", { n: i + 1 })} pages={pages} value={pages[Number(r.end) - 1]?.name ?? ""}
-                onChange={(name) => set(i, { end: String(pages.findIndex((x) => x.name === name) + 1) })} />
+              <PagePicker label={t("contentEditor.segmentEnd", { n: i + 1 })} pages={pages} value={pages[Number(r.end) - 1]?.id ?? ""}
+                onChange={(name) => set(i, { end: String(pages.findIndex((x) => x.id === name) + 1) })} />
             </>
           ) : (
             <>

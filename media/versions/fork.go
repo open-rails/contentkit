@@ -212,8 +212,8 @@ func (s *Service) fork(ctx context.Context, a forkArgs) error {
 	}
 	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		if a.Segments {
-			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at)
-SELECT tenant_id, $2, position, title, start_index, end_index, release_at FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $3
+			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page)
+SELECT tenant_id, $2, position, title, start_index, end_index, release_at, start_page FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $3
 AND NOT EXISTS (SELECT 1 FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $2)`, s.o.Tenant, a.Version, a.From); err != nil {
 				return err
 			}

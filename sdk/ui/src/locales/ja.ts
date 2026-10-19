@@ -241,6 +241,7 @@ export const ja: ContentKitUiMessageBundle = {
     operation_busy: "この送信を更新中です。しばらくしてから再試行してください。",
     source_conflict: "このソースはすでに送信されています。",
     content_changed: "送信後にコンテンツが変更されました。公開する前に確認してください。",
+    not_ready: "ファイルはまだ処理中です。完了してから公開してください。",
     invalid_archive: "このZIPを処理できませんでした。対応するファイルが含まれているか確認してください。",
     download_unavailable: "現在はダウンロードできません。",
     no_download: "まだダウンロードできるものがありません。",

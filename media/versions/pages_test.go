@@ -1,6 +1,8 @@
 package versions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"slices"
 	"strings"
 	"testing"
@@ -8,8 +10,17 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
+func reviewHash(seed string) string {
+	if len(seed) == 64 {
+		return seed
+	}
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])
+}
+
 func reviewFixture(name string, from, to int, hash string) media.File {
-	f := media.File{Path: "originals/" + name + ".png", Type: "image/png", Meta: map[string]any{digestMeta: hash}}
+	hash = reviewHash(hash)
+	f := media.File{Path: "originals/" + name + ".png", Blob: "sha256-" + hash, Type: "image/png", Meta: map[string]any{digestMeta: hash}}
 	writePageMeta(&f, pageMetadata{SchemaVersion: 1, Name: name, SourceName: name + ".png", Span: &PageSpan{From: from, To: to}})
 	return f
 }
@@ -18,7 +29,7 @@ func TestPageSelectionAndRestore(t *testing.T) {
 	k := &media.Kind{Publish: &media.Publish{Pages: "originals/{name}"}}
 	files := []media.File{reviewFixture("001", 1, 1, "a"), reviewFixture("002-003", 2, 3, "b"), reviewFixture("004", 2, 2, "c"), reviewFixture("005", 3, 3, "d"), reviewFixture("006", 6, 6, "e"), reviewFixture("007", 7, 7, "a")}
 	blank := pageMeta(files[4])
-	blank.Analysis = &media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: "e", Status: "complete", Blank: "blank", Confidence: "exact"}
+	blank.Analysis = &media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: reviewHash("e"), Status: "complete", Blank: "blank", Confidence: "exact"}
 	writePageMeta(&files[4], blank)
 	m := &media.Manifest{Files: files}
 	r := selectionOf(k, m)
@@ -48,17 +59,17 @@ func TestPageSelectionOverlappingJoinsAndStableIDs(t *testing.T) {
 		t.Fatalf("overlap: %+v", r)
 	}
 	m.Files[0], m.Files[1] = m.Files[1], m.Files[0]
-	if reordered := selectionOf(k, m); reordered.Pages[0].ID != "003-005" || reordered.Pages[1].ID != "002-004" {
+	if reordered := selectionOf(k, m); reordered.Pages[0].ID != reviewHash("b") || reordered.Pages[1].ID != reviewHash("a") {
 		t.Fatalf("reorder changed IDs: %+v", reordered)
 	}
 }
 
 func TestPageSelectionLegacyAndUnavailableAnalysis(t *testing.T) {
 	k := &media.Kind{Publish: &media.Publish{Pages: "originals/{name}"}}
-	f := media.File{Path: "originals/old-page-name.png", Meta: map[string]any{digestMeta: "abc"}}
-	f.Meta, _ = media.WithPageAnalysis(f.Meta, media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: "abc", Status: "unsupported", Blank: "unknown", Confidence: "unknown"})
+	f := media.File{Path: "originals/old-page-name.png", Blob: "sha256-" + reviewHash("abc"), Meta: map[string]any{digestMeta: reviewHash("abc")}}
+	f.Meta, _ = media.WithPageAnalysis(f.Meta, media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: reviewHash("abc"), Status: "unsupported", Blank: "unknown", Confidence: "unknown"})
 	r := selectionOf(k, &media.Manifest{Files: []media.File{f}})
-	if r.Pages[0].ID != "old-page-name" || !r.Pages[0].Included || !slices.Contains(r.Pages[0].Flags, "analysis_unsupported") {
+	if r.Pages[0].ID != reviewHash("abc") || !r.Pages[0].Included || !slices.Contains(r.Pages[0].Flags, "analysis_unsupported") {
 		t.Fatalf("legacy key: %+v", r)
 	}
 }
@@ -111,7 +122,7 @@ func TestPageNoticesForRemovalsAndArchiveReorder(t *testing.T) {
 	k := &media.Kind{Publish: &media.Publish{Pages: "originals/{name}"}}
 	files := []media.File{reviewFixture("001", 1, 1, "a"), reviewFixture("002-003", 2, 3, "b"), reviewFixture("004", 2, 2, "c"), reviewFixture("005", 5, 5, "d"), reviewFixture("006", 6, 6, "a")}
 	blank := pageMeta(files[3])
-	blank.Analysis = &media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: "d", Status: "complete", Blank: "blank", Confidence: "exact"}
+	blank.Analysis = &media.PageAnalysis{Recipe: media.PageAnalysisRecipe, SourceSHA256: reviewHash("d"), Status: "complete", Blank: "blank", Confidence: "exact"}
 	writePageMeta(&files[3], blank)
 	// An archive listed "10.png" before "1.png"; natural order put 1.png first.
 	for i, upload := range []int{2, 1, 3, 4, 5} {
@@ -128,7 +139,7 @@ func TestPageNoticesForRemovalsAndArchiveReorder(t *testing.T) {
 	for _, p := range notices[0].Pages {
 		reasons[p.ID] = p.Reason
 	}
-	if len(reasons) != 3 || reasons["004"] != "spread" || reasons["005"] != "blank" || reasons["006"] != "duplicate" {
+	if len(reasons) != 3 || reasons[reviewHash("c")] != "spread" || reasons[reviewHash("d")] != "blank" || reasons[reviewHash("a")] != "duplicate" {
 		t.Fatalf("removed reasons: %+v", notices[0].Pages)
 	}
 	if p := notices[1].Pages; len(p) != 5 || p[0].From != 2 || p[0].To != 1 || p[1].From != 1 || p[1].To != 2 {

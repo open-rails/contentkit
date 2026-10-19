@@ -112,6 +112,8 @@ describe("content pages against the real ContentKit", () => {
     expect(plan.segments[0]).toMatchObject({ start: 0, end: 2, released: true, locked: false });
     const { result: pages } = renderHook(() => useSegmentPages(plan.segments[0], "low"), { wrapper: wrap(anon, { viewer: null }) });
     await waitFor(() => expect(pages.current.pages.map((p) => !!p.url)).toEqual([true, true]), wait);
+    expect(pages.current.pages.map((p) => p.id)).toEqual(plan.segments[0]!.pages!.map((p) => p.id));
+    for (const page of pages.current.pages) expect(page.id).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("useVersionMenuItems: the player's language and version entries switch the version shown", async () => {

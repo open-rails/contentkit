@@ -481,7 +481,32 @@ func (rt *Runtime) recount(ctx context.Context, tx pgx.Tx, keys map[keyRow]bool)
 	if err != nil {
 		return err
 	}
+	var comments []string
+	for _, k := range list {
+		if k.Kind == KindComment && k.Version == "" {
+			comments = append(comments, k.ID)
+		}
+	}
+	// Each count below is its own statement: under READ COMMITTED it reads
+	// a snapshot taken after the locks are held, so it includes the live
+	// writes it waited for. Comments lock before rollups, comments in id order
+	// and rollups in list order, as erasure and live reactions lock them.
 	s := rt.store
+	if len(comments) > 0 {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.comments+` WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`, rt.tenant, comments); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.counts+` (tenant_id, content_kind, content_id, content_version_id)
+SELECT $1, k.kind, k.id, k.version FROM ROWS FROM (jsonb_to_recordset($2::jsonb) AS (kind text, id text, version text)) WITH ORDINALITY AS k(kind, id, version, n) ORDER BY k.n
+ON CONFLICT (tenant_id, content_kind, content_id, content_version_id) DO NOTHING`, rt.tenant, string(data)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.counts+` x JOIN ROWS FROM (jsonb_to_recordset($2::jsonb) AS (kind text, id text, version text)) WITH ORDINALITY AS k(kind, id, version, n)
+ ON x.content_kind = k.kind AND x.content_id = k.id AND x.content_version_id IS NOT DISTINCT FROM k.version
+ WHERE x.tenant_id = $1 ORDER BY k.n FOR UPDATE OF x`, rt.tenant, string(data)); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `WITH k AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS k(kind text, id text, version text)),
 n AS (SELECT k.kind, k.id, k.version,
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = 1)::int AS likes,
@@ -490,19 +515,11 @@ n AS (SELECT k.kind, k.id, k.version,
  (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id IS NOT DISTINCT FROM k.version
    AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved')::int AS comments
  FROM k)
-INSERT INTO `+s.t.counts+` AS x (tenant_id, content_kind, content_id, content_version_id, likes, dislikes, favorites, comment_count)
-SELECT $1, kind, id, version, likes, dislikes, favorites, comments FROM n
-ON CONFLICT (tenant_id, content_kind, content_id, content_version_id) DO UPDATE SET likes = EXCLUDED.likes, dislikes = EXCLUDED.dislikes,
- favorites = EXCLUDED.favorites, comment_count = EXCLUDED.comment_count, updated_at = now()
-WHERE (x.likes, x.dislikes, x.favorites, x.comment_count) IS DISTINCT FROM (EXCLUDED.likes, EXCLUDED.dislikes, EXCLUDED.favorites, EXCLUDED.comment_count)`,
+UPDATE `+s.t.counts+` x SET likes = n.likes, dislikes = n.dislikes, favorites = n.favorites, comment_count = n.comments, updated_at = now()
+FROM n WHERE x.tenant_id = $1 AND x.content_kind = n.kind AND x.content_id = n.id AND x.content_version_id IS NOT DISTINCT FROM n.version
+ AND (x.likes, x.dislikes, x.favorites, x.comment_count) IS DISTINCT FROM (n.likes, n.dislikes, n.favorites, n.comments)`,
 		rt.tenant, string(data)); err != nil {
 		return err
-	}
-	var comments []string
-	for _, k := range list {
-		if k.Kind == KindComment && k.Version == "" {
-			comments = append(comments, k.ID)
-		}
 	}
 	if len(comments) == 0 {
 		return nil

@@ -102,7 +102,8 @@ it("CommentModeration: without root:comments:moderate the rule sections say so",
   expect(await screen.findByText("You don't have permission to moderate comments.")).toBeInTheDocument();
 });
 
-const page = (name: string) => ({ name, w: 800, h: 1200, files: { low: `low/${name}.webp` } });
+const hash = (name: string) => name.padStart(64, "0");
+const page = (name: string) => ({ id: hash(name), name, w: 800, h: 1200, files: { low: `low/${name}.webp` } });
 const plan = (reader?: ReaderMeta): ReaderPlan => ({
   content_id: "c1",
   version_id: "v1",
@@ -115,7 +116,7 @@ const plan = (reader?: ReaderMeta): ReaderPlan => ({
 });
 
 it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad offset, saves the manifest and reads the plan again", async () => {
-  let stored: ReaderMeta = { schema_version: 1, anchors: [{ id: "a1", page: "002", offset_percent: 50 }], background: [{ file: "theme", loop: true }], foreground: [] };
+  let stored: ReaderMeta = { schema_version: 1, anchors: [{ id: "a1", page: hash("002"), offset_percent: 50 }], background: [{ file: "theme", loop: true }], foreground: [] };
   const s = server({
     "GET /contents/c1/versions/v1/reader": () => plan(stored),
     "PUT /contents/c1/versions/v1/reader": ({ body }) => void (stored = body as ReaderMeta),
@@ -147,13 +148,13 @@ it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad 
       schema_version: 1,
       defaults: { auto_advance_seconds: 6 },
       anchors: [
-        { id: "a1", page: "002", offset_percent: 50 },
-        { id: "a2", page: "001", offset_percent: 25 },
+        { id: "a1", page: hash("002"), offset_percent: 50 },
+        { id: "a2", page: hash("001"), offset_percent: 25 },
       ],
       background: [{ file: "theme", loop: true }],
       foreground: [
-        { file: "001", page: "001" },
-        { file: "003", page: "003" },
+        { file: "001", page: hash("001") },
+        { file: "003", page: hash("003") },
       ],
     },
   ]);

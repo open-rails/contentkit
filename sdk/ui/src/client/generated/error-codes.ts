@@ -28,6 +28,7 @@ export type ErrorCode =
   | "not_configured"
   | "not_found"
   | "not_joinable"
+  | "not_ready"
   | "not_uploaded"
   | "operation_busy"
   | "operation_conflict"
@@ -78,6 +79,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   not_configured: { status: 501, meaning: "The capability needs a port the host did not configure; retrying does not help." },
   not_found: { status: 404, meaning: "Nothing by that name, or nothing the actor may see." },
   not_joinable: { status: 409, meaning: "The group has no free offer to join: it sells its membership, or nothing." },
+  not_ready: { status: 409, meaning: "A version that would go live still has files processing or a publication not yet current; `error` says what. Retry once processing finishes." },
   not_uploaded: { status: 409, meaning: "A commit names an upload that has not landed; `blobs` lists the ones to upload again." },
   operation_busy: { status: 409, meaning: "The publishing operation is preparing an upload or completing another request; retry." },
   operation_conflict: { status: 409, meaning: "A publishing operation ID already names different immutable input." },

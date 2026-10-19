@@ -1184,7 +1184,7 @@ func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Con
 	return out, err
 }
 
-// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -1240,7 +1240,7 @@ func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body ca
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
@@ -1916,6 +1916,48 @@ func (c *Client) PutContentEntities(ctx context.Context, id string, body groups.
 	return out, err
 }
 
+// PutContentEntitiesSharedQuery is the query of PutContentEntitiesShared.
+type PutContentEntitiesSharedQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q PutContentEntitiesSharedQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PutContentEntitiesShared is PUT /v1/contents/{id}/entities/shared (staff). Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.
+func (c *Client) PutContentEntitiesShared(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesSharedQuery) (groups.ContentMemberships, error) {
+	var out groups.ContentMemberships
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities/shared", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	return out, err
+}
+
+// PutContentVersionEntitiesQuery is the query of PutContentVersionEntities.
+type PutContentVersionEntitiesQuery struct {
+	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
+	Language string
+}
+
+func (q PutContentVersionEntitiesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PutContentVersionEntities is PUT /v1/contents/{id}/versions/{vid}/entities (staff). Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.
+func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body groups.ContentGroups, q PutContentVersionEntitiesQuery) (groups.ContentMemberships, error) {
+	var out groups.ContentMemberships
+	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/entities", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), body, &out)
+	return out, err
+}
+
 // GetNotificationsInboxQuery is the query of GetNotificationsInbox.
 type GetNotificationsInboxQuery struct {
 	// page size: 20 by default, at most 100
@@ -2023,7 +2065,7 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2032,10 +2074,22 @@ func (c *Client) GetContentVersionDownload(ctx context.Context, id string, versi
 type GetContentVersionArchiveQuery struct {
 	// the viewer the ticket is for
 	For string
+	// the bound account in this tenant
+	Account string
+	// signed tenant membership presence: true or false
+	AccountSet string
+	// the viewer subject kind
+	Kind string
+	// signed exact-transfer editor capability: true or false
+	Editor string
+	// signed configured token-tier claims as a JSON string array
+	Claims string
 	// the pages to mark, from 1: 3,5,7
 	Mark string
 	// the zip's file name
 	Name string
+	// the exact ordered source revision
+	Revision string
 	// the download's ticket
 	Ticket string
 }
@@ -2045,11 +2099,29 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	if q.For != "" {
 		v.Set("for", q.For)
 	}
+	if q.Account != "" {
+		v.Set("account", q.Account)
+	}
+	if q.AccountSet != "" {
+		v.Set("account_set", q.AccountSet)
+	}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Editor != "" {
+		v.Set("editor", q.Editor)
+	}
+	if q.Claims != "" {
+		v.Set("claims", q.Claims)
+	}
 	if q.Mark != "" {
 		v.Set("mark", q.Mark)
 	}
 	if q.Name != "" {
 		v.Set("name", q.Name)
+	}
+	if q.Revision != "" {
+		v.Set("revision", q.Revision)
 	}
 	if q.Ticket != "" {
 		v.Set("ticket", q.Ticket)
@@ -2057,7 +2129,7 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the marked zip a download granted, under the name it granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }

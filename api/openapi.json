@@ -4137,7 +4137,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4191,7 +4191,8 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found"
+          "not_found",
+          "not_ready"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -5036,7 +5037,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -5094,7 +5095,8 @@
           "conflict",
           "forbidden",
           "not_found",
-          "moderation_rejected"
+          "moderation_rejected",
+          "not_ready"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -8039,6 +8041,150 @@
         ]
       }
     },
+    "/v1/contents/{id}/entities/shared": {
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentGroups"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{vid}/entities": {
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentGroups"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMemberships"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/notifications/inbox": {
       "get": {
         "tags": [
@@ -8730,7 +8876,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -8810,7 +8956,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Streams the marked zip a download granted, under the name it granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.",
+        "summary": "Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
         "parameters": [
           {
             "name": "id",
@@ -8837,6 +8983,46 @@
             }
           },
           {
+            "name": "account",
+            "in": "query",
+            "description": "the bound account in this tenant",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_set",
+            "in": "query",
+            "description": "signed tenant membership presence: true or false",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the viewer subject kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "editor",
+            "in": "query",
+            "description": "signed exact-transfer editor capability: true or false",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "claims",
+            "in": "query",
+            "description": "signed configured token-tier claims as a JSON string array",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "mark",
             "in": "query",
             "description": "the pages to mark, from 1: 3,5,7",
@@ -8848,6 +9034,14 @@
             "name": "name",
             "in": "query",
             "description": "the zip's file name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "description": "the exact ordered source revision",
             "schema": {
               "type": "string"
             }
@@ -15014,6 +15208,9 @@
           "url": {
             "type": "string"
           },
+          "page_id": {
+            "type": "string"
+          },
           "create_id": {
             "type": "string"
           },
@@ -16088,6 +16285,18 @@
       "Kind": {
         "type": "object",
         "properties": {
+          "access_levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comment_modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "route": {
             "type": "string"
           },
@@ -17143,6 +17352,9 @@
       "PlanPage": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -17163,6 +17375,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "w",
           "h",
@@ -17190,6 +17403,9 @@
       "PlanPreview": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "index": {
             "type": "integer"
           },
@@ -17207,6 +17423,7 @@
           }
         },
         "required": [
+          "id",
           "index",
           "name",
           "url",
@@ -18502,6 +18719,9 @@
           "title": {
             "type": "string"
           },
+          "start_page": {
+            "type": "string"
+          },
           "start": {
             "type": "integer"
           },
@@ -18523,13 +18743,40 @@
           "released"
         ]
       },
+      "SegmentInput": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start_page": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "release_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "released": {
+            "type": "boolean"
+          }
+        }
+      },
       "SegmentsInput": {
         "type": "object",
         "properties": {
           "segments": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Segment"
+              "$ref": "#/components/schemas/SegmentInput"
             }
           }
         }
@@ -18959,6 +19206,12 @@
             "type": "object",
             "additionalProperties": {}
           },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupSummary"
+            }
+          },
           "pages": {
             "type": "integer"
           },
@@ -19010,6 +19263,7 @@
           "traits",
           "live",
           "attributes",
+          "entities",
           "has_audio",
           "segments",
           "decision"
@@ -19073,7 +19327,7 @@
           "segments": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Segment"
+              "$ref": "#/components/schemas/SegmentInput"
             }
           },
           "ordinal": {
@@ -19322,6 +19576,7 @@
           "not_configured",
           "not_found",
           "not_joinable",
+          "not_ready",
           "not_uploaded",
           "operation_busy",
           "operation_conflict",
@@ -19635,6 +19890,10 @@
     "not_joinable": {
       "status": 409,
       "meaning": "The group has no free offer to join: it sells its membership, or nothing."
+    },
+    "not_ready": {
+      "status": 409,
+      "meaning": "A version that would go live still has files processing or a publication not yet current; `error` says what. Retry once processing finishes."
     },
     "not_uploaded": {
       "status": 409,

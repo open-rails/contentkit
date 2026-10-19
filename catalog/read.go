@@ -22,6 +22,12 @@ import (
 // editors. Editors also get every language's text, every version and the
 // moderation state.
 func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Content, error) {
+	return s.contents(ctx, v, ids, "")
+}
+
+// contents is Contents; a non-empty vid limits the items' versions to those
+// with that ID or version code.
+func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid string) ([]*Content, error) {
 	if v.management {
 		ctx = resolve.WithEditorRead(ctx)
 	}
@@ -47,7 +53,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	if err != nil {
 		return nil, err
 	}
-	versions, err := s.readVersions(ctx, visible)
+	versions, err := s.readVersions(ctx, visible, vid)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +86,7 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
 			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
-		c.Live = slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
+		c.Live = v.itemLive(iv)
 		shown := texts[id]
 		if !iv.editor && it.moderation != "approved" && it.snapshot != nil {
 			shown = it.snapshot
@@ -142,6 +148,10 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 	if err != nil {
 		return nil, err
 	}
+	scopes, err := s.entityScopes(ctx, visible, v.now)
+	if err != nil {
+		return nil, err
+	}
 	for id, c := range built {
 		// Body images are the opened version's private files, signed for its openers.
 		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
@@ -158,25 +168,16 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			}
 		}
 		c.Body = resolveBody(c.Body, c.Images)
-		var gs []string
-		for _, r := range views[id].versions {
-			for _, g := range r.groupIDs {
-				if !slices.Contains(gs, g) {
-					gs = append(gs, g)
-				}
+		if s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
+			c.Groups = scopedEntities(scopes[entityScope{content: id}], names)
+		}
+		for i := range c.Versions {
+			ver := &c.Versions[i]
+			ver.Groups = []GroupSummary{}
+			if s.shows(c.Kind, ver.Decision, kinds.ShowGroups) {
+				ver.Groups = scopedEntities(scopes[entityScope{content: id, version: ver.ID}], names)
 			}
 		}
-		for _, g := range gs {
-			if n, ok := names[g]; ok && s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
-				c.Groups = append(c.Groups, n)
-			}
-		}
-		slices.SortFunc(c.Groups, func(a, b GroupSummary) int {
-			if a.Kind != b.Kind {
-				return compare(a.Kind, b.Kind)
-			}
-			return compare(a.Slug, b.Slug)
-		})
 	}
 	if err := s.fillOffers(ctx, v, built); err != nil {
 		return nil, err
@@ -193,6 +194,11 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 		out[i] = built[id]
 	}
 	return out, nil
+}
+
+// itemLive reports whether any of an item's visible versions is live.
+func (v *Viewer) itemLive(iv *itemView) bool {
+	return slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
 }
 
 // fillOwners attaches the items' owner groups' cards, avatars and covers
@@ -504,11 +510,18 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 	return out, rows.Err()
 }
 
-// readVersions reads every version of the items with its text and segments.
-func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Version, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
- pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', '') FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2)`,
-		s.tenant, ids)
+// readVersions reads every version of the items with its text and segments,
+// or with a non-empty vid only those with that ID or version code.
+func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map[string]*Version, error) {
+	q := `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
+ pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', '') FROM ` + s.t.versions + ` WHERE tenant_id = $1 AND content_id = ANY($2)`
+	args := []any{s.tenant, ids}
+	if vid != "" {
+		code, _ := contenturl.ParseVersionCode(vid)
+		q += ` AND (id = $3 OR code = $4)`
+		args = append(args, vid, string(code))
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +573,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Ver
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, start_index, end_index, release_at FROM `+s.t.segments+`
+	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, '') FROM `+s.t.segments+`
  WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, position`, s.tenant, vids)
 	if err != nil {
 		return nil, err
@@ -569,7 +582,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string) (map[string]*Ver
 	for rows.Next() {
 		var vid string
 		var sg Segment
-		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt); err != nil {
+		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt, &sg.StartPage); err != nil {
 			return nil, err
 		}
 		out[vid].Segments = append(out[vid].Segments, sg)

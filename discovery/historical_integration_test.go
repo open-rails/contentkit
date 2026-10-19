@@ -105,7 +105,7 @@ func TestHistoricalActivityRanksWindowBeforeVisiblePagination(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{f.cid(8)}) || first.NextCursor == "" {
 		t.Fatalf("first visible page: %v %+v", got, first)
 	}
-	if r := first.Ranking; r == nil || r.Policy != "v2" || r.Mode != "population_normalized" || r.CoveredFrom != from.Format(time.RFC3339) {
+	if r := first.Ranking; r == nil || r.Policy != "v2" || r.Mode != "measured_then_standing" || r.CoveredFrom != from.Format(time.RFC3339) {
 		t.Fatalf("measured ranking provenance: %+v", r)
 	}
 	got, last := f.list("clean.test", "", path("limit", "1", "cursor", first.NextCursor))

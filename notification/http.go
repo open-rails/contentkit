@@ -1,11 +1,13 @@
 package notification
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/open-rails/authkit/auth"
@@ -63,16 +65,32 @@ func (s *Store) PublishBatch(ctx context.Context, in []notify.Input) ([]notify.I
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	out := make([]notify.Item, 0, len(in))
-	for _, n := range in {
-		item, err := s.PublishTx(ctx, tx, n)
+	// Each notice locks its recipient; taking them in one order keeps two
+	// concurrent batches from deadlocking. Results keep the caller's order.
+	order := make([]int, len(in))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		ra, rb := in[a].Recipient, in[b].Recipient
+		return cmp.Or(cmp.Compare(ra.Audience, rb.Audience), cmp.Compare(ra.ID, rb.ID))
+	})
+	stored := make([]*notify.Item, len(in))
+	for _, i := range order {
+		item, err := s.PublishTx(ctx, tx, in[i])
 		switch {
 		case errors.Is(err, notify.ErrRecipientErased):
 			continue
 		case err != nil:
 			return nil, err
 		}
-		out = append(out, item)
+		stored[i] = &item
+	}
+	out := make([]notify.Item, 0, len(in))
+	for _, item := range stored {
+		if item != nil {
+			out = append(out, *item)
+		}
 	}
 	return out, tx.Commit(ctx)
 }

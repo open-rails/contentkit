@@ -102,7 +102,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	var second catalog.Version
 	f.want(http.StatusCreated, staff, "POST", "/contents/"+book.ID+"/versions", catalog.VersionInput{Languages: []string{"ja"}, Traits: &[]string{"colored"}}, &second)
 	f.want(http.StatusOK, staff, "PATCH", "/contents/"+book.ID+"/versions/"+second.ID, catalog.VersionInput{Label: ptr("Colored")}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.Segment{{Start: 0, End: 10, Title: "One"}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.SegmentInput{{Start: 0, End: 10, Title: "One"}}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/order", catalog.OrderInput{IDs: []string{second.ID, book.Versions[0].ID}}, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+book.ID+"/versions/"+book.Versions[0].ID, nil, nil)
 	f.want(http.StatusConflict, staff, "DELETE", "/contents/"+book.ID+"/versions/"+second.ID, nil, nil)
@@ -282,17 +282,33 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
 		t.Fatalf("content groups %+v", held)
 	}
-	// Content detail names its groups with their pages, as cards do.
+	// Content detail names shared groups and version-owned groups separately.
 	var named catalog.Content
 	f.want(http.StatusOK, anon, "GET", "/contents/"+g1+"?language=ja", nil, &named)
 	routes := map[string]string{"tag": "/ja/tags/", "series": "/ja/series/"}
-	for _, g := range named.Groups {
-		if g.Code == "" || !strings.HasPrefix(g.Path, routes[g.Kind]+g.Code+"/") {
-			t.Fatalf("group page %+v", g)
+	checkEntities := func(got []catalog.GroupSummary, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("entity scope: got %+v, want %v", got, want)
+		}
+		for _, g := range got {
+			if !slices.Contains(want, g.ID) || g.Code == "" || !strings.HasPrefix(g.Path, routes[g.Kind]+g.Code+"/") {
+				t.Fatalf("entity page %+v is outside scope %v", g, want)
+			}
 		}
 	}
-	if len(named.Groups) != 3 {
-		t.Fatalf("detail groups %+v", named.Groups)
+	checkEntities(named.Groups, color, saga)
+	foundVersion := false
+	for _, v := range named.Versions {
+		if v.ID == g1v {
+			foundVersion = true
+			checkEntities(v.Groups, colour)
+		} else {
+			checkEntities(v.Groups)
+		}
+	}
+	if !foundVersion {
+		t.Fatalf("detail has no selected version %s: %+v", g1v, named.Versions)
 	}
 	f.want(http.StatusOK, staff, "POST", "/entities/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)

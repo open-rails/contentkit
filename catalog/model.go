@@ -63,11 +63,25 @@ type Creator struct {
 type Segment struct {
 	Position  int        `json:"position"`
 	Title     string     `json:"title,omitempty"`
+	StartPage string     `json:"start_page,omitempty"`
 	Start     int        `json:"start"`
 	End       int        `json:"end"`
 	ReleaseAt *time.Time `json:"release_at,omitempty"`
 	// Released is computed on reads.
 	Released bool `json:"released"`
+}
+
+// SegmentInput authors a chapter by its stable source page identity. Start and
+// End remain accepted together for older range-based clients. Anchored writes
+// omit both indices; the next start or the final page determines the end.
+type SegmentInput struct {
+	Position  int        `json:"position,omitempty"`
+	Title     string     `json:"title,omitempty"`
+	StartPage string     `json:"start_page,omitempty"`
+	Start     int        `json:"start,omitempty"`
+	End       int        `json:"end,omitempty"`
+	ReleaseAt *time.Time `json:"release_at,omitempty"`
+	Released  bool       `json:"released,omitempty"` // ignored, retained for older clients
 }
 
 // Cover is a version's cover: Image is the cover upload its editors
@@ -117,6 +131,9 @@ type Version struct {
 	// Access is the version's own rule; nil inherits the content's.
 	Access     *access.Rule   `json:"access,omitempty"`
 	Attributes map[string]any `json:"attributes"`
+	// Groups are entities attached specifically to this version. Combine them
+	// with Content.Groups when presenting the selected version's credits.
+	Groups     []GroupSummary `json:"entities"`
 	Pages      *int           `json:"pages,omitempty"`
 	DurationMS *int64         `json:"duration_ms,omitempty"`
 	Width      *int           `json:"width,omitempty"`
@@ -210,8 +227,10 @@ type Content struct {
 	// cover) while it is active.
 	Owner    *groups.GroupCard `json:"owner,omitempty"`
 	Creators []Creator         `json:"creators"`
-	Groups   []GroupSummary    `json:"entities"`
-	Versions []Version         `json:"versions"`
+	// Groups are shared/null-version memberships. Version-specific entities
+	// are carried by each Version.Groups, never merged across editions here.
+	Groups   []GroupSummary `json:"entities"`
+	Versions []Version      `json:"versions"`
 	// Viewer is the signed-in reader's standing with the item, to resume
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`

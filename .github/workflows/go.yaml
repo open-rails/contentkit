@@ -58,7 +58,7 @@ jobs:
         shard: ['0', '1', '2', e2e]
     services:
       postgres:
-        image: groonga/pgroonga:4.0.8-debian-18
+        image: groonga/pgroonga:4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit
@@ -140,7 +140,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: groonga/pgroonga:4.0.8-debian-18
+        image: groonga/pgroonga:4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit
@@ -174,7 +174,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: groonga/pgroonga:4.0.8-debian-18
+        image: groonga/pgroonga:4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit
@@ -211,7 +211,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: groonga/pgroonga:4.0.8-debian-18
+        image: groonga/pgroonga:4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit

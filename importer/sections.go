@@ -58,7 +58,8 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
 				return s.o.Signals.ImportSignals(ctx, in)
 			})},
-		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes)},
+		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes),
+			first: func(in any) bool { return in.(deletion).entity == EntityGroup }},
 	}
 	if s.o.Offers == nil {
 		out[3].skip = "no billing"
@@ -311,21 +312,25 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 	return deletion{entity: d.Entity, id: id}, d.ExternalID, err
 }
 
-// deletes deletes what the records name: content and versions, then groups,
-// then comments and polls.
+// deletes deletes what the records name: groups, then content and versions,
+// then comments and polls. Groups go first because deleting one takes the
+// group hierarchy lock, which every hierarchy writer takes before content
+// rows; deleting content first would hold content rows while waiting on it.
+// The section's first puts group records ahead, so a one-by-one retry keeps
+// that order.
 func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 	by := map[string][]string{}
 	for _, d := range in {
 		by[d.entity] = append(by[d.entity], d.id)
-	}
-	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[EntityContent], by[EntityVersion]); err != nil {
-		return err
 	}
 	gs := make([]groups.GroupID, len(by[EntityGroup]))
 	for i, id := range by[EntityGroup] {
 		gs[i] = groups.GroupID(id)
 	}
 	if err := s.o.Groups.ImportDeletes(ctx, tx, gs); err != nil {
+		return err
+	}
+	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[EntityContent], by[EntityVersion]); err != nil {
 		return err
 	}
 	return s.o.Content.ImportDeletes(ctx, tx, by[EntityComment], by[EntityPoll])

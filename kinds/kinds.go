@@ -107,6 +107,11 @@ func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.User
 
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
 type Kind struct {
+	// AccessLevels limits content and version rules. Empty permits every level.
+	// Omitting ppv and group_ppv also disables individual sales for this kind.
+	AccessLevels []string `json:"access_levels,omitempty" yaml:"access_levels"`
+	// CommentModes limits per-item comment settings. Empty permits every mode.
+	CommentModes []string `json:"comment_modes,omitempty" yaml:"comment_modes"`
 	// Route is the URL segment: /{lang}/{route}/{CODE}/{slug}.
 	Route string `json:"route" yaml:"route"`
 	// PathEntity names one of Groups whose slug prefixes the title in the
@@ -131,6 +136,21 @@ type Kind struct {
 	// Download is what a version's download serves; nil serves its
 	// presentation's default (Download.Serves).
 	Download *Download `json:"download,omitempty" yaml:"download"`
+}
+
+// AllowsAccess reports whether this kind accepts a rule's access level.
+func (k Kind) AllowsAccess(level string) bool {
+	return len(k.AccessLevels) == 0 || slices.Contains(k.AccessLevels, level)
+}
+
+// AllowsComments reports whether this kind accepts a per-item comment mode.
+func (k Kind) AllowsComments(mode string) bool {
+	return len(k.CommentModes) == 0 || slices.Contains(k.CommentModes, mode)
+}
+
+// Sellable reports whether content and versions of this kind may be sold.
+func (k Kind) Sellable() bool {
+	return k.AllowsAccess("ppv") || k.AllowsAccess("group_ppv")
 }
 
 // Download is what a kind's version download serves. Whether a viewer may
@@ -404,6 +424,23 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, k := range c.Kinds {
+		seenComments := map[string]bool{}
+		for _, mode := range k.CommentModes {
+			if !slices.Contains([]string{"open", "closed", "hidden"}, mode) || seenComments[mode] {
+				return fmt.Errorf("%w: kind %s has invalid or duplicate comment mode %q", ErrInvalid, name, mode)
+			}
+			seenComments[mode] = true
+		}
+		seenLevels := map[string]bool{}
+		for _, level := range k.AccessLevels {
+			if !slices.Contains([]string{"public", "tier", "ppv", "group", "group_ppv"}, level) || seenLevels[level] {
+				return fmt.Errorf("%w: kind %s has invalid or duplicate access level %q", ErrInvalid, name, level)
+			}
+			if level == "tier" && len(c.Tiers) == 0 {
+				return fmt.Errorf("%w: kind %s allows tier access without any tiers", ErrInvalid, name)
+			}
+			seenLevels[level] = true
+		}
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: kind %q", ErrInvalid, name)
 		}

@@ -31,10 +31,12 @@ type ContentInput struct {
 	// Text is the text per language.
 	Text    map[string]Text `json:"text,omitempty"`
 	Listing string          `json:"listing,omitempty"` // default listed
-	// Comments is open (the default), closed (existing ones show, new ones
-	// are refused) or hidden.
+	// Comments is open (the default when permitted), closed (existing ones
+	// show, new ones are refused) or hidden. A kind excluding open defaults to
+	// its first configured comment mode.
 	Comments string `json:"comments,omitempty"`
-	// Access defaults to public.
+	// Access defaults to public when permitted, otherwise the kind's first
+	// allowed level (and the first configured tier for tier access).
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
@@ -75,7 +77,7 @@ type VersionInput struct {
 	ClearAccess bool                   `json:"clear_access,omitempty"`
 	Attributes  map[string]any         `json:"attributes,omitempty"` // replaces all
 	Text        map[string]VersionText `json:"text,omitempty"`       // replaces all
-	Segments    *[]Segment             `json:"segments,omitempty"`   // replaces all
+	Segments    *[]SegmentInput        `json:"segments,omitempty"`   // replaces all
 	Ordinal     *int                   `json:"ordinal,omitempty"`
 	// Cover selects one of the version's cover uploads by name (i-{uuid});
 	// "" returns to its first.
@@ -141,12 +143,16 @@ type effects struct {
 // bumps their revisions, refreshes facets and documents, re-codes, emits
 // events and queues media exposure before committing.
 func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
+	g, err := s.grantsFor(ctx, actor, ids)
+	if err != nil {
+		return err
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	got, err := s.authorize(ctx, tx, actor, ids)
+	got, err := s.authorize(ctx, tx, actor, ids, g)
 	if err != nil {
 		return err
 	}
@@ -262,16 +268,22 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 			return nil, err
 		}
 		if p.Comments == "" {
-			p.Comments = content.CommentsOpen
+			p.Comments = s.defaultComments(c.Kind)
 		}
 		if err := checkComments(p.Comments); err != nil {
 			return nil, err
 		}
-		rule := access.Rule{Level: access.Public}
+		if err := s.checkKindComments(c.Kind, p.Comments); err != nil {
+			return nil, err
+		}
+		rule := s.defaultRule(c.Kind)
 		if c.Access != nil {
 			rule = *c.Access
 		}
 		if rule, err = s.checkRule(rule); err != nil {
+			return nil, err
+		}
+		if err := s.checkKindRule(c.Kind, rule); err != nil {
 			return nil, err
 		}
 		p.Access = &rule
@@ -428,6 +440,16 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		fx := effects{expose: true}
 		for _, u := range in {
 			o := got[u.ID]
+			if u.Comments != nil {
+				if err := s.checkKindComments(o.kind, *u.Comments); err != nil {
+					return fx, err
+				}
+			}
+			if u.Access != nil {
+				if err := s.checkKindRule(o.kind, *u.Access); err != nil {
+					return fx, err
+				}
+			}
 			if o.state == StateDeleted {
 				return fx, ErrNotFound
 			}
@@ -756,13 +778,6 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) e
 // runs after ordinary authorization and content locks, before any publication
 // mutation. It must use tx for database reads and must not open transactions.
 func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Publish, check func(context.Context, pgx.Tx) error) error {
-	// Resolve provider authority before reserving a pool connection: AuthKit
-	// may share this pool. The private context memo lasts only this operation.
-	rights, err := s.staffRights(ctx, actor)
-	if err != nil {
-		return err
-	}
-	ctx = context.WithValue(ctx, checkedStaffKey{}, checkedStaff{store: s, rights: rights})
 	ids := make([]string, len(in))
 	byID := map[string][]TextPut{}
 	for i, p := range in {
@@ -780,6 +795,24 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 			if err := check(ctx, tx); err != nil {
 				return fx, err
 			}
+		}
+		if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+			return fx, err
+		}
+		// A scheduled item goes live at its time without another check, so
+		// scheduling needs ready media too.
+		var going []string
+		for _, p := range in {
+			if o := got[p.ContentID]; o.state != StateDeleted && !(o.state == StatePublished && o.publishedAt) {
+				going = append(going, p.ContentID)
+			}
+		}
+		targets, err := s.publishedVersions(ctx, tx, going)
+		if err != nil {
+			return fx, err
+		}
+		if err := s.readyTx(ctx, tx, targets); err != nil {
+			return fx, err
 		}
 		for _, p := range in {
 			o := got[p.ContentID]
@@ -883,6 +916,18 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 // restoreRows brings deleted items back as they were: published (or
 // scheduled) when they had been, else drafts.
 func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
+	// A fixed comment policy is applied only when explicitly restoring a
+	// deleted item. Retained tombstones are not rewritten on configuration load.
+	for kind, spec := range s.cfg.Kinds {
+		if len(spec.CommentModes) == 1 {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET comments = $3 WHERE tenant_id = $1 AND id = ANY($2) AND kind = $4`, s.tenant, ids, spec.CommentModes[0], kind); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,
  state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	return err
@@ -1033,6 +1078,18 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 				continue
 			}
+			if o.state == StatePublished && (p.State == StatePublished || p.State == "" && p.PublishAt != nil) {
+				var was string
+				if err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
+					s.tenant, p.ContentID, p.VersionID).Scan(&was); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return fx, err
+				}
+				if (p.State == StatePublished || was == StatePublished) && (was != StatePublished || p.PublishAt != nil) {
+					if err := s.readyTx(ctx, tx, []versions.Target{{Content: p.ContentID, Version: p.VersionID}}); err != nil {
+						return fx, err
+					}
+				}
+			}
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err
 			}
@@ -1104,7 +1161,19 @@ func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versi
 		if err != nil {
 			return r, err
 		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
 		r.access, _ = json.Marshal(rule)
+	}
+	if r.access != nil {
+		var rule access.Rule
+		if err := json.Unmarshal(r.access, &rule); err != nil {
+			return r, err
+		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
 	}
 	if v.Attributes != nil {
 		a, err := checkAttributes(k.Attributes, v.Attributes)
@@ -1260,16 +1329,26 @@ func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v 
 		}
 	}
 	if v.Segments != nil {
-		segs, err := checkSegments(*v.Segments)
+		segs, err := checkSegmentInputs(*v.Segments)
 		if err != nil {
 			return err
+		}
+		if len(segs) > 0 && segs[0].StartPage != "" {
+			if err := s.validateChapterStarts(ctx, tx, id, segs); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $2`, s.tenant, id); err != nil {
 			return err
 		}
 		for _, sg := range segs {
-			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				s.tenant, id, sg.Position, strings.TrimSpace(sg.Title), sg.Start, sg.End, sg.ReleaseAt); err != nil {
+			var start, end any = sg.Start, sg.End
+			var startPage any
+			if sg.StartPage != "" {
+				start, end, startPage = nil, nil, sg.StartPage
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				s.tenant, id, sg.Position, strings.TrimSpace(sg.Title), start, end, sg.ReleaseAt, startPage); err != nil {
 				return err
 			}
 		}

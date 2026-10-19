@@ -115,6 +115,16 @@ export class EntitiesClient {
     return this.write(call(this.http, "PUT", "/contents/{id}/entities", { params: { id: contentId }, query: { language }, body: set }));
   }
 
+  /** Replaces shared content links only; every version's links are preserved. */
+  setSharedOfContent(contentId: string, set: ContentGroups, language?: string): Promise<ContentMemberships> {
+    return this.write(call(this.http, "PUT", "/contents/{id}/entities/shared", { params: { id: contentId }, query: { language }, body: set }));
+  }
+
+  /** Replaces this version's links only; shared and sibling links are preserved. */
+  setOfVersion(contentId: string, versionId: string, set: ContentGroups, language?: string): Promise<ContentMemberships> {
+    return this.write(call(this.http, "PUT", "/contents/{id}/versions/{vid}/entities", { params: { id: contentId, vid: versionId }, query: { language }, body: set }));
+  }
+
   private async write<T>(p: Promise<T>): Promise<T> {
     const emit = this.http.captureChanges();
     const out = await p;

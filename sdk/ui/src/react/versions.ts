@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import { throwIfAborted, toContentKitError, type ContentKitError } from "../client/errors.js";
+import { ContentKitError, throwIfAborted, toContentKitError } from "../client/errors.js";
 import type { FileDownload, Pending, PlanSegment, ReaderPlan } from "../client/generated/wire.js";
 import { isPending } from "../client/versions.js";
 import { sleep } from "../client/media/client.js";
@@ -52,6 +52,9 @@ export function useReaderPlan(content: string | null | undefined, version: strin
 
 /** A segment's page with the URL of one rendition, once its item's read signed it. */
 export interface ReaderPage {
+  /** SHA-256 of the original source image; stable across renaming and reordering. */
+  id: string;
+  /** Display name only; never a page reference. */
   name: string;
   w: number;
   h: number;
@@ -76,7 +79,7 @@ export function useSegmentPages(segment: PlanSegment | null | undefined, renditi
     const urls = new Map((read.read?.files ?? []).flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
     return (segment?.pages ?? []).map((p) => {
       const path = p.files[rendition];
-      return { name: p.name, w: p.w, h: p.h, url: path ? urls.get(path) : undefined };
+      return { id: p.id, name: p.name, w: p.w, h: p.h, url: path ? urls.get(path) : undefined };
     });
   }, [segment, rendition, read.read]);
   return { pages, loading: !!item && read.loading, error: read.error };
@@ -135,7 +138,9 @@ export function downloadMessage(m: Translator, err: ContentKitError | undefined,
 
 /**
  * A version's download, charged to the viewer's download quota: the
- * original or rendition its kind serves, or its pages as a zip.
+ * original or rendition its kind serves, or its pages as a zip. Polls while
+ * its source pages are prepared. ZIP assembly streams on demand after
+ * publication; render_timeout after ten minutes.
  */
 export function useVersionDownload(
   content: string,
@@ -154,6 +159,7 @@ export function useVersionDownload(
     const controller = owner.active = new AbortController();
     const { signal } = controller;
     setState({ owner, preparing: true });
+    const until = Date.now() + 600_000;
     try {
       for (;;) {
         const out = await client.versions.download(content, version, signal);
@@ -163,6 +169,7 @@ export function useVersionDownload(
           start(out);
           return out;
         }
+        if (Date.now() >= until) throw new ContentKitError("render_timeout", "the download is still being prepared");
         await sleep(o.poll ?? 3000, signal);
       }
     } catch (e) {

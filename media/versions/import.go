@@ -174,7 +174,7 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 	next := 0
 	for _, f := range m.Files {
 		if f.IsUpload() && inPattern(k.Publish.Pages, f.Path) {
-			name := pageID(k, f)
+			name := pageName(k, f)
 			names[name] = true
 			if _, _, end, ok := media.CanonicalPageName(name); ok && end > next {
 				next = end

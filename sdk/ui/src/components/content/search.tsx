@@ -34,8 +34,10 @@ export interface SearchBoxProps {
   /** Enter opens an explicitly selected suggestion; free text never submits a results search. */
   selectionOnly?: boolean;
   disabled?: boolean;
-  /** A portal dropdown anchored to the header field; default stays inline. */
-  presentation?: "inline" | "header";
+  /** Called after a nonempty query or navigable suggestion is chosen. */
+  onSelect?: () => void;
+  /** Header portals below the field; dialog keeps suggestions in the layout. */
+  presentation?: "inline" | "header" | "dialog";
   client?: ContentKitClient;
   className?: string;
   appearance?: ContentKitUiAppearance;
@@ -111,6 +113,7 @@ export function SearchBox(p: SearchBoxProps) {
   const panel = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const header = p.presentation === "header";
+  const dialog = p.presentation === "dialog";
   const anchor = useHeaderAnchor(open, header, root, input);
   const { top } = anchor;
   const empty = !text.trim();
@@ -156,7 +159,7 @@ export function SearchBox(p: SearchBoxProps) {
   };
   const search = (q: string) => {
     setOpen(false);
-    if (q) p.onSearch(q);
+    if (q) { p.onSelect?.(); p.onSearch(q); }
   };
   const go = (s: Suggestion) => {
     if (s.type === "recent") {
@@ -166,6 +169,7 @@ export function SearchBox(p: SearchBoxProps) {
     const url = p.href ? p.href(s.type === "content" ? s.card : s.group) : s.type === "content" ? s.card.path : s.group.path;
     setOpen(false);
     if (!url) return;
+    p.onSelect?.();
     if (navigate) navigate(url);
     else location.assign(url);
   };
@@ -178,11 +182,11 @@ export function SearchBox(p: SearchBoxProps) {
   };
   const results = (<>
     {showRecent && (
-      <div className={cn("flex items-center justify-between gap-2 text-muted-foreground", header ? "mb-4 text-base font-semibold" : "px-2 py-1 text-xs")}>
+      <div className={cn("flex items-center justify-between gap-2 text-muted-foreground", header ? "mb-4 text-base font-semibold" : dialog ? "px-2 pt-1 pb-3 text-xs font-medium" : "px-2 py-1 text-xs")}>
         <span id={`${id}-recent`} className="flex items-center gap-2">{header && <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-5" aria-hidden />}{t("contents.recentSearches")}</span>
         {visible.length > 0 && <button
           type="button"
-          className="rounded px-1 hover:text-foreground"
+          className={cn("rounded px-1 hover:text-foreground", dialog && "min-h-11 -my-3")}
           onMouseDown={(e) => {
             e.preventDefault();
           }}
@@ -202,7 +206,7 @@ export function SearchBox(p: SearchBoxProps) {
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
           onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
@@ -233,7 +237,7 @@ export function SearchBox(p: SearchBoxProps) {
               <span className="min-w-0 flex-1 truncate">{s.query}</span>
               <button
                 type="button"
-                className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                className={cn("rounded p-0.5 text-muted-foreground hover:text-foreground", dialog && "-my-2 grid size-11 shrink-0 place-items-center")}
                 aria-label={t("contents.removeRecent", { q: s.query })}
                 onMouseDown={(e) => {
                   e.preventDefault();
@@ -248,15 +252,15 @@ export function SearchBox(p: SearchBoxProps) {
         </li>
       ))}
     </ul>
-    {loading ? <div role="status" className={cn("text-muted-foreground", header ? "flex justify-center py-4" : "px-3 py-2")}>{header ? <><span className="size-6 animate-spin rounded-full border-2 border-muted border-t-foreground motion-reduce:animate-none" aria-hidden /><span className="sr-only">{t("contents.loading")}</span></> : t("contents.loading")}</div>
-      : !empty && found.error ? <p role="alert" className={cn("px-3 py-2 text-destructive", header && "text-center")}>{error(found.error)}</p>
-      : visible.length === 0 && <div role="status" className={cn("text-muted-foreground", header ? "flex flex-col items-center gap-2 py-8 text-center" : "px-3 py-2")}>{header && <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-8" aria-hidden />}<p>{t(emptyMessage, { q: text.trim() })}</p></div>}
+    {loading ? <div role="status" className={cn("text-muted-foreground", header ? "flex justify-center py-4" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}>{header ? <><span className="size-6 animate-spin rounded-full border-2 border-muted border-t-foreground motion-reduce:animate-none" aria-hidden /><span className="sr-only">{t("contents.loading")}</span></> : t("contents.loading")}</div>
+      : !empty && found.error ? <p role="alert" className={cn("px-3 py-2 text-destructive", (header || dialog) && "px-2 py-8 text-center")}>{error(found.error)}</p>
+      : visible.length === 0 && <div role="status" className={cn("text-muted-foreground", header ? "flex flex-col items-center gap-2 py-8 text-center" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}>{header && <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-8" aria-hidden />}<p>{t(emptyMessage, { q: text.trim() })}</p></div>}
   </>);
   return (
-    <ContentKitUiRoot ref={root} appearance={p.appearance} className={cn("relative text-sm", p.className)} data-ckui="search-box" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget) && !panel.current?.contains(event.relatedTarget)) setOpen(false); }}>
+    <ContentKitUiRoot ref={root} appearance={p.appearance} className={cn("relative text-sm", dialog && "flex min-h-0 flex-col gap-4", p.className)} data-ckui="search-box" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget) && !panel.current?.contains(event.relatedTarget)) setOpen(false); }}>
       <form
         role="search"
-        className="relative"
+        className="relative shrink-0"
         onSubmit={(e) => {
           e.preventDefault();
           if (p.disabled) return;
@@ -266,7 +270,7 @@ export function SearchBox(p: SearchBoxProps) {
         }}
       >
         {header ? <button type="submit" disabled={p.disabled} className="absolute top-1/2 left-2.5 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={t("contents.search")}><HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-4" aria-hidden /></button>
-          : <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />}
+          : <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className={cn("pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground", dialog && "left-3.5 size-4.5")} aria-hidden />}
         <Input
           ref={input}
           type={header ? "text" : "search"}
@@ -278,7 +282,7 @@ export function SearchBox(p: SearchBoxProps) {
           aria-autocomplete="list"
           autoComplete="off"
           disabled={p.disabled}
-          className={cn("h-9 ps-8", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none md:text-base")}
+          className={cn("h-9 ps-8", dialog && "h-12 border-border bg-background ps-10 text-base shadow-none focus-visible:ring-2 focus-visible:ring-ring/25 md:text-base dark:bg-background", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none md:text-base")}
           value={text}
           placeholder={p.placeholder ?? t("contents.searchPlaceholder")}
           onChange={(e) => {
@@ -332,7 +336,7 @@ export function SearchBox(p: SearchBoxProps) {
             </div>
           </div>
         </ContentKitUiRoot>, document.body,
-      ) : <div ref={panel} className="absolute top-full z-20 mt-1 grid max-h-96 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-md" data-ckui="search-panel" onKeyDown={panelKeyDown}>{results}</div>)}
+      ) : <div ref={panel} className={cn("absolute top-full z-20 mt-1 grid max-h-96 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-md", dialog && "relative top-auto z-auto m-0 block min-h-[min(9rem,20dvh)] max-h-[min(24rem,50dvh)] border-0 bg-transparent p-2 shadow-none overscroll-contain")} data-ckui="search-panel" onKeyDown={panelKeyDown}>{results}</div>)}
 
     </ContentKitUiRoot>
   );

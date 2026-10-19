@@ -200,7 +200,7 @@ func TestSegmentsReleaseInOrderIntegration(t *testing.T) {
 	f.publish("staff", id, nil)
 	v := f.read("staff", "main.test", id)[0].Versions[0]
 	soon, later := f.now().Add(time.Hour), f.now().Add(2*time.Hour)
-	segs := []Segment{{Title: "One", Start: 0, End: 10}, {Title: "Two", Start: 10, End: 20, ReleaseAt: &later}, {Title: "Three", Start: 20, End: 30, ReleaseAt: &soon}}
+	segs := []SegmentInput{{Title: "One", Start: 0, End: 10}, {Title: "Two", Start: 10, End: 20, ReleaseAt: &later}, {Title: "Three", Start: 20, End: 30, ReleaseAt: &soon}}
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: v.ID, VersionInput: VersionInput{Segments: &segs}}}); err != nil {
 		t.Fatal(err)
 	}

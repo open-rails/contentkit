@@ -117,12 +117,14 @@ test("a draft created on the first drop adds files as they finish; Publish waits
   await expect(publish).toBeEnabled();
 
   // The next file's upload stalls at the bucket, so it is in flight when the draft is discarded.
-  await h.faults([{ item: ids.draft!, fault: "hold", from: "browser" }]);
+  // Bucket paths name the item, not the demo's "{id}~{version}" parameter.
+  const held = ids.draft!.split("~")[0]!;
+  await h.faults([{ item: held, fault: "hold", from: "browser" }]);
   await composer.locator("[data-ckui=folder-add] input").setInputFiles([img("4.jpg")]);
   await expect(composer.locator("[data-ckui=queue-row]")).toHaveCount(1);
   await expect(publish).toBeDisabled();
   await composer.getByRole("button", { name: "Discard draft" }).click();
-  await h.clearFaults(ids.draft!);
+  await h.clearFaults(held);
   await expect(composer.getByText("Drop files here, or click to choose")).toBeVisible();
   await page.waitForTimeout(2000);
   await expect(composer.locator("[data-ckui=upload-row]")).toHaveCount(0);

@@ -2,6 +2,15 @@ import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
   readerEditor: {
+    sharedEntities: "갤러리 관련 정보",
+    sharedHint: "이 갤러리의 모든 버전에서 공유됩니다.",
+    versionDetails: "버전 세부 정보",
+    versionEntities: "버전 크레딧",
+    versionHint: "현재 편집 중인 버전에만 적용됩니다.",
+    versionMissing: "이 버전을 찾을 수 없습니다.",
+    leaveVersion: "이 버전에서 나갈까요?",
+    discardVersionEdits: "저장하지 않은 변경 사항을 버리고 다른 버전을 열까요?",
+    discard: "변경 사항 버리기",
     thumbnail: "썸네일",
     editThumbnail: "썸네일 자르기",
     setThumbnail: "썸네일로 설정",

@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
 import type { Content, ContentModel, GroupCard, GroupDetail, Version } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
-import { AccessEditor, VersionsEditor } from "./editors.js";
+import { AccessEditor, SegmentsEditor, VersionEditor, VersionsEditor } from "./editors.js";
 
 type Handler = (req: { url: URL; body: unknown }) => unknown;
 
@@ -46,7 +46,8 @@ const model: ContentModel = {
 };
 
 const at = "2026-10-13T00:00:00Z";
-const version: Version = { id: "v1", code: "AB12", position: 1, languages: ["en"], traits: [], live: false, has_audio: false, attributes: {}, segments: [], decision: { allowed: true } };
+const version: Version = { id: "v1", code: "AB12", position: 1, languages: ["en"], traits: [], live: false, has_audio: false,
+  entities: [], attributes: {}, segments: [], decision: { allowed: true } };
 const content = (o: Partial<Content> = {}): Content => ({
   id: "p1",
   kind: "post",
@@ -134,4 +135,104 @@ it("AccessEditor: a group level saves only with a group; previews are the kind's
   expect(within(editor).getByRole("combobox", { name: "Group" })).toBeInTheDocument();
   expect(within(editor).getByLabelText("Free pages")).toBeInTheDocument();
   expect(within(editor).getByLabelText("Free chapters")).toBeInTheDocument();
+});
+
+
+it("subscription-only policy shows two access choices, saves its single tier, and removes all offer fields", async () => {
+  const limited = { ...model, tiers: ["premium"], kinds: { ...model.kinds, comic: { ...model.kinds.comic!, access_levels: ["public", "tier"] } } };
+  const s = server({
+    "GET /kinds": () => limited,
+    "PATCH /contents/p1": ({ body }) => content({ kind: "comic", access: (body as { access: Content["access"] }).access, revision: 4 }),
+  });
+  const user = userEvent.setup();
+  const { container } = render(<AccessEditor content={content({ kind: "comic" })} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("heading", { name: "Access" })).toBeVisible();
+  await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+  await user.click(await screen.findByRole("option", { name: "Tier members" }));
+  expect(screen.queryByRole("switch", { name: "premium" })).toBeNull();
+  expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(s.calls.find((c) => c.key === "PATCH /contents/p1")?.body).toEqual({ access: { level: "tier", tiers: ["premium"] }, revision: 3 }));
+});
+
+it("subscription-only versions do not expose prices or purchases", async () => {
+  const limited = { ...model, tiers: ["premium"], kinds: { ...model.kinds, comic: { ...model.kinds.comic!, access_levels: ["public", "tier"] } } };
+  const s = server({ "GET /kinds": () => limited });
+  const user = userEvent.setup();
+  const { container } = render(<VersionsEditor content={content({ kind: "comic" })} media={false} client={s.client} />);
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  expect(container.querySelector('[data-ckui="offer-fields"]')).toBeNull();
+  expect(screen.queryByLabelText("Price")).toBeNull();
+  await user.click(screen.getByRole("switch", { name: "Its own access rule" }));
+  await user.click(screen.getByRole("combobox", { name: "Who can open it" }));
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Everyone", "Tier members"]);
+});
+
+it("edits one selected version without duplicating its media or chapter panels", async () => {
+  const limited = { ...model, kinds: { ...model.kinds, comic: { ...model.kinds.comic!, access_levels: ["public", "tier"] } } };
+  const s = server({
+    "GET /kinds": () => limited,
+    "PATCH /contents/p1/versions/v1": ({ body }) => ({ ...version, ...body as object }),
+  });
+  const user = userEvent.setup();
+  const { container } = render(<VersionEditor content={content({ kind: "comic" })} version={version} media={false} chapters={false} client={s.client} />);
+  const label = await screen.findByLabelText("Label (optional)");
+  await user.type(label, "Revised edition");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(s.calls.find((call) => call.key === "PATCH /contents/p1/versions/v1")?.body).toMatchObject({ label: "Revised edition", languages: ["en"] }));
+  expect(container.querySelector('[data-ckui="segments-editor"]')).toBeNull();
+  expect(container.querySelector('[data-ckui="media-folder"]')).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add version" })).toBeNull();
+});
+
+it("notifies the host only after the selected version is successfully deleted", async () => {
+  let rejected = true;
+  const s = server({
+    "GET /kinds": () => model,
+    "DELETE /contents/p1/versions/v1": () => {
+      if (rejected) throw new Error("Delete refused");
+      return null;
+    },
+  });
+  const onDeleted = vi.fn(), onError = vi.fn(), user = userEvent.setup();
+  render(<VersionEditor content={content()} version={version} media={false} chapters={false} client={s.client} onDeleted={onDeleted} onError={onError} />);
+  const remove = await screen.findByRole("button", { name: "Delete version" });
+  await user.click(remove);
+  await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+  expect(onDeleted).not.toHaveBeenCalled();
+  rejected = false;
+  await user.click(remove);
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledExactlyOnceWith(version));
+});
+
+it("lets the host cancel edition deletion to preserve unsaved parent fields", async () => {
+  const s = server({ "GET /kinds": () => model, "DELETE /contents/p1/versions/v1": () => null });
+  const beforeDelete = vi.fn<() => boolean | Promise<boolean>>().mockReturnValueOnce(false).mockResolvedValueOnce(true);
+  const onDeleted = vi.fn(), user = userEvent.setup();
+  render(<VersionEditor content={content()} version={version} media={false} chapters={false} client={s.client} beforeDelete={beforeDelete} onDeleted={onDeleted} />);
+  const remove = await screen.findByRole("button", { name: "Delete version" });
+  await user.click(remove);
+  expect(beforeDelete).toHaveBeenCalledOnce();
+  expect(s.calls.some((call) => call.key.startsWith("DELETE"))).toBe(false);
+  expect(onDeleted).not.toHaveBeenCalled();
+  await user.click(remove);
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledExactlyOnceWith(version));
+  expect(s.calls.filter((call) => call.key.startsWith("DELETE"))).toHaveLength(1);
+});
+
+it("resets unsaved version fields when selecting another edition", async () => {
+  const s = server({ "GET /kinds": () => model }), user = userEvent.setup();
+  const view = render(<VersionEditor content={content()} version={version} media={false} chapters={false} client={s.client} />);
+  await user.type(await screen.findByLabelText("Label (optional)"), "First draft");
+  const second = { ...version, id: "v2", code: "SECOND", label: "Second edition" };
+  view.rerender(<VersionEditor content={content()} version={second} media={false} chapters={false} client={s.client} />);
+  expect(screen.getByLabelText("Label (optional)")).toHaveValue("Second edition");
+});
+
+it("can render chapter controls under a host-supplied heading", async () => {
+  const s = server({ "GET /kinds": () => model });
+  render(<SegmentsEditor content={content({ kind: "comic" })} version={version} heading={false} client={s.client} />);
+  expect(screen.queryByRole("heading", { name: "Chapters" })).toBeNull();
+  expect(await screen.findByRole("button", { name: "Add chapter" })).toBeVisible();
 });

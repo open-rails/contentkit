@@ -4,7 +4,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/groups"
 
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"
@@ -72,6 +75,64 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	if got := find("青い海", "ja", anon); !slices.Equal(got, []string{live}) {
 		t.Fatalf("Japanese text finds %v", got)
 	}
+
+	// A renamed group's members, inherited ones through a parent included,
+	// are found by the new name only, whichever write renames it.
+	coast := f.group("tag", "coast")
+	parent := groups.GroupID(coast)
+	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(tag), ParentID: &parent}}); err != nil {
+		t.Fatal(err)
+	}
+	series := f.group("series", "voyage")
+	f.join(series, live, "")
+	sync()
+	renamed := func(old, now string) {
+		t.Helper()
+		sync()
+		if got := find(old, "en", anon); len(got) != 0 {
+			t.Fatalf("the old name %q still finds %v", old, got)
+		}
+		if got := find(now, "en", anon); !slices.Equal(got, []string{live}) {
+			t.Fatalf("the new name %q finds %v", now, got)
+		}
+	}
+	name := func(s string) []groups.Name {
+		return []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: s}}
+	}
+	if err := f.groups.SetNames(f.ctx, []groups.GroupNames{{ID: groups.GroupID(tag), Names: name("Mountain")}}); err != nil {
+		t.Fatal(err)
+	}
+	renamed("seaside", "mountain")
+	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: parent, Names: name("Harbor")}}); err != nil {
+		t.Fatal(err)
+	}
+	renamed("coast", "harbor")
+	// Resending the same names and slug queues none of the members.
+	slug := "coast"
+	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: parent, Slug: &slug, Names: name("Harbor")}}); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_search_dirty"}.Sanitize()+` WHERE content_id = $1`, live).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("an unchanged update queued %d documents: %v", queued, err)
+	}
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.groups.ImportGroups(f.ctx, tx, []groups.ImportGroup{{ID: groups.GroupID(tag), Kind: "tag", Slug: "seaside", ParentID: parent,
+		State: groups.StateActive, Names: name("Summit")}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	renamed("mountain", "summit")
+	// A path entity's rename already re-derived its members; it still does.
+	if err := f.groups.SetNames(f.ctx, []groups.GroupNames{{ID: groups.GroupID(series), Names: name("Odyssey")}}); err != nil {
+		t.Fatal(err)
+	}
+	renamed("voyage", "odyssey")
 
 	// Edits rebuild; deletion and a removed language drop the documents.
 	if err := f.s.PutText(f.ctx, f.as("staff"), []TextPut{{ContentID: live, Language: "en", Text: &Text{Title: "Green Ocean"}}, {ContentID: live, Language: "ja"}}); err != nil {

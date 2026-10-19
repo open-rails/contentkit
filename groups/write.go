@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -232,11 +233,13 @@ func (s *Store) checkLinks(ctx context.Context, q Querier, ids []string) error {
 		return err
 	}
 	var cycle string
-	err = q.QueryRow(ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id, depth) AS (
- SELECT g.id, g.parent_id, 1 FROM %[1]s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND g.parent_id IS NOT NULL
- UNION ALL
- SELECT up.start, g.parent_id, up.depth + 1 FROM up JOIN %[1]s g ON g.tenant_id = $1 AND g.id = up.id
- WHERE g.parent_id IS NOT NULL AND up.id <> up.start AND up.depth < 64)
+	// Topology writers hold lockHierarchy, so the stored graph is acyclic and
+	// the walk ends; UNION also ends it on a cycle no writer here created.
+	err = q.QueryRow(ctx, fmt.Sprintf(`WITH RECURSIVE up(start, id) AS (
+ SELECT g.id, g.parent_id FROM %[1]s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND g.parent_id IS NOT NULL
+ UNION
+ SELECT up.start, g.parent_id FROM up JOIN %[1]s g ON g.tenant_id = $1 AND g.id = up.id
+ WHERE g.parent_id IS NOT NULL AND up.id <> up.start)
 SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("content_groups")), s.tenant, ids).Scan(&cycle)
 	if err != nil {
 		return err
@@ -245,6 +248,28 @@ SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("
 		return fmt.Errorf("%w: group %s would be its own ancestor", ErrInvalid, cycle)
 	}
 	return nil
+}
+
+// lockHierarchy serializes the writers that change a group's parent or state
+// for the transaction's rest. Taken before any group row lock, it lets each
+// validate parents and cycles against the others' committed changes rather
+// than each against a graph the other is changing.
+func (s *Store) lockHierarchy(ctx context.Context, q Querier) error {
+	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, s.hierarchyKey())
+	return err
+}
+
+// LockHierarchyShared holds off hierarchy changes for the transaction's rest
+// while letting other membership writers through. A membership writer takes
+// it before any content or group lock, so a hierarchy change either sees its
+// membership or is seen by its facets.
+func (s *Store) LockHierarchyShared(ctx context.Context, q Querier) error {
+	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`, s.hierarchyKey())
+	return err
+}
+
+func (s *Store) hierarchyKey() string {
+	return "contentkit:group-hierarchy:" + s.schema + ":" + s.tenant
 }
 
 // CreateGroups creates groups with their names and text in one transaction.
@@ -329,7 +354,15 @@ func (s *Store) CreateGroups(ctx context.Context, inputs []GroupInput) ([]Group,
 		return nil, err
 	}
 	out := make([]Group, len(inputs))
+	parented := slices.ContainsFunc(rows, func(r groupRow) bool { return r.ParentID != nil })
 	err = s.run(ctx, func(q Querier) error {
+		// Only a parent can race a delete of that parent; name-linked creates,
+		// which run under content locks, take no parent and skip the lock.
+		if parented {
+			if err := s.lockHierarchy(ctx, q); err != nil {
+				return err
+			}
+		}
 		if err := s.lockOwners(ctx, q, rows); err != nil {
 			return err
 		}
@@ -466,9 +499,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 	if len(list) != len(updates) {
 		return nil, fmt.Errorf("%w: a group is updated twice", ErrInvalid)
 	}
+	topology := slices.ContainsFunc(updates, func(u GroupUpdate) bool { return u.ParentID != nil || u.State != nil })
 	out := make([]Group, len(updates))
 	var changed []string
 	err = s.run(ctx, func(q Querier) error {
+		if topology {
+			if err := s.lockHierarchy(ctx, q); err != nil {
+				return err
+			}
+		}
 		locked, err := s.lock(ctx, q, list)
 		if err != nil {
 			return err
@@ -487,6 +526,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 		var textIDs, nameIDs, reach []string
 		var restored []groupRow
 		var flipped, renamed []Ref
+		var relabeled []string
+		given := map[string][]nameRow{}
+		var unavailable []Ref
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -498,6 +540,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			}
 			if err := s.checkPolicyBinding(g, Group{ID: g.ID, Kind: row.Kind, Slug: row.Slug, ScopeID: GroupID(row.ScopeID), State: State(row.State), Internal: row.Internal}); err != nil {
 				return err
+			}
+			if row.State == string(StateDeleted) || !g.Internal && row.Internal {
+				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			row.Ordinal = i
 			rows = append(rows, row)
@@ -519,11 +564,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			if u.Names != nil || u.Slug != nil {
 				renamed = append(renamed, Ref{Kind: g.Kind, ID: g.ID})
 			}
+			if row.Slug != g.Slug {
+				relabeled = append(relabeled, string(g.ID))
+			}
 			if u.Names != nil {
 				n, err := validateNames(g.ID, u.Names)
 				if err != nil {
 					return err
 				}
+				given[string(g.ID)] = n
 				for _, r := range n {
 					r.Ordinal = len(names)
 					names = append(names, r)
@@ -537,6 +586,14 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 				}
 				texts = append(texts, t...)
 				textIDs = append(textIDs, string(g.ID))
+			}
+		}
+		if s.references != nil && len(unavailable) > 0 {
+			if err := checkReferenceTransaction(ctx, q); err != nil {
+				return err
+			}
+			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
+				return err
 			}
 		}
 		data, err := json.Marshal(rows)
@@ -561,6 +618,15 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			}
 		}
 		if len(nameIDs) > 0 {
+			stored, err := s.names(ctx, q, nameIDs)
+			if err != nil {
+				return err
+			}
+			for _, id := range nameIDs {
+				if !sameNames(given[id], stored[GroupID(id)]) && !slices.Contains(relabeled, id) {
+					relabeled = append(relabeled, id)
+				}
+			}
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND group_id = ANY($2::text[])`, s.table("content_group_names")), s.tenant, nameIDs); err != nil {
 				return err
 			}
@@ -586,6 +652,9 @@ func (s *Store) UpdateGroups(ctx context.Context, updates []GroupUpdate) ([]Grou
 			return err
 		}
 		if err := s.refreshGroupFacets(ctx, q, reach); err != nil {
+			return err
+		}
+		if err := s.namesChanged(ctx, q, relabeled); err != nil {
 			return err
 		}
 		updated, err := s.byIDs(ctx, q, list)

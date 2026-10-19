@@ -1,6 +1,15 @@
 // The drop-in admin flows: shared states, and each flow's own words.
 export const admin = {
   readerEditor: {
+    sharedEntities: "Gallery entities",
+    sharedHint: "Shared across every version of this gallery.",
+    versionDetails: "Version details",
+    versionEntities: "Version credits",
+    versionHint: "Only for the version being edited.",
+    versionMissing: "This version could not be found.",
+    leaveVersion: "Leave this version?",
+    discardVersionEdits: "Discard unsaved changes before opening another version?",
+    discard: "Discard changes",
     thumbnail: "Thumbnail",
     editThumbnail: "Crop the thumbnail",
     setThumbnail: "Set as thumbnail",
@@ -19,7 +28,7 @@ export const admin = {
     entities: "Artists, series and tags",
     headerText: "Header text",
     publication: "Publication",
-    versions: "Versions and chapters",
+    versions: "Versions",
     readerTools: "Audio and reading anchors",
     filesNotReady: "Finish uploading and processing the gallery pages before publishing.",
     filesFailed: "Some files need attention. Retry or remove the failed uploads before publishing.",

@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 
+	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -73,5 +76,29 @@ func TestSignalPlaneRecovers(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if connects.Load() != n || !on.Load() {
 		t.Fatal("the plane changed after close")
+	}
+}
+
+// Purged content's signal erasure fails, so River retries, while a configured
+// plane is down; with no plane configured there is nothing to erase.
+func TestForgetContentsRetriesWhilePlaneDown(t *testing.T) {
+	// pgxpool connects lazily; the hub never touches Postgres here.
+	pool, err := pgxpool.New(t.Context(), "postgres://unused:unused@127.0.0.1:9/unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	job := &river.Job[forgetContentsArgs]{Args: forgetContentsArgs{Contents: []signal.ForgottenContent{{Kind: "gallery", ContentID: "c1"}}}}
+	for _, c := range []struct {
+		configured bool
+		want       error
+	}{{true, hub.ErrSignalPlaneDown}, {false, nil}} {
+		h, err := hub.New(hub.Config{PG: pool, PGSchema: "contentkit", Tenant: "doujins", SignalPlane: c.configured})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (&forgetContentsWorker{e: &Engine{hub: h}}).Work(t.Context(), job); !errors.Is(err, c.want) {
+			t.Errorf("plane configured=%v: %v, want %v", c.configured, err, c.want)
+		}
 	}
 }

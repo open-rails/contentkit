@@ -241,6 +241,7 @@ export const ko: ContentKitUiMessageBundle = {
     operation_busy: "이 제출을 업데이트하고 있습니다. 잠시 후 다시 시도하세요.",
     source_conflict: "이 소스는 이미 제출되었습니다.",
     content_changed: "제출 후 콘텐츠가 변경되었습니다. 게시하기 전에 검토하세요.",
+    not_ready: "파일을 아직 처리 중입니다. 완료된 후 게시하세요.",
     invalid_archive: "이 ZIP을 처리할 수 없습니다. 지원되는 파일이 포함되어 있는지 확인하세요.",
     download_unavailable: "지금은 다운로드할 수 없습니다.",
     no_download: "아직 다운로드할 항목이 없습니다.",
