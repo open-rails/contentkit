@@ -4,6 +4,7 @@ export { DailyReleases, type DailyReleasesProps } from "./daily-releases.js";
 export { ReleaseDatePicker, isReleaseDate, localReleaseDate, type ReleaseDatePickerProps } from "./release-date-picker.js";
 export { PopularContentGrid, type PopularContentGridProps } from "./popular.js";
 export { SearchBox, type SearchBoxProps } from "./search.js";
+export { SearchDialog, type SearchDialogProps } from "./search-dialog.js";
 export { ReaderSettings, type ReaderSettingsProps } from "./reader-settings.js";
 export { ContentFilterDialog, type ContentFilterDialogProps } from "./filter-dialog.js";
 export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ContentFilterCount, type ReleaseDateIndexProps } from "./filters.js";
