@@ -1,4 +1,4 @@
-import { ContentKitError, toContentKitError } from "../errors.js";
+import { ContentKitError, throwIfAborted, toContentKitError } from "../errors.js";
 import type { FileInfo, Op, RefBody } from "../generated/wire.js";
 import { fill } from "../public.js";
 import { samePath, stem, type MediaClient, type Progress, type UploadedFile, type UploadState } from "./client.js";
@@ -180,15 +180,48 @@ export class ItemUploadQueue {
    * the item's attached uploads in order.
    */
   async commit(signal?: AbortSignal, o: { head?: boolean; attach?: readonly string[] } = {}): Promise<FileInfo[]> {
-    await Promise.all(this.staging.values());
-    let items = this.items;
-    if (o.head) {
-      // Only the uploaded head of the queue, so files land in the order added.
+    // Only the uploaded head of the queue, so files land in the order added.
+    const uploadedHead = (items: QueueItem[]) => {
       const end = items.findIndex((i) => i.status !== "uploaded" && i.status !== "committed");
-      if (end >= 0) items = items.slice(0, end);
+      return end >= 0 ? items.slice(0, end) : items;
+    };
+    // An upload still staging has no server path yet, and a put by its
+    // requested path would be a no-op beside the staged copy. Fix the batch
+    // now and wait for its stagings only, so neither later uploads nor a
+    // stalled staging further back hold it.
+    const batchIDs = new Set((o.head ? uploadedHead(this.items) : this.items).filter((i) => i.status === "uploaded").map((i) => i.id));
+    const staging = [...batchIDs].flatMap((id) => this.staging.get(id) ?? []);
+    if (staging.length) {
+      await Promise.all(staging);
+      throwIfAborted(signal);
     }
-    const ready = items.filter((i) => i.status === "uploaded");
-    const strays = o.attach ?? [];
+    const fixed = this.items.filter((i) => batchIDs.has(i.id));
+    // A batch item whose staging failed meanwhile ends a head batch, as before.
+    let ready = (o.head ? uploadedHead(fixed) : fixed).filter((i) => i.status === "uploaded");
+    // A staging whose reply was lost may still have landed under a path the
+    // queue never learned; find it by its create ID, else put as before.
+    const unknown = ready.filter((i) => i.result?.processOnUpload && !i.unattached);
+    if (unknown.length) {
+      const listed = await this.client.read(this.o.ref, { editor: true, signal }).then(
+        (r) => r.files,
+        (e: unknown) => {
+          if (toContentKitError(e).code === "aborted") throw e;
+          return [];
+        },
+      );
+      let found = false;
+      for (const i of unknown) {
+        const f = listed.find((x) => x.unattached && x.create_id === i.id);
+        if (f) found = this.set(i.id, { unattached: true, path: f.path, result: { ...i.result!, path: f.path } }) || found;
+      }
+      if (found) {
+        this.changed();
+        ready = ready.map((i) => this.find(i.id) ?? i);
+      }
+    }
+    // A stray read before its staging reply arrived is a queued upload: it
+    // attaches in queue order, not here.
+    const strays = (o.attach ?? []).filter((path) => !this.items.some((i) => stem(i.path) === stem(path)));
     if (ready.length === 0 && strays.length === 0) return [];
     const ops = ready.flatMap((i): Op[] => {
       const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
