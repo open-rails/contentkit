@@ -722,18 +722,43 @@ const MaxManageIDs = 100
 // root:content:write holders; else what they created, or with OwnerGroup the
 // group's items when they edit it.
 func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) ([]string, error) {
-	rights, err := s.staffRights(ctx, actor)
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	query, args, err := s.manageSelection(ctx, actor, q)
 	if err != nil {
 		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, query+" ORDER BY c.created_at DESC, c.id DESC LIMIT $8 OFFSET $9", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// manageSelection keeps listing and counting on the same authorization and filters.
+func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q ManageQuery) (string, []any, error) {
+	rights, err := s.staffRights(ctx, actor)
+	if err != nil {
+		return "", nil, err
 	}
 	group := false
 	if q.OwnerGroup != "" && !rights.write {
 		editors, err := s.groupEditor(ctx, s.pool, actor, []string{q.OwnerGroup})
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		if !editors[q.OwnerGroup] {
-			return nil, ErrForbidden
+			return "", nil, ErrForbidden
 		}
 		group = true
 	}
@@ -741,16 +766,16 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
 	if q.Code != "" {
 		c, err := contenturl.ParseCode(q.Code)
 		if err != nil {
-			return nil, invalid("code %q is not a content code", q.Code)
+			return "", nil, invalid("code %q is not a content code", q.Code)
 		}
 		code = string(c)
 	}
 	if len(q.IDs) > MaxManageIDs {
-		return nil, invalid("ids lists at most %d content ids", MaxManageIDs)
+		return "", nil, invalid("ids lists at most %d content ids", MaxManageIDs)
 	}
 	for _, id := range q.IDs {
 		if err := contentref.ValidateID(id); err != nil {
-			return nil, invalid("ids: %q is not a content id", id)
+			return "", nil, invalid("ids: %q is not a content id", id)
 		}
 	}
 	var state string
@@ -767,38 +792,21 @@ func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) (
 	case StatePublished:
 		state = "c.state = 'published' AND c.published_at IS NOT NULL"
 	default:
-		return nil, invalid("state %q must be draft, scheduled, published or deleted", q.State)
+		return "", nil, invalid("state %q must be draft, scheduled, published or deleted", q.State)
 	}
 	cond, err := s.accessCond(q.Access, q.Tier)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	state += cond
-	if q.Limit <= 0 {
-		q.Limit = 20
-	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND `+state+`
+	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_group_id = $3)
- AND ($4 OR $5 OR EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
- AND ($7 = '' OR EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
+ AND ($4 OR $5 OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
+ AND ($7 = '' OR EXISTS (SELECT 1 FROM ` + s.t.text + ` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
- AND ($10 = '' OR EXISTS (SELECT 1 FROM `+s.qs+`.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
- AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))
- ORDER BY c.created_at DESC, c.id DESC LIMIT $8 OFFSET $9`,
-		s.tenant, q.Kind, q.OwnerGroup, rights.write, group, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+ AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
+ AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
+		[]any{s.tenant, q.Kind, q.OwnerGroup, rights.write, group, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs)}, nil
 }
 
 // ManageCount is how many items a manage listing selects.
@@ -831,17 +839,21 @@ func (s *Store) handleManageCount(w http.ResponseWriter, r *http.Request) {
 }
 
 // CountManaged counts what Manage selects for q, exactly up to manageCountBound.
-// It pages through Manage itself so the filters cannot drift apart.
+// It counts a bounded selection without sorting or transferring its ids.
 func (s *Store) CountManaged(ctx context.Context, actor access.Actor, q ManageQuery) (ManageCount, error) {
 	q.Limit, q.Offset = manageCountBound+1, 0
-	ids, err := s.Manage(ctx, actor, q)
+	query, args, err := s.manageSelection(ctx, actor, q)
 	if err != nil {
 		return ManageCount{}, err
 	}
-	if len(ids) > manageCountBound {
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM ("+query+" LIMIT $8 OFFSET $9) counted", args...).Scan(&total); err != nil {
+		return ManageCount{}, err
+	}
+	if total > manageCountBound {
 		return ManageCount{Total: manageCountBound, Truncated: true}, nil
 	}
-	return ManageCount{Total: len(ids)}, nil
+	return ManageCount{Total: total}, nil
 }
 
 // accessCond is the SQL condition for a manage access filter. Levels and
