@@ -98,8 +98,12 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	}
 	args["prefix"] = strings.Join(prefixes, " ")
 	const order = `sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST`
-	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, priority, terms, from, where)
-	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,%s LIMIT @limit`, terms, "("+terms+")", terms, order)
+	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s AS priority,%s AS fields,cardinality(sd.aliases) AS aliases FROM %s WHERE %s AND `, priority, terms, from, where)
+	// Keep the normalized fields in a streaming projection. OFFSET 0 prevents
+	// flattening that would recompute them for both exact-rank expressions.
+	exact := `SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,sd.priority,sd.fields,sd.aliases FROM (` +
+		selectSQL + terms + ` @> ARRAY[@q::text] OFFSET 0) sd
+ ORDER BY (sd.fields[1]=@q) DESC,(@q=ANY(sd.fields[2:1+sd.aliases])) DESC,` + order + ` LIMIT @limit`
 	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
 	substring := selectSQL + corpus + ` LIKE @contains ESCAPE E'\\' ORDER BY ` + order + ` LIMIT @limit`
 	// The GiST word-distance order can stop after a bounded number of candidates.
