@@ -275,6 +275,46 @@ VALUES (?, 'gallery', ?, ?, 'residue', ?, '', '', [], true)`, testDB), []any{ten
 	}
 }
 
+func TestIntegrationCoEngagedErasureAfterReaderSelection(t *testing.T) {
+	st, conn := freshStore(t)
+	f := newBarrierFixture("coengaged-erasure")
+	f.seed(t, st)
+	gate := newGate(conn, "")
+	gate.match = func(query string) bool { return strings.Contains(query, "FROM contentkit_coengaged_readers") }
+	reader, err := NewStore(gate, testDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	release := sync.OnceFunc(func() { close(gate.release) })
+	t.Cleanup(release)
+	type result struct {
+		hits []CoEngagedHit
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		hits, err := reader.CoEngaged(ctx, f.tenant, f.e1, CoEngagedOptions{})
+		done <- result{hits, err}
+	}()
+	gate.wait(t, ctx)
+	// Anchor identities have already reached the client, but candidate reads
+	// must still consult the committed erasure fence.
+	if report, err := st.EraseSubjects(ctx, []string{f.tenant}, []Subject{f.gone}); err != nil || !report.Complete() {
+		t.Fatalf("erase: %+v, %v", report, err)
+	}
+	release()
+	select {
+	case got := <-done:
+		if got.err != nil || len(got.hits) != 1 || got.hits[0].ContentID != f.e2.ContentID || got.hits[0].Strength != 1 {
+			t.Fatalf("erased reader contributed: %+v, %v", got.hits, got.err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
 // A writer on its own connection reads the fence and pauses before its
 // INSERT; an independent Store erases and reports Complete; the writer lands.
 // The residue exists physically but no read, projection or export on a third
