@@ -922,6 +922,20 @@ access revision current; signed-out viewers do not fetch an inbox.
 
 ### Reader header controls
 
+`SearchDialog` is a controlled search modal with a visible title, a separate
+close control, and suggestions that contribute to its height rather than being
+clipped by its container. The field and close control stay visible while long
+result lists scroll. It closes when a query or navigable suggestion is chosen,
+and returns focus to the opener. Hosts supply `open`, `onOpenChange`, and
+`onSearch`; title, description, placeholder, appearance and `returnFocus` can
+be customized. Use `SearchBox presentation="dialog"` when a host already owns
+the dialog shell and only needs the in-flow search layout.
+
+```tsx
+<SearchDialog open={searchOpen} onOpenChange={setSearchOpen}
+  onSearch={(query) => navigate(`/search?q=${encodeURIComponent(query)}`)} />
+```
+
 `SearchBox` is an inline input with a downward suggestions/recent-search panel,
 including loading and empty states. Set `presentation="header"` for a portal
 panel directly below the input, matching its width and following it on resize
