@@ -227,7 +227,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     metaGroup ? <MetaLink key="group" url={metaGroup.path} name={metaGroup.name || metaGroup.slug} /> : null,
   ].filter(Boolean);
   const title = card.title || card.code;
-  const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-2 gap-y-1" : "gap-1");
+  const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-[0.3em] gap-y-1 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-[',']" : "gap-1");
   // A chip past one breakpoint's limit shows only at the other.
   const atWidth = (i: number) => i < limit.base && i < limit.lg ? undefined : i < limit.base ? "lg:hidden" : "hidden lg:list-item";
   const overflowItems = (kind: string, total: number) => {
