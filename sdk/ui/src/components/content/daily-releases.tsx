@@ -115,9 +115,9 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   return (
     <section data-ckui="release-day" data-date={day.date}>
       <h2>
-        <Button ref={dayHeading} id={`${id}-heading`} type="button" variant="ghost" className="h-auto w-full justify-start gap-3 px-0 py-3 text-start text-lg font-semibold" aria-expanded={open} aria-controls={`${id}-contents`} onClick={toggle}>
-          <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className={cn("size-5 shrink-0 transition-transform duration-200 motion-reduce:transition-none", !open && "-rotate-90")} aria-hidden />
+        <Button ref={dayHeading} id={`${id}-heading`} type="button" variant="ghost" className="h-auto w-full justify-between gap-3 rounded-none border-x-0 border-t-0 border-border px-0 py-3 text-start text-lg font-semibold hover:bg-transparent aria-expanded:bg-transparent dark:hover:bg-transparent" aria-expanded={open} aria-controls={`${id}-contents`} onClick={toggle}>
           <time dateTime={day.date}>{label}</time>
+          <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className={cn("box-content size-5 shrink-0 rounded-full bg-muted p-1.5 text-muted-foreground transition-transform duration-200 group-hover/button:text-foreground motion-reduce:transition-none", !open && "-rotate-90")} aria-hidden />
         </Button>
       </h2>
       {open && pending && <Skeleton className="h-24 w-full" />}
