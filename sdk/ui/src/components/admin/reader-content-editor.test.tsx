@@ -501,6 +501,19 @@ it("editing version credits targets only its atomic version scope", async () => 
   expect(writes(s).map((c) => c.path)).toEqual(["/contents/c1/versions/v2/entities"]);
 });
 
+it("saves dirty version details alongside its scoped credits", async () => {
+  const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  await user.type(await screen.findByLabelText("Label (optional)"), "Revised edition");
+  await user.click(await screen.findByRole("button", { name: "Remove Actor two" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Saved.", { selector: "p[role=status]" });
+  expect(s.item.versions[1]?.label).toBe("Revised edition");
+  expect(writes(s).map((call) => call.path)).toContain("/contents/c1/versions/v2/entities");
+  expect(writes(s).map((call) => call.path)).toContain("/contents/c1/versions/v2");
+});
+
 it("shared gallery entities use the parent-only atomic scope from any version", async () => {
   const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
   const user = userEvent.setup();

@@ -430,6 +430,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	out.Public = r.reg.publicImages(g.Item, g.Manifest)
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
+		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return importPending(k, f) }) {
+			out.State = StateProcessing
+		}
 	}
 	views := &editorViews{g: g}
 	for _, f := range g.Manifest.Files {
@@ -450,9 +453,6 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		switch {
 		case f.IsUpload() && editor:
 			fi = uploadInfo(f, k)
-			if importPending(k, f) && out.State == StateReady {
-				out.State = StateProcessing
-			}
 		case editor:
 			fi.From = f.From
 		}

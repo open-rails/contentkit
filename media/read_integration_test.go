@@ -103,6 +103,10 @@ func TestEditorReadPendingArchive(t *testing.T) {
 			if r.State != tc.state {
 				t.Fatalf("state %q, want %q", r.State, tc.state)
 			}
+			filtered, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Editor: true, Prefix: "originals/"})
+			if err != nil || filtered.State != tc.state {
+				t.Fatalf("prefix read lost item readiness: %+v, %v", filtered, err)
+			}
 			found := false
 			for _, file := range r.Files {
 				if file.Path == "import/book.zip" {
