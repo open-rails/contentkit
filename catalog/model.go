@@ -159,7 +159,8 @@ type ViewerState struct {
 	// Reaction is their like (1) or dislike (-1) of the item; absent for neither.
 	Reaction int `json:"reaction,omitempty"`
 	// Seen, Completed, Progress, ProgressMax and Resume (the client's own
-	// pointer, such as a page) come from the signal plane.
+	// pointer, such as a page) come from the signal plane. Progress counts
+	// whole pages for a reader and seconds for a player.
 	Seen        bool       `json:"seen"`
 	Completed   bool       `json:"completed"`
 	Progress    uint32     `json:"progress"`
