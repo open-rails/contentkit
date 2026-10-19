@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -417,4 +418,98 @@ func TestManageAccessAndCountIntegration(t *testing.T) {
 	f.want(http.StatusNotFound, "staff", "GET", "/v1/manage/unknown/count", nil, nil)
 	f.want(http.StatusBadRequest, "staff", "GET", "/v1/manage/gallery/count?access=gold", nil, nil)
 	f.want(http.StatusUnauthorized, anon, "GET", "/v1/manage/gallery/count", nil, nil)
+}
+
+func TestManagedCountMatchesSelection(t *testing.T) {
+	f := newFixture(t, nil)
+	studio := f.group("channel", "studio")
+	f.editor("studio", "ed")
+	draft := gallery("Draft", "en")
+	draft.Text["en"] = Text{Title: "Draft", Body: "body-only needle"}
+	f.create("staff", draft)
+	pub := gallery("Published", "en")
+	pub.Creators = &[]Creator{{UserID: "alice"}}
+	pub.Text["en"] = Text{Title: "Published", Description: "description-only needle"}
+	published := f.create("staff", pub)
+	f.publish("staff", published, nil)
+	scheduled := f.create("staff", gallery("Scheduled", "en"))
+	f.publish("staff", scheduled, ptr(f.now().Add(time.Hour)))
+	deleted := f.create("staff", gallery("Deleted", "en"))
+	code := f.read("staff", "main.test", deleted)[0].Code
+	if err := f.s.Delete(f.ctx, f.as("staff"), []string{deleted}); err != nil {
+		t.Fatal(err)
+	}
+	paid := gallery("Paid", "en")
+	paid.Creators, paid.Access = &[]Creator{{UserID: "alice"}}, &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
+	f.create("staff", paid)
+	owned := gallery("Owned", "en")
+	owned.OwnerGroupID = studio
+	f.create("staff", owned)
+	f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: "Blog"}}})
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_items")+` (tenant_id,id,kind) VALUES ('other',$1,'gallery')`, published); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, actor string
+		query       ManageQuery
+		want        int
+	}{
+		{"all kinds", "staff", ManageQuery{}, 6},
+		{"gallery", "staff", ManageQuery{Kind: "gallery"}, 5},
+		{"creator", "alice", ManageQuery{}, 2},
+		{"unrelated user", "bob", ManageQuery{}, 0},
+		{"owner editor", "ed", ManageQuery{OwnerGroup: studio}, 1},
+		{"staff owner filter", "staff", ManageQuery{OwnerGroup: studio}, 1},
+		{"draft", "staff", ManageQuery{Kind: "gallery", State: StateDraft}, 3},
+		{"published", "staff", ManageQuery{State: StatePublished}, 1},
+		{"scheduled", "staff", ManageQuery{State: "scheduled"}, 1},
+		{"deleted", "staff", ManageQuery{State: StateDeleted}, 1},
+		{"title", "staff", ManageQuery{Text: " PAID "}, 1},
+		{"description", "staff", ManageQuery{Text: "description-only"}, 1},
+		{"body", "staff", ManageQuery{Text: "body-only"}, 1},
+		{"public", "staff", ManageQuery{Kind: "gallery", Access: "public"}, 4},
+		{"tier", "alice", ManageQuery{Tier: "premium"}, 1},
+		{"deleted code", "staff", ManageQuery{Code: code}, 1},
+		{"ids include deleted", "staff", ManageQuery{IDs: []string{published, deleted}}, 2},
+		{"ids with state", "staff", ManageQuery{IDs: []string{published, deleted}, State: StatePublished}, 1},
+		{"no matches", "staff", ManageQuery{Text: "absent"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := tc.query
+			q.Limit, q.Offset = 1, 999
+			got, err := f.s.CountManaged(f.ctx, f.as(tc.actor), q)
+			if err != nil || got != (ManageCount{Total: tc.want}) {
+				t.Fatalf("count = %+v, %v; want %d", got, err, tc.want)
+			}
+			q.Limit, q.Offset = manageCountBound+1, 0
+			ids, err := f.s.Manage(f.ctx, f.as(tc.actor), q)
+			if err != nil || len(ids) != tc.want {
+				t.Fatalf("selection = %v, %v; want %d", ids, err, tc.want)
+			}
+		})
+	}
+	for _, q := range []ManageQuery{{State: "invalid"}, {Access: "invalid"}, {Tier: "invalid"}, {Access: "public", Tier: "premium"},
+		{Code: "invalid"}, {IDs: []string{"invalid"}}, {IDs: make([]string, MaxManageIDs+1)}} {
+		if _, err := f.s.CountManaged(f.ctx, f.as("staff"), q); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("query %+v: %v, want invalid", q, err)
+		}
+	}
+	if _, err := f.s.CountManaged(f.ctx, f.as("bob"), ManageQuery{OwnerGroup: studio}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unauthorized group count: %v", err)
+	}
+}
+
+func TestManagedCountBound(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, n := range []int{0, manageCountBound, manageCountBound + 1} {
+		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_items")+` (tenant_id,id,kind)
+SELECT $1,'01930000-0000-7000-8000-'||lpad(i::text,12,'0'),'gallery' FROM generate_series(1,$2::int) i ON CONFLICT DO NOTHING`, tenant, n); err != nil {
+			t.Fatal(err)
+		}
+		got, err := f.s.CountManaged(f.ctx, f.as("staff"), ManageQuery{Kind: "gallery"})
+		want := ManageCount{Total: min(n, manageCountBound), Truncated: n > manageCountBound}
+		if err != nil || got != want {
+			t.Fatalf("%d items: %+v, %v; want %+v", n, got, err, want)
+		}
+	}
 }
