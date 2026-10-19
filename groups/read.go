@@ -247,9 +247,18 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
+	from := s.table("content_groups") + " g"
+	predicate := "WHERE " + strings.Join(where, " AND ")
+	paging := " LIMIT @limit OFFSET @offset"
+	if c.sort == SortNewest && strings.TrimSpace(opts.Letter) == "" {
+		// Display names and counts do not select newest pages without a letter
+		// filter. Resolve them only for the selected page and its cursor sentinel.
+		from = "(SELECT g.* FROM " + from + " " + predicate + " ORDER BY " + order + paging + ") g"
+		predicate, paging = "", ""
+	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
  coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), coalesce(cc.n, 0), g.attributes, g.created_at, %[6]s, g.internal
-FROM %[1]s g
+FROM %[1]s
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
   ORDER BY CASE WHEN nn.language = @language THEN 0 WHEN nn.language = 'en' THEN 1 ELSE 2 + coalesce(array_position(@fallback::text[], nn.language), 1000) END, nn.language
@@ -258,10 +267,10 @@ LEFT JOIN %[3]s t ON t.tenant_id = g.tenant_id AND t.group_id = g.id AND t.langu
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %[5]s gc
   WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%[7]s) cc ON true
-WHERE %[8]s`,
-		s.table("content_groups"), s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		s.table("content_group_counts"), sortName, countKind, strings.Join(where, " AND "), scope, parent)
-	c.sql = base + " ORDER BY " + order + " LIMIT @limit OFFSET @offset"
+%[8]s`,
+		from, s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
+		s.table("content_group_counts"), sortName, countKind, predicate, scope, parent)
+	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
 		if strings.TrimSpace(opts.Letter) == "" {
