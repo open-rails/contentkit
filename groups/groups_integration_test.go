@@ -1,9 +1,11 @@
 package groups
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -980,6 +982,78 @@ func TestList(t *testing.T) {
 	}
 	if _, err := f.s.Detail(f.ctx, sub[1].ID, "en"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted detail: %v", err)
+	}
+}
+
+func TestCountSortedGroupPages(t *testing.T) {
+	f := newFixture(t)
+	f.content("gallery", 1, live("en"))
+	f.content("gallery", 2, live("es"))
+	f.content("video", 3, live("en"))
+	tags := f.create(
+		GroupInput{Kind: "tag", Slug: "zulu", Names: []Name{canonical("en", "Zulu"), canonical("es", "Zeta")}, Text: []Text{{Language: "en", SortKey: "aaa"}}},
+		GroupInput{Kind: "tag", Slug: "alpha", Names: []Name{canonical("es", "Alpha")}},
+		GroupInput{Kind: "tag", Slug: "unnamed"},
+		GroupInput{Kind: "tag", Slug: "bravo", Names: []Name{canonical("en", "Bravo")}},
+	)
+	f.add(
+		Membership{GroupID: tags[0].ID, ContentID: cid(1)},
+		Membership{GroupID: tags[0].ID, ContentID: cid(2)},
+		Membership{GroupID: tags[1].ID, ContentID: cid(1)},
+		Membership{GroupID: tags[1].ID, ContentID: cid(3)},
+		Membership{GroupID: tags[2].ID, ContentID: cid(3)},
+	)
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, language, kind string
+	}{
+		{"all", "", ""},
+		{"english galleries", "en", "gallery"},
+		{"spanish galleries", "es", "gallery"},
+		{"english videos", "en", "video"},
+		{"no matching counts", "ja", "video"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := ListOptions{Kind: "tag", Language: tc.language, ContentKind: tc.kind, Sort: SortName}
+			all, err := f.s.List(f.ctx, opts)
+			if err != nil || len(all.Groups) != len(tags) {
+				t.Fatalf("unpaged cards: %+v, %v", all, err)
+			}
+			// The name-sorted query supplies complete cards independently of
+			// count pagination, including localized paths and zero-count groups.
+			want := all.Groups
+			slices.SortFunc(want, func(a, b GroupCard) int {
+				if a.Count != b.Count {
+					return cmp.Compare(b.Count, a.Count)
+				}
+				return cmp.Compare(a.ID, b.ID)
+			})
+			opts.Sort, opts.Limit = SortCount, 1
+			for i := 0; i <= len(want); i++ {
+				opts.Cursor = ""
+				opts.Page = i + 1
+				got, err := f.s.List(f.ctx, opts)
+				if err != nil || got.Total == nil || *got.Total != len(want) {
+					t.Fatalf("numbered page %d: %+v, %v", i+1, got, err)
+				}
+				if !reflect.DeepEqual(got.Groups, want[i:min(i+1, len(want))]) {
+					t.Fatalf("numbered page %d: %+v", i+1, got.Groups)
+				}
+			}
+			opts.Page = 0
+			for i := range want {
+				got, err := f.s.List(f.ctx, opts)
+				if err != nil || got.Total != nil || !reflect.DeepEqual(got.Groups, want[i:i+1]) {
+					t.Fatalf("cursor page %d: %+v, %v", i+1, got, err)
+				}
+				if (got.NextCursor == "") != (i == len(want)-1) {
+					t.Fatalf("cursor ended at page %d: %q", i+1, got.NextCursor)
+				}
+				opts.Cursor = got.NextCursor
+			}
+		})
 	}
 }
 

@@ -43,12 +43,18 @@ func TestScopedGroupMetadataRetainsCredentialCeilings(t *testing.T) {
 	actor := testauth.Actor(access.Actor{ID: "reader"}, testauth.All{})
 	limited := &limitedScopeAuth{}
 	store := f.s.As(limited, actor)
-	page, err := store.Mine(f.ctx, ListOptions{Kind: "channel"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Groups) != 1 || page.Groups[0].ID != channels[0].ID || !page.Groups[0].Writer || page.Groups[0].Editor || page.Groups[0].Moderator {
-		t.Fatalf("directory grants escaped the request ceiling: %+v", page.Groups)
+	f.exec(`INSERT INTO {s}.content_group_counts(tenant_id,group_id,language,content_kind,content_count)
+ VALUES ($1,$2,'','video',1),($1,$3,'','video',100)`, tenant, channels[0].ID, channels[1].ID)
+	for _, sort := range []Sort{SortName, SortCount} {
+		t.Run(string(sort), func(t *testing.T) {
+			page, err := store.Mine(f.ctx, ListOptions{Kind: "channel", Sort: sort, Limit: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page.Groups) != 1 || page.Groups[0].ID != channels[0].ID || !page.Groups[0].Writer || page.Groups[0].Editor || page.Groups[0].Moderator || page.NextCursor != "" {
+				t.Fatalf("directory grants escaped the request ceiling: %+v", page)
+			}
+		})
 	}
 	editors := store.contentEditors(f.ctx, ids(channels...))
 	if !editors[string(channels[0].ID)] || editors[string(channels[1].ID)] {
