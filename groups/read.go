@@ -264,6 +264,9 @@ WHERE %[8]s`,
 	c.sql = base + " ORDER BY " + order + " LIMIT @limit OFFSET @offset"
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
+		if strings.TrimSpace(opts.Letter) == "" {
+			c.count = "SELECT count(*) FROM " + s.table("content_groups") + " g WHERE " + strings.Join(where, " AND ")
+		}
 	}
 	return c, nil
 }

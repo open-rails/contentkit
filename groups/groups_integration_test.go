@@ -983,6 +983,76 @@ func TestList(t *testing.T) {
 	}
 }
 
+func TestNumberedGroupTotals(t *testing.T) {
+	f := newFixture(t)
+	series := f.create(GroupInput{Kind: "series", Slug: "parent"})[0]
+	made := f.create(
+		GroupInput{Kind: "tag", Slug: "first", Names: []Name{canonical("en", "Alpha"), canonical("es", "Alfa"), alias("en", "Needle")}},
+		GroupInput{Kind: "tag", Slug: "needle-slug"},
+		GroupInput{Kind: "tag", Slug: "internal", Internal: true, Names: []Name{canonical("en", "Needle")}},
+		GroupInput{Kind: "tag", Slug: "deleted"},
+		GroupInput{Kind: "series", Slug: "child", ParentID: series.ID},
+		GroupInput{Kind: "character", Slug: "scoped", ScopeID: series.ID},
+	)
+	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{made[3].ID}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := New(Options{Pool: f.pool, Schema: f.schema, Tenant: "other", Kinds: config()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.CreateGroups(f.ctx, []GroupInput{{Kind: "tag", Slug: "needle-foreign"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		opts ListOptions
+		want []GroupID
+	}{
+		{"public", ListOptions{}, []GroupID{series.ID, made[0].ID, made[1].ID, made[4].ID, made[5].ID}},
+		{"kind", ListOptions{Kind: "tag"}, []GroupID{made[0].ID, made[1].ID}},
+		{"query", ListOptions{Kind: "tag", Query: " NEEDLE "}, []GroupID{made[0].ID, made[1].ID}},
+		{"management query", ListOptions{Query: "needle", IncludeInternal: true}, []GroupID{made[0].ID, made[1].ID, made[2].ID}},
+		{"slug", ListOptions{Slug: "first"}, []GroupID{made[0].ID}},
+		{"parent", ListOptions{Parent: series.ID}, []GroupID{made[4].ID}},
+		{"scope", ListOptions{Scope: series.ID}, []GroupID{made[5].ID}},
+		{"deleted", ListOptions{Kind: "tag", Deleted: true, IncludeInternal: true}, []GroupID{made[3].ID}},
+		{"language", ListOptions{Kind: "tag", Language: "es", ContentKind: "gallery"}, []GroupID{made[0].ID, made[1].ID}},
+		{"blank letter", ListOptions{Kind: "tag", Letter: " "}, []GroupID{made[0].ID, made[1].ID}},
+		{"letter", ListOptions{Kind: "tag", Letter: " A "}, []GroupID{made[0].ID}},
+		{"nonletter", ListOptions{Kind: "tag", Letter: "#"}, []GroupID{made[1].ID}},
+		{"empty", ListOptions{Query: "absent"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, sort := range []Sort{SortName, SortCount, SortNewest} {
+				opts := tc.opts
+				opts.Limit, opts.Sort = 1, sort
+				var ids []GroupID
+				for page := 1; page <= len(tc.want)+1; page++ {
+					opts.Page = page
+					got, err := f.s.List(f.ctx, opts)
+					if err != nil || got.Total == nil || *got.Total != len(tc.want) {
+						t.Fatalf("%s page %d: %+v, %v", sort, page, got, err)
+					}
+					wantLen := 0
+					if page <= len(tc.want) {
+						wantLen = 1
+					}
+					if len(got.Groups) != wantLen {
+						t.Fatalf("%s page %d: got %d groups, want %d", sort, page, len(got.Groups), wantLen)
+					}
+					for _, group := range got.Groups {
+						ids = append(ids, group.ID)
+					}
+				}
+				if !slices.Equal(slices.Sorted(slices.Values(ids)), slices.Sorted(slices.Values(tc.want))) {
+					t.Fatalf("%s: got %v, want %v", sort, ids, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // Group kinds are keyword documents: one per language, titled by the
 // language's canonical name, others as aliases; backfill lists active groups.
 func TestKeywordDocuments(t *testing.T) {
