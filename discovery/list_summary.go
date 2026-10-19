@@ -52,9 +52,8 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		out.Truncated = candidates.truncated
 	}
 	visibleIDs := map[string]struct{}{}
-	err = s.summaryRows(ctx, visible, sort, func(row cardRow) {
+	out.unknown, err = s.summaryRows(ctx, visible, sort, func(row cardRow) {
 		visibleIDs[row.ID] = struct{}{}
-		out.unknown = out.unknown || row.Access.Unknown
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
 			case access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV:
@@ -104,7 +103,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		}
 		relaxed = summaryCandidateSelection(relaxed, candidates.relaxed)
 	}
-	err = s.summaryRows(ctx, relaxed, sort, func(row cardRow) {
+	unknown, err := s.summaryRows(ctx, relaxed, sort, func(row cardRow) {
 		// A visible matching edition already represents this content, even
 		// when a sibling edition has an optional hidden entity.
 		if _, ok := visibleIDs[row.ID]; ok {
@@ -118,6 +117,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 			}
 		}
 	})
+	out.unknown = out.unknown || unknown
 	return out, err
 }
 
@@ -131,7 +131,8 @@ func summaryCandidateSelection(q *sel, ids []string) *sel {
 // summaryRows visits each selected content once, with the version its card
 // would show, settled and redacted exactly as cards are. It reads only what
 // the counts need, in one query: no titles, codes, media or offers.
-func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit func(cardRow)) error {
+// It also reports unresolved access, including rows withheld from the visitor.
+func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit func(cardRow)) (bool, error) {
 	args := maps.Clone(q.args)
 	for key, value := range sort.args {
 		args[key] = value
@@ -146,14 +147,14 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
-		return err
+		return false, err
 	}
 	picks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
 		var p pick
 		return p, r.Scan(&p.content, &p.version)
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Rows load and settle a batch at a time; only the picks span the selection.
 	const batchSize = 2048
@@ -164,6 +165,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
  JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators)
 	user := person(q.reader.Actor)
+	unknown := false
 	for start := 0; start < len(picks); start += batchSize {
 		vids := make([]string, 0, batchSize)
 		for _, p := range picks[start:min(start+batchSize, len(picks))] {
@@ -171,7 +173,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 		}
 		rows, err := s.o.Pool.Query(ctx, lean, s.o.Tenant, vids, user)
 		if err != nil {
-			return err
+			return false, err
 		}
 		batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
 			var c cardRow
@@ -179,10 +181,13 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 			return c, err
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := s.settle(ctx, q, batch); err != nil {
-			return err
+			return false, err
+		}
+		for _, row := range batch {
+			unknown = unknown || row.Access.Unknown
 		}
 		batch = slices.DeleteFunc(batch, func(c cardRow) bool {
 			return !c.Access.Allowed && (q.reader.Mode == access.Hide || c.listing == "members")
@@ -192,5 +197,5 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 			visit(row)
 		}
 	}
-	return nil
+	return unknown, nil
 }

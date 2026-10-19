@@ -230,7 +230,7 @@ WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.pre
 // buckets: a denied-only date must not consume a page or become its cursor.
 func (s *Service) settledReleaseDates(ctx context.Context, q *sel, layout, before string) ([]DateCount, error) {
 	counts := map[string]DateCount{}
-	err := s.summaryRows(ctx, q.with("f.published_at IS NOT NULL", nil), order{}, func(row cardRow) {
+	_, err := s.summaryRows(ctx, q.with("f.published_at IS NOT NULL", nil), order{}, func(row cardRow) {
 		if row.PublishedAt == nil {
 			return
 		}
