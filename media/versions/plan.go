@@ -168,12 +168,14 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		return nil, err
 	}
 	var snap pagesSnapshot
+	snapshots := map[Target]pagesSnapshot{}
 	if p != nil {
 		if err := json.Unmarshal(p.Source, &snap); err != nil {
 			return nil, err
 		}
+		snapshots[t] = snap
 	}
-	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, map[Target]pagesSnapshot{t: snap})
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, snapshots)
 	if err != nil {
 		return nil, err
 	}

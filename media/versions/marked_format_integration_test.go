@@ -64,13 +64,21 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 		return ok && f.Blob != ""
 	})
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/download"
-	response, data := s.call(s.fan, "GET", path, nil)
 	var download versions.FileDownload
-	if response.StatusCode != 200 || json.Unmarshal(data, &download) != nil || !strings.HasPrefix(download.URL, "archive?") {
-		t.Fatalf("download: %d %s", response.StatusCode, data)
-	}
+	// The ZIP may finish before the independently queued pages publication.
+	// Wait for the real download grant, retaining failures other than pending.
+	eventually(t, "ready archive download", time.Minute, func() bool {
+		response, data := s.call(s.fan, "GET", path, nil)
+		if response.StatusCode == 202 {
+			return false
+		}
+		if response.StatusCode != 200 || json.Unmarshal(data, &download) != nil || !strings.HasPrefix(download.URL, "archive?") {
+			t.Fatalf("download: %d %s", response.StatusCode, data)
+		}
+		return true
+	})
 	for range 2 {
-		response, data = s.call(access.Actor{}, "GET", strings.TrimSuffix(path, "download")+download.URL, nil)
+		response, data := s.call(access.Actor{}, "GET", strings.TrimSuffix(path, "download")+download.URL, nil)
 		if response.StatusCode != 200 || response.Header.Get("Cache-Control") != "private, no-store" {
 			t.Fatalf("private fresh archive: %d %s", response.StatusCode, response.Header.Get("Cache-Control"))
 		}
