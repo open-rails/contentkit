@@ -83,15 +83,15 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, rela
 	// The prefix route protects strong matches from a broad substring candidate
 	// cap. LIKE and strpos both treat query punctuation literally; neither route
 	// accepts Groonga's query language or contextual keywords.
-	language, groupBy := "sd.language", "1,2,3,4,5"
+	language, score, groupBy := "sd.language", "matched.score", ""
 	if relation != "content_search_documents" {
 		// Management searches every locale at once. One target's translated
 		// names must not consume the candidate budget before Hub deduplication.
 		// Every grouped row matched; language identifies one of those names,
 		// while the catalog independently chooses the display-language fallback.
-		language, groupBy = "min(sd.language)", "1,2,3,5"
+		language, score, groupBy = "min(sd.language)", "max(matched.score)", " GROUP BY 1,2,3,5"
 	}
-	base := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s AS language,%s,max(matched.score) AS score
+	base := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s AS language,%s,%s AS score
  FROM %s
  CROSS JOIN LATERAL (
    SELECT max(CASE WHEN names.ordinal=1 THEN CASE WHEN name=@q THEN 1.0 WHEN starts_with(name,@q) THEN 0.9 ELSE 0.8 END
@@ -99,9 +99,8 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, rela
    FROM unnest(%s) WITH ORDINALITY AS names(name,ordinal)
    WHERE strpos(name,@q)>0
  ) matched
- WHERE %s AND matched.score IS NOT NULL AND `, language, priority, from, names, where)
-	order := `
- GROUP BY ` + groupBy + `
+ WHERE %s AND matched.score IS NOT NULL AND `, language, priority, score, from, names, where)
+	order := groupBy + `
  ORDER BY score DESC,sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST,4
  LIMIT @limit`
 	queries := []string{
