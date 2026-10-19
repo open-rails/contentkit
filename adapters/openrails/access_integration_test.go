@@ -1,15 +1,141 @@
 package openrails_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/openrails"
+	"github.com/open-rails/openrails/billing"
 
 	"github.com/open-rails/contentkit/access"
+	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/offers"
 )
+
+var errGrantResponse = errors.New("grant response lost")
+
+// The real server commits normally; only its response or a later request fails.
+type grantFaultClient struct {
+	ckopenrails.Client
+	calls, failAt int
+	commit        bool
+	before        func() error
+}
+
+func (c *grantFaultClient) CreateProductAccess(ctx context.Context, p billing.CreateProductAccessBatchParams, opts ...openrails.RequestOption) ([]billing.ProductAccessGrant, error) {
+	c.calls++
+	if c.before != nil {
+		before := c.before
+		c.before = nil
+		if err := before(); err != nil {
+			return nil, err
+		}
+	}
+	if c.calls == c.failAt && !c.commit {
+		return nil, errGrantResponse
+	}
+	out, err := c.Client.CreateProductAccess(ctx, p, opts...)
+	if err == nil && c.calls == c.failAt {
+		return nil, errGrantResponse
+	}
+	return out, err
+}
+
+func TestGrantReceiptsPreserveIndependentAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		count, failAt int
+		commit        bool
+	}{
+		{"lost response", 1, 1, true},
+		{"later batch not sent", billing.MaxBatchItems + 1, 2, false},
+		{"later batch response lost", billing.MaxBatchItems + 1, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			ctx := t.Context()
+			viewer := w.customer()
+			product, err := w.bill.CreateProduct(ctx, billing.CreateProductParams{Key: "receipt-test", DisplayName: "Receipt test", Entitlements: []string{"receipt-test"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant := access.Grant{Subject: viewer.ID, ProductID: product.ID.String()}
+			independent, err := w.billing.Grant(ctx, contentref.NewID(), []access.Grant{grant})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fault := &grantFaultClient{Client: w.bill, failAt: tc.failAt, commit: tc.commit}
+			adapter := ckopenrails.Billing(fault)
+			grants := make([]access.Grant, tc.count)
+			for i := range grants {
+				grants[i] = grant
+			}
+			key := contentref.NewID()
+			prefix, err := adapter.Grant(ctx, key, grants)
+			if !errors.Is(err, errGrantResponse) || len(prefix) != (tc.failAt-1)*billing.MaxBatchItems {
+				t.Fatalf("failed batch: %d known IDs, %v", len(prefix), err)
+			}
+			ids, err := adapter.Grant(ctx, key, grants)
+			if err != nil || len(ids) != tc.count || !slices.Equal(prefix, ids[:len(prefix)]) {
+				t.Fatalf("recovered IDs: %v, %v", ids, err)
+			}
+			again, err := adapter.Grant(ctx, key, grants)
+			if err != nil || !slices.Equal(ids, again) {
+				t.Fatalf("replayed IDs changed: %v, %v", again, err)
+			}
+			for range 2 {
+				if err := adapter.RevokeGrants(ctx, ids); err != nil {
+					t.Fatal(err)
+				}
+			}
+			customer, _ := billing.ParseCustomerID(viewer.ID)
+			live, err := w.bill.ListProductAccess(ctx, billing.ProductAccessListParams{CustomerIDs: []billing.CustomerID{customer}, ProductIDs: []billing.ProductID{product.ID}, LiveOnly: true})
+			if err != nil || len(live.Items) != 1 || live.Items[0].ID.String() != independent[0] {
+				t.Fatalf("compensation must leave only the independent grant: %+v, %v", live, err)
+			}
+			if !w.holdsNow(viewer, "receipt-test") {
+				t.Fatal("independently granted access was removed")
+			}
+		})
+	}
+}
+
+func TestJoinCompensationPreservesConcurrentMembership(t *testing.T) {
+	w := newWorld(t)
+	ctx := t.Context()
+	owner, viewer := w.customer(), w.customer()
+	a, b := w.group("channel", "A", owner.ID), w.group("channel", "B", owner.ID)
+	targets := []offers.Target{{Kind: offers.GroupTarget, ID: a}, {Kind: offers.GroupTarget, ID: b}}
+	if _, err := w.offers.Put(ctx, []offers.Put{{Target: targets[0]}, {Target: targets[1]}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.offers.Sync(ctx, targets); err != nil {
+		t.Fatal(err)
+	}
+	fault := &grantFaultClient{Client: w.bill, failAt: 1, commit: true, before: func() error {
+		if _, err := w.offers.Join(ctx, viewer, []string{a}); err != nil {
+			return err
+		}
+		_, err := w.offers.Withdraw(ctx, targets[1:])
+		return err
+	}}
+	svc, err := offers.New(offers.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds, Billing: ckopenrails.Billing(fault), Gate: w.gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Join(ctx, viewer, []string{a, b}); !errors.Is(err, errGrantResponse) || !errors.Is(err, offers.ErrNotJoinable) {
+		t.Fatalf("failed batch: %v", err)
+	}
+	if !w.holdsNow(viewer, gk(a)) || w.holdsNow(viewer, gk(b)) {
+		t.Fatal("failed batch removed the successful membership or retained the withdrawn one")
+	}
+}
 
 // Rules stored on content and versions decide each version against keys a
 // real OpenRails holds: a version opens with its version key, its content's

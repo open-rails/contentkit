@@ -11,7 +11,7 @@ const hashes = { a: "a".repeat(64), b: "b".repeat(64), c: "c".repeat(64), d: "d"
 const model: ContentModel = { languages: ["en"], tiers: [], signals: false, kinds: { gallery: { route: "g", presentation: "reader", versions: { languages: "one" }, segments: true } }, entity_kinds: {} };
 const source = (id: string, path = `pages/${id[0]}.png`): FileInfo => ({ path, page_id: id, type: "image/png", upload: true, url: `https://original.invalid/${path}` });
 const chapter = (start: string, title = "Chapter"): Segment => ({ position: 1, start: 0, end: 0, start_page: start, title, released: true });
-const version = (segments = [chapter(hashes.a, "First"), chapter(hashes.c, "Second")]): Version => ({ id: "v1", code: "EDITION1", position: 1, languages: ["en"], traits: [], state: "draft", live: false, has_audio: false, attributes: {}, segments, decision: { allowed: true } });
+const version = (segments = [chapter(hashes.a, "First"), chapter(hashes.c, "Second")]): Version => ({ id: "v1", code: "EDITION1", position: 1, languages: ["en"], traits: [], state: "draft", live: false, has_audio: false, entities: [], attributes: {}, segments, decision: { allowed: true } });
 const content = (edition: Version): Content => ({
   id: "c1", code: "GALLERY1", kind: "gallery", path: "/g/GALLERY1", language: "en", title: "Gallery", decision: { allowed: true },
   state: "draft", listing: "listed", comments: "open", live: false, access: { level: "public" }, restrictions: [], attributes: {},

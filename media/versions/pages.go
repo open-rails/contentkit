@@ -422,6 +422,10 @@ func noticesOf(k *media.Kind, m *media.Manifest) []PageNotice {
 // PageNotices returns a version's undismissed notices to its editors only.
 func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t Target) (PageNotices, error) {
 	k, m, ref, err := s.pageEditorAccess(ctx, actor, t)
+	if errors.Is(err, media.ErrNotFound) {
+		// A new, authorized version has no manifest until its first upload.
+		return PageNotices{Notices: []PageNotice{}}, nil
+	}
 	if err != nil {
 		return PageNotices{}, err
 	}

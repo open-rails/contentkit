@@ -39,8 +39,14 @@ type Billing interface {
 	CreatePrices(ctx context.Context, prices []NewPrice) ([]Price, error)
 	// ArchivePrices takes prices off sale; buyers and subscribers keep theirs.
 	ArchivePrices(ctx context.Context, ids []string) error
-	// Grant gives subjects products free and indefinitely.
-	Grant(ctx context.Context, grants []Grant) error
+	// Grant gives subjects products free and indefinitely, returning access IDs
+	// in request order. Retrying the same key and grants returns the same IDs.
+	// On error it returns IDs for any known successful prefix; replay the same
+	// request to recover IDs after a lost response.
+	Grant(ctx context.Context, key string, grants []Grant) ([]string, error)
+	// RevokeGrants takes back only the named access IDs returned by Grant.
+	// Repeating a revocation changes nothing.
+	RevokeGrants(ctx context.Context, ids []string) error
 	// Revoke takes back subjects' free grants of products; revoking what is
 	// not granted changes nothing.
 	Revoke(ctx context.Context, grants []Grant) error

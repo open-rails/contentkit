@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
@@ -220,6 +221,10 @@ type joinBilling struct {
 	grants, revokes int
 	beforeProducts  func()
 	beforeGrant     func() error
+	beforeRevoke    func(context.Context) error
+	replayErr       error
+	attempts        map[string][]string
+	windows         map[string]string
 }
 
 func (b *joinBilling) Products(_ context.Context, keys []string) (map[string]access.Product, error) {
@@ -247,19 +252,58 @@ func (b *joinBilling) keyOf(product string) string {
 	return ""
 }
 
-func (b *joinBilling) Grant(_ context.Context, grants []access.Grant) error {
+func (b *joinBilling) Grant(_ context.Context, key string, grants []access.Grant) ([]string, error) {
 	b.grants++
+	if ids, ok := b.attempts[key]; ok {
+		if b.replayErr != nil {
+			return nil, b.replayErr
+		}
+		return ids, nil
+	}
 	var err error
 	if f := b.beforeGrant; f != nil {
 		b.beforeGrant = nil
 		err = f()
 	}
+	if b.attempts == nil {
+		b.attempts = make(map[string][]string)
+		b.windows = make(map[string]string)
+	}
+	var ids []string
 	for _, g := range grants {
+		id := contentref.NewID()
+		ids = append(ids, id)
+		b.windows[id] = b.keyOf(g.ProductID)
 		if k := b.keyOf(g.ProductID); k != "" && !slices.Contains(b.keys, k) {
 			b.keys = append(b.keys, k)
 		}
 	}
-	return err
+	b.attempts[key] = ids
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func (b *joinBilling) RevokeGrants(ctx context.Context, ids []string) error {
+	b.revokes++
+	if b.beforeRevoke != nil {
+		if err := b.beforeRevoke(ctx); err != nil {
+			return err
+		}
+	}
+	for _, id := range ids {
+		key := b.windows[id]
+		delete(b.windows, id)
+		stillHeld := false
+		for _, k := range b.windows {
+			stillHeld = stillHeld || k == key
+		}
+		if !stillHeld {
+			b.keys = slices.DeleteFunc(b.keys, func(k string) bool { return k == key })
+		}
+	}
+	return nil
 }
 
 func (b *joinBilling) Revoke(_ context.Context, grants []access.Grant) error {
@@ -389,6 +433,71 @@ func TestJoinRechecksFreeTerms(t *testing.T) {
 			t.Fatalf("join %d: %d grants, %d revokes", i, billing.grants-grants, billing.revokes-revokes)
 		}
 	}
+
+	t.Run("failed batch preserves a concurrent successful join", func(t *testing.T) {
+		a, aKey := group(t, contentref.NewID(), true)
+		b, bKey := group(t, contentref.NewID(), true)
+		billing.beforeGrant = func() error {
+			if _, err := s.Join(ctx, actor, []string{a}); err != nil {
+				return err
+			}
+			_, err := s.Withdraw(ctx, []Target{{Kind: GroupTarget, ID: b}})
+			return err
+		}
+		if _, err := s.Join(ctx, actor, []string{a, b}); !errors.Is(err, ErrNotJoinable) {
+			t.Fatalf("batch join: %v", err)
+		}
+		if !slices.Contains(billing.keys, aKey.String()) || slices.Contains(billing.keys, bKey.String()) {
+			t.Fatal("rollback removed the successful join or retained the withdrawn offer")
+		}
+	})
+
+	t.Run("cancelled caller still has bounded compensation", func(t *testing.T) {
+		id, key := group(t, contentref.NewID(), true)
+		joinCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		billing.beforeGrant = func() error {
+			if err := reprice(id)(); err != nil {
+				return err
+			}
+			cancel()
+			return context.Canceled
+		}
+		billing.beforeRevoke = func(cleanup context.Context) error {
+			deadline, ok := cleanup.Deadline()
+			if !ok || time.Until(deadline) > joinCleanupTimeout || cleanup.Err() != nil {
+				t.Fatalf("cleanup must survive caller cancellation with a bounded deadline: %v", cleanup.Err())
+			}
+			return nil
+		}
+		defer func() { billing.beforeRevoke = nil }()
+		if _, err := s.Join(joinCtx, actor, []string{id}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled join: %v", err)
+		}
+		if slices.Contains(billing.keys, key.String()) {
+			t.Fatal("cancelled join retained the repriced grant")
+		}
+	})
+
+	t.Run("unresolved grant recovery is not an unavailable offer", func(t *testing.T) {
+		id, _ := group(t, contentref.NewID(), true)
+		billing.beforeGrant = func() error {
+			if _, err := s.Withdraw(ctx, []Target{{Kind: GroupTarget, ID: id}}); err != nil {
+				return err
+			}
+			return errLost
+		}
+		recoveryErr := errors.New("billing unavailable during replay")
+		billing.replayErr = recoveryErr
+		defer func() { billing.replayErr = nil }()
+		_, err := s.Join(ctx, actor, []string{id})
+		if !errors.Is(err, errLost) || !errors.Is(err, recoveryErr) {
+			t.Fatalf("missing billing failure: %v", err)
+		}
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotJoinable) {
+			t.Fatalf("unresolved grant recovery misclassified as an unavailable offer: %v", err)
+		}
+	})
 }
 
 var errLost = errors.New("grant answer lost")

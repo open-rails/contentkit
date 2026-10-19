@@ -35,8 +35,8 @@ type ErasureReport struct {
 	// Remaining counts rows still attributable to the subjects per table after
 	// the pass; every value is zero when erasure is complete.
 	Remaining map[string]uint64
-	// PairsRemoved counts content_pairs rows invalidated because an erased
-	// subject contributed to a work in them; RefreshCoEngagement rebuilds them.
+	// PairsRemoved counts co-engagement pair rows removed because an erased
+	// subject contributed to a work in them.
 	PairsRemoved uint64
 }
 
@@ -69,8 +69,8 @@ const maxErasurePasses = 3
 //  2. every row of the subjects that existed when the pass ran is deleted from
 //     signals, compact state, daily contributions and exposures on every replica (mutations_sync = 2) and re-counted as zero;
 //  3. co-engagement pairs touching works the subjects contributed to are
-//     removed (RefreshCoEngagement rebuilds them and re-verifies the ledger
-//     around its build).
+//     removed (an explicit RefreshCoEngagement re-verifies the ledger around
+//     its build).
 //
 // A writer or projection that observed the pre-erasure state can still leave
 // residue rows; they are unreadable by (1) and EnforceErasures removes them

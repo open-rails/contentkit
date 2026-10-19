@@ -102,3 +102,15 @@ func TestRemovedPresetDoesNotLeavePendingWork(t *testing.T) {
 		t.Fatalf("obsolete work not cleared without deleting the original: %+v", m.Files[0])
 	}
 }
+
+func TestReaderZipDoesNotBlockReadiness(t *testing.T) {
+	k := &Kind{Publish: &Publish{Download: "zip"}, Private: []Private{{Name: "zip", Zip: "originals/", To: "download/pages.zip"}}}
+	m := &Manifest{Files: []File{{Path: "originals/001.png", Blob: "ready-source"}}}
+	if got := k.Readiness(m); !got.Ready() {
+		t.Fatalf("ordinary ZIP cache miss blocks ready pages: %+v", got)
+	}
+	k.Publish = nil
+	if got := k.Readiness(m); got.State != StateProcessing {
+		t.Fatalf("generic processing ZIP lost its readiness requirement: %+v", got)
+	}
+}

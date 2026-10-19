@@ -49,7 +49,7 @@ export class VersionsClient {
     const url = routeURL(this.http, "GET", "/contents/{id}/versions/{version}/download", { params: { id: content, version } });
     const out = await this.http.request<FileDownload | Pending>(url, { signal });
     if (isPending(out)) return out;
-    // A marked zip's URL is the archive route's, relative to this one.
+    // A ZIP URL is the archive route's, relative to this one.
     const base = new URL(url, globalThis.location?.href ?? "http://localhost/");
     return { ...out, url: new URL(out.url, base).toString() };
   }

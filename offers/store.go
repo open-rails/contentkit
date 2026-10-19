@@ -367,17 +367,46 @@ func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, targets []Target) erro
 	if client == nil || len(targets) == 0 {
 		return nil
 	}
-	// Sync jobs are unique per target; a duplicate in one batch would make the
-	// insert conflict with itself.
+	// Sync jobs are unique per target revision; a duplicate in one batch would
+	// make the insert conflict with itself.
 	seen := make(map[Target]bool, len(targets))
-	params := make([]river.InsertManyParams, 0, len(targets))
+	unique := make([]Target, 0, len(targets))
+	kinds, ids := make([]string, 0, len(targets)), make([]string, 0, len(targets))
 	for _, t := range targets {
 		if seen[t] {
 			continue
 		}
 		seen[t] = true
-		params = append(params, river.InsertManyParams{Args: syncArgs{Tenant: s.tenant, Target: t}, InsertOpts: s.syncOpts()})
+		unique = append(unique, t)
+		kinds, ids = append(kinds, string(t.Kind)), append(ids, t.ID)
 	}
-	_, err := client.InsertManyTx(ctx, tx, params)
+	// Offers are retained; each edit or withdrawal increments its revision and
+	// each new offer adds a row. Their sum changes for every target edit, even
+	// when an old withdrawn offer has a larger revision than the active one.
+	rows, err := tx.Query(ctx, `SELECT target_kind, target_id, sum(revision)::bigint FROM `+s.t.offers+`
+		WHERE tenant_id = $1 AND (target_kind, target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+		GROUP BY target_kind, target_id`, s.tenant, kinds, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	revisions := make(map[Target]int64, len(unique))
+	for rows.Next() {
+		var t Target
+		var revision int64
+		if err := rows.Scan(&t.Kind, &t.ID, &revision); err != nil {
+			return err
+		}
+		revisions[t] = revision
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	params := make([]river.InsertManyParams, 0, len(unique))
+	for _, t := range unique {
+		revision := revisions[Target{Kind: t.Kind, ID: t.ID}]
+		params = append(params, river.InsertManyParams{Args: syncArgs{Tenant: s.tenant, Target: t, Revision: revision}, InsertOpts: s.syncOpts()})
+	}
+	_, err = client.InsertManyTx(ctx, tx, params)
 	return err
 }

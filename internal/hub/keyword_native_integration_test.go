@@ -48,8 +48,8 @@ func profileDB(t *testing.T, ctx context.Context, prefix string, lineage fs.FS) 
 	return pool
 }
 
-// applyLineage applies every file of a lineage into schema app, recording the
-// ledger, and calls before(name) ahead of each file.
+// applyLineage applies every up migration of a lineage into schema app,
+// recording the ledger, and calls before(name) ahead of each migration.
 func applyLineage(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lineage fs.FS, before func(name string)) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS app; CREATE TABLE IF NOT EXISTS public.applied_migrations(name text PRIMARY KEY,checksum text NOT NULL)`); err != nil {
@@ -60,6 +60,9 @@ func applyLineage(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lineage
 		t.Fatal(err)
 	}
 	for _, entry := range files {
+		if !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
 		if before != nil {
 			before(entry.Name())
 		}

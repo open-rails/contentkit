@@ -18,8 +18,9 @@ import (
 const ReconcileInterval = time.Minute
 
 type syncArgs struct {
-	Tenant string `json:"tenant"`
-	Target Target `json:"target"`
+	Tenant   string `json:"tenant"`
+	Target   Target `json:"target"`
+	Revision int64  `json:"revision,omitempty"`
 }
 
 func (syncArgs) Kind() string { return "contentkit_offer_sync" }
@@ -75,10 +76,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	})
 }
 
-// syncOpts keeps one waiting or running sync per job args, so a stalled
-// target does not accumulate a job every reconcile. (An edit names a version's
-// content, the reconcile does not, so a version can briefly have two.)
-// Completed jobs are not in ByState, so a later revision is always synced again.
+// syncOpts keeps one waiting or running sync per target revision. A running
+// sync may already have read an older revision, so a follow-up edit uses new
+// args rather than being suppressed. Sync serializes provider writes for a
+// target under its advisory lock. An edit names a version's content, the
+// reconcile does not, so a version can briefly have two jobs for one revision.
 func (s *Service) syncOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: s.queue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
 		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,

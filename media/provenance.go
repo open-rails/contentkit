@@ -52,6 +52,12 @@ func ZipFP(inputs []File) string {
 	return Fingerprint(parts...)
 }
 
+// LazyZip reports a reader download archive assembled on demand, rather than
+// a processing output. Other Zip presets still build with their producer.
+func (k *Kind) LazyZip(p *Private) bool {
+	return p.Zip != "" && k.Publish != nil && k.Publish.Download == p.Name
+}
+
 // ZipStale reports a Zip preset whose output does not pack its current
 // inputs: missing with inputs, kept without, or another fingerprint.
 func (k *Kind) ZipStale(m *Manifest, p *Private) bool {
@@ -113,7 +119,7 @@ func (k *Kind) Readiness(m *Manifest) Readiness {
 		}
 	}
 	for i := range k.Private {
-		if p := &k.Private[i]; p.Zip != "" && k.ZipStale(m, p) {
+		if p := &k.Private[i]; p.Zip != "" && !k.LazyZip(p) && k.ZipStale(m, p) {
 			r.Processing = append(r.Processing, p.To)
 		}
 	}
