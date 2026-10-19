@@ -3,10 +3,10 @@ package groups
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/riverqueue/river"
 )
 
 // effectiveSQL derives eff(version_id, group_ids) for the versions source
@@ -142,27 +142,35 @@ func (s *Store) queueRefresh(ctx context.Context, q Querier, groupIDs []string) 
 	if client == nil || !ok {
 		return false, nil
 	}
-	_, err := client.InsertTx(ctx, tx, refreshArgs{Tenant: s.tenant, Groups: groupIDs}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
+	_, err := client.InsertTx(ctx, tx, refreshArgs{Tenant: s.tenant, Groups: groupIDs}, refreshOpts(s.queue))
 	return err == nil, err
 }
 
-// RefreshGroupMembers re-derives the facets of every content the groups
-// reach, refreshBatch contents per transaction. Repeating it is harmless.
-func (s *Store) RefreshGroupMembers(ctx context.Context, groupIDs []string) error {
+// RefreshGroupMembers re-derives the facets of the contents the groups reach
+// whose ids sort after after, refreshBatch per transaction, until budget
+// passes (0: none). It returns where it stopped, "" when done. Repeating it
+// is harmless.
+func (s *Store) RefreshGroupMembers(ctx context.Context, groupIDs []string, after string, budget time.Duration) (string, error) {
 	var contentIDs []string
 	if err := s.read(ctx, func(q Querier) (err error) {
 		contentIDs, err = s.groupReach(ctx, q, groupIDs)
 		return err
 	}); err != nil {
-		return err
+		return "", err
 	}
-	for start := 0; start < len(contentIDs); start += refreshBatch {
-		batch := contentIDs[start:min(start+refreshBatch, len(contentIDs))]
+	start := time.Now()
+	contentIDs = contentIDs[sort.SearchStrings(contentIDs, after+"\x00"):]
+	for len(contentIDs) > 0 {
+		batch := contentIDs[:min(refreshBatch, len(contentIDs))]
 		if err := s.run(ctx, func(q Querier) error { return s.refreshFacets(ctx, q, batch) }); err != nil {
-			return err
+			return after, err
+		}
+		after, contentIDs = batch[len(batch)-1], contentIDs[len(batch):]
+		if budget > 0 && len(contentIDs) > 0 && time.Since(start) > budget {
+			return after, nil
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // RefreshWindows re-derives the facets of content whose windowed memberships

@@ -27,20 +27,44 @@ func (syncArgs) Kind() string { return "contentkit_group_sync" }
 type refreshArgs struct {
 	Tenant string   `json:"tenant"`
 	Groups []string `json:"groups"`
+	// After resumes past this content id.
+	After string `json:"after,omitempty"`
 }
 
 func (refreshArgs) Kind() string { return "contentkit_group_refresh" }
+
+// refreshBudget is one refresh job's work before it queues the rest, well
+// inside refreshTimeout.
+const (
+	refreshBudget  = 5 * time.Minute
+	refreshTimeout = 15 * time.Minute
+)
+
+func refreshOpts(queue string) *river.InsertOpts {
+	return &river.InsertOpts{Queue: queue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true}}
+}
 
 type refreshWorker struct {
 	river.WorkerDefaults[refreshArgs]
 	s *Store
 }
 
+func (w *refreshWorker) Timeout(*river.Job[refreshArgs]) time.Duration { return refreshTimeout }
+
 func (w *refreshWorker) Work(ctx context.Context, job *river.Job[refreshArgs]) error {
 	if job.Args.Tenant != w.s.tenant {
 		return river.JobCancel(fmt.Errorf("groups: job of tenant %q", job.Args.Tenant))
 	}
-	return w.s.RefreshGroupMembers(ctx, job.Args.Groups)
+	next, err := w.s.RefreshGroupMembers(ctx, job.Args.Groups, job.Args.After, refreshBudget)
+	if err != nil || next == "" {
+		return err
+	}
+	client := w.s.river.bound()
+	if client == nil {
+		return errors.New("groups: River unbound mid-refresh")
+	}
+	_, err = client.Insert(ctx, refreshArgs{Tenant: job.Args.Tenant, Groups: job.Args.Groups, After: next}, refreshOpts(w.s.queue))
+	return err
 }
 
 type reconcileArgs struct {
