@@ -160,10 +160,10 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	const batchSize = 2048
 	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, f.listing, coalesce(f.owner_group_id, ''), f.published_at,
  $3 <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3)
- FROM unnest($2::text[]) AS p(vid)
- JOIN %[1]s f ON f.tenant_id = $1 AND f.version_id = p.vid
+ FROM %[3]s v
+ JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
  JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
- JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators)
+ WHERE v.tenant_id = $1 AND v.id = ANY($2::text[])`, s.t.facets, s.t.items, s.t.versions, s.t.creators)
 	user := person(q.reader.Actor)
 	unknown := false
 	for start := 0; start < len(picks); start += batchSize {
