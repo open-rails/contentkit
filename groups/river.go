@@ -24,6 +24,25 @@ type syncArgs struct {
 
 func (syncArgs) Kind() string { return "contentkit_group_sync" }
 
+type refreshArgs struct {
+	Tenant string   `json:"tenant"`
+	Groups []string `json:"groups"`
+}
+
+func (refreshArgs) Kind() string { return "contentkit_group_refresh" }
+
+type refreshWorker struct {
+	river.WorkerDefaults[refreshArgs]
+	s *Store
+}
+
+func (w *refreshWorker) Work(ctx context.Context, job *river.Job[refreshArgs]) error {
+	if job.Args.Tenant != w.s.tenant {
+		return river.JobCancel(fmt.Errorf("groups: job of tenant %q", job.Args.Tenant))
+	}
+	return w.s.RefreshGroupMembers(ctx, job.Args.Groups)
+}
+
 type reconcileArgs struct {
 	Tenant string `json:"tenant"`
 }
@@ -88,6 +107,9 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			return err
 		}
 		if err := river.AddWorkerSafely(cfg.Workers, &reconcileWorker{s: s}); err != nil {
+			return err
+		}
+		if err := river.AddWorkerSafely(cfg.Workers, &refreshWorker{s: s}); err != nil {
 			return err
 		}
 		if s.scopes != nil || s.owned != nil || s.folders != nil {
