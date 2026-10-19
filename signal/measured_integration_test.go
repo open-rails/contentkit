@@ -73,3 +73,42 @@ func TestMeasuredSegmentsKeepCoverageAcrossVisitsWithoutCountingOpens(t *testing
 		t.Fatal("erased reader was resurrected by a replay")
 	}
 }
+
+func TestMeasuredReaderProgressIsWholePagesRoundedDownButNeverZero(t *testing.T) {
+	st, _ := freshStore(t)
+	ctx := t.Context()
+	tenant, work, version := "measured-pages", cid(420), cid(421)
+	ref := contentref.New(tenant, "gallery", work)
+	read := func(subject Subject, pages []PageEngagement) {
+		t.Helper()
+		var ms uint32
+		for _, p := range pages {
+			ms += p.ActiveMS
+		}
+		m, err := MeasurePages(pages, 8, ms)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.VersionID, m.VisitID, m.SegmentID = version, "visit-"+subject.UserID, "segment-"+subject.UserID
+		observed := at(1, 10)
+		if err := st.RecordSignals(ctx, tenant, []Signal{{ContentRef: ref.WithVersion(version), Subject: subject, Type: TypeEngagement,
+			EventID: subject.UserID, Revision: 1, OccurredAt: observed, Resume: "page", Measurement: &m,
+			Access: &AccessContext{ObservedAt: observed, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	full := CoverageRange{From: 0, To: 10_000}
+	partial, glimpse := Subject{UserID: "partial"}, Subject{UserID: "glimpse"}
+	read(partial, []PageEngagement{{Index: 0, Ranges: []CoverageRange{full}, ActiveMS: 2000}, {Index: 1, Ranges: []CoverageRange{full}, ActiveMS: 2000},
+		{Index: 2, Ranges: []CoverageRange{{From: 0, To: 5000}}, ActiveMS: 2000}})
+	read(glimpse, []PageEngagement{{Index: 0, Ranges: []CoverageRange{{From: 0, To: 1000}}, ActiveMS: 2000}})
+	for subject, want := range map[Subject]uint32{partial: 2, glimpse: 1} {
+		states, err := st.States(ctx, tenant, subject, []ContentRef{ref})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := states[ref.Key()]; s.MaxProgress != want || s.ProgressMax != 8 || !s.Seen {
+			t.Fatalf("%s: progress %d / %d seen=%v, want %d / 8 seen", subject.UserID, s.MaxProgress, s.ProgressMax, s.Seen, want)
+		}
+	}
+}

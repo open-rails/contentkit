@@ -111,10 +111,18 @@ export function guestStanding(card: Card, item: GuestReadingItem): ViewerState {
   };
   const pageCount = card.version.pages ?? 0;
   const total = pageCount ? pageCount * 100 : Math.ceil((card.version.duration_ms ?? 0) / 1000);
-  const progress = pageCount ? [...pages].reduce((n, [index, page]) => n + (index < pageCount && page.active >= 1000 ? unionLength(page.ranges) / 100 : 0), 0) : unionLength(watched) / 1000;
+  // Hundredths of a page touched, as the server stores them: each range widens to whole hundredths.
+  const hundredths = (ranges: { from: number; to: number }[]) => {
+    const touched = new Set<number>();
+    for (const r of ranges) for (let n = Math.floor(r.from / 100); n < Math.ceil(r.to / 100); n++) touched.add(n);
+    return touched.size;
+  };
+  const covered = pageCount ? [...pages].reduce((n, [index, page]) => n + (index < pageCount && page.active >= 1000 ? hundredths(page.ranges) : 0), 0) : unionLength(watched) / 1000;
+  // Readers report whole pages, as accounts do: hundredths rounded down, at least 1 once any are read.
+  const progress = pageCount ? (covered > 0 ? Math.max(1, Math.floor(covered / 100)) : 0) : Math.floor(covered);
   const newest = rows.toSorted((a, b) => b.saved_at - a.saved_at)[0];
-  return { favorited: card.viewer?.favorited ?? false, seen: rows.some(row => row.active_ms > 0), completed: total > 0 && progress >= total * 0.9,
-    progress: Math.min(total, Math.floor(progress)), progress_max: total, resume: newest?.resume };
+  return { favorited: card.viewer?.favorited ?? false, seen: rows.some(row => row.active_ms > 0), completed: total > 0 && covered >= total * 0.9,
+    progress: Math.min(pageCount || total, progress), progress_max: pageCount || total, resume: newest?.resume };
 }
 
 const stores = new WeakMap<Window, Map<string, GuestReadingHistory>>();

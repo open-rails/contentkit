@@ -129,7 +129,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("States after replay: %v", err)
 	}
-	if got := states[g1.Key()]; got.ActiveMS != 160_000 || got.MaxProgress != 2_000 || got.Quality != 1 {
+	if got := states[g1.Key()]; got.ActiveMS != 160_000 || got.MaxProgress != 20 || got.Quality != 1 {
 		t.Fatalf("replay double-counted: %+v", got)
 	}
 }

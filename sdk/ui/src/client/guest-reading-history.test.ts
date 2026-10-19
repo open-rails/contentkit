@@ -14,7 +14,7 @@ it("replaces retry revisions, accumulates separate visits and counts actual page
   history.record(snapshot({ visit_id: "another" }));
   expect(history.snapshot()[0]!.checkpoints).toHaveLength(2);
   const viewer = guestStanding(card, history.snapshot()[0]!);
-  expect(viewer.progress).toBe(100); expect(viewer.progress_max).toBe(1000); expect(viewer.completed).toBe(false);
+  expect(viewer.progress).toBe(1); expect(viewer.progress_max).toBe(10); expect(viewer.completed).toBe(false);
   history.record(snapshot({ revision: 2, active_ms: 1600, pages: [{ index: 9, active_ms: 1600, ranges: [{ from: 0, to: 10_000 }] }] }));
   expect(history.snapshot()[0]!.checkpoints).toHaveLength(2);
   expect(JSON.stringify([...Object.values(localStorage)])).not.toContain("private-receipt");
@@ -31,10 +31,13 @@ it("preserves independent stale-tab writes, reloads and storage events, and isol
   b.clear({ content_id: "gallery" }); expect(b.snapshot().map(row => row.id)).toEqual(["second"]); off();
 });
 
-it("does not claim a whole tall page from a small visible part or reuse another version's progress", () => {
+it("counts small visible parts of tall pages by their total, not as whole pages, and does not reuse another version's progress", () => {
   const history = new GuestReadingHistory("reading:", window);
   history.record(snapshot({ active_ms: 2000, pages: [{ index: 0, active_ms: 2000, ranges: [{ from: 0, to: 1000 }] }] }));
-  expect(guestStanding(card, history.snapshot()[0]!).progress).toBe(10);
+  expect(guestStanding(card, history.snapshot()[0]!)).toMatchObject({ progress: 1, progress_max: 10, completed: false });
+  const skimmed = new GuestReadingHistory("skimmed:", window);
+  skimmed.record(snapshot({ active_ms: 20_000, pages: Array.from({ length: 10 }, (_, index) => ({ index, active_ms: 2000, ranges: [{ from: 0, to: 1000 }] })) }));
+  expect(guestStanding(card, skimmed.snapshot()[0]!)).toMatchObject({ progress: 1, progress_max: 10, completed: false });
   expect(guestStanding({ version: { id: "replacement", pages: 10 } } as Card, history.snapshot()[0]!).seen).toBe(false);
 });
 
@@ -46,4 +49,15 @@ it("ignores zero attention/corrupt stored geometry and remains usable when local
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("blocked"); });
   history.record(snapshot()); expect(history.snapshot()).toHaveLength(1);
   history.clear(); expect(history.snapshot()).toEqual([]);
+});
+
+it("counts touched hundredths of a page as the server stores them", () => {
+  const record = (key: string, ranges: number[][]) => {
+    const history = new GuestReadingHistory(key, window);
+    history.record(snapshot({ active_ms: 2000 * ranges.length, pages: ranges.map(([from, to], index) => ({ index, active_ms: 2000, ranges: [{ from: from!, to: to! }] })) }));
+    return guestStanding(card, history.snapshot()[0]!);
+  };
+  expect(record("widened:", [[0, 9950], [0, 9950]])).toMatchObject({ progress: 2, progress_max: 10 });
+  expect(record("sum:", [[0, 8014], [0, 7113], [0, 4873]])).toMatchObject({ progress: 2, progress_max: 10 });
+  expect(record("complete:", Array.from({ length: 10 }, () => [0, 8950]))).toMatchObject({ progress: 9, completed: true });
 });

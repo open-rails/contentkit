@@ -99,7 +99,7 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing state: %v", states)
 	}
-	if s.ActiveMS != 24000 || s.Quality <= 0 || s.Quality > 1 || !s.Seen || s.MaxProgress != 1900 || s.ProgressMax != 2000 || !s.Completed {
+	if s.ActiveMS != 24000 || s.Quality <= 0 || s.Quality > 1 || !s.Seen || s.MaxProgress != 19 || s.ProgressMax != 20 || !s.Completed {
 		t.Fatalf("unexpected state: %+v", s)
 	}
 	if s.Resume != "p:19" {
@@ -118,7 +118,7 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = states[ref.Key()]
-	if !s.Completed || s.MaxProgress != 1900 {
+	if !s.Completed || s.MaxProgress != 19 {
 		t.Fatalf("monotonic fields regressed: %+v", s)
 	}
 	if s.Resume != "p:3" {
@@ -274,7 +274,7 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if us[ref.Key()].MaxProgress != 500 || as[ref.Key()].MaxProgress != 1000 {
+	if us[ref.Key()].MaxProgress != 5 || as[ref.Key()].MaxProgress != 10 {
 		t.Fatalf("subject isolation broken: user=%+v anon=%+v", us[ref.Key()], as[ref.Key()])
 	}
 
