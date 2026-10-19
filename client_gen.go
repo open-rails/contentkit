@@ -2065,7 +2065,7 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2074,10 +2074,18 @@ func (c *Client) GetContentVersionDownload(ctx context.Context, id string, versi
 type GetContentVersionArchiveQuery struct {
 	// the viewer the ticket is for
 	For string
+	// the viewer account in this tenant
+	Account string
+	// the viewer subject kind
+	Kind string
+	// signed exact-transfer editor capability: true or false
+	Editor string
 	// the pages to mark, from 1: 3,5,7
 	Mark string
 	// the zip's file name
 	Name string
+	// the exact ordered source revision
+	Revision string
 	// the download's ticket
 	Ticket string
 }
@@ -2087,11 +2095,23 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	if q.For != "" {
 		v.Set("for", q.For)
 	}
+	if q.Account != "" {
+		v.Set("account", q.Account)
+	}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Editor != "" {
+		v.Set("editor", q.Editor)
+	}
 	if q.Mark != "" {
 		v.Set("mark", q.Mark)
 	}
 	if q.Name != "" {
 		v.Set("name", q.Name)
+	}
+	if q.Revision != "" {
+		v.Set("revision", q.Revision)
 	}
 	if q.Ticket != "" {
 		v.Set("ticket", q.Ticket)
@@ -2099,7 +2119,7 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the marked zip a download granted, under the name it granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. A signed editor grant delegates only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }

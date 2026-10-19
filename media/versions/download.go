@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -199,10 +200,8 @@ func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 
 // FileDownload is a granted download. URL serves it as an attachment named
 // Name until ExpiresAt (a transfer begun runs to its end): the media host's
-// URL of the file (the original, a rendition, a prepared zip), or, for a zip
-// the kind's watermark marks for its viewer, this module's archive route,
-// relative to the download route ("archive?..."). Size is 0 when the zip is
-// marked as it streams.
+// URL of a file, or this module's archive route relative to the download
+// route ("archive?..."). Size is 0 for archives: they stream on demand.
 type FileDownload struct {
 	URL       string    `json:"url"`
 	Name      string    `json:"name"`
@@ -211,7 +210,18 @@ type FileDownload struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// Archive is a marked page archive ready to stream.
+// ArchiveRequest is the signed download grant's selectors. Editor delegates
+// only this exact transfer until ticket expiry, like a private media URL. It
+// never creates a session, Verified credential or reusable permission checker.
+type ArchiveRequest struct {
+	Target
+	Viewer, Account              string
+	Kind                         auth.SubjectKind
+	Editor                       bool
+	Mark, Name, Revision, Ticket string
+}
+
+// Archive is an authorized page archive ready to stream.
 type Archive struct {
 	Name  string // the attachment's file name
 	ctx   context.Context
@@ -221,6 +231,7 @@ type Archive struct {
 	mark  []int // pages from 0
 	v     Target
 	who   access.Actor
+	cache string // never-public complete ordinary ZIP; empty for personalized output
 }
 
 // Download grants t's download to actor, what its kind's download serves
@@ -234,7 +245,15 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if err != nil {
 		return nil, err
 	}
-	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, nil)
+	item, m, err := s.downloadItem(ctx, k, t)
+	if err != nil {
+		return nil, err
+	}
+	snapshots, err := s.downloadSnapshot(ctx, k, t, m)
+	if err != nil {
+		return nil, err
+	}
+	ds, err := s.decisions(ctx, actor, v.Kind, []Target{t}, snapshots)
 	if err != nil {
 		return nil, err
 	}
@@ -245,19 +264,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	case !d.whole():
 		return nil, ErrForbidden
 	}
-	item, m, err := s.downloadItem(ctx, k, t)
-	if err != nil {
-		return nil, err
-	}
-	if d.anchored {
-		pages, err := pagesOf(k, m)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := resolveChapterStarts(d.segs, pages); err != nil {
-			return nil, err
-		}
-	}
+
 	z := private(k, k.Download)
 	var pages []media.File
 	if z != nil && z.Zip != "" {
@@ -278,20 +285,15 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	var name string
 	if z != nil && z.Zip != "" {
 		name = fileName(".zip", g.name, archiveStem(title, z), v.Content)
-		if len(g.mark) > 0 {
-			if err := s.charge(ctx, actor); err != nil {
-				return nil, err
-			}
-			exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
-			marks := joinPages(g.mark)
-			q := url.Values{"for": {actor.AccountID()}, "mark": {marks}, "name": {name},
-				"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, t, actor.AccountID(), marks, name), exp)}}
-			return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
+		if err := s.charge(ctx, actor); err != nil {
+			return nil, err
 		}
-		var ok bool
-		if f, ok = m.Get(z.To); !ok || f.Blob == "" || k.ZipStale(m, z) {
-			return nil, ErrNotReady
-		}
+		exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
+		marks, revision := joinPages(g.mark), archiveRevision(pages)
+		r := ArchiveRequest{Target: t, Viewer: actor.ID, Account: actor.AccountID(), Kind: actor.Kind, Editor: d.res.Editor, Mark: marks, Name: name, Revision: revision}
+		q := url.Values{"for": {r.Viewer}, "account": {r.Account}, "kind": {string(r.Kind)}, "editor": {strconv.FormatBool(r.Editor)}, "mark": {marks}, "name": {name}, "revision": {revision},
+			"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, r), exp)}}
+		return &FileDownload{URL: "archive?" + q.Encode(), Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 	} else {
 		var state media.DownloadState
 		switch f, state = k.DownloadFile(m); state {
@@ -315,17 +317,20 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
-// Archive opens the marked archive named name a Download granted viewer for
-// t, by its ticket: the pages zipped as they stream, the policy marking those
-// mark names. A ticket that is expired or not for viewer, t, mark and name is
-// ErrNotFound.
-func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, ticket string) (*Archive, error) {
-	pages, ok := splitPages(mark)
-	if s.m.Reader == nil || s.o.Policy == nil || viewer == "" || name == "" || !ok ||
-		s.m.Reader.VerifyTicket(ticket, archiveScope(s.o.Tenant, t, viewer, mark, name)) != nil {
+// Archive opens the archive a Download granted. The ticket binds its viewer,
+// marks, name and exact ordered source revision. Access, publication, chapter
+// release and policy are checked again, even when its ZIP is already cached.
+func (s *Service) Archive(ctx context.Context, request ArchiveRequest) (*Archive, error) {
+	t, viewer, mark, name, revision := request.Target, request.Viewer, request.Mark, request.Name, request.Revision
+	marked, ok := splitPages(mark)
+	if mark == "" {
+		ok = true
+	}
+	if s.m.Reader == nil || name == "" || revision == "" || !ok ||
+		s.m.Reader.VerifyTicket(request.Ticket, archiveScope(s.o.Tenant, request)) != nil {
 		return nil, ErrNotFound
 	}
-	_, k, err := s.downloadKind(ctx, t)
+	v, k, err := s.downloadKind(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -333,24 +338,36 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, tic
 	if err != nil {
 		return nil, err
 	}
-	if k.Publish != nil {
-		actor := access.Actor{ID: viewer, Kind: auth.SubjectUser}
-		ds, err := s.decisions(ctx, actor, k.Name, []Target{t}, nil)
-		if err != nil {
+	snapshots, err := s.downloadSnapshot(ctx, k, t, m)
+	if err != nil {
+		return nil, err
+	}
+	actor := access.Actor{ID: viewer, Kind: request.Kind, Account: &access.AccountMembership{ID: request.Account}, Anonymous: viewer == ""}
+	ds, err := s.decisions(ctx, actor, k.Name, []Target{t}, snapshots)
+	if err != nil {
+		return nil, err
+	}
+	d := ds[t]
+	if request.Editor {
+		// A plain attachment navigation cannot replay an SPA's bearer header.
+		// The HMAC delegates the already-authorized edit/read capability only
+		// for this target and revision. Soft deletion still revokes the URL.
+		var active bool
+		if err := s.o.Pool.QueryRow(ctx, `SELECT c.deleted_at IS NULL AND v.deleted_at IS NULL
+FROM `+s.t.items+` c JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id
+WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version).Scan(&active); err != nil {
 			return nil, err
 		}
-		if d := ds[t]; d.anchored {
-			if !d.whole() {
-				return nil, ErrForbidden
-			}
-			pages, err := pagesOf(k, m)
-			if err != nil {
-				return nil, err
-			}
-			if _, err := resolveChapterStarts(d.segs, pages); err != nil {
-				return nil, err
-			}
+		if !active {
+			return nil, ErrNotFound
 		}
+		d.res.Visible, d.res.Editor = true, true
+	}
+	if !d.res.Visible {
+		return nil, ErrNotFound
+	}
+	if !d.whole() {
+		return nil, ErrForbidden
 	}
 	z := private(k, k.Download)
 	if z == nil || z.Zip == "" {
@@ -363,8 +380,19 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, tic
 	if len(files) == 0 {
 		return nil, ErrNoDownload
 	}
-	a := &Archive{Name: name, ctx: ctx, s: s, v: t, who: access.Actor{ID: viewer, Kind: auth.SubjectUser}}
-	for _, p := range pages {
+	if archiveRevision(files) != revision {
+		return nil, ErrNotFound // obtain a fresh grant after any source edit
+	}
+	title, _ := s.title(ctx, v)
+	g, err := s.ask(ctx, actor, v, title, d.res.Editor, len(files))
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(g.mark, marked) {
+		return nil, ErrForbidden
+	}
+	a := &Archive{Name: name, ctx: ctx, s: s, v: t, who: actor}
+	for _, p := range marked {
 		a.mark = append(a.mark, p-1)
 	}
 	for _, f := range files {
@@ -375,10 +403,48 @@ func (s *Service) Archive(ctx context.Context, t Target, viewer, mark, name, tic
 		a.keys = append(a.keys, key)
 		a.names = append(a.names, media.PositionalName(len(a.names)+1, len(files), path.Ext(f.Path)))
 	}
+	if len(marked) == 0 {
+		a.cache = item.TempPrefix() + "zip-cache-" + revision
+	}
 	if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
 		return nil, err
 	}
 	return a, nil
+}
+
+// downloadSnapshot refuses to combine a draft manifest's sources with another
+// publication's chapter release positions. Every source and its order must match
+// the same frozen publication used by decisions. Pending edits wait for publish.
+func (s *Service) downloadSnapshot(ctx context.Context, k *media.Kind, t Target, m *media.Manifest) (map[Target]pagesSnapshot, error) {
+	if k.Publish == nil {
+		return nil, nil
+	}
+	p, err := s.current(ctx, s.o.Pool, t, kindPages)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, ErrNotReady
+	}
+	var snap pagesSnapshot
+	if err := json.Unmarshal(p.Source, &snap); err != nil {
+		return nil, err
+	}
+	var selected []media.File
+	for _, f := range m.Files {
+		if k.IsPageUpload(f) && !f.Unattached && !f.Gone && media.PageIncluded(f) {
+			selected = append(selected, f)
+		}
+	}
+	if len(selected) != len(snap.Pages) {
+		return nil, ErrNotReady
+	}
+	for i, f := range selected {
+		if f.Path != snap.Pages[i].Path || f.Key() != snap.Pages[i].Source {
+			return nil, ErrNotReady
+		}
+	}
+	return map[Target]pagesSnapshot{t: snap}, nil
 }
 
 // grant is a policy's grant of a download: the pages (from 1) to mark and
@@ -456,11 +522,11 @@ ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kind
 	})
 }
 
-// archiveScope is the scope of viewer's ticket to t's archive marked at
-// mark and named name; its ':' keeps it apart from every media item and
-// download scope.
-func archiveScope(tenant string, t Target, viewer, mark, name string) string {
-	return "archive:" + tenant + "/" + t.Content + "/" + t.Version + "/" + viewer + "/" + mark + "/" + name
+// archiveScope binds identity, tenant membership, delegated editor authority
+// and every output selector without ambiguous delimiter concatenation.
+func archiveScope(tenant string, r ArchiveRequest) string {
+	b, _ := json.Marshal([]any{tenant, r.Content, r.Version, r.Viewer, r.Account, r.Kind, r.Editor, r.Mark, r.Name, r.Revision})
+	return "archive:" + string(b)
 }
 
 // joinPages is "3,5,7".
@@ -593,7 +659,12 @@ func fileName(ext string, names ...string) string {
 
 // WriteTo streams the archive within its request's context.
 func (a *Archive) WriteTo(w io.Writer) (int64, error) {
-	return 0, a.s.streamMarked(a.ctx, w, a)
+	if a.cache != "" {
+		return a.writeCached(w)
+	}
+	out := &archiveWriter{ctx: a.ctx, Writer: w}
+	err := a.s.streamMarked(a.ctx, out, a)
+	return out.n, err
 }
 
 // streamMarked zips the pages one at a time, the policy marking those its

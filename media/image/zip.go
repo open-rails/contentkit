@@ -20,7 +20,7 @@ func (p *Processor) staleZips(item media.Item, m *media.Manifest, job media.Proc
 	var out []*media.Private
 	for i := range k.Private {
 		z := &k.Private[i]
-		if z.Zip == "" || job.Preset != "" && z.Name != job.Preset || !k.ZipStale(m, z) && !job.Force {
+		if z.Zip == "" || k.LazyZip(z) || job.Preset != "" && z.Name != job.Preset || !k.ZipStale(m, z) && !job.Force {
 			continue
 		}
 		pending := false

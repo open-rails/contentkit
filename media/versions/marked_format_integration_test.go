@@ -59,10 +59,7 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 	s.mustUpload(s.creator, ref, "originals/100", "image/png", second)
 	index := 0
 	s.commit(s.creator, ref, media.Op{Op: media.OpMove, Path: "originals/900.jpg", Index: &index})
-	eventually(t, "original-format archive", time.Minute, func() bool {
-		f, ok := s.manifest(ref).Get("download/pages.zip")
-		return ok && f.Blob != ""
-	})
+
 	path := "/v1/contents/" + c + "/versions/" + v.Version + "/download"
 	var download versions.FileDownload
 	// The ZIP may finish before the independently queued pages publication.
@@ -98,5 +95,12 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 	}
 	if policy.calls.Load() != 2 {
 		t.Fatalf("personalized output reused: %d marks", policy.calls.Load())
+	}
+	item, _ := s.reg.Item(ref)
+	for _, err := range s.Store.List(s.ctx, item.TempPrefix()+"zip-cache-") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("personalized archive was cached")
 	}
 }
