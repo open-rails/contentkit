@@ -73,6 +73,12 @@ func streamArchive(ctx context.Context, store media.Store, cache string, keys, n
 	case budget <- struct{}{}:
 		defer func() { <-budget }()
 		spool.file, spool.err = os.CreateTemp("", "contentkit-download-*.zip")
+		if spool.file != nil {
+			// On POSIX the descriptor remains usable, but a forced process exit
+			// also frees its disk space. Platforms that disallow unlinking an
+			// open file retain the normal deferred removal below.
+			_ = os.Remove(spool.file.Name())
+		}
 		spool.max = maxBytes
 		defer spool.drop()
 		writer = io.MultiWriter(&spool, out)
