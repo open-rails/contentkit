@@ -112,3 +112,29 @@ func TestMeasuredReaderProgressIsWholePagesRoundedDownButNeverZero(t *testing.T)
 		}
 	}
 }
+
+func TestMeasuredPlaybackProgressStaysInSeconds(t *testing.T) {
+	st, _ := freshStore(t)
+	ctx := t.Context()
+	tenant, work, version := "measured-seconds", cid(430), cid(431)
+	ref := contentref.New(tenant, "video", work)
+	subject := Subject{UserID: "viewer"}
+	m, err := MeasurePlayback([]WatchedRange{{FromMS: 0, ToMS: 30_000}}, 60_000, 30_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.VersionID, m.VisitID, m.SegmentID = version, "visit", "segment"
+	observed := at(1, 10)
+	if err := st.RecordSignals(ctx, tenant, []Signal{{ContentRef: ref.WithVersion(version), Subject: subject, Type: TypeEngagement,
+		EventID: "watch", Revision: 1, OccurredAt: observed, Resume: "30", Measurement: &m,
+		Access: &AccessContext{ObservedAt: observed, ContentAccess: "public", ViewerAccess: "full", Audience: "public", EligibilityKnown: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	states, err := st.States(ctx, tenant, subject, []ContentRef{ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := states[ref.Key()]; s.MaxProgress != 30 || s.ProgressMax != 60 || !s.Seen {
+		t.Fatalf("playback progress %d / %d seen=%v, want 30 / 60 seen", s.MaxProgress, s.ProgressMax, s.Seen)
+	}
+}
