@@ -21,8 +21,9 @@ func (st *Store) readingState(scope string) string {
  FROM (
  SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,
  first_engaged_at AS first_at,last_engaged_at AS last_at,active_ms,
- toUInt32(length(arrayFilter(unit -> unit_scale=1 OR unit_attention[intDiv(unit,unit_scale)]>=1000,covered_units))) AS progress,
- unit_total AS total,coverage AS ratio,completed AS done,resume,if(qualified,quality,0.) AS quality
+ toUInt32(if((length(arrayFilter(unit -> unit_scale=1 OR unit_attention[intDiv(unit,unit_scale)]>=1000,covered_units)) AS read_units)=0,
+  0,greatest(1,intDiv(read_units,greatest(unit_scale,1))))) AS progress,
+ toUInt32(intDiv(unit_total,greatest(unit_scale,1))) AS total,coverage AS ratio,completed AS done,resume,if(qualified,quality,0.) AS quality
  FROM %s.engagement_state FINAL WHERE %s
  UNION ALL
  SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,

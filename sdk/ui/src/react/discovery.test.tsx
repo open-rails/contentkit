@@ -157,7 +157,7 @@ it("hydrates guest reading IDs through public policy and keeps account history a
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
   const { result, rerender } = renderHook(() => useHistory({ kind: "gallery" }), { wrapper });
   await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["allowed"]));
-  expect(result.current.items[0]!.viewer).toMatchObject({ seen: true, completed: false, progress: 100, progress_max: 200, resume: "002" });
+  expect(result.current.items[0]!.viewer).toMatchObject({ seen: true, completed: false, progress: 1, progress_max: 2, resume: "002" });
   expect(calls.some(url => url.pathname.endsWith("/me/history"))).toBe(false);
   const staleForget = result.current.forget;
   viewer = "account"; rerender();

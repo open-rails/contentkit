@@ -34,7 +34,7 @@ func TestIntegrationReadingRecencyRepairRestoresHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 1 || history[0].ContentID != ref.ContentID || !history[0].LastReadAt.Equal(when(4)) || history[0].Resume != "p:4" || history[0].MaxProgress != 400 {
+	if len(history) != 1 || history[0].ContentID != ref.ContentID || !history[0].LastReadAt.Equal(when(4)) || history[0].Resume != "p:4" || history[0].MaxProgress != 4 {
 		t.Fatalf("repaired reading history must retain actual read recency and resume: %+v", history)
 	}
 }

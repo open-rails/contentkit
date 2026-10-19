@@ -144,7 +144,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 
 	// Intended semantics on the converged result.
 	u1g1 := want.States["u1"]["g1"]
-	if u1g1.ActiveMS != 240000 || u1g1.MaxProgress != 800 ||
+	if u1g1.ActiveMS != 240000 || u1g1.MaxProgress != 8 ||
 		u1g1.Completed || u1g1.Resume != "p:8" ||
 		u1g1.NetValue != -1 {
 		t.Fatalf("u1/g1 must be revision 4 of s1 plus current preference -1: %+v", u1g1)
@@ -334,7 +334,7 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := states[ref.Key()]; s.MaxProgress != 3400 || s.ActiveMS != 34000 {
+	if s := states[ref.Key()]; s.MaxProgress != 34 || s.ActiveMS != 34000 {
 		t.Fatalf("concurrent projections must converge on revision 34: %+v", s)
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 0 {
