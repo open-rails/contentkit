@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/openrails/billing"
 
@@ -468,6 +469,24 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// This helper stands in for the producer. Freeze the same source order a
+	// real worker publishes; download authorization must not mix draft pages
+	// with another publication's chapter positions.
+	m, _, err = ms.Get(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pages []map[string]any
+	for _, f := range m.Files {
+		if f.IsUpload() && strings.HasPrefix(f.Path, "pages/") {
+			pages = append(pages, map[string]any{"path": f.Path, "source": f.Key()})
+		}
+	}
+	snapshot, _ := json.Marshal(map[string]any{"pages": pages, "spans": []any{}})
+	if _, err := d.w.pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{d.w.schema, "content_version_publications"}.Sanitize()+`
+	(tenant_id,id,version_id,kind,state,source) VALUES ($1,$2,$3,'pages','current',$4)`, d.w.tenant, contentref.NewID(), c.Versions[0].ID, snapshot); err != nil {
+		t.Fatal(err)
+	}
 	return zipped.Bytes()
 }
 
@@ -491,7 +510,7 @@ func entries(t *testing.T, b []byte) [][]byte {
 // marks exactly pages 3, 5 and 7 of a premium version the site translated,
 // streamed through the archive route; every other page, and every page of a
 // premium version outside the group or a free one in it, is byte-identical
-// to the prepared archive the media host serves. The policy names a
+// to the configured download rendition. The policy names a
 // translated version's zip from its title and groups' names in its language,
 // leaving out a group by its attributes; the archive route serves only the
 // name its ticket was granted. The
@@ -542,19 +561,48 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 		}
 	}
 	// Theirs (not in the group, ContentKit's name) and the free one (in it,
-	// the policy's): the prepared archive at the media host, by a download
-	// token.
+	// the policy's): the ordinary archive route, with reusable private caching.
 	for c, name := range map[*catalog.Content]string{&theirs: "Theirs.zip", &free: "[Doujins.com] Free (en).zip"} {
 		granted := d.file(d.premium, *c)
-		status, body, hdr := d.fetch(granted.URL)
-		if status != http.StatusOK || !bytes.Equal(body, prepared[c.ID]) || granted.Size != int64(len(body)) ||
+		rec := d.f.want(http.StatusOK, "", "GET", "/contents/"+c.ID+"/versions/"+c.Versions[0].ID+"/"+granted.URL, nil, nil)
+		status, body, hdr := rec.Code, rec.Body.Bytes(), rec.Header()
+		if status != http.StatusOK || !slices.EqualFunc(entries(t, body), entries(t, prepared[c.ID]), bytes.Equal) || granted.Size != 0 ||
 			granted.Name != name || hdr.Get("Content-Disposition") != layout.Attachment(name) {
-			t.Fatalf("%s: not the prepared archive: %d %+v", c.ID, status, granted)
+			t.Fatalf("%s: not the lazy archive: %d %+v", c.ID, status, granted)
+		}
+	}
+	// Staff without Premium receive a target-only presigned capability. A
+	// normal anchor transfer carries no SPA bearer header; it must still work.
+	staffGrant := d.file(d.staff, theirs)
+	staffArchive := "/contents/" + theirs.ID + "/versions/" + theirs.Versions[0].ID + "/" + staffGrant.URL
+	staffResponse := d.f.want(http.StatusOK, "", "GET", staffArchive, nil, nil)
+	if !slices.EqualFunc(entries(t, staffResponse.Body.Bytes()), entries(t, prepared[theirs.ID]), bytes.Equal) {
+		t.Fatal("staff archive changed sources")
+	}
+	staffURL, _ := url.Parse(staffArchive)
+	for key, value := range map[string]string{"editor": "false", "account": "foreign-account", "kind": "application", "revision": strings.Repeat("0", 64)} {
+		bad := *staffURL
+		query := bad.Query()
+		query.Set(key, value)
+		bad.RawQuery = query.Encode()
+		d.f.want(http.StatusNotFound, "", "GET", bad.String(), nil, nil)
+	}
+	d.f.want(http.StatusNotFound, "", "GET", strings.Replace(staffArchive, theirs.ID, free.ID, 1), nil, nil)
+	d.f.want(http.StatusNotFound, "", "GET", strings.Replace(staffArchive, theirs.Versions[0].ID, free.Versions[0].ID, 1), nil, nil)
+	for _, target := range []struct{ table, id string }{{"content_versions", theirs.Versions[0].ID}, {"content_items", theirs.ID}} {
+		table := pgx.Identifier{d.w.schema, target.table}.Sanitize()
+		if _, err := d.w.pool.Exec(t.Context(), `UPDATE `+table+` SET deleted_at=now() WHERE tenant_id=$1 AND id=$2`, d.w.tenant, target.id); err != nil {
+			t.Fatal(err)
+		}
+		d.f.want(http.StatusNotFound, "", "GET", staffArchive, nil, nil)
+		if _, err := d.w.pool.Exec(t.Context(), `UPDATE `+table+` SET deleted_at=NULL WHERE tenant_id=$1 AND id=$2`, d.w.tenant, target.id); err != nil {
+			t.Fatal(err)
 		}
 	}
 	// A signed-out download of the free one is never marked.
-	if status, body, _ := d.fetch(d.file("", free).URL); status != http.StatusOK || !bytes.Equal(body, prepared[free.ID]) {
-		t.Fatal("an anonymous download was not the prepared archive")
+	rec = d.f.want(http.StatusOK, "", "GET", "/contents/"+free.ID+"/versions/"+free.Versions[0].ID+"/"+d.file("", free).URL, nil, nil)
+	if !slices.EqualFunc(entries(t, rec.Body.Bytes()), entries(t, prepared[free.ID]), bytes.Equal) {
+		t.Fatal("anonymous download source bytes changed")
 	}
 
 	// The viewing token opens the web rendition, never the originals, the

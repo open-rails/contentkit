@@ -3,6 +3,7 @@ package versions_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,20 @@ func sourcePageID(t *testing.T, s *site, ref contentref.ContentRef, path string)
 		t.Fatalf("missing source hash for %s", path)
 	}
 	return k.PageID(f)
+}
+
+func TestAnchoredPlanWithoutPublicationIsPending(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c := s.content("gallery", `{"level":"public"}`)
+	v := s.version(c)
+	// A withdrawn publication leaves valid stored chapter starts while its
+	// replacement is being built. A missing snapshot means pending, not an empty
+	// gallery whose chapter markers need repair.
+	s.exec(`INSERT INTO `+s.table("content_segments")+` (tenant_id,version_id,position,start_page)
+ VALUES ($1,$2,0,$3)`, s.tenant, v.Version, strings.Repeat("a", 64))
+	if _, err := s.svc.Plan(s.ctx, s.fan, v); !errors.Is(err, versions.ErrNotReady) {
+		t.Fatalf("missing publication must remain pending: %v", err)
+	}
 }
 
 func TestChapterHashAnchorsPreservePublishedAccess(t *testing.T) {

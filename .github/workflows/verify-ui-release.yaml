@@ -1,0 +1,51 @@
+name: Verify published UI package
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published UI version to download and verify
+        required: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download public tarball and verify registry integrity
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          node --input-type=module <<'JS'
+          import { createHash } from 'node:crypto';
+          import { writeFile } from 'node:fs/promises';
+          const version = process.env.VERSION;
+          const registry = `https://registry.npmjs.org/@openrails%2fcontentkit-ui/${version}`;
+          const response = await fetch(registry);
+          if (!response.ok) throw new Error(`registry metadata: HTTP ${response.status}`);
+          const metadata = await response.json();
+          if (metadata.name !== '@openrails/contentkit-ui' || metadata.version !== version) throw new Error('wrong package metadata');
+          const tarball = await fetch(metadata.dist.tarball);
+          if (!tarball.ok) throw new Error(`public tarball: HTTP ${tarball.status}`);
+          const body = Buffer.from(await tarball.arrayBuffer());
+          const integrity = `sha512-${createHash('sha512').update(body).digest('base64')}`;
+          if (integrity !== metadata.dist.integrity) throw new Error('registry integrity mismatch');
+          await writeFile('package.tgz', body);
+          await writeFile('registry.json', JSON.stringify(metadata, null, 2));
+          console.log(JSON.stringify({ version, bytes: body.length, integrity }));
+          JS
+          tar -xOf package.tgz package/package.json > package.json
+          node -e 'const p=require("./package.json"); if(p.name!=="@openrails/contentkit-ui" || p.version!==process.env.VERSION) process.exit(1)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-contentkit-ui-${{ inputs.version }}
+          path: |
+            package.tgz
+            package.json
+            registry.json
+          if-no-files-found: error
+          retention-days: 7

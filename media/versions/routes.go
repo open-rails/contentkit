@@ -63,13 +63,13 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.Accepted(Pending{})}},
 		Serve: httpapi.H(handler.fork)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a zip the policy marks for this viewer, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
 		Responses: []httpapi.Reply{httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, CodeDownloadUnavailable, httpapi.CodeRateLimited, CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/archive", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Streams the marked zip a download granted, under the name it granted: the version's pages, those the host's policy named marked for the viewer the ticket is for. 404 for an expired or foreign ticket.",
-		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("mark", "the pages to mark, from 1: 3,5,7"), httpapi.Text("name", "the zip's file name"), httpapi.Text("ticket", "the download's ticket")},
+		Doc:       "Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("account", "the bound account in this tenant"), httpapi.Text("account_set", "signed tenant membership presence: true or false"), httpapi.Text("kind", "the viewer subject kind"), httpapi.Text("editor", "signed exact-transfer editor capability: true or false"), httpapi.Text("claims", "signed configured token-tier claims as a JSON string array"), httpapi.Text("mark", "the pages to mark, from 1: 3,5,7"), httpapi.Text("name", "the zip's file name"), httpapi.Text("revision", "the exact ordered source revision"), httpapi.Text("ticket", "the download's ticket")},
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"})}},
 		Serve: httpapi.H(handler.archive)},
 }
@@ -187,7 +187,14 @@ func (h handler) download(w http.ResponseWriter, r *http.Request) {
 func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	q := r.URL.Query()
-	a, err := h.s.Archive(r.Context(), target(r), q.Get("for"), q.Get("mark"), q.Get("name"), q.Get("ticket"))
+	var claims []string
+	if raw := q.Get("claims"); raw != "" {
+		if json.Unmarshal([]byte(raw), &claims) != nil {
+			h.fail(w, r, ErrNotFound)
+			return
+		}
+	}
+	a, err := h.s.Archive(r.Context(), ArchiveRequest{Target: target(r), Viewer: q.Get("for"), Account: q.Get("account"), AccountSet: q.Get("account_set") == "true", Kind: auth.SubjectKind(q.Get("kind")), Editor: q.Get("editor") == "true", Claims: claims, Mark: q.Get("mark"), Name: q.Get("name"), Revision: q.Get("revision"), Ticket: q.Get("ticket")})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -195,8 +202,13 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
 	w.WriteHeader(http.StatusOK)
-	if _, err := a.WriteTo(w); err != nil && r.Context().Err() == nil {
-		h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
+	if _, err := a.WriteTo(w); err != nil {
+		if r.Context().Err() == nil {
+			h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
+		}
+		// Headers may already be sent. Terminate the transport so clients see
+		// an incomplete transfer instead of a successful truncated ZIP.
+		panic(http.ErrAbortHandler)
 	}
 }
 

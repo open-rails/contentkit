@@ -2015,6 +2015,7 @@ export interface Version {
   live: boolean;
   access?: Rule;
   attributes: Record<string, unknown>;
+  entities: GroupSummary[];
   pages?: number;
   duration_ms?: number;
   width?: number;

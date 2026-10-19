@@ -139,8 +139,8 @@ export function downloadMessage(m: Translator, err: ContentKitError | undefined,
 /**
  * A version's download, charged to the viewer's download quota: the
  * original or rendition its kind serves, or its pages as a zip. Polls while
- * it is prepared (a zip is built after its pages publish, behind the worker
- * queue); render_timeout after ten minutes.
+ * its source pages are prepared. ZIP assembly streams on demand after
+ * publication; render_timeout after ten minutes.
  */
 export function useVersionDownload(
   content: string,

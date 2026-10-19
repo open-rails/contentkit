@@ -775,3 +775,128 @@ func TestReplyCountWritesAndErasureLockCommentsInIDOrder(t *testing.T) {
 		})
 	}
 }
+
+// An admitted moderation write racing its moderator's erasure keeps its rule
+// but never stores the erased id, whichever side takes the subject fence
+// first; another moderator's write records them as before.
+func TestModerationWritesRaceModeratorErasure(t *testing.T) {
+	type write struct {
+		name   string
+		write  func(context.Context, *Runtime, string, string) error
+		insert string // $1 tenant, $2 key, $3 provenance
+		row    string // provenance column by $1 tenant, $2 key
+	}
+	writes := []write{
+		{"comment ban", func(ctx context.Context, rt *Runtime, by, key string) error {
+			_, err := rt.banCommenter(ctx, by, ScopeGlobal, key, BanInput{})
+			return err
+		}, `INSERT INTO %s (tenant_id, user_id, scope, banned_by) VALUES ($1, $2, 'global', $3)`,
+			`SELECT banned_by FROM %s WHERE tenant_id=$1 AND user_id=$2 AND scope='global'`},
+		{"banned word", func(ctx context.Context, rt *Runtime, by, key string) error {
+			return rt.addBannedWords(ctx, by, []BannedWordInput{{Word: key}})
+		}, `INSERT INTO %s (tenant_id, word, created_by) VALUES ($1, $2, $3)`,
+			`SELECT created_by FROM %s WHERE tenant_id=$1 AND word=$2`},
+		{"ip ban", func(ctx context.Context, rt *Runtime, by, key string) error {
+			return rt.banIPs(ctx, by, []IPBanInput{{Network: key}})
+		}, `INSERT INTO %s (tenant_id, network, banned_by) VALUES ($1, $2::cidr, $3)`,
+			`SELECT banned_by FROM %s WHERE tenant_id=$1 AND network=$2::cidr`},
+	}
+	keys := map[string][3]string{ // seed, race, normal
+		"comment ban": {"seeded", "target", "other-target"},
+		"banned word": {"seeded", "racer", "other"},
+		"ip ban":      {"192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"},
+	}
+	const gone = "departing-moderator"
+	for i, w := range writes {
+		for _, erasureFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/erasure first %v", w.name, erasureFirst), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				rt, pool := newTestRuntime(t, Options{})
+				table := []string{rt.store.t.commentBans, rt.store.t.bannedWords, rt.store.t.ipBans}[i]
+				insert, row := fmt.Sprintf(w.insert, table), fmt.Sprintf(w.row, table)
+				seed, race, normal := keys[w.name][0], keys[w.name][1], keys[w.name][2]
+				if _, err := pool.Exec(ctx, insert, rt.tenant, seed, gone); err != nil {
+					t.Fatal(err)
+				}
+				run := func(f func() error) <-chan error {
+					c := make(chan error, 1)
+					go func() { c <- f() }()
+					return c
+				}
+				// waitFence returns once a session waits on a subject fence, or
+				// once the other side finished without taking one.
+				waitFence := func(c <-chan error) <-chan error {
+					for {
+						var waiting bool
+						if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)`).Scan(&waiting); err != nil {
+							t.Fatal(err)
+						}
+						if waiting {
+							return c
+						}
+						select {
+						case err := <-c:
+							done := make(chan error, 1)
+							done <- err
+							return done
+						case <-ctx.Done():
+							t.Fatal(ctx.Err())
+						case <-time.After(5 * time.Millisecond):
+						}
+					}
+				}
+				// The blocker pauses the first side after its fence: erasure on
+				// the seeded rule it clears, the write on its own uncommitted key.
+				blocker, err := pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer blocker.Rollback(context.Background())
+				erase := func() error { return rt.EraseAppSubjects(ctx, []string{gone}) }
+				moderate := func() error { return w.write(ctx, rt, gone, race) }
+				var erased, wrote <-chan error
+				if erasureFirst {
+					if _, err := blocker.Exec(ctx, row+` FOR UPDATE`, rt.tenant, seed); err != nil {
+						t.Fatal(err)
+					}
+					erased = run(erase)
+					waitLockWaiters(t, ctx, rt, 1)
+					wrote = waitFence(run(moderate))
+				} else {
+					if _, err := blocker.Exec(ctx, insert, rt.tenant, race, "blocker"); err != nil {
+						t.Fatal(err)
+					}
+					wrote = run(moderate)
+					waitLockWaiters(t, ctx, rt, 1)
+					erased = waitFence(run(erase))
+				}
+				if err := blocker.Rollback(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if err := <-erased; err != nil {
+					t.Fatalf("erasure: %v", err)
+				}
+				if err := <-wrote; err != nil {
+					t.Fatalf("write: %v", err)
+				}
+				var by string
+				if err := pool.QueryRow(ctx, row, rt.tenant, race).Scan(&by); err != nil || by != "" {
+					t.Fatalf("raced rule provenance %q (%v)", by, err)
+				}
+				var n int
+				if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM `+rt.store.t.commentBans+` WHERE banned_by=$1)
+					+ (SELECT count(*) FROM `+rt.store.t.bannedWords+` WHERE created_by=$1)
+					+ (SELECT count(*) FROM `+rt.store.t.ipBans+` WHERE banned_by=$1)`, gone).Scan(&n); err != nil || n != 0 {
+					t.Fatalf("%d rows keep the erased moderator (%v)", n, err)
+				}
+				if err := w.write(ctx, rt, "staff", normal); err != nil {
+					t.Fatal(err)
+				}
+				if err := pool.QueryRow(ctx, row, rt.tenant, normal).Scan(&by); err != nil || by != "staff" {
+					t.Fatalf("another moderator's provenance %q (%v)", by, err)
+				}
+			})
+		}
+	}
+}
