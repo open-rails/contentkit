@@ -157,10 +157,11 @@ type Options struct {
 	Tenant string
 	// Kinds is the site's content model; its GroupKinds govern every write.
 	Kinds kinds.Config
-	// ContentChanged runs in the writing transaction whenever the effective
-	// groups of contents may have changed (their facets' group_ids are
-	// already re-derived), so the engine can rebuild what else depends on
-	// them, such as search documents. Optional.
+	// ContentChanged runs whenever the effective groups of contents may have
+	// changed (their facets' group_ids are already re-derived), so the engine
+	// can rebuild what else depends on them, such as search documents: in the
+	// writing transaction, or for a large reach in the refresh job's batch
+	// transactions. Optional.
 	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
 	// NamesChanged runs in the writing transaction after the names or slugs
 	// of groups changed, so the engine can requeue the documents of content

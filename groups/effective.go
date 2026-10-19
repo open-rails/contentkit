@@ -3,7 +3,10 @@ package groups
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // effectiveSQL derives eff(version_id, group_ids) for the versions source
@@ -88,6 +91,14 @@ UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff
 	return s.changed(ctx, q, contentIDs)
 }
 
+// A group write refreshes up to inlineRefresh reached contents in its own
+// transaction. A larger reach is refreshed after it commits by a queued job,
+// refreshBatch contents per transaction, so one write never locks a whole tag.
+var (
+	inlineRefresh = 500
+	refreshBatch  = 200
+)
+
 // refreshGroupFacets re-derives the facets of every content a change to the
 // given groups can reach: members of them or of their descendants, and
 // content whose facets name any of them.
@@ -95,22 +106,71 @@ func (s *Store) refreshGroupFacets(ctx context.Context, q Querier, groupIDs []st
 	if len(groupIDs) == 0 {
 		return nil
 	}
+	contentIDs, err := s.groupReach(ctx, q, groupIDs)
+	if err != nil {
+		return err
+	}
+	if len(contentIDs) > inlineRefresh {
+		if queued, err := s.queueRefresh(ctx, q, groupIDs); err != nil || queued {
+			return err
+		}
+	}
+	return s.refreshFacets(ctx, q, contentIDs)
+}
+
+func (s *Store) groupReach(ctx context.Context, q Querier, groupIDs []string) ([]string, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`WITH RECURSIVE sub(id) AS (
  SELECT unnest($2::text[])
  UNION
  SELECT g.id FROM %[1]s g JOIN sub ON g.tenant_id = $1 AND g.parent_id = sub.id)
 SELECT m.content_id FROM %[2]s m WHERE m.tenant_id = $1 AND m.group_id IN (SELECT id FROM sub)
 UNION
-SELECT f.content_id FROM %[3]s f WHERE f.tenant_id = $1 AND f.group_ids && (SELECT array_agg(id) FROM sub)`,
+SELECT f.content_id FROM %[3]s f WHERE f.tenant_id = $1 AND f.group_ids && (SELECT array_agg(id) FROM sub)
+ORDER BY 1`,
 		s.table("content_groups"), s.table("content_memberships"), s.table("content_facets")), s.tenant, groupIDs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	contentIDs, err := collectStrings(rows)
-	if err != nil {
-		return err
+	return collectStrings(rows)
+}
+
+// queueRefresh queues the groups' member refresh in the writing transaction,
+// when River is bound; false leaves it to the caller.
+func (s *Store) queueRefresh(ctx context.Context, q Querier, groupIDs []string) (bool, error) {
+	client := s.river.bound()
+	tx, ok := q.(pgx.Tx)
+	if client == nil || !ok {
+		return false, nil
 	}
-	return s.refreshFacets(ctx, q, contentIDs)
+	_, err := client.InsertTx(ctx, tx, refreshArgs{Tenant: s.tenant, Groups: groupIDs}, refreshOpts(s.queue))
+	return err == nil, err
+}
+
+// RefreshGroupMembers re-derives the facets of the contents the groups reach
+// whose ids sort after after, refreshBatch per transaction, until budget
+// passes (0: none). It returns where it stopped, "" when done. Repeating it
+// is harmless.
+func (s *Store) RefreshGroupMembers(ctx context.Context, groupIDs []string, after string, budget time.Duration) (string, error) {
+	var contentIDs []string
+	if err := s.read(ctx, func(q Querier) (err error) {
+		contentIDs, err = s.groupReach(ctx, q, groupIDs)
+		return err
+	}); err != nil {
+		return "", err
+	}
+	start := time.Now()
+	contentIDs = contentIDs[sort.SearchStrings(contentIDs, after+"\x00"):]
+	for len(contentIDs) > 0 {
+		batch := contentIDs[:min(refreshBatch, len(contentIDs))]
+		if err := s.run(ctx, func(q Querier) error { return s.refreshFacets(ctx, q, batch) }); err != nil {
+			return after, err
+		}
+		after, contentIDs = batch[len(batch)-1], contentIDs[len(batch):]
+		if budget > 0 && len(contentIDs) > 0 && time.Since(start) > budget {
+			return after, nil
+		}
+	}
+	return "", nil
 }
 
 // RefreshWindows re-derives the facets of content whose windowed memberships
