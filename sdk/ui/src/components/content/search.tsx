@@ -44,6 +44,8 @@ export interface SearchBoxProps {
 }
 
 type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
+const groups = (entities: GroupCard[]): Suggestion[] => entities.map((group) => ({ type: "group", group }));
+const titles = (contents: Card[]): Suggestion[] => contents.map((card) => ({ type: "content", card }));
 const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`;
 
 // Mirror search-only normalization. Identity/slug normalization stays separate;
@@ -128,12 +130,9 @@ export function SearchBox(p: SearchBoxProps) {
         .filter((r) => empty || (normalized && r.normalized.includes(normalized)))
         .sort((a, b) => Number(b.normalized.startsWith(normalized)) - Number(a.normalized.startsWith(normalized)))
         .map((r) => ({ type: "recent" as const, query: r.query }))),
-      ...(!empty && current ? [
-        ...found.entities.map((group) => ({ type: "group" as const, group })),
-        ...found.contents.map((card) => ({ type: "content" as const, card })),
-      ] : []),
+      ...(!empty && current ? header ? [...titles(found.contents), ...groups(found.entities)] : [...groups(found.entities), ...titles(found.contents)] : []),
     ],
-    [p.recent, normalized, empty, current, recent.searches, found.contents, found.entities],
+    [p.recent, normalized, empty, current, header, recent.searches, found.contents, found.entities],
   );
   // History and live suggestions can arrive independently. Track identity so
   // prepending history never changes what Enter will open.
@@ -181,12 +180,12 @@ export function SearchBox(p: SearchBoxProps) {
     setActive(undefined);
   };
   const results = (<>
-    {showRecent && (
-      <div className={cn("flex items-center justify-between gap-2 text-muted-foreground", header ? "mb-4 text-base font-semibold" : dialog ? "px-2 pt-1 pb-3 text-xs font-medium" : "px-2 py-1 text-xs")}>
-        <span id={`${id}-recent`} className="flex items-center gap-2">{header && <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-5" aria-hidden />}{t("contents.recentSearches")}</span>
+    {showRecent && !(header && visible.length === 0) && (
+      <div className={cn("flex items-center justify-between gap-2 text-muted-foreground", header ? "px-2.5 pt-2 pb-1.5 text-[11px] font-semibold tracking-wider uppercase" : dialog ? "px-2 pt-1 pb-3 text-xs font-medium" : "px-2 py-1 text-xs")}>
+        <span id={`${id}-recent`}>{t("contents.recentSearches")}</span>
         {visible.length > 0 && <button
           type="button"
-          className={cn("rounded px-1 hover:text-foreground", dialog && "min-h-11 -my-3")}
+          className={cn("rounded px-1 hover:text-foreground", header && "text-xs font-medium tracking-normal normal-case", dialog && "min-h-11 -my-3")}
           onMouseDown={(e) => {
             e.preventDefault();
           }}
@@ -196,7 +195,7 @@ export function SearchBox(p: SearchBoxProps) {
         </button>}
       </div>
     )}
-    <ul id={`${id}-list`} role="listbox" aria-label={empty ? t("contents.recentSearches") : t("contents.suggestions")} className={cn("grid", header && "gap-2")}>
+    <ul id={`${id}-list`} role="listbox" aria-label={empty ? t("contents.recentSearches") : t("contents.suggestions")} className={cn("grid", header && "gap-0.5")}>
       {visible.map((s, i) => (
         <li
           key={suggestionKey(s)}
@@ -206,7 +205,7 @@ export function SearchBox(p: SearchBoxProps) {
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "gap-2 rounded-md p-3 text-base hover:bg-foreground/10" : "gap-3 rounded-md px-4 py-1 text-base font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "group h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
           onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
@@ -215,9 +214,10 @@ export function SearchBox(p: SearchBoxProps) {
         >
           {header && s.type !== "recent" ? (
             <>
-              <SearchTypeIcon kind={s.type === "content" ? s.card.kind : s.group.kind} />
-              <span className="sr-only">{labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)}</span>
+              {s.type === "content" ? <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted"><RenditionImg outputs={s.card.cover} alt="" fit="cover" className="size-full" /></span>
+                : <span className="grid h-10 w-8 shrink-0 place-items-center"><SearchTypeIcon kind={s.group.kind} /></span>}
               <span className="min-w-0 flex-1 truncate">{s.type === "content" ? s.card.title || s.card.code : s.group.name || s.group.slug}</span>
+              <span className={cn("shrink-0 text-xs font-normal text-muted-foreground", s.type === "content" && "sr-only")}>{labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)}</span>
             </>
           ) : s.type === "content" ? (
             <>
@@ -233,11 +233,11 @@ export function SearchBox(p: SearchBoxProps) {
             </>
           ) : (
             <>
-              <HugeiconsIcon icon={header ? Search01Icon : Clock01Icon} strokeWidth={2} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate">{s.query}</span>
               <button
                 type="button"
-                className={cn("rounded p-0.5 text-muted-foreground hover:text-foreground", dialog && "-my-2 grid size-11 shrink-0 place-items-center")}
+                className={cn("rounded p-0.5 text-muted-foreground hover:text-foreground", header && "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-aria-selected:opacity-100 focus-visible:opacity-100", dialog && "-my-2 grid size-11 shrink-0 place-items-center")}
                 aria-label={t("contents.removeRecent", { q: s.query })}
                 onMouseDown={(e) => {
                   e.preventDefault();
@@ -254,7 +254,7 @@ export function SearchBox(p: SearchBoxProps) {
     </ul>
     {loading ? <div role="status" className={cn("text-muted-foreground", header ? "flex justify-center py-4" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}>{header ? <><span className="size-6 animate-spin rounded-full border-2 border-muted border-t-foreground motion-reduce:animate-none" aria-hidden /><span className="sr-only">{t("contents.loading")}</span></> : t("contents.loading")}</div>
       : !empty && found.error ? <p role="alert" className={cn("px-3 py-2 text-destructive", (header || dialog) && "px-2 py-8 text-center")}>{error(found.error)}</p>
-      : visible.length === 0 && <div role="status" className={cn("text-muted-foreground", header ? "flex flex-col items-center gap-2 py-8 text-center" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}>{header && <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-8" aria-hidden />}<p>{t(emptyMessage, { q: text.trim() })}</p></div>}
+      : visible.length === 0 && <div role="status" className={cn("text-muted-foreground", header ? "px-2 py-3" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}><p>{t(emptyMessage, { q: text.trim() })}</p></div>}
   </>);
   return (
     <ContentKitUiRoot ref={root} appearance={p.appearance} className={cn("relative text-sm", dialog && "flex min-h-0 flex-col gap-4", p.className)} data-ckui="search-box" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget) && !panel.current?.contains(event.relatedTarget)) setOpen(false); }}>
@@ -282,7 +282,7 @@ export function SearchBox(p: SearchBoxProps) {
           aria-autocomplete="list"
           autoComplete="off"
           disabled={p.disabled}
-          className={cn("h-9 ps-8", dialog && "h-12 border-border bg-background ps-10 text-base shadow-none focus-visible:ring-2 focus-visible:ring-ring/25 md:text-base dark:bg-background", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none md:text-base")}
+          className={cn("h-9 ps-8", dialog && "h-12 border-border bg-background ps-10 text-base shadow-none focus-visible:ring-2 focus-visible:ring-ring/25 md:text-base dark:bg-background", header && "rounded-full border-border/50 bg-foreground/10 pe-9 text-base shadow-none focus-visible:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring/25 md:text-base")}
           value={text}
           placeholder={p.placeholder ?? t("contents.searchPlaceholder")}
           onChange={(e) => {
@@ -328,9 +328,9 @@ export function SearchBox(p: SearchBoxProps) {
       {open && (header ? createPortal(
         <ContentKitUiRoot appearance={p.appearance} className="fixed inset-x-0 bottom-0 z-[70] text-sm" style={{ top }} data-ckui="search-layer">
           <div className="absolute inset-0 bg-black/30" data-ckui="search-backdrop" aria-hidden />
-          <div ref={panel} style={{ width: anchor.width, marginLeft: anchor.left }} className="relative origin-top animate-[search-expand_300ms_ease-out] rounded-lg border border-border bg-background text-foreground shadow-lg transition-none motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
-            <div className="w-full px-3 pt-3">
-              <div className="[--search-max-height:70vh] overflow-y-auto pb-7 md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>
+          <div ref={panel} style={{ width: anchor.width, marginLeft: anchor.left }} className="relative origin-top animate-[search-expand_300ms_ease-out] rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl transition-none motion-reduce:animate-none" data-ckui="search-panel" onKeyDown={panelKeyDown}>
+            <div className="w-full p-2">
+              <div className="[--search-max-height:70vh] overflow-y-auto md:[--search-max-height:60vh]" style={{ maxHeight: `min(var(--search-max-height), calc(100dvh - ${top}px - 1.875rem))` }}>
                 <div>{results}</div>
               </div>
             </div>
