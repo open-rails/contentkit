@@ -141,115 +141,6 @@ it("finds a newly allocated path by create_id for direct puts and staged queue a
   } finally { queue.dispose(); }
 });
 
-it("attaches pages in queue order when a later page is still staging as the head commits", async () => {
-  type Entry = { path: string; create_id?: string; source: string; unattached: boolean };
-  const manifest: Entry[] = [];
-  const gates = new Map<string, () => void>();
-  const held = new Map<string, Promise<void>>();
-  const hold = (source: string) => held.set(source, new Promise<void>((r) => gates.set(source, r)));
-  ["1.png", "2.png", "3.png"].forEach(hold);
-  let uploading!: () => void;
-  const later = new Promise<void>((r) => (uploading = r));
-  const listing = () => [...manifest.filter((f) => !f.unattached), ...manifest.filter((f) => f.unattached)]
-    .map((f): FileInfo => ({ path: f.path, create_id: f.create_id, type: "image/png", upload: true, unattached: f.unattached, size: 4 }));
-  const client = createContentKitClient({
-    baseUrl: "https://api.test",
-    media: { transport: async () => {}, retries: 0 },
-    fetch: (async (input, init) => {
-      const path = new URL(String(input)).pathname;
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      // Nothing is placed yet, so every new page is offered the first slot.
-      if (path.endsWith("/presign") && (body as PresignBody).path !== "pages/1.png") await later;
-      if (path.endsWith("/presign")) return Response.json({ path: "pages/001.png", source_name: (body as PresignBody).path, blob: `upload-${(body as PresignBody).sha256}`, process_on_upload: true, put: { url: "https://storage.test/file", headers: {} } });
-      if (path.endsWith("/commit")) {
-        let staged: string | undefined;
-        for (const op of (body as CommitBody).ops) {
-          if (op.op === "put") {
-            if (op.create_id && manifest.some((f) => f.create_id === op.create_id)) continue;
-            const entry = { path: `pages/${String(manifest.length + 1).padStart(3, "0")}.png`, create_id: op.create_id, source: op.source_name!, unattached: !!op.unattached };
-            manifest.push(entry);
-            if (op.unattached) staged = entry.source;
-          } else if (op.op === "attach") {
-            const i = manifest.findIndex((f) => f.path === op.path && f.unattached);
-            if (i >= 0) manifest.push({ ...manifest.splice(i, 1)[0]!, unattached: false });
-          }
-        }
-        // The staging write lands at once; only its reply is late.
-        if (staged) await held.get(staged);
-        return Response.json({ files: listing() });
-      }
-      return Response.json({ access: "full", expires: 0, total: 0, offset: 0, limit: 100, files: listing() });
-    }) as typeof fetch,
-  });
-  const queue = new ItemUploadQueue(client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
-  try {
-    queue.add([file("1.png"), file("2.png"), file("3.png")]);
-    await vi.waitFor(() => expect(queue.getSnapshot().items[0]?.status).toBe("uploaded"));
-    const committed = queue.commit(undefined, { head: true });
-    uploading();
-    await vi.waitFor(() => expect(queue.getSnapshot().items.every((i) => i.status === "uploaded")).toBe(true));
-    gates.get("1.png")!();
-    setTimeout(() => { gates.get("2.png")!(); gates.get("3.png")!(); }, 30);
-    await committed;
-    if (queue.getSnapshot().items.some((i) => i.status === "uploaded")) await queue.commit(undefined, { head: true });
-    expect(manifest.filter((f) => !f.unattached).map((f) => f.source)).toEqual(["1.png", "2.png", "3.png"]);
-    expect(manifest.some((f) => f.unattached)).toBe(false);
-  } finally { queue.dispose(); }
-});
-
-it("finds a staged upload whose reply was lost by its create ID and attaches it in queue order", async () => {
-  type Entry = { path: string; create_id?: string; source: string; unattached: boolean };
-  const manifest: Entry[] = [];
-  const gates = new Map<string, () => void>();
-  const held = new Map<string, Promise<void>>();
-  const hold = (source: string) => held.set(source, new Promise<void>((r) => gates.set(source, r)));
-  ["1.png", "2.png", "3.png"].forEach(hold);
-  const later = Promise.resolve();
-  gates.forEach((open) => open());
-  const listing = () => [...manifest.filter((f) => !f.unattached), ...manifest.filter((f) => f.unattached)]
-    .map((f): FileInfo => ({ path: f.path, create_id: f.create_id, type: "image/png", upload: true, unattached: f.unattached, size: 4 }));
-  const client = createContentKitClient({
-    baseUrl: "https://api.test",
-    media: { transport: async () => {}, retries: 0 },
-    fetch: (async (input, init) => {
-      const path = new URL(String(input)).pathname;
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      // Nothing is placed yet, so every new page is offered the first slot.
-      if (path.endsWith("/presign") && (body as PresignBody).path !== "pages/1.png") await later;
-      if (path.endsWith("/presign")) return Response.json({ path: "pages/001.png", source_name: (body as PresignBody).path, blob: `upload-${(body as PresignBody).sha256}`, process_on_upload: true, put: { url: "https://storage.test/file", headers: {} } });
-      if (path.endsWith("/commit")) {
-        let staged: string | undefined;
-        for (const op of (body as CommitBody).ops) {
-          if (op.op === "put") {
-            if (op.create_id && manifest.some((f) => f.create_id === op.create_id)) continue;
-            const entry = { path: `pages/${String(manifest.length + 1).padStart(3, "0")}.png`, create_id: op.create_id, source: op.source_name!, unattached: !!op.unattached };
-            manifest.push(entry);
-            if (op.unattached) staged = entry.source;
-          } else if (op.op === "attach") {
-            const i = manifest.findIndex((f) => f.path === op.path && f.unattached);
-            if (i >= 0) manifest.push({ ...manifest.splice(i, 1)[0]!, unattached: false });
-          }
-        }
-        // The staging write lands at once; only its reply is late.
-        if (staged) await held.get(staged);
-        // The write landed, but its reply is lost.
-        if (staged === "2.png") return Response.json({ code: "unavailable", error: "Unavailable" }, { status: 503 });
-        return Response.json({ files: listing() });
-      }
-      return Response.json({ access: "full", expires: 0, total: 0, offset: 0, limit: 100, files: listing() });
-    }) as typeof fetch,
-  });
-  const queue = new ItemUploadQueue(client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
-  try {
-    queue.add([file("1.png"), file("2.png"), file("3.png")]);
-    await vi.waitFor(() => expect(queue.getSnapshot().ready).toBe(true));
-    await vi.waitFor(() => expect(queue.getSnapshot().items.filter((i) => i.unattached)).toHaveLength(2));
-    await queue.commit();
-    expect(manifest.filter((f) => !f.unattached).map((f) => f.source)).toEqual(["1.png", "2.png", "3.png"]);
-    expect(manifest.some((f) => f.unattached)).toBe(false);
-  } finally { queue.dispose(); }
-});
-
 it("leaves a stray the queue now holds to its queued attach", async () => {
   const s = server({ process: true, allocatedPath: "pages/002.png" });
   const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
@@ -261,17 +152,14 @@ it("leaves a stray the queue now holds to its queued attach", async () => {
   } finally { queue.dispose(); }
 });
 
-it("does not hold a head commit for pages that finish uploading while it waits", async () => {
+/**
+ * Pages as ContentKit stores them: presign offers every new page the first
+ * slot, a staging put takes the next number, a put of a known create ID is a
+ * retry and does nothing, and an attach moves an unattached page to the end.
+ */
+function stagingServer(o: { presign?: (path: string) => Promise<void> | void; reply?: (source: string) => Promise<Response | void> | Response | void; failRead?: () => boolean } = {}) {
   type Entry = { path: string; create_id?: string; source: string; unattached: boolean };
   const manifest: Entry[] = [];
-  const gates = new Map<string, () => void>();
-  const held = new Map<string, Promise<void>>();
-  const hold = (source: string) => held.set(source, new Promise<void>((r) => gates.set(source, r)));
-  ["1.png", "2.png", "3.png"].forEach(hold);
-  let uploading!: () => void;
-  const later = new Promise<void>((r) => (uploading = r));
-  let third!: () => void;
-  const thirdUpload = new Promise<void>((r) => (third = r));
   const listing = () => [...manifest.filter((f) => !f.unattached), ...manifest.filter((f) => f.unattached)]
     .map((f): FileInfo => ({ path: f.path, create_id: f.create_id, type: "image/png", upload: true, unattached: f.unattached, size: 4 }));
   const client = createContentKitClient({
@@ -280,10 +168,10 @@ it("does not hold a head commit for pages that finish uploading while it waits",
     fetch: (async (input, init) => {
       const path = new URL(String(input)).pathname;
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      // Nothing is placed yet, so every new page is offered the first slot.
-      if (path.endsWith("/presign") && (body as PresignBody).path !== "pages/1.png") await later;
-      if (path.endsWith("/presign") && (body as PresignBody).path === "pages/3.png") await thirdUpload;
-      if (path.endsWith("/presign")) return Response.json({ path: "pages/001.png", source_name: (body as PresignBody).path, blob: `upload-${(body as PresignBody).sha256}`, process_on_upload: true, put: { url: "https://storage.test/file", headers: {} } });
+      if (path.endsWith("/presign")) {
+        await o.presign?.((body as PresignBody).path);
+        return Response.json({ path: "pages/001.png", source_name: (body as PresignBody).path, blob: `upload-${(body as PresignBody).sha256}`, process_on_upload: true, put: { url: "https://storage.test/file", headers: {} } });
+      }
       if (path.endsWith("/commit")) {
         let staged: string | undefined;
         for (const op of (body as CommitBody).ops) {
@@ -297,26 +185,120 @@ it("does not hold a head commit for pages that finish uploading while it waits",
             if (i >= 0) manifest.push({ ...manifest.splice(i, 1)[0]!, unattached: false });
           }
         }
-        // The staging write lands at once; only its reply is late.
-        if (staged) await held.get(staged);
-        return Response.json({ files: listing() });
+        // A staging write lands at once; only its reply may be late or lost.
+        const reply = staged ? await o.reply?.(staged) : undefined;
+        return reply ?? Response.json({ files: listing() });
       }
+      if (o.failRead?.()) return Response.json({ code: "unavailable", error: "Unavailable" }, { status: 503 });
       return Response.json({ access: "full", expires: 0, total: 0, offset: 0, limit: 100, files: listing() });
     }) as typeof fetch,
   });
-  const queue = new ItemUploadQueue(client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  return { client, manifest, attached: () => manifest.filter((f) => !f.unattached).map((f) => f.source) };
+}
+
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+const lost = () => Response.json({ code: "unavailable", error: "Unavailable" }, { status: 503 });
+
+it("attaches pages in queue order when a later page is still staging as the head commits", async () => {
+  const later = gate();
+  const replies = new Map(["1.png", "2.png", "3.png"].map((source) => [source, gate()]));
+  const s = stagingServer({ presign: (path) => (path === "pages/1.png" ? undefined : later.opened), reply: (source) => replies.get(source)!.opened });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
   try {
     queue.add([file("1.png"), file("2.png"), file("3.png")]);
     await vi.waitFor(() => expect(queue.getSnapshot().items[0]?.status).toBe("uploaded"));
     const committed = queue.commit(undefined, { head: true });
-    // Page 2 finishes while the batch waits for page 1; its staging stays unanswered.
-    uploading();
-    await vi.waitFor(() => expect(queue.getSnapshot().items[1]?.status).toBe("uploaded"));
-    gates.get("1.png")!();
+    later.open();
+    await vi.waitFor(() => expect(queue.getSnapshot().items.every((i) => i.status === "uploaded")).toBe(true));
+    replies.forEach((reply) => reply.open());
     await committed;
-    expect(manifest.filter((f) => !f.unattached).map((f) => f.source)).toEqual(["1.png"]);
-    third();
-    gates.get("2.png")!();
-    gates.get("3.png")!();
+    await queue.commit(undefined, { head: true });
+    expect(s.attached()).toEqual(["1.png", "2.png", "3.png"]);
+    expect(s.manifest.some((f) => f.unattached)).toBe(false);
+  } finally { queue.dispose(); }
+});
+
+it("finds a staged upload whose reply was lost by its create ID and attaches it in queue order", async () => {
+  const s = stagingServer({ reply: (source) => (source === "2.png" ? lost() : undefined) });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  try {
+    queue.add([file("1.png"), file("2.png"), file("3.png")]);
+    await vi.waitFor(() => expect(queue.getSnapshot().ready).toBe(true));
+    await vi.waitFor(() => expect(queue.getSnapshot().items.filter((i) => i.unattached)).toHaveLength(2));
+    await queue.commit();
+    expect(s.attached()).toEqual(["1.png", "2.png", "3.png"]);
+    expect(s.manifest.some((f) => f.unattached)).toBe(false);
+  } finally { queue.dispose(); }
+});
+
+it("marks a lost-reply page that is already attached as committed instead of putting it again", async () => {
+  const s = stagingServer({ reply: (source) => (source === "2.png" ? lost() : undefined) });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  try {
+    queue.add([file("1.png"), file("2.png")]);
+    await vi.waitFor(() => expect(queue.getSnapshot().ready).toBe(true));
+    await vi.waitFor(() => expect(queue.getSnapshot().items[0]?.unattached).toBe(true));
+    // Something else attached page 2's staged copy first.
+    const two = s.manifest.find((f) => f.source === "2.png")!;
+    two.unattached = false;
+    const commits: CommitBody[] = [];
+    const commit = s.client.media.commit.bind(s.client.media);
+    s.client.media.commit = (r, ops, opts) => (commits.push({ ref: r, ops } as CommitBody), commit(r, ops, opts));
+    await queue.commit(undefined, { head: true });
+    const one = s.manifest.find((f) => f.source === "1.png")!;
+    expect(commits.flatMap((c) => c.ops).map((op) => `${op.op} ${op.path}`)).toEqual([`attach ${one.path}`]);
+    expect(queue.getSnapshot().items.map((i) => i.status)).toEqual(["committed", "committed"]);
+  } finally { queue.dispose(); }
+});
+
+it("stops a head batch before a lost-reply page it cannot look up, and places it on the next commit", async () => {
+  let readFails = true;
+  const s = stagingServer({ reply: (source) => (source === "2.png" ? lost() : undefined), failRead: () => readFails });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  try {
+    queue.add([file("1.png"), file("2.png"), file("3.png")]);
+    await vi.waitFor(() => expect(queue.getSnapshot().ready).toBe(true));
+    await vi.waitFor(() => expect(queue.getSnapshot().items.filter((i) => i.unattached)).toHaveLength(2));
+    await queue.commit(undefined, { head: true });
+    expect(s.attached()).toEqual(["1.png"]);
+    readFails = false;
+    await queue.commit(undefined, { head: true });
+    expect(s.attached()).toEqual(["1.png", "2.png", "3.png"]);
+  } finally { queue.dispose(); }
+});
+
+it("does not hold a head commit for pages that finish uploading while it waits", async () => {
+  const later = gate();
+  const first = gate();
+  const s = stagingServer({ presign: (path) => (path === "pages/1.png" ? undefined : later.opened), reply: (source) => (source === "1.png" ? first.opened : new Promise(() => {})) });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  try {
+    queue.add([file("1.png"), file("2.png")]);
+    await vi.waitFor(() => expect(queue.getSnapshot().items[0]?.status).toBe("uploaded"));
+    const committed = queue.commit(undefined, { head: true });
+    // Page 2 finishes while the batch waits for page 1; its staging never answers.
+    later.open();
+    await vi.waitFor(() => expect(queue.getSnapshot().items[1]?.status).toBe("uploaded"));
+    first.open();
+    await committed;
+    expect(s.attached()).toEqual(["1.png"]);
+  } finally { queue.dispose(); }
+});
+
+it("stops waiting for stagings when the commit is aborted", async () => {
+  const s = stagingServer({ reply: () => new Promise(() => {}) });
+  const queue = new ItemUploadQueue(s.client.media, { ref, path: "pages/{name}", pollInterval: 100_000 });
+  try {
+    queue.add([file("1.png")]);
+    await vi.waitFor(() => expect(queue.getSnapshot().items[0]?.status).toBe("uploaded"));
+    const abort = new AbortController();
+    const committed = queue.commit(abort.signal, { head: true });
+    abort.abort();
+    await expect(committed).rejects.toMatchObject({ code: "aborted" });
   } finally { queue.dispose(); }
 });

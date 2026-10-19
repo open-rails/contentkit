@@ -170,10 +170,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   // A committed file stays in the queue until the read lists it, so it never drops out of view.
   const items = useMemo(() => raw.items.filter((i) => !(i.status === "committed" && listed.has(i.path))), [raw.items, listed]);
   const queue = { ...raw, items };
-  const leftover = useMemo(() => {
-    const held = new Set(raw.items.map((i) => stem(i.path)));
-    return unattached.filter((f) => !held.has(stem(f.path)));
-  }, [unattached, raw.items]);
+  const leftover = useMemo(() => leftoverUploads(unattached, raw.items), [unattached, raw.items]);
   const [refused, setRefused] = useState<Screened["refused"]>([]);
   const [waiting, setWaiting] = useState<readonly File[]>([]);
   const pending = useRef<File[]>([]);
@@ -397,4 +394,14 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     fileCount,
     error: error ?? stalled,
   };
+}
+
+/**
+ * Unattached uploads no queue item holds: an earlier visit's. A queued upload's
+ * staged copy is held by its create ID before the queue learns its path.
+ */
+export function leftoverUploads(unattached: readonly FileInfo[], items: readonly { id: string; path: string }[]): FileInfo[] {
+  const held = new Set(items.map((i) => stem(i.path)));
+  const ids = new Set(items.map((i) => i.id));
+  return unattached.filter((f) => !held.has(stem(f.path)) && !(f.create_id && ids.has(f.create_id)));
 }
