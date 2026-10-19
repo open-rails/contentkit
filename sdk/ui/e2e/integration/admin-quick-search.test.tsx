@@ -24,7 +24,7 @@ it("quick-navigates current drafts/internal names through the real mounted manag
  await user.type(input,`the ${word}`);
  await screen.findByRole("option",{name:new RegExp(`${word} Artist`)},{timeout:30_000});
  await user.keyboard("{Enter}");expect(navigate).not.toHaveBeenCalled();
- await user.keyboard("{ArrowDown}{Enter}");expect(navigate).toHaveBeenLastCalledWith(`/admin/entities/artist/${artist!.id}`);
+ await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");expect(navigate).toHaveBeenLastCalledWith(`/admin/entities/artist/${artist!.id}`);
  await user.click(input);await user.click(await screen.findByRole("option",{name:new RegExp(`${word} Draft`)}));
  expect(navigate).toHaveBeenLastCalledWith(`/admin/comics/${draft.id}`);
  expect(record.calls.some((path)=>path.endsWith("/manage/search-suggestions"))).toBe(true);
