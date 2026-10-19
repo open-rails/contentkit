@@ -558,7 +558,7 @@ func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []ca
 	for i, c := range rows {
 		refs[i] = contentref.New(s.o.Tenant, c.Kind, c.ID)
 	}
-	got, err := s.Standing(ctx, actor, refs)
+	got, err := s.standing(ctx, actor, refs, standingTimeout)
 	if err != nil {
 		return err
 	}
@@ -572,6 +572,11 @@ func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []ca
 // per ref in order: their favorites and, with a signal plane, their progress.
 // A failed signal read leaves progress out.
 func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]catalog.ViewerState, error) {
+	return s.standing(ctx, actor, refs, 0)
+}
+
+// standing is Standing with its progress read bounded by limit (0: none).
+func (s *Service) standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef, limit time.Duration) ([]catalog.ViewerState, error) {
 	out := make([]catalog.ViewerState, len(refs))
 	if !actor.Member() || len(refs) == 0 {
 		return out, nil
@@ -614,9 +619,13 @@ func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []conte
 	if !s.o.Hub.SignalPlane() {
 		return out, nil
 	}
-	// Progress is optional on a card: a slow signal plane drops it, not the page.
-	readCtx, cancel := context.WithTimeout(ctx, standingTimeout)
-	defer cancel()
+	readCtx := ctx
+	if limit > 0 {
+		// Progress is optional on a card: a slow signal plane drops it, not the list.
+		var cancel context.CancelFunc
+		readCtx, cancel = context.WithTimeout(ctx, limit)
+		defer cancel()
+	}
 	states, err := s.o.Hub.States(readCtx, signal.Subject{UserID: actor.AccountID()}, refs)
 	if err != nil {
 		s.o.Logger.WarnContext(ctx, "discovery: viewer progress unavailable", "err", err)
