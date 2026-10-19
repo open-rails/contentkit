@@ -313,16 +313,6 @@ func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }
 
-// RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
-// for this tenant (see signal.Store.RefreshCoEngagement). Run periodically.
-func (h *Hub) RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.RefreshCoEngagement(ctx, h.tenant, opts)
-}
-
 // RepairProjections is the bounded, host-scheduled projection repair (see
 // signal.Store.RepairProjections): run it periodically with IngestedSince for
 // crash repair, and with Rebuild over a window after projection changes.
