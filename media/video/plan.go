@@ -484,6 +484,16 @@ func (c WorkerConfig) insertRuns(ctx context.Context, ref contentref.ContentRef,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	insertChunks := func(id string, bounds [][2]int64) error {
+		for ordinal, bound := range bounds {
+			if _, err := tx.Exec(ctx, `INSERT INTO `+c.chunkTable()+`
+  (run_id, ordinal, start_ms, end_ms) VALUES ($1, $2, $3, $4)
+ON CONFLICT (run_id, ordinal) DO NOTHING`, id, ordinal, bound[0], bound[1]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	previousComplete := true
 	for i, stage := range stages {
 		var copyCodec media.Codec
@@ -509,15 +519,13 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND 
 		} else if err != nil {
 			return err
 		} else if i >= done {
-			for ordinal, bound := range bounds[i] {
-				if _, err := tx.Exec(ctx, `INSERT INTO `+c.chunkTable()+`
-  (run_id, ordinal, start_ms, end_ms) VALUES ($1, $2, $3, $4)`, id, ordinal, bound[0], bound[1]); err != nil {
-					return err
-				}
+			if err := insertChunks(id, bounds[i]); err != nil {
+				return err
 			}
 		}
 		var state string
-		if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1`, id).Scan(&state); err != nil {
+		// Serialize reopening with other planners before inspecting or resetting chunks.
+		if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1 FOR UPDATE`, id).Scan(&state); err != nil {
 			return err
 		}
 		if i < done && state != "complete" {
@@ -527,6 +535,16 @@ SET state = 'complete', updated_at = now() WHERE id = $1`, id); err != nil {
 			}
 			state = "complete"
 		} else if i >= done && (state == "cancelled" || state == "complete") {
+			// A rung adopted from existing outputs was recorded without chunks.
+			var chunked bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.chunkTable()+` WHERE run_id = $1)`, id).Scan(&chunked); err != nil {
+				return err
+			}
+			if !chunked {
+				if err := insertChunks(id, bounds[i]); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
 SET state = 'planned', job_id = NULL, output = NULL, finished_at = NULL WHERE run_id = $1`, id); err != nil {
 				return err
