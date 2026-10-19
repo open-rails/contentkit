@@ -9,7 +9,7 @@ require (
 	github.com/open-rails/contentkit v0.108.0
 	github.com/open-rails/contentkit/adapters/authkit v0.9.0
 	github.com/open-rails/contentkit/adapters/openrails v0.5.3
-	github.com/open-rails/helpers v1.13.0
+	github.com/open-rails/helpers v1.14.1
 	github.com/open-rails/openrails v0.259.0
 )
 
