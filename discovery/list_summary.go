@@ -144,28 +144,43 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit fun
  SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s
 WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
-	args["d_user"] = person(q.reader.Actor)
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, f.listing, coalesce(f.owner_group_id, ''), f.published_at,
- @d_user <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user)
- FROM (%[5]s) p
- JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.version_id
- JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
- JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`,
-		s.t.facets, s.t.items, s.t.versions, s.t.creators, sql), args)
+	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {
 		return err
 	}
-	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
-		var c cardRow
-		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.listing, &c.owner, &c.PublishedAt, &c.creator)
-		return c, err
+	picks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
+		var p pick
+		return p, r.Scan(&p.content, &p.version)
 	})
 	if err != nil {
 		return err
 	}
+	// Rows load and settle a batch at a time; only the picks span the selection.
 	const batchSize = 2048
-	for start := 0; start < len(got); start += batchSize {
-		batch := got[start:min(start+batchSize, len(got))]
+	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, f.listing, coalesce(f.owner_group_id, ''), f.published_at,
+ $3 <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3)
+ FROM unnest($2::text[]) AS p(vid)
+ JOIN %[1]s f ON f.tenant_id = $1 AND f.version_id = p.vid
+ JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
+ JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators)
+	user := person(q.reader.Actor)
+	for start := 0; start < len(picks); start += batchSize {
+		vids := make([]string, 0, batchSize)
+		for _, p := range picks[start:min(start+batchSize, len(picks))] {
+			vids = append(vids, p.version)
+		}
+		rows, err := s.o.Pool.Query(ctx, lean, s.o.Tenant, vids, user)
+		if err != nil {
+			return err
+		}
+		batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
+			var c cardRow
+			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.listing, &c.owner, &c.PublishedAt, &c.creator)
+			return c, err
+		})
+		if err != nil {
+			return err
+		}
 		if err := s.settle(ctx, q, batch); err != nil {
 			return err
 		}
