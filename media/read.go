@@ -450,6 +450,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		switch {
 		case f.IsUpload() && editor:
 			fi = uploadInfo(f, k)
+			if importPending(k, f) && out.State == StateReady {
+				out.State = StateProcessing
+			}
 		case editor:
 			fi.From = f.From
 		}

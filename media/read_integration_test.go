@@ -50,6 +50,72 @@ func urls(res *media.ReadResult) map[string]string {
 	return out
 }
 
+// Archive import is queued after the media worker finishes placing the ZIP.
+// Editor reads must keep polling during that gap without blocking ItemReady.
+func TestEditorReadPendingArchive(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.gallery(1, 1)
+	f.put(ref, "import/book.zip", "application/zip", []byte("archive pending extraction"))
+	k, err := f.reg.Kind("gallery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Publish = &media.Publish{Import: "import/{name}"}
+	blob := f.fileBlob(ref, "import/book.zip")
+	digest, _ := layout.BlobDigest(blob)
+	for _, tc := range []struct {
+		name, completed, state           string
+		unattached, failed, unconfigured bool
+		pending                          bool
+	}{
+		{name: "waiting for extraction", state: media.StateProcessing, pending: true},
+		{name: "completed", completed: fmt.Sprintf("%x", digest), state: media.StateReady},
+		{name: "changed archive", completed: strings.Repeat("0", 64), state: media.StateProcessing, pending: true},
+		{name: "unattached", unattached: true, state: media.StateReady},
+		{name: "failed", failed: true, state: media.StateFailed},
+		{name: "ordinary ZIP upload", unconfigured: true, state: media.StateReady},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k.Publish = &media.Publish{Import: "import/{name}"}
+			if tc.unconfigured {
+				k.Publish = nil
+			}
+			m, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+				u := &m.Files[m.Find("import/book.zip")]
+				u.Meta = map[string]any{"archive_completed_sha256": tc.completed}
+				u.Unattached, u.Failed = tc.unattached, nil
+				if tc.failed {
+					u.Failed = media.NewFailure(*u, errors.New("bad archive"))
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.pending && k.Readiness(m).State != media.StateReady {
+				t.Fatal("editor extraction progress blocked the worker's ItemReady callback")
+			}
+			r, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Editor: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.State != tc.state {
+				t.Fatalf("state %q, want %q", r.State, tc.state)
+			}
+			found := false
+			for _, file := range r.Files {
+				if file.Path == "import/book.zip" {
+					found = slices.Contains(file.Pending, "extract")
+				}
+			}
+			if found != tc.pending {
+				t.Fatalf("archive extract pending %t, want %t", found, tc.pending)
+			}
+		})
+	}
+}
+
 // A full-access read lists the derived files (not the unserved originals)
 // in manifest order with URLs the media gateway serves; prefix, offset and
 // limit select them.
