@@ -31,3 +31,37 @@ func TestHeldLockLeavesThePoolFree(t *testing.T) {
 	}
 	again()
 }
+
+func TestLiveHolderKeepsTheLockPastTheIdleLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	release, ok, err := acquire(ctx, pool, "pglock-live", false, time.Second, 200*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire: %v %v", ok, err)
+	}
+	defer release()
+	time.Sleep(3 * time.Second)
+	if _, ok, err := Acquire(ctx, pool, "pglock-live", false); err != nil || ok {
+		t.Fatalf("live holder lost the lock: %v %v", ok, err)
+	}
+}
+
+func TestSilentHolderFreesTheLock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	// No pings stands in for a client that vanished without closing.
+	release, ok, err := acquire(ctx, pool, "pglock-silent", false, time.Second, 0)
+	if err != nil || !ok {
+		t.Fatalf("acquire: %v %v", ok, err)
+	}
+	defer release()
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	again, ok, err := Acquire(waitCtx, pool, "pglock-silent", true)
+	if err != nil || !ok {
+		t.Fatalf("silent holder kept the lock: %v %v", ok, err)
+	}
+	again()
+}
