@@ -44,6 +44,56 @@ import (
 
 const tenant = "site"
 
+func TestBatchRecordCount(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		batch importer.Batch
+		want  int
+	}{
+		{"empty", importer.Batch{}, 0},
+		{"metadata", importer.Batch{Source: "legacy", PreferenceFloor: 10, ProvisionScopes: true}, 0},
+		{"groups", importer.Batch{Groups: make([]importer.GroupRecord, 2)}, 2},
+		{"contents and versions", importer.Batch{Contents: []importer.ContentRecord{{}, {Versions: make([]importer.VersionRecord, 3)}}}, 5},
+		{"memberships", importer.Batch{Memberships: make([]importer.MembershipSet, 2)}, 2},
+		{"offers", importer.Batch{Offers: make([]importer.OfferRecord, 2)}, 2},
+		{"aliases", importer.Batch{Aliases: make([]importer.AliasRecord, 2)}, 2},
+		{"comments", importer.Batch{Comments: make([]importer.CommentRecord, 2)}, 2},
+		{"reactions", importer.Batch{Reactions: make([]importer.ReactionRecord, 2)}, 2},
+		{"favorites", importer.Batch{Favorites: make([]importer.FavoriteRecord, 2)}, 2},
+		{"polls and options", importer.Batch{Polls: []importer.PollRecord{{}, {Options: make([]importer.PollOptionRecord, 3)}}}, 5},
+		{"votes", importer.Batch{Votes: make([]importer.VoteRecord, 2)}, 2},
+		{"answers", importer.Batch{Answers: make([]importer.AnswerRecord, 2)}, 2},
+		{"reading", importer.Batch{LegacyReading: make([]importer.LegacyReadingRecord, 2)}, 2},
+		{"signals", importer.Batch{Signals: make([]importer.SignalRecord, 2)}, 2},
+		{"deletes", importer.Batch{Deletes: make([]importer.DeleteRecord, 2)}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.batch.RecordCount(); got != tc.want {
+				t.Fatalf("RecordCount() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestImportRejectsNestedRecordOverflow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		batch importer.Batch
+	}{
+		{"versions", importer.Batch{Contents: []importer.ContentRecord{{Versions: make([]importer.VersionRecord, importer.MaxRecords)}}}},
+		{"options", importer.Batch{Polls: []importer.PollRecord{{Options: make([]importer.PollOptionRecord, importer.MaxRecords)}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.batch.Source = "legacy"
+			// Capacity must be rejected before accessing any destination store.
+			_, err := new(importer.Service).Import(t.Context(), tc.batch)
+			if !errors.Is(err, importer.ErrInvalid) || !strings.Contains(err.Error(), "20001 records") {
+				t.Fatalf("overflow error = %v", err)
+			}
+		})
+	}
+}
+
 // importer holds root:import:write; staff holds every other permission.
 type authz struct{}
 
