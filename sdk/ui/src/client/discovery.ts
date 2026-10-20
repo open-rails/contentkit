@@ -138,6 +138,8 @@ export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> 
   end_date?: string;
   time_zone?: string;
 };
+/** Explicit known IDs, including unlisted items, under current reader policy. */
+export type KnownCardsQuery = ReaderQuery & CardQuery & { ids: readonly string[]; kind?: string; summary?: boolean };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed"; summary?: boolean };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
@@ -186,6 +188,10 @@ export class DiscoveryClient {
   /** Contents as cards, one per content item with the version that fits the reader. */
   list(q: ContentQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
     return call(this.http, "GET", "/contents", { query: query(q) as never, signal });
+  }
+  /** Hydrates at most 100 known IDs in caller order; records no engagement. */
+  knownCards(q: KnownCardsQuery, signal?: AbortSignal): Promise<ContentPage> {
+    return call(this.http, "GET", "/content-cards", { query: query(q) as never, signal });
   }
   /** A first page is kept among the reader's recent searches. */
   async search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {

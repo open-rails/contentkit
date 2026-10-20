@@ -30,7 +30,8 @@ type HistoryOptions struct {
 }
 
 // History pages the contents the signed-in reader engaged with, most
-// recent first, as their listing shows them now.
+// recent first, including unlisted items they already know. Current domain,
+// publication, preferences and access rules still apply.
 func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}
 	if err := s.signals(); err != nil {
@@ -67,7 +68,7 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 	if len(rows) > limit {
 		rows, next = rows[:limit], strconv.Itoa(offset+limit)
 	}
-	q, err := s.compile(ctx, o.Reader, Filter{Kind: o.Kind})
+	q, err := s.compileKnown(ctx, o.Reader, Filter{Kind: o.Kind})
 	if err != nil {
 		return empty, err
 	}

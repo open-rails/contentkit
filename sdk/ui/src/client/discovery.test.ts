@@ -1,7 +1,7 @@
 import { expect, expectTypeOf, it, vi } from "vitest";
 import { createContentKitClient } from "./client.js";
 import type { MineQuery } from "./content/favorites.js";
-import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, RecentSearchesQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "./discovery.js";
+import type { ContentQuery, DailyReleasesQuery, HistoryQuery, KnownCardsQuery, RailQuery, RecentSearchesQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "./discovery.js";
 import { popularBetween, popularQuery } from "./discovery.js";
 import type { Method, RouteQuery } from "./route.js";
 
@@ -49,6 +49,7 @@ it("discovery query types take exactly their routes' parameters (checked by tsc)
   expectTypeOf<Gap<ReleaseDatesQuery, "GET", "/release-dates">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<DailyReleasesQuery, "GET", "/releases">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<HistoryQuery, "GET", "/me/history">>().toEqualTypeOf<never>();
+  expectTypeOf<Gap<KnownCardsQuery, "GET", "/content-cards">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<RecentSearchesQuery, "GET", "/me/searches">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<MineQuery, "GET", "/me/favorites">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<MineQuery & { value?: string }, "GET", "/me/reactions">>().toEqualTypeOf<never>();

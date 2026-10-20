@@ -92,7 +92,7 @@ export class GuestReadingHistory {
   }
 }
 
-/** Hydrate through ordinary public discovery before applying local progress: cached IDs never bypass current domain/access restrictions. */
+/** Apply local progress only after known-ID hydration: cached IDs never bypass current domain/access restrictions. */
 export function guestStanding(card: Card, item: GuestReadingItem): ViewerState {
   const rows = item.checkpoints.filter(row => !row.version_id || row.version_id === card.version.id);
   const pages = new Map<number, { active: number; ranges: { from: number; to: number }[] }>();

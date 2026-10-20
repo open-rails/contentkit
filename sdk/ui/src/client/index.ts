@@ -34,6 +34,7 @@ export {
   type ContentFilterQuery,
   type ContentQuery,
   type HistoryQuery,
+  type KnownCardsQuery,
   type ListSort,
   type Period,
   type PopularPeriod,

@@ -1075,6 +1075,15 @@ server-owned. An account switch discards old in-flight observations instead of
 assigning them to the next account. The optional `kind` groups local guest history
 only; remote requests never trust a browser-supplied content kind.
 
+`useHistory` retains previously read unlisted items for guests and accounts.
+Guest cards hydrate through `client.discovery.knownCards({ ids })`
+(`GET /content-cards?ids=…`, at most 100 IDs, caller order), rather than a browse
+listing. This read records no engagement. Current domain rules, reader filters,
+languages, publication/deletion state and access decisions still apply; hidden
+items are omitted and locked cards use normal redaction. `/contents` and search
+continue to exclude unlisted items.
+
+
 For a custom integration, `EngagementTracker` accepts injected `begin` and
 `submit` callbacks. `client.discovery.activityContexts(targets, session, language)`
 exposes `POST /activity-contexts`; `client.discovery.engagement(snapshots, options)`

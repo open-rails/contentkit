@@ -199,9 +199,9 @@ export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKit
     const limit = Math.max(1, Math.min(100, query?.limit ?? 50));
     const batch = selected.slice(offset, offset + limit);
     if (!batch.length) return { items: [], next: null };
-    // Public hydration enforces current hard-domain rules, access and optional preferences.
-    const out = await client.discovery.list({ ids: (query?.summary && !cursor ? selected : batch).map(row => row.id), summary: !cursor ? query?.summary : undefined, kind: query?.kind, language: query?.language,
-      display_language: query?.display_language, mode: query?.mode, card_entities: query?.card_entities, limit: 100 }, signal);
+    // Bounded known-ID hydration retains unlisted history under current reader policy.
+    const out = await client.discovery.knownCards({ ids: (query?.summary && !cursor ? selected : batch).map(row => row.id), summary: !cursor ? query?.summary : undefined, kind: query?.kind, language: query?.language,
+      display_language: query?.display_language, mode: query?.mode, card_entities: query?.card_entities }, signal);
     const cards = new Map(out.contents.map(card => [card.id, card]));
     const items = batch.flatMap(row => {
       const card = cards.get(row.id); if (!card) return [];

@@ -2380,6 +2380,57 @@ func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery
 	return out, err
 }
 
+// GetContentCardsQuery is the query of GetContentCards.
+type GetContentCardsQuery struct {
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+	// required: 1-100 known content IDs
+	Ids []string
+	// only this content kind
+	Kind string
+	// the group kinds cards name; every kind with a page by default
+	CardEntities []string
+	// filtered and locked counts within only these IDs
+	Summary *bool
+}
+
+func (q GetContentCardsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
+	}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.Summary != nil {
+		v.Set("summary", fmt.Sprint(*q.Summary))
+	}
+	return v
+}
+
+// GetContentCards is GET /v1/content-cards (public). Hydrates 1-100 already-known content IDs in caller order, including unlisted items. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.
+func (c *Client) GetContentCards(ctx context.Context, q GetContentCardsQuery) (discovery.ContentPage, error) {
+	var out discovery.ContentPage
+	err := c.call(ctx, http.MethodGet, "/v1/content-cards", q.values(), nil, &out)
+	return out, err
+}
+
 // GetContentsQuery is the query of GetContents.
 type GetContentsQuery struct {
 	// only this content kind

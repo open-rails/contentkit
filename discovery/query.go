@@ -125,6 +125,19 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	return s.compileWithViewer(ctx, r, f, nil)
 }
 
+// compileKnown preserves the normal selection's policy, admitting unlisted
+// items only for a caller-bounded known-ID selection or personal history.
+func (s *Service) compileKnown(ctx context.Context, r Reader, f Filter) (*sel, error) {
+	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode})
+	if err != nil {
+		if errors.Is(err, catalog.ErrInvalid) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalid, err)
+		}
+		return nil, err
+	}
+	return s.compileWithViewer(ctx, r, f, v.ForKnownContents())
+}
+
 // compileWithViewer reuses a resolved request viewer for a private selection
 // under the same domain, entitlements and captured clock. Nil resolves normally.
 func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *catalog.Viewer) (*sel, error) {

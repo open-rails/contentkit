@@ -114,6 +114,10 @@ var routes = []httpapi.Route[handler]{
 		Doc:       "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
 		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardGroups, httpapi.Int("days", "calendar days including end_date: 10 by default, from 1 through 31"), httpapi.Text("end_date", "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
 		Responses: []httpapi.Reply{httpapi.OK(DailyReleases{})}}, Serve: httpapi.H(handler.releases)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/content-cards", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Hydrates 1-100 already-known content IDs in caller order, including unlisted items. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.",
+		Query:     params(readerParams, []httpapi.Param{httpapi.List("ids", "required: 1-100 known content IDs"), httpapi.Text("kind", "only this content kind"), cardGroups, httpapi.Bool("summary", "filtered and locked counts within only these IDs")}),
+		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}}, Serve: httpapi.H(handler.knownCards)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents", Resource: "discovery", Auth: httpapi.Public,
 		Doc:   "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
 		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardGroups, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page")}, activityParams, pageParams, []httpapi.Param{numberedPage}), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})},
@@ -233,6 +237,17 @@ func (h handler) releases(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	out, err := h.s.Releases(r.Context(), DailyReleasesOptions{Reader: readerOf(r), Filter: filterOf(r), Days: days, EndDate: q.Get("end_date"), TimeZone: q.Get("time_zone"), CardGroups: list(q.Get("card_entities"))})
+	h.reply(w, r, out, err)
+}
+
+func (h handler) knownCards(w http.ResponseWriter, r *http.Request) {
+	summary, err := optionalFlag(r, "summary")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	out, err := h.s.KnownCards(r.Context(), KnownCardsOptions{Reader: readerOf(r), IDs: list(q.Get("ids")), Kind: q.Get("kind"), CardGroups: list(q.Get("card_entities")), Summary: summary})
 	h.reply(w, r, out, err)
 }
 

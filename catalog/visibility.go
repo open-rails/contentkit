@@ -54,6 +54,7 @@ type Viewer struct {
 	now            time.Time
 	staff          bool
 	management     bool
+	knownContents  bool
 	filter         *access.Filter
 	policies       domainpolicy.Policies
 	hidden         map[string][]string
@@ -221,6 +222,16 @@ func (v *Viewer) WithoutContentFilters() *Viewer {
 	return &out
 }
 
+// ForKnownContents retains current domain, publication, reader preferences and
+// access policy while admitting unlisted items. Use only for an explicit bounded
+// ID selection or the reader's own saved history, never browsing or search.
+func (v *Viewer) ForKnownContents() *Viewer {
+	out := *v
+	out.knownContents = true
+	out.asked = maps.Clone(v.asked)
+	return &out
+}
+
 // Listed is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions the viewer's listing shows. A list shows one card per
 // content item among its rows. In Hide mode, and for members-listed rows,
@@ -265,6 +276,9 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		return "(" + scope + " AND " + soft + ")", args
 	}
 	listed := "(" + f("listing") + " = 'listed' OR (" + f("listing") + " = 'members' AND " + opens + "))"
+	if v.knownContents {
+		listed = "(" + listed + " OR " + f("listing") + " = 'unlisted')"
+	}
 	if v.mode == access.Hide {
 		listed += " AND " + opens
 	}

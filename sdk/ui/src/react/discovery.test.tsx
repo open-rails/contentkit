@@ -148,7 +148,7 @@ it("hydrates guest reading IDs through public policy and keeps account history a
   const client = createContentKitClient({ baseUrl: "https://catalog.test/guest-reading", fetch: async input => {
     const url = new URL(String(input)); calls.push(url);
     if (url.pathname.endsWith("/me/history")) return Response.json({ contents: [{ id: "account-only" }] });
-    expect(url.pathname.endsWith("/contents")).toBe(true);
+    expect(url.pathname.endsWith("/content-cards")).toBe(true);
     expect(url.searchParams.get("ids")!.split(",").sort()).toEqual(["allowed", "now-restricted"]);
     return Response.json({ contents: [{ id: "allowed", kind: "gallery", version: { id: "edition", pages: 2 } }] });
   } });
@@ -168,4 +168,51 @@ it("hydrates guest reading IDs through public policy and keeps account history a
   await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["allowed"]));
   await act(() => result.current.forget());
   await waitFor(() => expect(result.current.items).toEqual([]));
+});
+
+it("keeps a previously read unlisted gallery in guest history through bounded known-ID hydration", async () => {
+  const calls: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/unlisted-history", fetch: async input => {
+    const url = new URL(String(input)); calls.push(url);
+    if (url.pathname.endsWith("/content-cards")) {
+      expect(url.searchParams.get("ids")).toBe("known-unlisted");
+      expect(url.searchParams.get("kind")).toBe("gallery");
+      expect(url.searchParams.get("mode")).toBe("hide");
+      return Response.json({ contents: [{ id: "known-unlisted", kind: "gallery", version: { id: "edition", pages: 2 } }] });
+    }
+    return Response.json({ contents: [] });
+  } });
+  client.guestHistory.record({ content_id: "known-unlisted", version_id: "edition", visit_id: "visit", segment_id: "segment",
+    revision: 1, active_ms: 1500, activity_token: "", pages: [{ index: 0, active_ms: 1500, ranges: [{ from: 0, to: 10_000 }] }], resume: "001", kind: "gallery" });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={null}>{children}</ContentKitProvider>;
+  const { result } = renderHook(() => useHistory({ kind: "gallery", mode: "hide" }), { wrapper });
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["known-unlisted"]));
+  expect(calls.map(url => url.pathname)).toEqual(["/unlisted-history/v1/content-cards"]);
+});
+
+it("bounds guest history summary hydration to the newest 100 known IDs", async () => {
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/bounded-history", fetch: async input => {
+    const url = new URL(String(input));
+    expect(url.pathname.endsWith("/content-cards")).toBe(true);
+    const ids = url.searchParams.get("ids")!.split(",");
+    expect(ids).toHaveLength(100);
+    expect(ids[0]).toBe("known-100");
+    expect(ids).not.toContain("known-0");
+    expect(url.searchParams.get("summary")).toBe("true");
+    return Response.json({ contents: [{ id: ids[0], kind: "gallery", version: { id: "edition", pages: 1 } }], summary: { total: 1, filtered_count: 0, filtered_entities: [], locked_count: 0 } });
+  } });
+  const now = vi.spyOn(Date, "now");
+  try {
+    for (let n = 0; n < 101; n++) {
+      now.mockReturnValue(1_000 + n);
+      client.guestHistory.record({ content_id: `known-${n}`, version_id: "edition", visit_id: "visit", segment_id: `segment-${n}`,
+        revision: 1, active_ms: 1500, activity_token: "", pages: [{ index: 0, active_ms: 1500, ranges: [{ from: 0, to: 10_000 }] }], resume: "001", kind: "gallery" });
+    }
+  } finally {
+    now.mockRestore();
+  }
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={null}>{children}</ContentKitProvider>;
+  const { result } = renderHook(() => useHistory({ kind: "gallery", summary: true, limit: 10 }), { wrapper });
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["known-100"]));
+  expect(result.current.summary?.total).toBe(1);
 });

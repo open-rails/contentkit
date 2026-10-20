@@ -10008,6 +10008,121 @@
         ]
       }
     },
+    "/v1/content-cards": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Hydrates 1-100 already-known content IDs in caller order, including unlisted items. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "required: 1-100 known content IDs",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_entities",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "description": "filtered and locked counts within only these IDs",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/search": {
       "get": {
         "tags": [
