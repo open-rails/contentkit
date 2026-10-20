@@ -288,20 +288,38 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	}
 	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (" + f("content_id") + " = ANY(@cv_owned::text[]) OR " +
 		f("version_id") + " = ANY(@cv_owned_versions::text[]) OR @cv_owned_candidates::boolean))"
-	privileged := "(" + f("owner_group_id") + " = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
-		" cc WHERE cc.tenant_id = " + f("tenant_id") + " AND cc.content_id = " + f("content_id") + " AND cc.user_id = @cv_user)))"
-	return "(" + scope + " AND (" + public + " OR " + held + " OR " + privileged + "))", args
+	return "(" + scope + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+}
+
+// privileged is the SQL test, over Listed's args, of a row whose channel the
+// viewer edits or whose content they created.
+func (v *Viewer) privileged(alias string) string {
+	return "(" + alias + ".owner_group_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
+		" cc WHERE cc.tenant_id = " + alias + ".tenant_id AND cc.content_id = " + alias + ".content_id AND cc.user_id = @cv_user)))"
+}
+
+// Playable is a boolean SQL predicate over the content_facets row aliased
+// alias, to AND with Listed (it uses Listed's args): versions that play, or
+// that the viewer may see before they do as staff, channel editor or
+// creator. Browsing applies it; a reader's own history and saved items do
+// not.
+func (v *Viewer) Playable(alias string) string {
+	if v.staff {
+		return "true"
+	}
+	return "(NOT " + alias + ".unplayable OR " + v.privileged(alias) + ")"
 }
 
 // Indexable is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions a site lists to anyone, as its sitemaps name them:
-// live, not deleted, listed and in the viewer's site scope. Access, the
-// language and a reader's content filters do not apply. Args are pgx named
-// args prefixed ci_.
+// live, not deleted, listed, playable and in the viewer's site scope.
+// Access, the language and a reader's content filters do not apply. Args are
+// pgx named args prefixed ci_.
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
 	args["ci_now"] = v.now
-	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + alias + ".listing = 'listed' AND " + scope + ")", args
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + alias + ".listing = 'listed' AND NOT " + alias +
+		".unplayable AND " + scope + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.

@@ -24,7 +24,7 @@ func (s *Service) KnownCards(ctx context.Context, o KnownCardsOptions) (ContentP
 	if len(o.IDs) == 0 || len(o.IDs) > 100 {
 		return out, fmt.Errorf("%w: 1-100 content ids", ErrInvalid)
 	}
-	filter := Filter{Kind: o.Kind, IDs: o.IDs}
+	filter := Filter{Kind: o.Kind, IDs: o.IDs, keepUnplayable: true}
 	q, err := s.compileKnown(ctx, o.Reader, filter)
 	if err != nil {
 		return out, err

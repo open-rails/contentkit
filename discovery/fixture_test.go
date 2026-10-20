@@ -117,7 +117,7 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 		t.Fatal(err)
 	}
 	if f.cat, err = catalog.New(ctx, catalog.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Auth: testauth.Auth{Authz: staffOnly{}},
-		Gate: gate, Groups: f.groups, Now: func() time.Time { return f.clock }}); err != nil {
+		Gate: gate, Groups: f.groups, PlayableKinds: []string{"video"}, Now: func() time.Time { return f.clock }}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.cat.Close)
@@ -197,6 +197,8 @@ type ver struct {
 	future bool    // not live yet
 	rule   *string // access override
 	pages  int     // media's fact
+	// unplayable: a player version whose media cannot play yet; others play.
+	unplayable bool
 }
 
 // item is one content item to seed.
@@ -276,6 +278,11 @@ func (f *fixture) seed(items ...item) {
 			f.vids[[2]int{it.n, i}] = vs[i]
 			if v.pages > 0 {
 				f.exec(`UPDATE {s}.content_versions SET pages = $2 WHERE id = $1`, vs[i], v.pages)
+			}
+			// Media records whether a player version plays; its facet follows.
+			if it.kind == "video" {
+				f.exec(`UPDATE {s}.content_versions SET playable = $2 WHERE id = $1`, vs[i], !v.unplayable)
+				f.exec(`UPDATE {s}.content_facets SET unplayable = $2 WHERE version_id = $1`, vs[i], v.unplayable)
 			}
 		}
 		var code string

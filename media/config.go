@@ -336,6 +336,11 @@ type Hooks struct {
 	// job, through the host's media queue. It must be idempotent; an error
 	// retries.
 	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
+	// ItemProgressed reports an item still processing once a job left it
+	// playable (a video's first HLS rendition is out), in a host transaction
+	// through the host's media queue like ItemReady, which still reports the
+	// far end. Optional; idempotent; an error retries.
+	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
 	// ItemCommitted reports an item a commit changed, before its processing
 	// runs; ItemReady reports the far end. Idempotent; an error fails the
 	// commit.
