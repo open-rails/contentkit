@@ -94,9 +94,9 @@ export function GroupEditor(p: GroupEditorProps) {
   return root(
     <>
       <Head management={p.management} group={group} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      <Details management={p.management} key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
+      <Details management={p.management} key={`details:${group.id}`} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
       <Names group={group} g={g} languages={languages} onError={p.onError} />
-      <Texts key={group.id} group={group} g={g} languages={languages} onError={p.onError} />
+      <Texts key={`text:${group.id}`} group={group} g={g} languages={languages} onError={p.onError} />
       <Images management={p.management} group={group} spec={spec} onError={p.onError} client={p.client} />
       {spec.sellable && <Membership group={group} onError={p.onError} client={p.client} />}
       <Edges management={p.management} group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />

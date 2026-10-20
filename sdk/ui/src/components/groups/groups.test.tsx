@@ -93,6 +93,18 @@ it("GroupEditor: its editor sees the membership it sells, though no paywall offe
   expect(within(section).queryByText("Not for sale.")).toBeNull();
 });
 
+it("GroupEditor keeps independent section state without duplicate sibling keys", async () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
+    const { container } = render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+    await waitFor(() => expect(container.querySelector('[data-ckui="group-text"]')).not.toBeNull());
+    expect(errors.mock.calls.filter(args => String(args[0]).includes("same key"))).toEqual([]);
+  } finally {
+    errors.mockRestore();
+  }
+});
+
 it("GroupAvatar and GroupCover are styling roots of their own outside a ContentKit surface", () => {
   const g = { id: "g1", kind: "channel", name: "Studio", slug: "studio" };
   const { container } = render(
