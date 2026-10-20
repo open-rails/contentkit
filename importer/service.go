@@ -78,7 +78,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 	if !sourceRE.MatchString(b.Source) {
 		return res, fmt.Errorf("%w: source %q must match %s", ErrInvalid, b.Source, sourceRE)
 	}
-	if n := b.records(); n > MaxRecords {
+	if n := b.RecordCount(); n > MaxRecords {
 		return res, fmt.Errorf("%w: %d records; at most %d per batch", ErrInvalid, n, MaxRecords)
 	}
 	if b.PreferenceFloor != 0 {
@@ -114,7 +114,9 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 	return res, nil
 }
 
-func (b Batch) records() int {
+// RecordCount returns the count checked against MaxRecords, including nested
+// content versions and poll options. Importers can use it to size their batches.
+func (b Batch) RecordCount() int {
 	n := len(b.Groups) + len(b.Memberships) + len(b.Offers) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
 		len(b.Votes) + len(b.Answers) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
