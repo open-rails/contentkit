@@ -443,6 +443,144 @@ func TestGroupReferencesRejectStaleSnapshots(t *testing.T) {
 	}
 }
 
+func TestMatchExactNameSQLTx(t *testing.T) {
+	f := newFixture(t)
+	g := f.create(
+		GroupInput{Kind: "artist", Slug: "artist", Names: []Name{canonical("en", "Café-Art"), canonical("es", "Café-Art"), alias("en", "Studio, West")}},
+		GroupInput{Kind: "artist", Slug: "first", Names: []Name{canonical("en", "Shared")}},
+		GroupInput{Kind: "artist", Slug: "second", Names: []Name{canonical("en", "Second"), alias("en", "Shared")}},
+		GroupInput{Kind: "tag", Slug: "tag", Names: []Name{canonical("en", "Café-Art")}},
+		GroupInput{Kind: "artist", Slug: "internal", Internal: true, Names: []Name{canonical("en", "Hidden")}},
+		GroupInput{Kind: "artist", Slug: "deleted", Names: []Name{canonical("en", "Deleted")}},
+		GroupInput{Kind: "series", Slug: "series-one"}, GroupInput{Kind: "series", Slug: "series-two"},
+	)
+	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{g[5].ID}); err != nil {
+		t.Fatal(err)
+	}
+	characters := f.create(
+		GroupInput{Kind: "character", Slug: "one", ScopeID: g[6].ID, Names: []Name{canonical("en", "Character")}},
+		GroupInput{Kind: "character", Slug: "two", ScopeID: g[7].ID, Names: []Name{canonical("en", "Character")}},
+	)
+	other, err := New(Options{Pool: f.pool, Schema: f.schema, Tenant: "other", Kinds: config()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.CreateGroups(f.ctx, []GroupInput{{Kind: "artist", Slug: "foreign", Names: []Name{canonical("en", "Café-Art"), alias("en", "Foreign")}}}); err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDBFromPool(f.pool)
+	defer db.Close()
+	tx, err := db.BeginTx(f.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	ambiguous := []string{string(g[1].ID), string(g[2].ID)}
+	slices.Sort(ambiguous)
+	for _, tc := range []struct {
+		name, kind, scope, language, input string
+		want                               []string
+	}{
+		{"canonical across languages", "artist", "", "", "Café-Art", []string{string(g[0].ID)}},
+		{"alias", "artist", "", "en", "Studio, West", []string{string(g[0].ID)}},
+		{"ambiguous", "artist", "", "", "Shared", ambiguous},
+		{"correct kind", "tag", "", "", "Café-Art", []string{string(g[3].ID)}},
+		{"scoped", "character", string(g[6].ID), "", "Character", []string{string(characters[0].ID)}},
+		{"missing scope", "character", "", "", "Character", nil},
+		{"other language", "artist", "", "es", "Studio, West", nil},
+		{"case", "artist", "", "", "café-Art", nil},
+		{"accent", "artist", "", "", "Cafe-Art", nil},
+		{"separator", "artist", "", "", "Café Art", nil},
+		{"whitespace", "artist", "", "", " Café-Art ", nil},
+		{"punctuation", "artist", "", "", "Studio West", nil},
+		{"no comma splitting", "artist", "", "", "Café-Art, Second", nil},
+		{"unknown", "artist", "", "", "Unknown", nil},
+		{"blank", "artist", "", "", "", nil},
+		{"internal", "artist", "", "", "Hidden", nil},
+		{"deleted", "artist", "", "", "Deleted", nil},
+		{"foreign catalog", "artist", "", "", "Foreign", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.s.MatchExactNameSQLTx(f.ctx, tx, tc.kind, tc.scope, tc.language, tc.input)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v: %v", got, tc.want, err)
+			}
+		})
+	}
+	if _, err := f.s.MatchExactNameSQLTx(f.ctx, nil, "artist", "", "", "Café-Art"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("nil transaction: %v", err)
+	}
+	if _, err := f.s.MatchExactNameSQLTx(f.ctx, tx, "unknown", "", "", "Café-Art"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown kind: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.MatchExactNameSQLTx(f.ctx, tx, "artist", "", "", "Café-Art"); !errors.Is(err, sql.ErrTxDone) {
+		t.Fatalf("finished transaction was treated as a missing name: %v", err)
+	}
+}
+
+func TestSQLGroupReferencesStayInHostTransaction(t *testing.T) {
+	for _, outcome := range []string{"commit", "dry-run rollback", "failed batch"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := newFixture(t)
+			h := f.hostReferences()
+			g := f.create(GroupInput{Kind: "artist", Slug: "artist"})[0]
+			db := stdlib.OpenDBFromPool(f.pool)
+			defer db.Close()
+			tx, err := db.BeginTx(f.ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if _, err := tx.ExecContext(f.ctx, `INSERT INTO `+f.s.table("content_group_names")+` (tenant_id,group_id,language,kind,name) VALUES ($1,$2,'en','alias','Uncommitted')`, tenant, string(g.ID)); err != nil {
+				t.Fatal(err)
+			}
+			ids, err := f.s.MatchExactNameSQLTx(f.ctx, tx, "artist", "", "", "Uncommitted")
+			if err != nil || !slices.Equal(ids, []string{string(g.ID)}) {
+				t.Fatalf("transaction-local name %v: %v", ids, err)
+			}
+			if err := f.s.LockReferencesSQLTx(f.ctx, tx, []Ref{{Kind: "artist", ID: GroupID(ids[0])}}); err != nil {
+				t.Fatal(err)
+			}
+			insert := `INSERT INTO ` + h.table + ` VALUES ($1,'one',$2)`
+			if _, err := tx.ExecContext(f.ctx, insert, tenant, ids[0]); err != nil {
+				t.Fatal(err)
+			}
+			var count int
+			if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+h.table).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("host write escaped transaction: count=%d, error=%v", count, err)
+			}
+			want := 0
+			if outcome == "commit" {
+				if err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+				want = 1
+			} else {
+				if outcome == "failed batch" {
+					if _, err := tx.ExecContext(f.ctx, insert, tenant, ids[0]); err == nil {
+						t.Fatal("expected duplicate host link to abort the batch")
+					}
+					if _, err := f.s.MatchExactNameSQLTx(f.ctx, tx, "artist", "", "", "Uncommitted"); err == nil {
+						t.Fatal("aborted transaction treated as an unresolved name")
+					}
+				}
+				if err := tx.Rollback(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+h.table).Scan(&count); err != nil || count != want {
+				t.Fatalf("host links after %s: count=%d, error=%v", outcome, count, err)
+			}
+			if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.s.table("content_group_names")+` WHERE name='Uncommitted'`).Scan(&count); err != nil || count != want {
+				t.Fatalf("name after %s: count=%d, error=%v", outcome, count, err)
+			}
+		})
+	}
+}
+
 // Groups are created against their kind's rules: scope, parent, owner, auth
 // scope, declared attributes and cover; slugs are unique per kind and scope.
 func TestCreateGroupsFollowsKinds(t *testing.T) {

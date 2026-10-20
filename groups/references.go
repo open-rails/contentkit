@@ -58,6 +58,42 @@ func (s *Store) LockReferencesSQLTx(ctx context.Context, tx *sql.Tx, refs []Ref)
 	return s.lockReferences(ctx, codes.SQL(tx), refs)
 }
 
+// MatchExactNameSQLTx finds up to two distinct active, non-internal groups of
+// kind within scope whose canonical name or alias equals name literally. Case,
+// accents, whitespace and punctuation are significant. Empty language searches
+// all languages. Zero matches means unresolved; two means ambiguous.
+//
+// This is a lookup, not a reservation of the name or authorization. It neither
+// creates groups nor follows merged IDs. Before writing host links, pass the
+// complete resolved selection to LockReferencesSQLTx in this same READ COMMITTED
+// transaction. Keep the original text for unresolved or ambiguous names.
+func (s *Store) MatchExactNameSQLTx(ctx context.Context, tx *sql.Tx, kind, scopeID, language, name string) ([]string, error) {
+	if err := checkSQLReferenceTransaction(ctx, tx); err != nil {
+		return nil, err
+	}
+	if _, err := s.groupKind(kind); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT DISTINCT g.id FROM %s g
+ JOIN %s n ON n.tenant_id=g.tenant_id AND n.group_id=g.id
+ WHERE g.tenant_id=$1 AND g.kind=$2 AND g.scope_id=$3 AND g.state='active' AND NOT g.internal
+   AND ($4='' OR n.language=$4) AND n.name COLLATE "C" = $5 COLLATE "C"
+ ORDER BY g.id LIMIT 2`, s.table("content_groups"), s.table("content_group_names")), s.tenant, kind, scopeID, language, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) lockReferences(ctx context.Context, q codes.Querier, refs []Ref) error {
 	ids := make([]GroupID, len(refs))
 	wanted := make(map[GroupID]string, len(refs))
