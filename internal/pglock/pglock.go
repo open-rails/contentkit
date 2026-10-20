@@ -4,21 +4,38 @@ package pglock
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// A lock's session ends itself once idle this long, so a holder whose client
+// vanished without closing the connection (a dead node or a dropped tunnel)
+// frees the lock instead of blocking every waiter until TCP gives up. A live
+// holder pings well within it.
+const idleLimit = 2 * time.Minute
+
 // Acquire locks key on a new connection configured like pool's. Without wait
 // it returns ok=false while another session holds key. release closes the
 // connection, which ends the lock.
 func Acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool) (release func(), ok bool, err error) {
-	conn, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
+	return acquire(ctx, pool, key, wait, idleLimit, idleLimit/4)
+}
+
+func acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool, idle, ping time.Duration) (release func(), ok bool, err error) {
+	cfg := pool.Config().ConnConfig.Copy()
+	if cfg.RuntimeParams == nil {
+		cfg.RuntimeParams = map[string]string{}
+	}
+	cfg.RuntimeParams["idle_session_timeout"] = strconv.FormatInt(idle.Milliseconds(), 10)
+	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, false, err
 	}
-	release = func() {
+	closeConn := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = conn.Close(ctx)
@@ -30,8 +47,37 @@ func Acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool) (re
 		err = conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(hashtextextended($1, 0))", key).Scan(&ok)
 	}
 	if err != nil || !ok {
-		release()
+		closeConn()
 		return nil, false, err
 	}
-	return release, true, nil
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if ping <= 0 {
+			return
+		}
+		t := time.NewTicker(ping)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				// A timed-out query closes the connection, and with it the lock,
+				// so a ping may run until the server would end the session anyway.
+				ctx, cancel := context.WithTimeout(context.Background(), idle-ping)
+				_, _ = conn.Exec(ctx, "SELECT 1")
+				cancel()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+			closeConn()
+		})
+	}, true, nil
 }
