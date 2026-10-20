@@ -35,12 +35,9 @@ func acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool, idl
 	if err != nil {
 		return nil, false, err
 	}
-	var mu sync.Mutex
 	closeConn := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		mu.Lock()
-		defer mu.Unlock()
 		_ = conn.Close(ctx)
 	}
 	ok = true
@@ -67,11 +64,11 @@ func acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool, idl
 			case <-stop:
 				return
 			case <-t.C:
-				mu.Lock()
-				ctx, cancel := context.WithTimeout(context.Background(), ping)
+				// A timed-out query closes the connection, and with it the lock,
+				// so a ping may run until the server would end the session anyway.
+				ctx, cancel := context.WithTimeout(context.Background(), idle-ping)
 				_, _ = conn.Exec(ctx, "SELECT 1")
 				cancel()
-				mu.Unlock()
 			}
 		}
 	}()
