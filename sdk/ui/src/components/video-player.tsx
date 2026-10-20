@@ -601,7 +601,7 @@ export function VideoPlayer({
         <Panel icon>{t("player.failed")}</Panel>
       ) : pending || !base ? (
         <div className="absolute inset-0 flex items-center justify-center bg-muted p-6 text-foreground">
-          <EncodeProgress progress={progress} className="max-w-xs" />
+          <EncodeProgress progress={progress} className="max-w-xs text-center" />
         </div>
       ) : (
         <>
