@@ -2,9 +2,12 @@ package groups
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/internal/codes"
 )
 
 // References maintains a host's links to catalog groups. Calls run with the
@@ -39,6 +42,23 @@ func (s *Store) LockReferencesTx(ctx context.Context, tx pgx.Tx, refs []Ref) err
 	if err := checkReferenceTransaction(ctx, tx); err != nil {
 		return err
 	}
+	return s.lockReferences(ctx, codes.Pgx(tx), refs)
+}
+
+// LockReferencesSQLTx is LockReferencesTx for a database/sql transaction using
+// the pgx stdlib driver. Pass the underlying *sql.Tx when using an ORM. It never
+// starts or ends a transaction; the caller must roll back on error.
+func (s *Store) LockReferencesSQLTx(ctx context.Context, tx *sql.Tx, refs []Ref) error {
+	if err := checkSQLReferenceTransaction(ctx, tx); err != nil {
+		return err
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return s.lockReferences(ctx, codes.SQL(tx), refs)
+}
+
+func (s *Store) lockReferences(ctx context.Context, q codes.Querier, refs []Ref) error {
 	ids := make([]GroupID, len(refs))
 	wanted := make(map[GroupID]string, len(refs))
 	for i, ref := range refs {
@@ -55,13 +75,21 @@ func (s *Store) LockReferencesTx(ctx context.Context, tx pgx.Tx, refs []Ref) err
 	if err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g
- WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR SHARE`, groupColumns, s.table("content_groups")), s.tenant, list)
+	rows, err := q.Query(ctx, `SELECT g.id, g.kind, g.state, g.internal FROM `+s.table("content_groups")+` g
+ WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR SHARE`, s.tenant, list)
 	if err != nil {
 		return err
 	}
-	locked, err := scanGroups(rows)
-	if err != nil {
+	defer rows.Close()
+	var locked []Group
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.Kind, &g.State, &g.Internal); err != nil {
+			return err
+		}
+		locked = append(locked, g)
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	if len(locked) != len(list) {
@@ -74,6 +102,20 @@ func (s *Store) LockReferencesTx(ctx context.Context, tx pgx.Tx, refs []Ref) err
 		if g.State != StateActive || g.Internal {
 			return fmt.Errorf("%w: group %s is unavailable", ErrConflict, g.ID)
 		}
+	}
+	return nil
+}
+
+func checkSQLReferenceTransaction(ctx context.Context, tx *sql.Tx) error {
+	if tx == nil {
+		return fmt.Errorf("%w: transaction is required", ErrInvalid)
+	}
+	var isolation string
+	if err := tx.QueryRowContext(ctx, "SHOW transaction_isolation").Scan(&isolation); err != nil {
+		return err
+	}
+	if isolation != "read committed" {
+		return fmt.Errorf("%w: host group references require READ COMMITTED isolation", ErrInvalid)
 	}
 	return nil
 }

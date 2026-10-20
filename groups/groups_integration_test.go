@@ -3,6 +3,7 @@ package groups
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -160,6 +162,12 @@ func TestGroupReferencesIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlDB := stdlib.OpenDBFromPool(f.pool)
+	defer sqlDB.Close()
+	unavailable := f.create(GroupInput{Kind: "artist", Slug: "hidden", Internal: true}, GroupInput{Kind: "artist", Slug: "deleted"})
+	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{unavailable[1].ID}); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		refs []Ref
@@ -171,16 +179,44 @@ func TestGroupReferencesIntegration(t *testing.T) {
 		{"conflicting duplicate", []Ref{{Kind: "artist", ID: into.ID}, {Kind: "tag", ID: into.ID}}, ErrInvalid},
 		{"merged", []Ref{{Kind: "artist", ID: from.ID}}, ErrConflict},
 		{"foreign tenant", []Ref{{Kind: "artist", ID: foreign[0].ID}}, ErrNotFound},
+		{"internal", []Ref{{Kind: "artist", ID: unavailable[0].ID}}, ErrConflict},
+		{"deleted", []Ref{{Kind: "artist", ID: unavailable[1].ID}}, ErrConflict},
+		{"duplicate", []Ref{{Kind: "artist", ID: into.ID}, {Kind: "artist", ID: into.ID}}, nil},
+		{"unknown kind", []Ref{{Kind: "missing", ID: into.ID}}, ErrInvalid},
+		{"empty id", []Ref{{Kind: "artist"}}, ErrInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error { return f.s.LockReferencesTx(f.ctx, tx, tc.refs) })
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("lock: %v, want %v", err, tc.want)
 			}
+			tx, err := sqlDB.BeginTx(f.ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if err := f.s.LockReferencesSQLTx(f.ctx, tx, tc.refs); !errors.Is(err, tc.want) {
+				t.Fatalf("SQL lock: %v, want %v", err, tc.want)
+			}
 		})
 	}
 	if err := f.s.LockReferencesTx(f.ctx, nil, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil transaction: %v", err)
+	}
+	if err := f.s.LockReferencesSQLTx(f.ctx, nil, nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("nil SQL transaction: %v", err)
+	}
+	for _, isolation := range []sql.IsolationLevel{sql.LevelRepeatableRead, sql.LevelSerializable} {
+		tx, err := sqlDB.BeginTx(f.ctx, &sql.TxOptions{Isolation: isolation})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.s.LockReferencesSQLTx(f.ctx, tx, []Ref{{Kind: "artist", ID: into.ID}}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("SQL isolation %v: %v", isolation, err)
+		}
+		if err := tx.Rollback(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.exec(`DELETE FROM {s}.host_links`)
 	if _, err := f.s.DeleteGroups(f.ctx, []GroupID{into.ID}); err != nil {
@@ -189,26 +225,57 @@ func TestGroupReferencesIntegration(t *testing.T) {
 }
 
 func TestGroupReferencesConcurrentBinding(t *testing.T) {
-	for _, operation := range []string{"merge", "delete", "import"} {
+	for _, scenario := range []struct{ driver, operation string }{
+		{"pgx", "merge"}, {"pgx", "delete"}, {"pgx", "import"},
+		{"sql", "merge"}, {"sql", "delete"}, {"sql", "import"},
+	} {
+		driver, operation := scenario.driver, scenario.operation
 		for _, bindFirst := range []bool{true, false} {
-			t.Run(fmt.Sprintf("%s/bind-first=%t", operation, bindFirst), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s/bind-first=%t", driver, operation, bindFirst), func(t *testing.T) {
 				f := newFixture(t)
 				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 				defer cancel()
 				f.ctx = ctx
 				h := f.hostReferences()
 				g := f.create(GroupInput{Kind: "artist", Slug: "old"}, GroupInput{Kind: "artist", Slug: "new"})
-				bind, err := f.pool.Begin(ctx)
-				if err != nil {
-					t.Fatal(err)
+				var lock, insert, commit func() error
+				var bindPID uint32
+				if driver == "sql" {
+					db := stdlib.OpenDBFromPool(f.pool)
+					defer db.Close()
+					tx, err := db.BeginTx(ctx, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer tx.Rollback()
+					if err := tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&bindPID); err != nil {
+						t.Fatal(err)
+					}
+					lock = func() error { return f.s.LockReferencesSQLTx(ctx, tx, []Ref{{Kind: "artist", ID: g[0].ID}}) }
+					insert = func() error {
+						_, err := tx.ExecContext(ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID))
+						return err
+					}
+					commit = tx.Commit
+				} else {
+					tx, err := f.pool.Begin(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer tx.Rollback(ctx)
+					bindPID = tx.Conn().PgConn().PID()
+					lock = func() error { return f.s.LockReferencesTx(ctx, tx, []Ref{{Kind: "artist", ID: g[0].ID}}) }
+					insert = func() error {
+						_, err := tx.Exec(ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID))
+						return err
+					}
+					commit = func() error { return tx.Commit(ctx) }
 				}
-				defer bind.Rollback(ctx)
 				write, err := f.pool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer write.Rollback(ctx)
-				lock := func() error { return f.s.LockReferencesTx(ctx, bind, []Ref{{Kind: "artist", ID: g[0].ID}}) }
 				mutate := func() error {
 					if operation == "import" {
 						return f.s.ImportGroups(ctx, write, []ImportGroup{{ID: g[0].ID, Kind: "artist", Slug: "old", State: StateDeleted}}, false)
@@ -239,10 +306,10 @@ func TestGroupReferencesConcurrentBinding(t *testing.T) {
 					}()
 					defer func() { cancel(); <-done }()
 					f.waitGroupReferenceBlocked(ctx, pid)
-					if _, err := bind.Exec(ctx, `INSERT INTO `+h.table+` VALUES ($1,'one',$2)`, tenant, string(g[0].ID)); err != nil {
+					if err := insert(); err != nil {
 						t.Fatal(err)
 					}
-					if err := bind.Commit(ctx); err != nil {
+					if err := commit(); err != nil {
 						t.Fatal(err)
 					}
 					err = <-result
@@ -268,10 +335,9 @@ func TestGroupReferencesConcurrentBinding(t *testing.T) {
 					if err := mutate(); err != nil {
 						t.Fatal(err)
 					}
-					pid := bind.Conn().PgConn().PID()
 					go func() { defer close(done); result <- lock() }()
 					defer func() { cancel(); <-done }()
-					f.waitGroupReferenceBlocked(ctx, pid)
+					f.waitGroupReferenceBlocked(ctx, bindPID)
 					if err := write.Commit(ctx); err != nil {
 						t.Fatal(err)
 					}
