@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
@@ -17,6 +18,76 @@ import (
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 )
+
+func TestPublishedVersionReferencesIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	r, err := NewVersionReferences(f.schema, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDB(*f.pool.Config().ConnConfig)
+	t.Cleanup(func() { _ = db.Close() })
+	in := gallery("Reference", "en", "ja")
+	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
+	id := f.create("staff", in)
+	vid := f.read("staff", "main.test", id)[0].Versions[0].ID
+	check := func(kind, language string, want error) {
+		t.Helper()
+		tx, err := db.BeginTx(f.ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		content, err := r.LockPublishedSQLTx(f.ctx, tx, vid, kind, language)
+		if !errors.Is(err, want) || (want == nil && content != id) {
+			t.Fatalf("reference %s/%s: content=%q err=%v, want %v", kind, language, content, err, want)
+		}
+	}
+	publication := func(want bool) {
+		t.Helper()
+		var published bool
+		if err := f.pool.QueryRow(f.ctx, `SELECT published FROM (`+r.PublicationSQL()+`) p
+ WHERE catalog_key=$1 AND version_id=$2`, tenant, vid).Scan(&published); err != nil || published != want {
+			t.Fatalf("publication=%v err=%v, want %v", published, err, want)
+		}
+	}
+	check("gallery", "en", ErrConflict)
+	publication(false)
+	future := f.now().Add(time.Hour)
+	f.publish("staff", id, &future)
+	check("gallery", "en", ErrConflict)
+	publication(false)
+	f.publish("staff", id, nil)
+	check("gallery", "en", nil)
+	check("gallery", "ja", ErrConflict)
+	check("blog", "en", ErrConflict)
+	publication(true)
+	other, err := NewVersionReferences(f.schema, "other-catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(f.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.LockPublishedSQLTx(f.ctx, tx, vid, "gallery", "en"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-catalog reference: %v", err)
+	}
+	_ = tx.Rollback()
+	if err := f.s.Unpublish(f.ctx, f.as("staff"), []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	check("gallery", "en", ErrConflict)
+	publication(false)
+	f.publish("staff", id, nil)
+	check("gallery", "en", nil)
+	publication(true)
+	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: vid}}); err != nil {
+		t.Fatal(err)
+	}
+	check("gallery", "en", ErrConflict)
+	publication(false)
+}
 
 // An item created without versions gets one serving its text's language,
 // live with the item; a version added later stays a draft (out of every

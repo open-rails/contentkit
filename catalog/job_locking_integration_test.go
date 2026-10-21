@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -9,11 +10,74 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/offers"
 )
+
+func TestEditionReferenceSerializesWithUnpublishIntegration(t *testing.T) {
+	for _, referenceFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unpublish-first", true: "reference-first"}[referenceFirst], func(t *testing.T) {
+			b := newCatalogJobBarrier(t, "SELECT c.id FROM", referenceFirst)
+			f := catalogJobFixture(t, b)
+			id := f.create("staff", gallery("Concurrent reference", "en"))
+			f.publish("staff", id, nil)
+			vid := f.read("staff", "main.test", id)[0].Versions[0].ID
+			r, err := NewVersionReferences(f.schema, tenant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := f.pool.Config().ConnConfig.Copy()
+			cfg.Tracer = b
+			db := stdlib.OpenDB(*cfg)
+			t.Cleanup(func() { _ = db.Close() })
+			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				tx, err := db.BeginTx(ctx, nil)
+				if err != nil {
+					done <- err
+					return
+				}
+				defer tx.Rollback()
+				_, err = r.LockPublishedSQLTx(context.WithValue(ctx, catalogJobTraceKey{}, "job"), tx, vid, "gallery", "en")
+				if err == nil {
+					err = tx.Commit()
+				}
+				done <- err
+			}()
+			select {
+			case <-b.reached:
+			case <-ctx.Done():
+				t.Fatal("reference did not reach parent lock")
+			}
+			writer := make(chan error, 1)
+			go func() {
+				writer <- f.s.Unpublish(context.WithValue(ctx, catalogJobTraceKey{}, "writer"), f.as("staff"), []string{id})
+			}()
+			committed := waitCatalogWriter(t, f, b, writer)
+			if committed == referenceFirst {
+				t.Fatal("unpublish did not respect the parent lock")
+			}
+			b.release()
+			var want error
+			if !referenceFirst {
+				want = ErrConflict
+			}
+			if err := <-done; !errors.Is(err, want) {
+				t.Fatalf("reference result: %v, want %v", err, want)
+			}
+			if !committed {
+				if err := <-writer; err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 type catalogJobTraceKey struct{}
 type catalogJobQueryKey struct{}
