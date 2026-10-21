@@ -12,9 +12,9 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// playableArgs records whether player versions play where nothing has yet:
-// versions from before the fact existed. Unknown lists, so this only hides
-// those that do not play.
+// playableArgs re-reads, daily, player versions not known to play: those
+// from before the fact existed (unknown lists, so this only hides those that
+// do not play) and those whose media arrived past the hooks.
 type playableArgs struct{}
 
 func (playableArgs) Kind() string { return "contentkit_version_playable" }
@@ -32,8 +32,8 @@ func (w *playableWorker) Work(ctx context.Context, job *river.Job[playableArgs])
 
 const playableBatch = 100
 
-// recordPlayable records the facts of every player version not yet known to
-// play or not, which refreshes its listing.
+// recordPlayable records the facts of every player version not known to
+// play, which refreshes its listing when they changed.
 func (s *Service) recordPlayable(ctx context.Context) error {
 	var players []string
 	for name, k := range s.o.Kinds.Kinds {
@@ -49,7 +49,7 @@ func (s *Service) recordPlayable(ctx context.Context) error {
 	for {
 		rows, err := s.o.Pool.Query(ctx, `SELECT c.kind, v.content_id, v.id FROM `+s.t.versions+` v
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-WHERE v.tenant_id = $1 AND c.kind = ANY($2) AND v.playable IS NULL AND v.id > $3 ORDER BY v.id LIMIT $4`,
+WHERE v.tenant_id = $1 AND c.kind = ANY($2) AND v.playable IS NOT TRUE AND v.id > $3 ORDER BY v.id LIMIT $4`,
 			s.o.Tenant, players, after, playableBatch)
 		if err != nil {
 			return err
