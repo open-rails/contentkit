@@ -47,7 +47,7 @@ export interface CommentsProps {
   renderBody?: (body: string, comment: Comment) => ReactNode;
   /** A profile URL for an author. */
   userHref?: (user: PublicUser) => string | undefined;
-  /** The heading; false hides it. */
+  /** The heading; false hides it. Defaults to Comments with a positive count badge. */
   heading?: ReactNode | false;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
@@ -155,13 +155,17 @@ export function Comments(p: CommentsProps) {
   // Standing counts the entire visible thread, even while only page one is
   // loaded. Older servers can infer a total only after the list is complete.
   const count = p.count ?? standing?.count ?? (!comments.loading && !comments.error && !comments.hasMore ? comments.items.length : undefined);
-  const heading = p.heading === undefined ? (count === undefined ? t("comments.title") : m.plural("comments.count", count)) : p.heading;
+  const heading = p.heading === undefined ? t("comments.title") : p.heading;
+  const showCount = p.heading === undefined && count !== undefined && count > 0;
+  const showSort = count === undefined ? comments.items.length > 1 || comments.hasMore : count > 1;
+  const empty = standing?.comments === "open" && !standing.locked && !ban && count === 0 &&
+    !comments.loading && !comments.error && !comments.hasMore && comments.items.length === 0;
 
   if (standing?.comments === "hidden") return null;
   if (standing?.locked)
     return (
-      <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments" data-locked="">
-        {heading !== false && <h2 className="text-base font-semibold">{p.heading ?? t("comments.title")}</h2>}
+      <ContentKitUiRoot appearance={p.appearance} className={cn("grid w-full gap-6 text-base leading-normal [&_button]:text-sm [&_button]:leading-normal [&_label]:leading-normal", p.className)} data-ckui="comments" data-locked="">
+        {heading !== false && <h2 className="text-xl font-semibold leading-[1.4]">{p.heading ?? t("comments.title")}</h2>}
         <p className="rounded-lg border border-border p-3 text-muted-foreground" data-ckui="comments-locked">
           {t("comments.unlock")}
         </p>
@@ -169,28 +173,34 @@ export function Comments(p: CommentsProps) {
     );
   return (
     <ThreadContext.Provider value={thread}>
-      <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="comments">
-        {(heading !== false || comments.items.length > 1) && (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {heading !== false && <h2 className="text-base font-semibold">{heading}</h2>}
-            <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
-              <SelectTrigger size="sm" aria-label={t("comments.sort")} className="ms-auto">
+      <ContentKitUiRoot appearance={p.appearance} className={cn("grid w-full gap-6 text-base leading-normal [&_button]:text-sm [&_button]:leading-normal [&_label]:leading-normal", p.className)} data-ckui="comments">
+        {(heading !== false || showSort) && (
+          <div className="flex min-h-10 flex-wrap items-center justify-between gap-2">
+            {heading !== false && (
+              <h2 className="flex items-center gap-2 text-xl font-semibold leading-[1.4]" aria-label={showCount ? m.plural("comments.count", count!) : undefined}>
+                {heading}
+                {showCount && <span data-ckui="comments-count" className="rounded-full bg-muted px-2.5 py-0.5 text-sm font-medium text-muted-foreground">{count!.toLocaleString(m.language)}</span>}
+              </h2>
+            )}
+            {showSort && <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+              <SelectTrigger size="sm" aria-label={t("comments.sort")} className="ms-auto h-10!">
                 <SelectValue>{(v: string) => t(v === "best" ? "comments.best" : "comments.newest")}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="newest">{t("comments.newest")}</SelectItem>
                 <SelectItem value="best">{t("comments.best")}</SelectItem>
               </SelectContent>
-            </Select>
+            </Select>}
           </div>
         )}
+        {empty && <p className="text-muted-foreground" data-ckui="comments-empty">{t("comments.empty")}</p>}
         {standing?.comments === "closed" ? (
           <p className="rounded-lg border border-border p-3 text-muted-foreground">{t("comments.closed")}</p>
         ) : ban ? (
           <BanNotice ban={ban} />
         ) : mustSignIn("comment") ? (
           signIn ? (
-            <Button variant="outline" className="justify-self-start" onClick={signIn}>
+            <Button variant="outline" size="lg" className="mb-4 justify-self-start px-5" onClick={signIn}>
               {t("comments.signIn")}
             </Button>
           ) : (
@@ -270,7 +280,7 @@ function CommentList() {
     <>
       <ul className="grid divide-y divide-border">
         {comments.items.map((c) => (
-          <li key={c.id} className="py-3 first:pt-0">
+          <li key={c.id} className="py-5 first:pt-0">
             <TopLevel comment={c} />
           </li>
         ))}
@@ -300,7 +310,7 @@ function TopLevel({ comment }: { comment: Comment }) {
     <div className="grid gap-2">
       <Row comment={comment} onReply={comment.deleted || comment.moderation || !thread.can("comment") ? undefined : startReply} />
       {(comment.reply_count > 0 || (open && replies.items.length > 0)) && (
-        <Button variant="link" size="xs" className="ms-11 justify-self-start px-0" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Button variant="link" size="xs" className="ms-11 justify-self-start border-0! px-0 focus-visible:underline focus-visible:decoration-2 focus-visible:ring-0!" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? t("comments.hideReplies") : plural("comments.showReplies", comment.reply_count)}
         </Button>
       )}
@@ -421,7 +431,7 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
         ) : c.deleted ? (
           <p className="text-muted-foreground italic">{t("comments.deleted")}</p>
         ) : (
-          <div className="break-words whitespace-pre-wrap">
+          <div className="break-words whitespace-pre-wrap leading-[1.6]">
             {thread.renderBody ? thread.renderBody(c.body, c) : body}
             {long && (
               <Button variant="link" size="xs" className="ms-1 h-auto px-0" onClick={() => setExpanded(!expanded)}>
@@ -530,10 +540,11 @@ function Composer(p: ComposerProps) {
       {p.askName && (
         <div className="grid gap-1.5 sm:max-w-xs">
           <Label htmlFor={`${ids}-name`}>{t("comments.name")}</Label>
-          <Input id={`${ids}-name`} value={name} maxLength={60} placeholder={t("comments.namePlaceholder")} onChange={(e) => setName(e.target.value)} autoComplete="nickname" />
+          <Input className="text-base leading-normal md:text-base" id={`${ids}-name`} value={name} maxLength={60} placeholder={t("comments.namePlaceholder")} onChange={(e) => setName(e.target.value)} autoComplete="nickname" />
         </div>
       )}
       <Textarea
+        className="text-base leading-normal md:text-base"
         ref={area}
         value={body}
         rows={p.initial === undefined ? 2 : 3}
