@@ -106,31 +106,34 @@ type Options struct {
 	// DocumentsChanged runs in the writing transaction after a write queued
 	// search documents, so the engine can sync them at once. Optional.
 	DocumentsChanged func(ctx context.Context, q Querier) error
-	Now              func() time.Time
-	Logger           *slog.Logger
+	// References clears host-owned edition links during permanent purge.
+	References VersionReferenceOwner
+	Now        func() time.Time
+	Logger     *slog.Logger
 }
 
 // Store is one tenant's catalog.
 type Store struct {
-	pool      *pgxpool.Pool
-	schema    string
-	qs        string
-	tenant    string
-	cfg       kinds.Config
-	t         tables
-	guard     *gate.Gate
-	accessG   *access.Gate
-	offers    Offers
-	groups    Groups
-	moderator Moderation
-	body      Sanitizer
-	media     *Media
-	standing  Standing
-	retention time.Duration
-	documents func(ctx context.Context, q Querier) error
-	now       func() time.Time
-	log       *slog.Logger
-	totals    *cache.Cache[totalsKey, Total]
+	pool       *pgxpool.Pool
+	schema     string
+	qs         string
+	tenant     string
+	cfg        kinds.Config
+	t          tables
+	guard      *gate.Gate
+	accessG    *access.Gate
+	offers     Offers
+	groups     Groups
+	moderator  Moderation
+	body       Sanitizer
+	media      *Media
+	standing   Standing
+	retention  time.Duration
+	documents  func(ctx context.Context, q Querier) error
+	references VersionReferenceOwner
+	now        func() time.Time
+	log        *slog.Logger
+	totals     *cache.Cache[totalsKey, Total]
 
 	mu          sync.Mutex
 	subscribers []Subscriber
@@ -165,7 +168,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, groups: opts.Groups, moderator: opts.Moderation,
-		body: opts.Body, retention: opts.DeletedRetention, documents: opts.DocumentsChanged, now: opts.Now, log: opts.Logger,
+		body: opts.Body, retention: opts.DeletedRetention, documents: opts.DocumentsChanged, references: opts.References, now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {
 		g, err := access.NewGate(access.GateConfig{Tenant: opts.Tenant, Kinds: opts.Kinds, Logger: opts.Logger})

@@ -349,6 +349,21 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 		return 0, err
 	}
 	// Codes stay: a purged item's URL keeps answering 410.
+	if s.references != nil {
+		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=ANY($2) ORDER BY id`, s.tenant, ids)
+		if err != nil {
+			return 0, err
+		}
+		versions, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return 0, err
+		}
+		if len(versions) > 0 {
+			if err := s.references.PurgeVersions(ctx, tx, s.tenant, versions); err != nil {
+				return 0, err
+			}
+		}
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return 0, err
 	}
@@ -434,6 +449,11 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 	}
 	if err := s.eraseInteractions(ctx, tx, kinds, contents, vids); err != nil {
 		return 0, "", err
+	}
+	if s.references != nil {
+		if err := s.references.PurgeVersions(ctx, tx, s.tenant, vids); err != nil {
+			return 0, "", err
+		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, vids); err != nil {
 		return 0, "", err

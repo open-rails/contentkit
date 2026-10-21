@@ -2,10 +2,75 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
 )
+
+type versionOwner struct {
+	table string
+	fail  bool
+}
+
+func (o *versionOwner) PurgeVersions(ctx context.Context, q Querier, catalog string, ids []string) error {
+	if _, err := q.Exec(ctx, `UPDATE `+o.table+` SET version_id=NULL WHERE catalog_key=$1 AND version_id=ANY($2)`, catalog, ids); err != nil {
+		return err
+	}
+	if o.fail {
+		return errors.New("host reference cleanup failed")
+	}
+	return nil
+}
+
+func TestPurgeVersionReferencesIntegration(t *testing.T) {
+	for _, wholeContent := range []bool{true, false} {
+		t.Run(map[bool]string{true: "content", false: "edition"}[wholeContent], func(t *testing.T) {
+			o := &versionOwner{}
+			f := newFixture(t, func(opts *Options) { opts.References = o })
+			o.table = f.table("host_links")
+			if _, err := f.pool.Exec(f.ctx, `CREATE TABLE `+o.table+` (catalog_key text, version_id text)`); err != nil {
+				t.Fatal(err)
+			}
+			id := f.create("staff", gallery("Referenced", "en", "ja"))
+			f.publish("staff", id, nil)
+			vid := f.read("staff", "main.test", id)[0].Versions[0].ID
+			if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+o.table+` VALUES ($1,$2)`, tenant, vid); err != nil {
+				t.Fatal(err)
+			}
+			if wholeContent {
+				if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: vid}}); err != nil {
+				t.Fatal(err)
+			}
+			linked := func(want bool) {
+				t.Helper()
+				var got bool
+				if err := f.pool.QueryRow(f.ctx, `SELECT version_id IS NOT NULL FROM `+o.table).Scan(&got); err != nil || got != want {
+					t.Fatalf("linked=%v err=%v, want %v", got, err, want)
+				}
+			}
+			linked(true)
+			f.advance(DefaultDeletedRetention + time.Hour)
+			o.fail = true
+			if _, err := f.s.PurgeDeleted(f.ctx); err == nil {
+				t.Fatal("purge ignored failed reference cleanup")
+			}
+			linked(true)
+			var exists bool
+			if err := f.pool.QueryRow(f.ctx, `SELECT EXISTS(SELECT 1 FROM `+f.table("content_versions")+` WHERE tenant_id=$1 AND id=$2)`, tenant, vid).Scan(&exists); err != nil || !exists {
+				t.Fatalf("failed purge erased edition: exists=%v err=%v", exists, err)
+			}
+			o.fail = false
+			if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 1 {
+				t.Fatalf("purge after recovery: n=%d err=%v", n, err)
+			}
+			linked(false)
+		})
+	}
+}
 
 // Purging erases an item's or a version's interactions with it; the code stays
 // so its URL keeps answering 410, and the outbox names what went.

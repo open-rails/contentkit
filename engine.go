@@ -371,7 +371,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		return err
 	}
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Groups: e.groups,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.offers != nil {
 		co.Offers = e.offers
