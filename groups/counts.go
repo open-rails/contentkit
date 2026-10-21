@@ -17,7 +17,7 @@ type Count struct {
 }
 
 // liveListed is the facet predicate counts and automatic covers share.
-const liveListed = `NOT f.deleted AND f.listing = 'listed' AND f.live_from IS NOT NULL AND f.live_from <= now()`
+const liveListed = `NOT f.deleted AND f.listing = 'listed' AND NOT f.unplayable AND f.live_from IS NOT NULL AND f.live_from <= now()`
 
 // Recount rebuilds content_group_counts from content_facets, whose rows are
 // versions: per active group, content kind and language, the distinct live,

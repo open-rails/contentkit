@@ -16,7 +16,9 @@ import (
 // content items, and queues their search documents, in q's transaction.
 // live_from is when a version went (or goes) live, kept through deletion so
 // holders of a deleted item still read what was live; deleted marks either
-// deletion. Every
+// deletion; unplayable marks a gated player version whose media does not
+// play yet (playable false; unknown lists).
+// Every
 // write to a content item, its versions, memberships, access, listing,
 // restrictions, traits or attributes calls it before committing; the groups
 // module calls it after membership changes.
@@ -77,7 +79,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	if err != nil {
 		return err
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, listing, languages,
+	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, listing, unplayable, languages,
  access_level, access_tiers, access_group_id, access_free_after, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
  updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
@@ -85,7 +87,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
    AND (c.moderation = 'approved' OR c.published_snapshot IS NOT NULL)
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
-  c.state = 'deleted' OR v.state = 'deleted', c.listing, v.languages,
+  c.state = 'deleted' OR v.state = 'deleted', c.listing, c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
   a.level, a.tiers, a.group_id, a.free_after, c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
   c.attributes || v.attributes, clock_timestamp()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, free_after timestamptz, groups text[])
@@ -93,19 +95,36 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE c.id = ANY($2)
  ON CONFLICT (tenant_id, version_id) DO UPDATE SET content_id = EXCLUDED.content_id, kind = EXCLUDED.kind, live_from = EXCLUDED.live_from,
-  deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
+  deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
   position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,
   updated_at = EXCLUDED.updated_at,
   free_applied = f.free_applied AND f.access_free_after IS NOT DISTINCT FROM EXCLUDED.access_free_after`,
-		s.tenant, ids, string(data)); err != nil {
+		s.tenant, ids, string(data), s.playerKinds()); err != nil {
 		return err
 	}
 	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
 		return err
 	}
 	return s.markDocuments(ctx, q, ids)
+}
+
+// playerKinds are the kinds whose versions list once their media plays
+// (Options.PlayableKinds).
+func (s *Store) playerKinds() []string { return append([]string{}, s.playable...) }
+
+// gated reports a kind whose versions list only once their media plays.
+func (s *Store) gated(kind string) bool { return slices.Contains(s.playable, kind) }
+
+// startsUnplayable is a new version's playable fact: false for a gated kind,
+// until its media records otherwise; unknown (NULL) for others.
+func (s *Store) startsUnplayable(kind string) *bool {
+	if !s.gated(kind) {
+		return nil
+	}
+	f := false
+	return &f
 }
 
 // effectiveRule decodes a version's effective rule: its override, else its

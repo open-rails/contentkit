@@ -16,7 +16,8 @@ import (
 
 // readyHook asks the host to report an item's readiness (Hooks.ItemReady,
 // through its media queue) after each place, image or video job that leaves
-// the item settled.
+// the item settled, and its progress (Hooks.ItemProgressed) after each that
+// published renditions and leaves it playable but still processing.
 type readyHook struct {
 	river.HookDefaults
 	manifests *media.Manifests
@@ -43,8 +44,17 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 		return err
 	}
 	k, err := h.manifests.Registry().Kind(args.Ref.ContentKind)
-	if err != nil || k.Readiness(m).State == media.StateProcessing {
+	if err != nil {
 		return err
 	}
+	// Only assembly and audio jobs publish renditions, so only they can make
+	// a processing item playable.
+	if k.Readiness(m).State == media.StateProcessing && (!publishes(job.Kind) || !k.Playable(m)) {
+		return nil
+	}
 	return h.host.Ready(ctx, args.Ref)
+}
+
+func publishes(kind string) bool {
+	return kind == (workqueue.VideoAssembleArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
 }

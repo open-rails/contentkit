@@ -13,16 +13,18 @@ import (
 
 // facts are what a version's media says about it (content_versions):
 // pages for a publishing kind; duration and size of its longest video, else
-// its first page's size; and whether it has audio.
+// its first page's size; whether it has audio; and, for a player kind,
+// whether it plays (an HLS rendition is out).
 type facts struct {
 	Pages    *int
 	Duration *int64 // ms
 	Width    *int
 	Height   *int
 	HasAudio bool
+	Playable *bool
 }
 
-func factsOf(k *media.Kind, m *media.Manifest) facts {
+func factsOf(k *media.Kind, m *media.Manifest, player bool) facts {
 	var f facts
 	var pages int
 	var first *media.File
@@ -52,6 +54,10 @@ func factsOf(k *media.Kind, m *media.Manifest) facts {
 	if k.Publish != nil {
 		f.Pages = &pages
 	}
+	if player {
+		playable := k.Playable(m)
+		f.Playable = &playable
+	}
 	size := first
 	if video != nil {
 		size = video
@@ -65,6 +71,9 @@ func factsOf(k *media.Kind, m *media.Manifest) facts {
 	}
 	return f
 }
+
+// player reports a kind a player presents, whose versions list once playable.
+func (s *Service) player(kind string) bool { return s.o.Kinds.Kinds[kind].Presentation == "player" }
 
 // inPattern reports a path of a "{dir}{name}" upload pattern.
 func inPattern(pattern, path string) bool {
@@ -95,11 +104,11 @@ func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v T
 	} else if err != nil {
 		return err
 	}
-	f := factsOf(k, m)
-	err = tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
+	f := factsOf(k, m, s.player(k.Name))
+	err = tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, playable = $9, updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3
-AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8) RETURNING id`,
-		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio).Scan(&id)
+AND (pages, duration_ms, width, height, has_audio, playable) IS DISTINCT FROM ($4, $5, $6, $7, $8, $9) RETURNING id`,
+		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio, f.Playable).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	} else if err != nil {

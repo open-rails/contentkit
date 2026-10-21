@@ -43,6 +43,10 @@ type Reader struct {
 // Filter selects contents: what lists, search and release dates share.
 type Filter struct {
 	Kind string
+	// keepUnplayable keeps versions whose media does not play yet, which
+	// browsing leaves out: a reader's own history, favorites, reactions and
+	// known cards.
+	keepUnplayable bool
 	// IDs bounds a public hydration read; normal visibility/domain rules apply.
 	IDs []string
 	// Groups are all required (effective on the card's version); a position
@@ -135,6 +139,7 @@ func (s *Service) compileKnown(ctx context.Context, r Reader, f Filter) (*sel, e
 		}
 		return nil, err
 	}
+	f.keepUnplayable = true
 	return s.compileWithViewer(ctx, r, f, v.ForKnownContents())
 }
 
@@ -200,6 +205,10 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 	listed, args := v.Listed("f")
 	q.and("f.tenant_id = @d_tenant", nil)
 	q.and("("+listed+")", args)
+	// A video lists once it plays; its page still opens it.
+	if !f.keepUnplayable {
+		q.and(v.Playable("f"), nil)
+	}
 	if f.IDs != nil {
 		if len(f.IDs) == 0 || len(f.IDs) > 100 {
 			return nil, fmt.Errorf("%w: 1-100 content ids", ErrInvalid)

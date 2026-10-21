@@ -12,3 +12,6 @@ func SetRecoveryBatch(n int) (restore func()) {
 	recoveryBatch = n
 	return func() { recoveryBatch = old }
 }
+
+// RecordPlayable runs the pass the daily playable job runs.
+var RecordPlayable = (*Service).recordPlayable

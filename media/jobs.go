@@ -78,8 +78,8 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.ErasureQueue != nil && (cfg.ErasureQueue.reg != cfg.Registry || cfg.ErasureQueue.pool != cfg.Journal.pool) {
 		return nil, errors.New("media: erasure queue must use the registry and journal database")
 	}
-	if cfg.Registry.cfg.Hooks.ItemReady != nil && cfg.Pool == nil {
-		return nil, errors.New("media: Hooks.ItemReady needs JobsConfig.Pool")
+	if (cfg.Registry.cfg.Hooks.ItemReady != nil || cfg.Registry.cfg.Hooks.ItemProgressed != nil) && cfg.Pool == nil {
+		return nil, errors.New("media: Hooks.ItemReady and Hooks.ItemProgressed need JobsConfig.Pool")
 	}
 	if cfg.Limiter != nil && (cfg.Limiter.pool != cfg.Journal.pool || cfg.Limiter.usage != cfg.Journal.limiter.usage) {
 		return nil, errors.New("media: deletion quota must use the journal's pool and ContentKit schema")
@@ -534,8 +534,8 @@ type readyWorker struct {
 
 func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	hook := w.j.cfg.Registry.cfg.Hooks.ItemReady
-	if hook == nil {
+	hooks := w.j.cfg.Registry.cfg.Hooks
+	if hooks.ItemReady == nil && hooks.ItemProgressed == nil {
 		return nil
 	}
 	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
@@ -553,9 +553,15 @@ func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err 
 	}
 	r := item.Kind().Readiness(m)
 	if r.State == StateProcessing {
-		return nil // a later job reports it
+		if hooks.ItemProgressed == nil || !item.Kind().Playable(m) {
+			return nil // a later job reports it
+		}
+		return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemProgressed(ctx, tx, item.Ref()) })
 	}
-	return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hook(ctx, tx, item.Ref(), r) })
+	if hooks.ItemReady == nil {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemReady(ctx, tx, item.Ref(), r) })
 }
 
 // purgeArgs relays public keys the worker overwrote or deleted to
@@ -635,7 +641,8 @@ func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef
 }
 
 // Ready asks the host to report ref's readiness (Hooks.ItemReady) once it
-// has settled.
+// has settled, or its progress (Hooks.ItemProgressed) while it plays but
+// still processes.
 func (h *HostQueue) Ready(ctx context.Context, ref contentref.ContentRef) error {
 	if _, err := h.reg.Item(ref); err != nil {
 		return err

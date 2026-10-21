@@ -66,6 +66,7 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &recoverWorker{s: s}) },
+			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
 		} {
 			if err := add(cfg.Workers); err != nil {
 				return err
@@ -78,6 +79,10 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 			func() (river.JobArgs, *river.InsertOpts) {
 				return recoverArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
 			}, &river.PeriodicJobOpts{ID: "contentkit_version_publish_recovery"}))
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return playableArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
+			}, &river.PeriodicJobOpts{ID: "contentkit_version_playable", RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		if b.Pool != s.o.Pool {

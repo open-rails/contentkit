@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,10 @@ type Options struct {
 	Body Sanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
 	DeletedRetention time.Duration
+	// PlayableKinds are the kinds whose versions list only once their media
+	// plays (an HLS rendition is out): a new version starts not playable until
+	// media records otherwise. Only kinds media streams belong here.
+	PlayableKinds []string
 	// DocumentsChanged runs in the writing transaction after a write queued
 	// search documents, so the engine can sync them at once. Optional.
 	DocumentsChanged func(ctx context.Context, q Querier) error
@@ -131,6 +136,7 @@ type Store struct {
 	retention  time.Duration
 	documents  func(ctx context.Context, q Querier) error
 	references VersionReferenceOwner
+	playable   []string
 	now        func() time.Time
 	log        *slog.Logger
 	totals     *cache.Cache[totalsKey, Total]
@@ -168,7 +174,8 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, groups: opts.Groups, moderator: opts.Moderation,
-		body: opts.Body, retention: opts.DeletedRetention, documents: opts.DocumentsChanged, references: opts.References, now: opts.Now, log: opts.Logger,
+		body: opts.Body, retention: opts.DeletedRetention, documents: opts.DocumentsChanged, references: opts.References,
+		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {
 		g, err := access.NewGate(access.GateConfig{Tenant: opts.Tenant, Kinds: opts.Kinds, Logger: opts.Logger})

@@ -252,7 +252,7 @@ func (e *Engine) validate(deps Deps) error {
 			return err
 		}
 		h := cfg.Media.Hooks
-		if h.Resolver != nil || h.CanUpload != nil || h.PurgePublic != nil || h.ItemReady != nil || h.ItemCommitted != nil || h.Failed != nil {
+		if h.Resolver != nil || h.CanUpload != nil || h.PurgePublic != nil || h.ItemReady != nil || h.ItemProgressed != nil || h.ItemCommitted != nil || h.Failed != nil {
 			return errors.New("contentkit: Config.Media.Hooks is set: media's providers come from Deps")
 		}
 		if deps.Store == nil {
@@ -370,8 +370,12 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	if e.groups, err = groups.New(opts); err != nil {
 		return err
 	}
+	playable, err := e.playableKinds()
+	if err != nil {
+		return err
+	}
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Groups: e.groups,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.offers != nil {
 		co.Offers = e.offers
@@ -381,6 +385,26 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	e.catalog.Subscribe(e.forgetPurged)
 	return nil
+}
+
+// playableKinds are the player kinds media streams (an HLS or audio preset):
+// their versions list once a rendition is out.
+func (e *Engine) playableKinds() ([]string, error) {
+	if e.cfg.Media == nil {
+		return nil, nil
+	}
+	mc, err := e.cfg.MediaKinds()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, k := range mc.Kinds {
+		if e.cfg.Content.Kinds[k.Name].Presentation == "player" &&
+			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil || p.Audio != nil }) {
+			out = append(out, k.Name)
+		}
+	}
+	return out, nil
 }
 
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {

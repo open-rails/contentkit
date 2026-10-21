@@ -115,6 +115,8 @@ type importVersionRow struct {
 	Cover       *Cover          `json:"cover"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	// Playable is a new version's starting fact; an existing one keeps its own.
+	Playable *bool `json:"playable"`
 }
 
 type importTextRow struct {
@@ -360,6 +362,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				rules = append(rules, v.Access)
 			}
 			vr.CreatedAt, vr.UpdatedAt = importStamps(v.CreatedAt, v.UpdatedAt, op, now)
+			vr.Playable = s.startsUnplayable(c.Kind)
 			b.versions = append(b.versions, vr)
 			if v.Text != nil {
 				b.vtextIDs = append(b.vtextIDs, v.ID)
@@ -448,12 +451,12 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	if err := run(changed, `INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
- published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at)
+ published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at, playable)
  SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
-  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at
+  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at, r.playable
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text, position int, languages text[], traits text[], label text, state text,
   publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, cover jsonb, created_at timestamptz,
-  updated_at timestamptz)
+  updated_at timestamptz, playable boolean)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
   access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = coalesce(EXCLUDED.cover, v.cover), created_at = EXCLUDED.created_at,

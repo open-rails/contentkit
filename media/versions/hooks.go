@@ -322,6 +322,27 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
 }
 
+// itemProgressed records the facts of a version still processing once it
+// plays, so listings show it before its last rendition is out.
+func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error {
+	k, err := s.reg.Kind(ref.ContentKind)
+	if err != nil || !k.Versions || ref.Version() == "" {
+		return nil
+	}
+	v := Target{Content: ref.ContentID, Version: ref.Version()}
+	// As in itemReady: lock v, then read the newest manifest.
+	if err := s.lockTarget(ctx, tx, v); err != nil {
+		return err
+	}
+	m, _, err := s.m.Manifests.Get(ctx, ref)
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return s.recordFacts(ctx, tx, k, v, m)
+}
+
 // itemCommitted records a changed version's facts, withdraws its
 // publications at once when an edit removed or replaced what they show, and
 // queues its publication.

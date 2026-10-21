@@ -851,3 +851,66 @@ func TestVersionFolderJobs(t *testing.T) {
 		}
 	}
 }
+
+// A video still encoding reaches ItemProgressed through the host's media
+// queue once its first rendition is out, and ItemReady only once it settles.
+func TestHostRelaysPlayableProgress(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	var mu sync.Mutex
+	var progressed, ready int
+	f := newFixtureOn(t, env, func(c *media.Config) {
+		c.Hooks.ItemProgressed = func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error {
+			mu.Lock()
+			progressed++
+			mu.Unlock()
+			return nil
+		}
+		c.Hooks.ItemReady = func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
+			mu.Lock()
+			ready++
+			mu.Unlock()
+			return nil
+		}
+	})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Pool: pool, Processes: f.q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := riverHost(t, jobs, pool)
+	host, err := media.NewHostQueue(pool, f.reg, schema, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.visible(1)
+	v := f.ref("video", 1)
+	m := f.put(v, "source.mp4", "video/mp4", []byte("video"))
+	if source, _ := m.Get("source.mp4"); len(source.Pending) == 0 {
+		t.Fatalf("the source is not encoding: %+v", source)
+	}
+	ctx := context.Background()
+	counts := func() (int, int) { mu.Lock(); defer mu.Unlock(); return progressed, ready }
+	if err := host.Ready(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	if p, r := counts(); p != 0 || r != 0 {
+		t.Fatalf("a video with nothing to play was reported: progressed %d, ready %d", p, r)
+	}
+	// The smallest rung lands while the others still encode.
+	playlist := f.blob(v, []byte("#EXTM3U"), "application/vnd.apple.mpegurl")
+	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Path: "hls/480/index.m3u8", Blob: playlist, Type: "application/vnd.apple.mpegurl", Size: 7, From: "source.mp4",
+			Preset: "hls", Track: &media.Track{Kind: media.TrackVideo}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Ready(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "ItemProgressed", func() bool { p, _ := counts(); return p == 1 })
+	if _, r := counts(); r != 0 {
+		t.Fatalf("a video still encoding was reported ready %d times", r)
+	}
+}

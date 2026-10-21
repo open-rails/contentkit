@@ -155,6 +155,27 @@ func (k *Kind) private(name string) *Private {
 	return nil
 }
 
+// Playable reports a manifest a player can start: a video or audio HLS
+// rendition the public read lists (as read.hls), whatever the viewer's grant.
+func (k *Kind) Playable(m *Manifest) bool {
+	for _, f := range m.Files {
+		if f.Track == nil || f.Track.Kind != TrackVideo && f.Track.Kind != TrackAudio || f.Blob == "" {
+			continue
+		}
+		if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
+			continue
+		}
+		if p := k.private(f.Preset); p != nil && p.HostOnly {
+			continue
+		}
+		if src, ok := m.Get(f.From); ok && src.IsUpload() && src.Unattached {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func (k *Kind) public(name string) *Public {
 	if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.Name == name }); i >= 0 {
 		return &k.Public[i]
