@@ -1,4 +1,4 @@
-import { useId, useMemo } from "react";
+import { useContext, useId, useMemo } from "react";
 import type { Offer, Terms } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { Badge } from "#ckui/ui/badge";
@@ -7,7 +7,7 @@ import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { useDraft } from "../../react/use-draft.js";
-import { useEditorSaveTask } from "./editor-save.js";
+import { EditorSaveContext, useEditorSaveTask } from "./editor-save.js";
 import { priceLabel } from "./paywall.js";
 
 type Mode = "once" | "rent" | "renew";
@@ -16,6 +16,7 @@ type Mode = "once" | "rent" | "renew";
 export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pick<Offer, "terms"> & Partial<Pick<Offer, "state" | "synced">>; onSell: (t: Terms) => unknown | Promise<unknown>; onWithdraw: () => void; pending: boolean }) {
   const m = useMessages();
   const { t } = m;
+  const coordinated = useContext(EditorSaveContext) !== null;
   const id = useId();
   const active = offer && (offer.state ?? "active") === "active" ? offer : undefined;
   const fields=useDraft(useMemo(()=>({amount:active?.terms.amount??"",currency:active?.terms.currency??"USD",mode:(active?.terms.renew_hours?"renew":active?.terms.access_hours?"rent":"once")as Mode,days:String(((active?.terms.renew_hours??active?.terms.access_hours??720)/24)|0)}),[active?.terms]));
@@ -79,7 +80,7 @@ export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pi
             <Input id={`${id}-days`} className="h-8 w-20" type="number" min={1} value={days} onChange={(e) => edit({days:e.target.value})} />
           </div>
         )}
-        <Button
+        {!coordinated && <Button
           type="button"
           size="sm"
           variant="outline"
@@ -87,7 +88,7 @@ export function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Pi
           onClick={()=>void submit()}
         >
           {t(active ? "contentEditor.reprice" : "contentEditor.sell")}
-        </Button>
+        </Button>}
       </div>
     </div>
   );

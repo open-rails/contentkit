@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta } from "../../client/generated/wire.js";
@@ -14,7 +14,7 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { ErrorLine, useAction } from "../social/parts.js";
-import { useEditorSaveTask } from "../content/editor-save.js";
+import { EditorSaveContext, useEditorSaveTask } from "../content/editor-save.js";
 import { useDraft } from "../../react/use-draft.js";
 import { LoadFailed, Rows } from "./shell.js";
 import { AudioPreview, PagePicker, usePlanMedia, type PlanMedia } from "./page-picker.js";
@@ -60,6 +60,7 @@ const shown = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? "
  */
 export function ReaderManifestEditor({ content, version, client: own, onError, className, appearance }: ReaderManifestEditorProps) {
   const { t } = useMessages();
+  const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(own);
   const plan = useReaderPlan(content, version, { client });
   const names = useMemo<ReaderNames>(() => (plan.plan ? readerNames(plan.plan) : { pages: [], files: [] }), [plan.plan]);
@@ -94,7 +95,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
     const anchors = meta.anchors ?? [];
     const anchorIds = anchors.map((a) => a.id).filter(Boolean);
     return (
-      <form className="grid gap-4" onSubmit={(event)=>{event.preventDefault();void submit();}}>
+      <form className="grid gap-4" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
         <p className="text-muted-foreground">{t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })}</p>
         <Defaults meta={meta} edit={edit} />
         <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
@@ -130,7 +131,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
         </Group>
         {problems.length > 0 && <Problems problems={problems} />}
         <ErrorLine error={save.error} />
-        <div className="flex flex-wrap items-center gap-3">
+        {!coordinated && <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending || !dirty || problems.length > 0}>
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
@@ -143,7 +144,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
             </Button>
           )}
           {saved && <span role="status" className="text-muted-foreground">{t("readerManifest.saved")}</span>}
-        </div>
+        </div>}
       </form>
     );
   })();

@@ -620,7 +620,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   }
   return (
     <div className="grid gap-4 pt-2">
-      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (!coordinated) void submit();}}>
+      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
         <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
         {showTraits && !!spec?.versions.traits?.length && (
           <fieldset className="flex flex-wrap gap-3">
@@ -762,6 +762,7 @@ const ALL_EDITOR_FILES = { start: 0, end: Number.MAX_SAFE_INTEGER, chunk: 200 };
 
 function ReaderChaptersEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
   const { t } = useMessages();
+  const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(p.client);
   const read = useMediaRead({ kind: content.kind, id: content.id, version: version.id }, { editor: true, window: ALL_EDITOR_FILES, client });
   const pages = useMemo(() => {
@@ -835,8 +836,10 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
         setSaved(false);
         fields.edit((previous) => ({ rows: [...previous.rows, { title: "", startPage: pages[next]?.id ?? "", release: "" }] }));
       }}>{t("contentEditor.addSegment")}</Button>
-      <Button type="button" size="sm" disabled={save.pending || !valid} onClick={() => void submit()}>{t("contentEditor.saveSegments")}</Button>
-      <Saved show={saved} />
+      {!coordinated && <>
+        <Button type="button" size="sm" disabled={save.pending || !valid} onClick={() => void submit()}>{t("contentEditor.saveSegments")}</Button>
+        <Saved show={saved} />
+      </>}
     </div>
     <ErrorLine error={read.error} />
     <ErrorLine error={save.error} />
@@ -846,6 +849,7 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
 /** Numeric ranges for presentations without reader pages. */
 function NumericSegmentsEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
   const { t } = useMessages();
+  const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(p.client);
   const fields=useDraft(useMemo(()=>({rows:segmentRows(version)}),[version]));
   const rows=fields.value.rows;
@@ -911,6 +915,7 @@ function NumericSegmentsEditor({ content, version, heading = true, ...p }: Segme
         >
           {t("contentEditor.addSegment")}
         </Button>
+        {!coordinated && <>
         <Button
           type="button"
           size="sm"
@@ -920,6 +925,7 @@ function NumericSegmentsEditor({ content, version, heading = true, ...p }: Segme
           {t("contentEditor.saveSegments")}
         </Button>
         <Saved show={saved} />
+        </>}
       </div>
       <ErrorLine error={save.error} />
     </div>
