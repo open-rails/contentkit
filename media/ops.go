@@ -301,11 +301,6 @@ func (o *opRun) dropZips(path string) {
 func (o *opRun) put(op Op) error {
 	k, m := o.k, o.m
 	requested := op.Path
-	requestedStem, _ := splitExt(requested)
-	existing := o.stem(requestedStem)
-	if existing < 0 || op.CreateID != "" && op.CreateID != m.Files[existing].CreateID {
-		op.Path = normalizedPagePath(k, op.Path)
-	}
 	source := op.SourceName
 	if source == "" {
 		source = requested
@@ -321,7 +316,6 @@ func (o *opRun) put(op Op) error {
 			}
 		}
 		stem, _ := splitExt(op.Path)
-		hasTarget := o.stem(stem) >= 0
 		if i := o.stem(stem); i >= 0 {
 			old := m.Files[i]
 			if op.SourceName == "" && (op.CreateID == "" || op.CreateID == old.CreateID) {
@@ -330,10 +324,9 @@ func (o *opRun) put(op Op) error {
 			collision = !op.Replace && (sourceName(old.Meta, old.Path) != sourceName(nil, source) ||
 				op.CreateID != "" && op.CreateID != old.CreateID)
 		} else {
-			collision = pageIdentityUsed(k, m, k.NameOf(op.Path))
+			collision = pageNameUsed(k, m, k.NameOf(op.Path))
 		}
-		_, _, _, numeric := CanonicalPageName(op.Path)
-		if collision || !numeric && !hasTarget {
+		if collision {
 			op.Path = nextPagePath(k, m, op.Path)
 		}
 	}
@@ -586,11 +579,9 @@ func (o *opRun) copy(op Op, src []File) error {
 	if to == "" {
 		to = f.Path
 	}
-	to = normalizedPagePath(k, to)
 	if k.IsPageUpload(File{Path: to}) {
 		stem, _ := splitExt(to)
-		_, _, _, numeric := CanonicalPageName(to)
-		if o.stem(stem) >= 0 || pageIdentityUsed(k, m, k.NameOf(to)) || !numeric {
+		if o.stem(stem) >= 0 || pageNameUsed(k, m, k.NameOf(to)) {
 			to = nextPagePath(k, m, to)
 		}
 	}
@@ -697,6 +688,22 @@ func (o *opRun) rename(f File, to string) error {
 	if o.stem(stem) >= 0 {
 		return uploadErr(CodeConflict, "upload %q exists", to)
 	}
+	if k.IsPageUpload(f) {
+		name := k.NameOf(to)
+		for _, other := range m.Files {
+			if other.Path == f.Path || !k.IsPageUpload(other) {
+				continue
+			}
+			if strings.EqualFold(k.NameOf(other.Path), name) {
+				return uploadErr(CodeConflict, "upload %q exists", to)
+			}
+			if page, err := pageMetadata(other.Meta); err == nil {
+				if prior, ok := page["name"].(string); ok && strings.EqualFold(prior, name) {
+					return uploadErr(CodeConflict, "upload %q exists", to)
+				}
+			}
+		}
+	}
 	if k.Uploads[g].Named {
 		return uploadErr(CodeInvalid, "named uploads keep their name")
 	}
@@ -705,6 +712,16 @@ func (o *opRun) rename(f File, to string) error {
 		switch {
 		case x.Path == f.Path:
 			x.Path = to
+			if k.IsPageUpload(*x) {
+				if page, err := pageMetadata(x.Meta); err == nil {
+					page["name"] = k.NameOf(to)
+					x.Meta = maps.Clone(x.Meta)
+					if x.Meta == nil {
+						x.Meta = map[string]any{}
+					}
+					x.Meta["page"] = page
+				}
+			}
 		case !x.IsUpload() && x.From == f.Path:
 			x.From = to
 			if p := k.private(x.Preset); p != nil {

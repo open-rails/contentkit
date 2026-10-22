@@ -76,9 +76,8 @@ func TestPageSelectionLegacyAndUnavailableAnalysis(t *testing.T) {
 
 func TestArchivePageNamePlanPreservesGapsAndSources(t *testing.T) {
 	taken := map[string]bool{}
-	next := 11
-	for _, test := range []struct{ source, want string }{{"1.png", "001"}, {"2.png", "002"}, {"10.png", "010"}, {"11.jpg", "011"}, {"credits.png", "012"}, {"001.webp", "013"}} {
-		got, _, _ := plannedPageName(test.source, taken, &next)
+	for _, test := range []struct{ source, want string }{{"1.png", "1"}, {"2.png", "2"}, {"10.png", "10"}, {"11.jpg", "11"}, {"credits.png", "credits"}, {"001.webp", "001"}, {"credits.jpg", "credits (2)"}} {
+		got, _, _ := plannedPageName(test.source, taken)
 		if got != test.want {
 			t.Fatalf("%s -> %s, want %s", test.source, got, test.want)
 		}

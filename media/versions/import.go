@@ -160,6 +160,11 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
+	sourceNames := make([]string, len(entries))
+	for i, entry := range entries {
+		sourceNames[i] = path.Base(entry.Name)
+	}
+	cleanedNames := media.CleanPageBatchNames(sourceNames)
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
 		return err
@@ -171,23 +176,15 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		archiveHash = expected
 	}
 	existing := map[int]media.File{}
-	next := 0
 	for _, f := range m.Files {
 		if f.IsUpload() && inPattern(k.Publish.Pages, f.Path) {
 			name := pageName(k, f)
 			names[name] = true
-			if _, _, end, ok := media.CanonicalPageName(name); ok && end > next {
-				next = end
-			}
+			names[k.NameOf(f.Path)] = true
 			pm := pageMeta(f)
 			if pm.ArchiveSHA256 == archiveHash {
 				existing[pm.SourceIndex] = f
 			}
-		}
-	}
-	for _, e := range entries {
-		if _, _, end, ok := media.CanonicalPageName(path.Base(e.Name)); ok && end > next {
-			next = end
 		}
 	}
 	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
@@ -210,7 +207,10 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			expectedPages[previous.Path] = sum
 			continue
 		}
-		name, span, flags := plannedPageName(path.Base(e.Name), names, &next)
+		name, span, flags := plannedPageName(cleanedNames[index], names)
+		if cleanedNames[index] != sourceNames[index] {
+			flags = append(flags, "source_name_cleaned")
+		}
 		pm := pageMetadata{SchemaVersion: 1, Name: name, SourceName: path.Base(e.Name), SourceEntry: e.Name, ArchiveSHA256: archiveHash, SourceIndex: index + 1, UploadIndex: uploaded[e], SourceSHA256: sum, Span: span, Flags: flags}
 		metaFile := media.File{Meta: map[string]any{digestMeta: sum}}
 		writePageMeta(&metaFile, pm)

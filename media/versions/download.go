@@ -437,7 +437,7 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 			return nil, err
 		}
 		a.keys = append(a.keys, key)
-		a.names = append(a.names, media.PositionalName(len(a.names)+1, len(files), path.Ext(f.Path)))
+		a.names = append(a.names, path.Base(f.Path))
 	}
 	if len(marked) == 0 {
 		a.cache = item.TempPrefix() + "zip-cache-" + revision

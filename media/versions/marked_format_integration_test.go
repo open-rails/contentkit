@@ -83,7 +83,7 @@ func TestMarkedArchiveKeepsFormatsAndStreamsEveryRequest(t *testing.T) {
 		if err != nil || len(archive.File) != 2 {
 			t.Fatalf("archive: %v", err)
 		}
-		if archive.File[0].Name != "01.jpg" || archive.File[1].Name != "02.png" {
+		if archive.File[0].Name != "900.jpg" || archive.File[1].Name != "100.png" {
 			t.Fatalf("virtual order/format: %s %s", archive.File[0].Name, archive.File[1].Name)
 		}
 		file, _ := archive.File[0].Open()

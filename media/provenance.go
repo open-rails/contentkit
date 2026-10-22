@@ -29,7 +29,7 @@ func SpecFP(src File, spec any, recipe string) string {
 }
 
 // ZipRecipe versions the Zip producer.
-const ZipRecipe = "zip-store-1"
+const ZipRecipe = "zip-source-names-2"
 
 // ZipInputs are the files a Zip preset packs: the files under its prefix
 // whose upload is attached, in manifest order.

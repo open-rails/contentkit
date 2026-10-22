@@ -76,6 +76,25 @@ ZIPs need additional multipart signing, part uploads and assembly calls. The Go
 helper handles those details, checksums, bounded retry delays and part resumption.
 It does not forward the API key or cookies to storage or follow storage redirects.
 
+### Page names and order
+
+The archive's images start in natural filename order, then the manifest owns
+reading order. Reordering never renames files or changes their source hashes.
+Downloads stream ZIP entries in manifest order while retaining the chosen
+filenames; an external viewer may sort extracted files by name instead.
+
+Ingestion preserves meaningful names such as `00a.png`, `06-07.png` and
+`cover.png`. Batch cleanup is deliberately narrow: consistent redundant
+numeric prefixes/suffixes, repeated numbers such as `02_2`, and inconsistent
+numeric padding. Original names remain in source metadata; cleanup is flagged
+for review. Ambiguous names can be renamed explicitly in an unsaved editor
+draft. Filename collisions gain a readable suffix rather than overwriting
+another image.
+
+Ordinary streamed archives are cached only after completion. Their cache key
+includes ordered source hashes and filenames, so reordering or renaming creates
+a fresh archive. Personalized watermarked archives are never shared-cached.
+
 ### Prepare or resume
 
 ```http

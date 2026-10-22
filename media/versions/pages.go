@@ -614,12 +614,9 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 		before := revisionOfInput(m.Files)
 		guardSegmentedPages(k, m, legacyPageRanges(segments[t.Version]))
 		taken := map[string]bool{}
-		next := 0
 		for _, f := range sourcePages(k, m) {
-			name := pageName(k, f)
-			taken[name] = true
-			if _, _, end, ok := media.CanonicalPageName(name); ok && end > next {
-				next = end
+			if name := pageMeta(f).Name; name != "" {
+				taken[name] = true
 			}
 		}
 		for i, f := range m.Files {
@@ -630,22 +627,10 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 			if meta.SchemaVersion == 0 || meta.Name != "" {
 				continue
 			}
-			name, from, to, numeric := media.CanonicalPageName(path.Base(f.Path))
-			if !numeric || taken[name] {
-				for {
-					next++
-					name = fmt.Sprintf("%03d", next)
-					if !taken[name] {
-						break
-					}
-				}
-				meta.Flags = append(meta.Flags, "unusual_source_name")
-			}
-			taken[name] = true
+			name, span, flags := plannedPageName(path.Base(f.Path), taken)
 			meta.Name = name
-			if numeric {
-				meta.Span = &PageSpan{From: from, To: to}
-			}
+			meta.Span = span
+			meta.Flags = append(meta.Flags, flags...)
 			writePageMeta(&m.Files[i], meta)
 		}
 		persistPageSelection(k, m)
@@ -676,32 +661,24 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 	return err
 }
 
-// plannedPageName allocates canonical IDs before archive bytes are committed.
-func plannedPageName(source string, taken map[string]bool, next *int) (string, *PageSpan, []string) {
-	name, from, to, ok := media.CanonicalPageName(source)
+// plannedPageName keeps the source filename independently of order and hash
+// identity. Printed ranges remain metadata for joined-page detection.
+func plannedPageName(source string, taken map[string]bool) (string, *PageSpan, []string) {
+	stem := media.CleanName(strings.TrimSuffix(path.Base(source), path.Ext(source)))
+	name := media.UniquePageName(stem, taken)
+	_, from, to, numeric := media.CanonicalPageName(source)
 	var span *PageSpan
-	if ok {
+	if numeric {
 		span = &PageSpan{From: from, To: to}
-		if to > *next {
-			*next = to
-		}
-		if !taken[name] {
-			taken[name] = true
-			return name, span, nil
-		}
 	}
-	flags := []string{"unusual_source_name"}
-	if ok {
-		flags = []string{"duplicate_printed_number"}
+	var flags []string
+	if !numeric {
+		flags = append(flags, "unusual_source_name")
 	}
-	for {
-		*next++
-		name = fmt.Sprintf("%03d", *next)
-		if !taken[name] {
-			taken[name] = true
-			return name, span, flags
-		}
+	if name != stem {
+		flags = append(flags, "duplicate_source_name")
 	}
+	return name, span, flags
 }
 
 // revisionOfInput is separate from signed URLs, whose expiry must not create

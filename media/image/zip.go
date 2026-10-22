@@ -52,18 +52,12 @@ func (p *Processor) buildZip(ctx context.Context, item media.Item, m *media.Mani
 	defer f.Close()
 	h := sha256.New()
 	zw := zip.NewWriter(io.MultiWriter(f, h))
-	k := item.Kind()
-	// The reader's download names pages by their place, never their upload names.
-	pages := k.Publish != nil && k.Publish.Download == z.Name
-	for i, in := range inputs {
+	for _, in := range inputs {
 		key, err := item.Blob(in.Blob)
 		if err != nil {
 			return media.File{}, false, err
 		}
 		name := path.Base(in.Path)
-		if pages {
-			name = media.PositionalName(i+1, len(inputs), path.Ext(in.Path))
-		}
 		w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
 		if err != nil {
 			return media.File{}, false, err

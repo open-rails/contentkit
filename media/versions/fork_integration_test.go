@@ -65,7 +65,7 @@ func TestImport(t *testing.T) {
 	for _, pg := range p.Segments[0].Pages {
 		names = append(names, pg.Name)
 	}
-	if strings.Join(names, ",") != "001,002,003" || p.Segments[0].Locked {
+	if strings.Join(names, ",") != "p1,p2,p10" || p.Segments[0].Locked {
 		t.Fatalf("imported plan %+v", p)
 	}
 	if archive, ok := s.manifest(ref).Get("import/book.zip"); !ok || archive.Meta["archive_completed_sha256"] == nil {
@@ -81,6 +81,40 @@ func TestImport(t *testing.T) {
 		f, ok := s.manifest(ref).Get("import/empty.zip")
 		return ok && f.Fail() != nil
 	})
+}
+
+func TestImportReservesLegacyPhysicalFilenames(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "originals/cover", "image/png", pngOf(t, 20, 30, 61))
+	s.plan(access.Actor{Anonymous: true, IP: "203.0.113.2"}, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+	original, _ := s.manifest(ref).Get("originals/cover.png")
+	_, err := s.ms.EditExisting(s.ctx, ref, func(m *media.Manifest) error {
+		i := m.Find("originals/cover.png")
+		page := m.Files[i].Meta["page"].(map[string]any)
+		page["name"] = "legacy-label"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zipOf(t, map[string][]byte{"Cover.png": pngOf(t, 20, 30, 62)})
+	s.mustUpload(s.creator, ref, "import/book", "application/zip", archive)
+	s.plan(access.Actor{Anonymous: true, IP: "203.0.113.2"}, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 2 })
+	m := s.manifest(ref)
+	kept, ok := m.Get("originals/cover.png")
+	if !ok || kept.Blob != original.Blob {
+		t.Fatal("archive overwrote the retained source")
+	}
+	imported, ok := m.Get("originals/Cover (2).png")
+	if !ok {
+		t.Fatalf("missing collision-safe imported filename: %+v", m.Files)
+	}
+	page := imported.Meta["page"].(map[string]any)
+	if page["source_name"] != "Cover.png" || page["source_entry"] != "Cover.png" {
+		t.Fatalf("lost archive filename provenance: %+v", page)
+	}
 }
 
 // Reader metadata names pages, anchors and audio the version has; the plan
@@ -171,9 +205,9 @@ func TestDownload(t *testing.T) {
 		t.Fatalf("marked archive: %d %s", resp.StatusCode, b)
 	}
 	marked := entries(b)
-	// Entries are named by position, padded to the page count.
-	if len(marked) != 3 || !bytes.HasSuffix(marked["02.png"], []byte("marked:"+s.fan.ID)) || marked["01.webp"] == nil ||
-		bytes.Contains(marked["03.webp"], []byte("marked:")) {
+	// Entries retain filenames; only the marked image's format changes.
+	if len(marked) != 3 || !bytes.HasSuffix(marked["b.png"], []byte("marked:"+s.fan.ID)) || marked["a.webp"] == nil ||
+		bytes.Contains(marked["c.webp"], []byte("marked:")) {
 		t.Fatalf("marked archive %v", keys(marked))
 	}
 	if resp, _ := s.call(access.Actor{}, "GET", strings.Replace(archive, "for="+s.fan.ID, "for="+s.stranger.ID, 1), nil); resp.StatusCode != 404 {

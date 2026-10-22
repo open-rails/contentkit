@@ -178,12 +178,6 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err != nil {
 		return Presigned{}, err
 	}
-	if item.Kind().IsPageUpload(File{Path: path}) {
-		_, _, _, numeric := CanonicalPageName(path)
-		if !numeric {
-			out.Path = nextPagePath(item.Kind(), current, path)
-		}
-	}
 	views, area := u.reg.editorViews(current), item.Kind().Area(path, "")
 	for _, blob := range current.Blobs() {
 		sum, ok := layout.BlobDigest(blob)
@@ -252,11 +246,6 @@ func (u *Uploads) uploadPath(k *Kind, path, contentType string) (string, int, er
 	}
 	if k.Uploads[g].Named {
 		stem = dir + NewName()
-	}
-	if k.IsPageUpload(File{Path: stem}) {
-		if canonical, _, _, ok := CanonicalPageName(stem); ok {
-			stem = dir + canonical
-		}
 	}
 	if ext == "" {
 		ext = typeExt(contentType)

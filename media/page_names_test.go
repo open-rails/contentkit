@@ -57,18 +57,18 @@ func TestCanonicalPageNamesRetainGapsRangesAndLargeNumbers(t *testing.T) {
 	}
 }
 
-func TestPagePutRetainsCanonicalCollisionsAndCreateIdentity(t *testing.T) {
+func TestPagePutPreservesNamesAndCreateIdentity(t *testing.T) {
 	o := pageOps(t)
 	first := putPage(t, o, "originals/1.png", "1.png", "")
 	second := putPage(t, o, "originals/001.png", "001.png", "")
-	if len(o.m.Files) != 2 || o.m.Files[0].Path != "originals/001.png" || o.m.Files[1].Path != "originals/002.png" {
+	if len(o.m.Files) != 2 || o.m.Files[0].Path != "originals/1.png" || o.m.Files[1].Path != "originals/001.png" {
 		t.Fatalf("source overwritten: %+v", o.m.Files)
 	}
 	if o.m.Files[0].Source() != first.Blob || o.m.Files[1].Source() != second.Blob {
 		t.Fatal("source bytes lost")
 	}
 	page, _ := pageMetadata(o.m.Files[1].Meta)
-	if page["name"] != "002" || page["source_name"] != "001.png" {
+	if page["name"] != "001" || page["source_name"] != "001.png" {
 		t.Fatalf("provenance: %+v", page)
 	}
 	create := uuid.NewString()
@@ -79,9 +79,17 @@ func TestPagePutRetainsCanonicalCollisionsAndCreateIdentity(t *testing.T) {
 	if done, err := o.created(third); err != nil || !done {
 		t.Fatalf("allocated retry not found: %v %v", done, err)
 	}
-	if info := uploadInfo(o.m.Files[2], o.k); info.CreateID != create {
-		t.Fatal("editor reply lost allocation identity")
+	// Natural filename order may insert the collision allocation before an
+	// existing page; creation identity must survive independently of position.
+	for _, f := range o.m.Files {
+		if f.CreateID == create {
+			if info := uploadInfo(f, o.k); info.CreateID != create || f.Source() != third.Blob {
+				t.Fatal("editor reply lost allocation identity")
+			}
+			return
+		}
 	}
+	t.Fatal("created page was not retained")
 }
 
 func TestPageMetadataUpdatePreservesManualSelectionAndAnalysis(t *testing.T) {
@@ -109,7 +117,7 @@ func TestPageMetadataUpdatePreservesManualSelectionAndAnalysis(t *testing.T) {
 func TestPageReplacementWithoutSourceNameKeepsItsIdentity(t *testing.T) {
 	o := pageOps(t)
 	putPage(t, o, "originals/1.png", "1.png", "")
-	putPage(t, o, "originals/001.png", "", "")
+	putPage(t, o, "originals/1.png", "", "")
 	if len(o.m.Files) != 1 || sourceName(o.m.Files[0].Meta, "") != "1.png" {
 		t.Fatalf("ordinary replacement became an extra page: %+v", o.m.Files)
 	}
@@ -118,12 +126,12 @@ func TestPageReplacementWithoutSourceNameKeepsItsIdentity(t *testing.T) {
 func TestExplicitPageReplacementDoesNotAllocateAnotherPage(t *testing.T) {
 	o := pageOps(t)
 	putPage(t, o, "originals/1.png", "1.png", "")
-	op := Op{Op: OpPut, Path: "originals/001.png", SourceName: "replacement.png", Blob: NewStaged(), Replace: true}
+	op := Op{Op: OpPut, Path: "originals/1.png", SourceName: "replacement.png", Blob: NewStaged(), Replace: true}
 	o.objects[op.Blob] = Object{ContentType: "image/png", Size: 10}
 	if err := o.put(op); err != nil {
 		t.Fatal(err)
 	}
-	if len(o.m.Files) != 1 || o.m.Files[0].Path != "originals/001.png" || o.m.Files[0].Source() != op.Blob {
+	if len(o.m.Files) != 1 || o.m.Files[0].Path != "originals/1.png" || o.m.Files[0].Source() != op.Blob {
 		t.Fatalf("explicit replacement appended a page: %+v", o.m.Files)
 	}
 	op.CreateID = uuid.NewString()
@@ -160,8 +168,10 @@ func TestPageAllocationReservesRenamedPhysicalPaths(t *testing.T) {
 	if err := o.rename(o.m.Files[0], "originals/002.png"); err != nil {
 		t.Fatal(err)
 	}
-	putPage(t, o, "originals/001.png", "001.png", uuid.NewString())
-	if len(o.m.Files) != 2 || o.m.Files[0].Source() != first.Blob || o.m.Files[0].Path != "originals/002.png" || o.m.Files[1].Path != "originals/003.png" {
+	second := putPage(t, o, "originals/001.png", "001.png", uuid.NewString())
+	renamed, hasRenamed := o.m.Get("originals/002.png")
+	added, hasAdded := o.m.Get("originals/001.png")
+	if len(o.m.Files) != 2 || !hasRenamed || !hasAdded || renamed.Source() != first.Blob || added.Source() != second.Blob {
 		t.Fatalf("renamed original was overwritten: %+v", o.m.Files)
 	}
 }
@@ -179,7 +189,7 @@ func TestCopiedPageGetsIndependentIdentity(t *testing.T) {
 	}
 	copy := o.m.Files[1]
 	meta, _ := pageMetadata(copy.Meta)
-	if copy.Path != "originals/002.png" || meta["name"] != "002" || meta["mode"] != nil || meta["included"] != nil {
+	if copy.Path != "originals/2.png" || meta["name"] != "2" || meta["mode"] != nil || meta["included"] != nil {
 		t.Fatalf("copied stale identity/override: %+v", copy)
 	}
 }
@@ -189,7 +199,7 @@ func TestChangedSourceClearsArchiveCompletionAndChecksAllocatedPermission(t *tes
 	putPage(t, o, "originals/1.png", "1.png", "")
 	o.m.Files[0].Meta["archive_complete"] = true
 	o.m.Files[0].Meta["archive_complete_sha256"] = strings.Repeat("a", 64)
-	putPage(t, o, "originals/001.png", "1.png", "")
+	putPage(t, o, "originals/1.png", "1.png", "")
 	for _, key := range archiveStateKeys {
 		if _, ok := o.m.Files[0].Meta[key]; ok {
 			t.Fatal("new bytes inherited import completion")
@@ -197,12 +207,12 @@ func TestChangedSourceClearsArchiveCompletionAndChecksAllocatedPermission(t *tes
 	}
 	denied := errors.New("path denied")
 	o.authorizePath = func(p string) error {
-		if p == "originals/002.png" {
+		if p == "originals/1 (2).png" {
 			return denied
 		}
 		return nil
 	}
-	op := Op{Op: OpPut, Path: "originals/001.png", SourceName: "001.png", Blob: NewStaged()}
+	op := Op{Op: OpPut, Path: "originals/1.png", SourceName: "another-name.png", Blob: NewStaged()}
 	o.objects[op.Blob] = Object{ContentType: "image/png", Size: 10}
 	if err := o.put(op); !errors.Is(err, denied) || len(o.m.Files) != 1 {
 		t.Fatalf("allocation escaped permission: %v %+v", err, o.m.Files)

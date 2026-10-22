@@ -176,8 +176,8 @@ func TestArchiveRevisionTracksOrderExclusionsFormatsAndNames(t *testing.T) {
 	}
 	renamed := append([]media.File(nil), original...)
 	renamed[0].Path = "originals/renamed.png"
-	if !reflect.DeepEqual(archiveRevision(renamed), key) {
-		t.Fatal("irrelevant source name invalidates positional ZIP")
+	if reflect.DeepEqual(archiveRevision(renamed), key) {
+		t.Fatal("renamed ZIP entry reused the old cache")
 	}
 }
 

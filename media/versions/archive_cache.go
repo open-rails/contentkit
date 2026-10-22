@@ -15,19 +15,19 @@ import (
 )
 
 // archiveRevision covers every input that changes ZIP bytes. The recipe fixes
-// Store compression, zero timestamps and positional naming. Source-format or
+// Store compression, zero timestamps and preserved filenames. Source-format or
 // bounded-download changes select different blobs; inclusion and order select
 // different entries. It deliberately excludes the attachment's external title.
 func archiveRevision(files []media.File) string {
 	type entry struct{ Blob, Name, Type string }
 	entries := make([]entry, len(files))
 	for i, f := range files {
-		entries[i] = entry{f.Blob, media.PositionalName(i+1, len(files), path.Ext(f.Path)), f.Type}
+		entries[i] = entry{f.Blob, path.Base(f.Path), f.Type}
 	}
 	body, _ := json.Marshal(struct {
 		Recipe string
 		Files  []entry
-	}{"reader-zip-store-1", entries})
+	}{"reader-zip-source-names-2", entries})
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }
