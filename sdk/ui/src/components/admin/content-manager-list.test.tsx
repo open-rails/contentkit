@@ -65,13 +65,14 @@ function server(items: Content[], o: { count?: ManageCount; fail?: string; model
   return { client: createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch }), calls };
 }
 
-function Route({ client, search = "" }: { client: ReturnType<typeof server>["client"]; search?: string }) {
+function Route({ client, search = "", noun }: { client: ReturnType<typeof server>["client"]; search?: string; noun?: { one: string; other: string } }) {
   const [at, setAt] = useState({ pathname: "/galleries", search });
   return (
     <ContentManager
       client={client}
       kind="gallery"
       basePath="/galleries"
+      noun={noun}
       navigation={{ ...at, navigate: (to) => setAt({ pathname: to.split("?")[0]!, search: to.includes("?") ? `?${to.split("?")[1]}` : "" }) }}
     />
   );
@@ -125,6 +126,13 @@ it("searches as the admin types and tells filtered from truly empty", async () =
   // The empty state repeats the header's create action next to its message.
   expect(screen.getAllByRole("button", { name: "New item" })).toHaveLength(2);
   unmount();
+
+  // A host-supplied kind name replaces the generic wording.
+  const named = render(<Route client={server([]).client} noun={{ one: "gallery", other: "galleries" }} />);
+  expect(await screen.findByText("No galleries yet.")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "galleries" })).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "New gallery" })).toHaveLength(2);
+  named.unmount();
 
   const s = server([item("a", "Alpha", { level: "public" })]);
   const user = userEvent.setup();

@@ -791,8 +791,11 @@ The host still owns navigation outside the flow, including browser Back handling
   schedule, cover and body with inline images per language; publish or
   unpublish; the moderation state. Props: `kind`, `languages`,
   `renderEditor` (`richTextEditor` from `/editor`, or the host's; a plain
-  HTML field without it), `contentHref`, `pageSize`.
-  `useContentManagerAccess()`.
+  HTML field without it), `contentHref`, `pageSize`, `noun` (the kind's
+  name, localized by the host as it reads mid-sentence, e.g.
+  `{ one: "gallery", other: "galleries" }`: the list heading, with its first
+  letter capitalized, the New button and the empty state; generic wording
+  without it). `useContentManagerAccess()`.
 
   ```tsx
   import { richTextEditor } from "@openrails/contentkit-ui/editor";

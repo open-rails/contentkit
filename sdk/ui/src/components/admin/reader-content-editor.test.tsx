@@ -818,6 +818,41 @@ it("unpublishes only the selected edition", async () => {
   expect(writes(s).map((call) => [call.path, call.body])).toEqual([["/contents/c1/versions/v2", { state: "draft" }]]);
 });
 
+it("names the gallery's status and the version's own status, and says why a published version is hidden", async () => {
+  const languages = [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }];
+  const open = (patch: Partial<Content>) => {
+    const s = server();
+    Object.assign(s.item, patch);
+    return render(<ContentEditor client={s.client} kind="gallery" id="c1" languages={languages} />);
+  };
+  let view = open({});
+  expect(await screen.findByText("Gallery · Draft")).toBeVisible();
+  expect(await screen.findByText("This version (English) · Published")).toBeVisible();
+  expect(screen.getByText("Readers can't see this version until the gallery is published.")).toBeVisible();
+  view.unmount();
+
+  view = open({ state: "published", publish_at: "2030-01-01T12:00:00Z" });
+  expect(await screen.findByText("Gallery · Scheduled")).toBeVisible();
+  expect(await screen.findByText(/^Readers can't see this version until the gallery goes live on .*2030/)).toBeVisible();
+  view.unmount();
+
+  view = open({ state: "published", moderation: "held" });
+  expect(await screen.findByText("Gallery · Held for review")).toBeVisible();
+  expect(await screen.findByText("Readers can't see this version while the gallery is held for review.")).toBeVisible();
+  view.unmount();
+
+  // A live gallery with a held edit keeps showing its approved snapshot: readers still see the version.
+  view = open({ state: "published", moderation: "held", live: true, versions: [{ ...edition, live: true }] });
+  expect(await screen.findByText("Gallery · Held for review")).toBeVisible();
+  expect(screen.queryByText(/^Readers can't see this version/)).toBeNull();
+  view.unmount();
+
+  open({ state: "published", live: true, versions: [{ ...edition, live: true }] });
+  expect(await screen.findByText("Gallery · Published")).toBeVisible();
+  expect(await screen.findByText("This version (English) · Published")).toBeVisible();
+  expect(screen.queryByText(/^Readers can't see this version/)).toBeNull();
+});
+
 it("confirms version deletion and preserves unsaved changes when cancelled", async () => {
   const s = server({ versions: [edition, otherEdition] }), user = userEvent.setup();
   render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);

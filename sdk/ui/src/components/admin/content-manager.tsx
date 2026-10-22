@@ -62,6 +62,8 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   pageSize?: number;
   /** Row checkboxes with bulk access, delete and restore (default true). */
   selectable?: boolean;
+  /** The kind's name, localized by the host and as it reads mid-sentence (e.g. gallery, galleries): the list heading, New button and empty state. */
+  noun?: { one: string; other: string };
 }
 
 /** Whether the caller manages content: root:content:write holders, creators and owner-group editors. */
@@ -266,7 +268,7 @@ async function eachLimited<T>(items: readonly T[], fn: (item: T) => Promise<unkn
   return failed;
 }
 
-function List({ loc, open, client, kind, languages: offered, contentHref, labels, pageSize: defaultSize = 20, selectable = true, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
+function List({ loc, open, client, kind, languages: offered, contentHref, labels, pageSize: defaultSize = 20, selectable = true, noun, onError }: Inner & { loc: AdminLocation; open: (c: Content) => void }) {
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -382,7 +384,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{t("contentManager.title")}</h2>
+        <h2 className="text-base font-semibold first-letter:uppercase">{noun?.other ?? t("contentManager.title")}</h2>
         <div className="flex gap-2">
           {bulkable && !deleted && (
             <Button size="sm" variant="outline" aria-expanded={bulkOpen} onClick={() => setBulkOpen((o) => !o)}>
@@ -390,7 +392,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             </Button>
           )}
           <Button size="sm" onClick={() => loc.go("new")}>
-            {t("contentManager.new")}
+            {noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new")}
           </Button>
         </div>
       </div>
@@ -409,7 +411,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           />
         </section>
       )}
-      <div className="flex gap-2" role="group" aria-label={t("contentManager.title")}>
+      <div className="flex gap-2" role="group" aria-label={noun?.other ?? t("contentManager.title")}>
         <Button size="sm" variant={deleted ? "outline" : "default"} aria-pressed={!deleted} onClick={() => loc.go("", { q: query })}>
           {t("contentManager.items")}
         </Button>
@@ -513,7 +515,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
         <LoadFailed error={listing.error} message={t("contentManager.loadFailed")} retry={listing.reload} />
       ) : !items.length ? (
         <div className="grid justify-items-start gap-2">
-          <p className="text-muted-foreground">{t(filtered ? "contentManager.noMatches" : deleted ? "contentManager.noDeleted" : "contentManager.emptyAll")}</p>
+          <p className="text-muted-foreground">{filtered ? t("contentManager.noMatches") : deleted ? t("contentManager.noDeleted") : noun ? t("contentManager.emptyNamed", { other: noun.other }) : t("contentManager.emptyAll")}</p>
           {filtered ? (
             <Button size="sm" variant="outline" onClick={() => loc.go("", { deleted: deleted ? "1" : undefined })}>
               {t("contentManager.clearFilters")}
@@ -521,7 +523,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           ) : (
             !deleted && (
               <Button size="sm" onClick={() => loc.go("new")}>
-                {t("contentManager.new")}
+                {noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new")}
               </Button>
             )
           )}
