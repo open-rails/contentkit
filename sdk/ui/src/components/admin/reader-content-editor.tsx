@@ -768,8 +768,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             </Panel>
           </aside>
         </fieldset>
-        <Dialog open={coverChoices} onOpenChange={setCoverChoices}>
-          <DialogContent>
+        <Dialog open={coverChoices} onOpenChange={(open) => !cover.pending && setCoverChoices(open)}>
+          <DialogContent showCloseButton={!cover.pending}>
             <DialogHeader><DialogTitle>{t("readerEditor.thumbnail")}</DialogTitle></DialogHeader>
             <p className="text-sm text-muted-foreground">{t("readerEditor.thumbnailHelp")}</p>
             <label className="inline-flex cursor-pointer justify-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">

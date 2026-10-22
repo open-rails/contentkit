@@ -45,9 +45,10 @@ it("uploads, associates, chooses a stored cover and publishes the current galler
   await waitFor(() => {
     const alert = screen.queryAllByRole("alert").map((a) => a.textContent).join("; ");
     expect(alert).toBe("");
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(document.querySelector('[data-ckui="crop-dialog"]')).not.toBeNull();
   }, wait);
   await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.querySelector('[data-ckui="crop-dialog"]')).toBeNull(), wait);
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
   await user.click(screen.getByRole("button", { name: "Publish" }));
   await waitFor(async () => expect((await c.contents.get(created!.id, "en")).live).toBe(true), wait);

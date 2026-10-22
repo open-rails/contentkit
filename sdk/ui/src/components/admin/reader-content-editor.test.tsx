@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
@@ -882,4 +882,27 @@ it("defaults to an undeleted edition even if a deleted edition has the first pos
   await waitFor(() => expect(changed).toHaveBeenCalled());
   expect(changed.mock.calls[0]?.[0]?.id).toBe("v2");
   expect(screen.queryByRole("button", { name: "Restore version" })).toBeNull();
+});
+
+it("keeps cover choices open during a pending copy and closes the actual crop dialog on Escape", async () => {
+  const s = server(), user = userEvent.setup();
+  vi.spyOn(s.client.media, "presetPath").mockResolvedValue("cover/i-pending.png");
+  let finish!: (files: FileInfo[]) => void;
+  const copied = new Promise<FileInfo[]>((resolve) => { finish = resolve; });
+  const commit = vi.spyOn(s.client.media, "commit").mockReturnValue(copied);
+  vi.spyOn(s.client.contents, "setCover").mockResolvedValue(edition);
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await user.click(await screen.findByRole("button", { name: "Reorder 001.png" }));
+  await user.click(screen.getByRole("button", { name: "Thumbnail" }));
+  await user.click(await screen.findByRole("button", { name: "Set as thumbnail" }));
+  await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  expect(document.querySelector('[data-ckui="crop-dialog"]')).toBeNull();
+  await act(async () => { finish([]); await copied; });
+  await waitFor(() => expect(document.querySelector('[data-ckui="crop-dialog"]')).not.toBeNull());
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled();
 });
