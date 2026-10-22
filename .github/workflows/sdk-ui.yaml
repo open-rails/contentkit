@@ -116,9 +116,7 @@ jobs:
         cache-from: type=gha,scope=ckui-e2e-media-worker
         cache-to: type=gha,mode=max,scope=ckui-e2e-media-worker
     - name: ffmpeg (the harness's frame grabs, the ABR source)
-      run: |
-        sudo rm -f /var/lib/man-db/auto-update
-        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh ffmpeg
     - uses: pnpm/action-setup@v4
       with:
         package_json_file: sdk/ui/package.json

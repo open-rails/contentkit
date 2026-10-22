@@ -62,9 +62,7 @@ jobs:
           -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
           cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
     - name: Install libvips and ffmpeg (mixed image and video items)
-      run: |
-        sudo rm -f /var/lib/man-db/auto-update
-        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libvips-dev ffmpeg libheif-plugin-dav1d libheif-plugin-aomenc
+      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev ffmpeg libheif-plugin-dav1d libheif-plugin-aomenc
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
