@@ -31,6 +31,10 @@ const (
 	kindPlayback = "playback"
 )
 
+// pageCount is a publication row's page count. Publications written before
+// pages were always an array hold null for a version without pages.
+const pageCount = `CASE jsonb_typeof(source->'pages') WHEN 'array' THEN jsonb_array_length(source->'pages') ELSE 0 END`
+
 // pagesSnapshot is a version's pages as a publication freezes them.
 type pagesSnapshot struct {
 	Pages []page `json:"pages"`
@@ -363,8 +367,8 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	// (new chapters in the same edition): cards mark the work updated.
 	if kind == kindPages && len(old) > 0 {
 		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2
- AND (SELECT jsonb_array_length(source->'pages') FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
-     (SELECT max(jsonb_array_length(source->'pages')) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
+ AND (SELECT `+pageCount+` FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
+     (SELECT max(`+pageCount+`) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
 			s.o.Tenant, v.Version, id, old); err != nil {
 			return false, err
 		}
@@ -393,6 +397,9 @@ func (s *Service) snapshotPages(ctx context.Context, q querier, k *media.Kind, v
 	resolved, err := resolveChapterStarts(segs[v.Version], pages)
 	if err != nil {
 		return pagesSnapshot{}, err
+	}
+	if pages == nil {
+		pages = []page{} // snapshot JSON keeps pages an array; SQL counts them
 	}
 	return pagesSnapshot{Pages: pages, Spans: spans(resolved, len(pages))}, nil
 }

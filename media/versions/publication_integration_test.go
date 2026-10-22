@@ -235,6 +235,41 @@ func TestPagesAddedMarksTheVersion(t *testing.T) {
 	}
 }
 
+// Audio that finishes before any page publishes a pages publication
+// without pages; the first pages replace it like any republication.
+func TestFirstPagesReplaceAPagelessPublication(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "audio/theme", "audio/wav", wav(t))
+	var pages string
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		err := s.pool.QueryRow(s.ctx, `SELECT coalesce(jsonb_typeof(source->'pages'), '') FROM `+s.table("content_version_publications")+`
+ WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current'`, s.tenant, v.Version).Scan(&pages)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) || time.Now().After(deadline) {
+			s.dumpJobs()
+			t.Fatalf("no current pageless publication: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pages != "array" {
+		t.Fatalf("the pageless publication stores pages as %q, not an array", pages)
+	}
+	// Publications written before the fix hold null pages; they must not
+	// block the next one.
+	if _, err := s.pool.Exec(s.ctx, `UPDATE `+s.table("content_version_publications")+` SET source = jsonb_set(source, '{pages}', 'null')
+ WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current'`, s.tenant, v.Version); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
+	}
+	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 2 })
+}
+
 // Removing a page withdraws the publication showing it at once, previews
 // included; the next one replaces it.
 func TestWithdrawal(t *testing.T) {
