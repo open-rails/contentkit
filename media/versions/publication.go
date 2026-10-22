@@ -31,6 +31,10 @@ const (
 	kindPlayback = "playback"
 )
 
+// pageCount is a publication row's page count. Publications written before
+// pages were always an array hold null for a version without pages.
+const pageCount = `CASE jsonb_typeof(source->'pages') WHEN 'array' THEN jsonb_array_length(source->'pages') ELSE 0 END`
+
 // pagesSnapshot is a version's pages as a publication freezes them.
 type pagesSnapshot struct {
 	Pages []page `json:"pages"`
@@ -116,7 +120,7 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 	if m.Meta[forkMeta] != nil || len(imports(k, m)) > 0 {
 		return nil, ErrNotReady
 	}
-	var out []page
+	out := []page{} // never nil: snapshots store pages as an array, which SQL counts
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) {
 			continue
@@ -363,8 +367,8 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	// (new chapters in the same edition): cards mark the work updated.
 	if kind == kindPages && len(old) > 0 {
 		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2
- AND (SELECT jsonb_array_length(source->'pages') FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
-     (SELECT max(jsonb_array_length(source->'pages')) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
+ AND (SELECT `+pageCount+` FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
+     (SELECT max(`+pageCount+`) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
 			s.o.Tenant, v.Version, id, old); err != nil {
 			return false, err
 		}
