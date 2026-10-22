@@ -15,6 +15,12 @@ Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
 
 ## Release policy
 
+Standalone gateway patches use `media-gateway/vX.Y.Z` tags and publish only
+`contentkit-media-gateway:gateway-vX.Y.Z` for amd64 and arm64, keeping those
+immutable tags separate from root-release image tags. They do not release the
+Go modules, media worker or UI package; those components can retain their
+existing versions when their code and protocol are unchanged.
+
 ContentKit is pre-stable and releases on `v0.x`; its API may change between
 minor versions. The historical `v1.0.0-rc.1` through `v1.1.1` tags were
 premature and are retracted. `v1.1.2` is a self-retracted, withdrawal-only

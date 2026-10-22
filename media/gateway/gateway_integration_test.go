@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
@@ -209,7 +210,7 @@ func TestGateway(t *testing.T) {
 		expect(t, r, 200, "cover")
 		for name, want := range map[string]string{
 			"Cache-Control": "public, max-age=300, stale-while-revalidate=86400", "Content-Type": "image/webp", "Content-Length": "5",
-			"Cross-Origin-Resource-Policy": "same-site", "X-Content-Type-Options": "nosniff",
+			"Cross-Origin-Resource-Policy": "cross-origin", "X-Content-Type-Options": "nosniff",
 			"Content-Security-Policy": "default-src 'none'; sandbox", "Vary": "Origin",
 		} {
 			if got := r.header.Get(name); got != want {
@@ -226,6 +227,39 @@ func TestGateway(t *testing.T) {
 		}
 		expect(t, do(t, srv, "GET", f.path("gallery/456/public/"+name), nil), 200, "generated")
 		denied(t, do(t, srv, "GET", f.path("gallery/456/public/"+strings.Repeat("c", 166)), nil))
+	})
+
+	t.Run("public cross-site embedding", func(t *testing.T) {
+		head := do(t, srv, "HEAD", cover, nil)
+		for _, tc := range []struct {
+			name, method, path, body, policy string
+			status                           int
+			headers                          map[string]string
+		}{
+			{name: "GET", method: "GET", path: cover, status: 200, body: "cover", policy: "cross-origin"},
+			{name: "HEAD", method: "HEAD", path: cover, status: 200, policy: "cross-origin"},
+			{name: "range", method: "GET", path: cover, status: 206, body: "ove", policy: "cross-origin", headers: map[string]string{"Range": "bytes=1-3"}},
+			{name: "not modified", method: "GET", path: cover, status: 304, policy: "cross-origin", headers: map[string]string{"If-None-Match": head.header.Get("ETag")}},
+			{name: "default fallback", method: "GET", path: f.path("gallery/789/public/cover-460.webp"), status: 200, body: "default cover", policy: "cross-origin"},
+			{name: "invalid range", method: "GET", path: cover, status: 416, policy: "same-site", headers: map[string]string{"Range": "bytes=100-"}},
+			{name: "public missing", method: "GET", path: f.path("gallery/456/public/missing.webp"), status: 404, body: "Not Found\n", policy: "same-site"},
+			{name: "private denied", method: "GET", path: blobA, status: 404, body: "Not Found\n", policy: "same-site"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				headers := map[string]string{"Origin": "https://hentai0.test", "Referer": "https://hentai0.test/en/", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image"}
+				for key, value := range tc.headers {
+					headers[key] = value
+				}
+				r := do(t, srv, tc.method, tc.path, headers)
+				expect(t, r, tc.status, tc.body)
+				if r.header.Get("Cross-Origin-Resource-Policy") != tc.policy {
+					t.Fatalf("cross-site policy: %v, want %s", r.header, tc.policy)
+				}
+				if r.header.Get("Access-Control-Allow-Origin") != "" || r.header.Get("Access-Control-Allow-Credentials") != "" {
+					t.Fatalf("public embedding must not broaden credentialed CORS: %v", r.header)
+				}
+			})
+		}
 	})
 
 	t.Run("default fallback", func(t *testing.T) {
@@ -332,7 +366,7 @@ func TestGateway(t *testing.T) {
 		dlOriginal := cur.Sign(token.DownloadScope(f.key("gallery/456/download/"+sha("o"))), time.Now().Add(5*time.Minute))
 		r := do(t, srv, "GET", withQuery(original, "t", dlOriginal, "dl", "Title [A1].webp"), nil)
 		expect(t, r, 200, "original")
-		if r.header.Get("Content-Disposition") != layout.Attachment("Title [A1].webp") {
+		if r.header.Get("Content-Disposition") != layout.Attachment("Title [A1].webp") || r.header.Get("Cross-Origin-Resource-Policy") != "same-site" {
 			t.Fatalf("download headers: %v", r.header)
 		}
 		version := cur.Sign(token.ItemScope(f.ns, "gallery", "456", "v1"), exp)
@@ -437,6 +471,49 @@ func TestGateway(t *testing.T) {
 		if denial.status != 404 || denial.header.Get("Access-Control-Allow-Origin") != origin {
 			t.Fatalf("a credentialed denial must stay readable: %d %v", denial.status, denial.header)
 		}
+	})
+
+	t.Run("scoped public policy preserves private isolation and erasure", func(t *testing.T) {
+		env := s3test.Open(t)
+		scope := layout.Scope{TenantID: uuid.NewString(), AppID: uuid.NewString()}
+		// This test owns the random tenant root, including on a shared bucket.
+		env.Tenant = "tenant/" + scope.TenantID
+		prefix := scope.Prefix("gallery", "456", "v1")
+		put := func(name, body string) {
+			t.Helper()
+			if _, err := env.Store.Put(t.Context(), prefix+name, strings.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/webp"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put("public/cover.webp", "scoped cover")
+		put("private/"+sha("scoped"), "private")
+		foreign := "https://hentai0.test"
+		cfg := f.config(t)
+		cfg.Origins = append(cfg.Origins, foreign)
+		cfg.Routes = []gateway.Route{{Host: host, Scope: scope, Bucket: env.Config.Bucket, Origins: []string{origin}}}
+		scoped := serve(t, cfg)
+		public, private := "/v1/"+prefix+"public/cover.webp", "/v1/"+prefix+"private/"+sha("scoped")
+		access := cur.Sign(strings.TrimSuffix(prefix, "/"), exp)
+		check := func(r result, status int, body, policy, allowedOrigin string) {
+			t.Helper()
+			expect(t, r, status, body)
+			if r.header.Get("Cross-Origin-Resource-Policy") != policy || r.header.Get("Access-Control-Allow-Origin") != allowedOrigin {
+				t.Fatalf("scoped response policy: %v", r.header)
+			}
+			if allowedOrigin == "" && r.header.Get("Access-Control-Allow-Credentials") != "" {
+				t.Fatalf("foreign origin gained credentialed access: %v", r.header)
+			}
+		}
+		check(do(t, scoped, "GET", public, map[string]string{"Origin": foreign}), 200, "scoped cover", "cross-origin", "")
+		check(do(t, scoped, "GET", private, map[string]string{"Origin": foreign, "Cookie": "mt=" + access}), 200, "private", "same-site", "")
+		check(do(t, scoped, "GET", private, map[string]string{"Origin": origin, "Cookie": "mt=" + access}), 200, "private", "same-site", origin)
+		check(do(t, scoped, "GET", private, map[string]string{"Origin": foreign}), 404, "Not Found\n", "same-site", "")
+		other := scope
+		other.AppID = uuid.NewString()
+		check(do(t, scoped, "GET", "/v1/"+other.Prefix("gallery", "456", "v1")+"public/cover.webp", nil), 404, "Not Found\n", "same-site", "")
+		put("public/"+layout.ErasureFenceName, "erased")
+		check(do(t, scoped, "GET", public, nil), 404, "Not Found\n", "same-site", "")
+		check(do(t, scoped, "GET", private, cookie(access)), 404, "Not Found\n", "same-site", "")
 	})
 
 	t.Run("methods and health", func(t *testing.T) {

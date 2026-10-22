@@ -1,7 +1,8 @@
 name: Release
-# A published release publishes @openrails/contentkit-ui at X.Y.Z to npm, built
-# from the release's tag, through npm trusted publishing with provenance.
+# Root and sdk/ui releases publish @openrails/contentkit-ui at X.Y.Z to npm,
+# built from the release's tag through trusted publishing with provenance.
 # sdk/ui/vX.Y.Z tags publish UI-only patches without releasing the Go modules.
+# Standalone component releases leave the Go/UI packages unchanged.
 'on':
   release:
     types: [published]
@@ -12,6 +13,7 @@ env:
 jobs:
   package:
     name: Pack @openrails/contentkit-ui
+    if: startsWith(github.event.release.tag_name, 'v') || startsWith(github.event.release.tag_name, 'sdk/ui/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:

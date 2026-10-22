@@ -2,12 +2,15 @@ name: images
 # Release tags publish ghcr.io/open-rails/contentkit-{name}:{tag} and
 # docker.io/openrails/contentkit-{name}:{tag} for linux/amd64 and linux/arm64,
 # each built on a native runner (QEMU arm64 builds exceeded the timeout), then
-# merged into one multi-arch tag. Pull requests that touch image definitions
+# merged into one multi-arch tag. media-gateway/vX.Y.Z releases only that
+# component as contentkit-media-gateway:gateway-vX.Y.Z, independently of root
+# release image tags. Pull requests that touch image definitions
 # build linux/amd64 only, without pushing. workflow_dispatch rebuilds a tag.
 'on':
   push:
     tags:
     - 'v*'
+    - 'media-gateway/v*'
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -19,7 +22,7 @@ name: images
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to (re)publish images for (e.g. v0.53.0)
+        description: Existing root or media-gateway release tag to (re)publish
         required: true
 permissions:
   contents: read
@@ -41,9 +44,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-gateway, media-worker, server]
+        name: ${{ fromJSON(startsWith(inputs.tag || github.ref_name, 'media-gateway/') && '["media-gateway"]' || '["media-gateway","media-worker","server"]') }}
         arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
     steps:
+    - name: Image version
+      if: env.PUBLISH == 'true'
+      run: |
+        [[ "$TAG" =~ ^(media-gateway/)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Invalid image release tag'; exit 1; }
+        if [[ "$TAG" == media-gateway/* ]]; then TAG="gateway-${TAG##*/}"; fi
+        echo "TAG=$TAG" >> "$GITHUB_ENV"
     - uses: actions/checkout@v4
       with:
         ref: ${{ inputs.tag || github.ref }}
@@ -99,7 +108,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-gateway, media-worker, server]
+        name: ${{ fromJSON(startsWith(inputs.tag || github.ref_name, 'media-gateway/') && '["media-gateway"]' || '["media-gateway","media-worker","server"]') }}
     steps:
     - uses: actions/download-artifact@v4
       with:
@@ -118,6 +127,7 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     - working-directory: digests
       run: |
+        if [[ "$TAG" == media-gateway/* ]]; then TAG="gateway-${TAG##*/}"; fi
         test "$(ls | wc -l)" -eq 2
         for repo in ghcr.io/open-rails/contentkit-$NAME docker.io/openrails/contentkit-$NAME; do
           docker buildx imagetools create -t "$repo:$TAG" $(printf "$repo@sha256:%s " *)

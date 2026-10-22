@@ -226,7 +226,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	h.relay(w, r, key, resp, cacheControl, dl)
+	h.relay(w, r, key, resp, cacheControl, dl, o.area == layout.AreaPublic)
 }
 
 type object struct {
@@ -356,7 +356,7 @@ func (h *Handler) fetch(r *http.Request, bucket, key string) (*http.Response, er
 }
 
 // relay streams the bucket's answer, as an attachment when dl is set.
-func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp *http.Response, cacheControl string, dl *string) {
+func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp *http.Response, cacheControl string, dl *string, public bool) {
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified,
 		http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
@@ -381,6 +381,11 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		hdr.Set("Content-Disposition", layout.Disposition(*dl, resp.Header.Get("Content-Type")))
 	}
 	securityHeaders(hdr)
+	if public && (body || resp.StatusCode == http.StatusNotModified) {
+		// Public renditions may be embedded by another app, without granting
+		// credentialed CORS access to private files or changing denial headers.
+		hdr.Set("Cross-Origin-Resource-Policy", "cross-origin")
+	}
 	w.WriteHeader(resp.StatusCode)
 	if r.Method == http.MethodHead || !body {
 		return
