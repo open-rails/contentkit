@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/media"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 )
 
 // Event types written to the outbox.
@@ -84,9 +82,10 @@ func (s *Store) emit(ctx context.Context, q Querier, events ...Event) error {
 	return s.enqueueEvents(ctx, q)
 }
 
-// Queue delivery with the outbox write. A running delivery may already have
-// read its last batch, so InsertOnce retains one follow-up instead of losing
-// the wake-up. An unbound/older producer is covered by the recovery sweep.
+// Queue delivery with the outbox write. Keep it nonunique: a conflict locks
+// the running job and can deadlock with River's batch completer when this
+// transaction already locked another job. The recovery sweep covers unbound
+// producers.
 func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
 	s.mu.Lock()
 	client := s.jobs
@@ -94,12 +93,14 @@ func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
 	if client == nil {
 		return nil
 	}
-	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-		if tx, ok := q.(pgx.Tx); ok {
-			return client.InsertTx(ctx, tx, args, opts)
-		}
-		return client.Insert(ctx, args, opts)
-	}, deliverEventsArgs{}, river.InsertOpts{Queue: Queue, MaxAttempts: 3})
+	opts := &river.InsertOpts{Queue: Queue, MaxAttempts: 3}
+	var err error
+	if tx, ok := q.(pgx.Tx); ok {
+		_, err = client.InsertTx(ctx, tx, deliverEventsArgs{}, opts)
+	} else {
+		_, err = client.Insert(ctx, deliverEventsArgs{}, opts)
+	}
+	return err
 }
 
 // eventBatch bounds one delivery.
@@ -135,6 +136,10 @@ func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
+	// Nonunique wake-ups may run together; deliver their batches in order.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:catalog:events:"+s.schema+":"+s.tenant); err != nil {
+		return 0, err
+	}
 	rows, err := tx.Query(ctx, `SELECT id, type, payload, created_at FROM `+s.t.events+`
  WHERE tenant_id = $1 AND delivered_at IS NULL ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, s.tenant, eventBatch)
 	if err != nil {

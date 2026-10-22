@@ -2,18 +2,132 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/media"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 )
 
-func TestCatalogEventsQueueWithMutationAndKeepRunningFollowUp(t *testing.T) {
+func TestCatalogEventEnqueueDoesNotDeadlockWithCompletion(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+	defer cancel()
+	schema := pgtest.EmptySchema(t, ctx, f.pool)
+	if err := riverhelpers.ApplyMigrations(ctx, f.pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	c, err := riverhelpers.New(ctx, f.pool, &river.Config{Schema: schema}, f.s.RiverJobs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
+	first, err := c.Insert(ctx, refreshCountsArgs{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := c.Insert(ctx, deliverEventsArgs{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := pgx.Identifier{schema, "river_job"}.Sanitize()
+	if _, err := f.pool.Exec(ctx, `UPDATE `+jobs+` SET state='running',attempted_at=now()`); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Rollback(f.ctx)
+	// A mutation can already hold another job's lock (the engine's search
+	// sync) before queuing events. A unique insert takes that lock even when
+	// it only returns an existing job.
+	if _, err := c.InsertTx(ctx, writer, refreshCountsArgs{}, opts); err != nil {
+		t.Fatal(err)
+	}
+	completer, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer completer.Rollback(f.ctx)
+	// Force the completer's first row to be the delivery. Its UPDATE FROM
+	// has no guaranteed lock order; the final ORDER BY only sorts results.
+	if _, err := completer.Exec(ctx, `SELECT id FROM `+jobs+` WHERE id=$1 FOR NO KEY UPDATE`, delivery.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	writerPID, completerPID := writer.Conn().PgConn().PID(), completer.Conn().PgConn().PID()
+	go func() {
+		err := f.s.enqueueEvents(ctx, writer)
+		if err == nil {
+			err = writer.Commit(ctx)
+		} else {
+			_ = writer.Rollback(ctx)
+		}
+		done <- err
+	}()
+	// Continue once the writer either commits or is demonstrably waiting
+	// for the completer, so the old code always forms the same cycle.
+	var writerErr error
+	finished := false
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+wait:
+	for {
+		select {
+		case writerErr = <-done:
+			finished = true
+			break wait
+		case <-tick.C:
+			var blocked bool
+			if err := f.pool.QueryRow(ctx, `SELECT $1::int = ANY(pg_blocking_pids($2::int))`,
+				completerPID, writerPID).Scan(&blocked); err != nil {
+				t.Fatal(err)
+			}
+			if blocked {
+				break wait
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	now := time.Now()
+	_, completeErr := riverpgxv5.New(f.pool).UnwrapExecutor(completer).JobSetStateIfRunningMany(ctx, &riverdriver.JobSetStateIfRunningManyParams{
+		Schema: schema, ID: []int64{first.Job.ID, delivery.Job.ID},
+		Attempt: []*int{nil, nil}, ErrData: [][]byte{nil, nil}, FinalizedAt: []*time.Time{&now, &now},
+		MetadataDoMerge: []bool{false, false}, ScheduledAt: []*time.Time{nil, nil},
+		State: []rivertype.JobState{rivertype.JobStateCompleted, rivertype.JobStateCompleted},
+	})
+	if completeErr == nil {
+		completeErr = completer.Commit(ctx)
+	} else {
+		_ = completer.Rollback(ctx)
+	}
+	if !finished {
+		writerErr = <-done
+	}
+	for _, err := range []error{writerErr, completeErr} {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "40P01" {
+			t.Fatalf("event enqueue and River completion deadlocked: %v", err)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCatalogEventsQueueAWakeUpWithEachMutation(t *testing.T) {
 	f := newFixture(t, nil)
 	id := f.create("staff", gallery("Queued events", "en"))
 	schema := pgtest.EmptySchema(t, f.ctx, f.pool)
@@ -53,18 +167,13 @@ func TestCatalogEventsQueueWithMutationAndKeepRunningFollowUp(t *testing.T) {
 	emit(false)
 	count(0)
 	emit(true)
-	count(1) // A burst coalesces before the worker starts.
-	var running int64
-	if err := f.pool.QueryRow(f.ctx, `UPDATE `+jobs+` SET state='running',attempted_at=now() WHERE kind='contentkit_catalog_deliver_events' RETURNING id`).Scan(&running); err != nil {
+	count(2)
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+jobs+` SET state='running',attempted_at=now() WHERE kind='contentkit_catalog_deliver_events'`); err != nil {
 		t.Fatal(err)
 	}
 	emit(true)
 	emit(true)
-	count(2) // A writer racing the last batch preserves exactly one follow-up.
-	var after int64
-	if err := f.pool.QueryRow(f.ctx, `SELECT (args->>'after')::bigint FROM `+jobs+` WHERE state='available'`).Scan(&after); err != nil || after != running {
-		t.Fatalf("follow-up predecessor=%d, want %d: %v", after, running, err)
-	}
+	count(6) // Writes racing a running delivery retain their own wake-ups.
 }
 
 func TestCatalogEventRecoveryFindsUnboundProducer(t *testing.T) {
@@ -130,20 +239,24 @@ func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {
 		t.Fatal("mutation did not wake the delivery worker:", ctx.Err())
 	}
 	second := f.create("staff", gallery("Follow-up immediate delivery", "en"))
-	poll := time.NewTicker(20 * time.Millisecond)
+	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
 	for {
 		var waiting bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()+` WHERE kind='contentkit_catalog_deliver_events' AND args ? 'after' AND coalesce((metadata->>'snoozes')::int,0)>0)`).Scan(&waiting); err != nil {
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted
+ AND classid=((hashtextextended($1,0) >> 32) & 4294967295)::oid
+ AND objid=(hashtextextended($1,0) & 4294967295)::oid)`, "contentkit:catalog:events:"+f.schema+":"+tenant).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
-			break // The real follow-up worker ran WaitFor and snoozed behind the held callback.
+			break
 		}
 		select {
+		case event := <-delivered:
+			t.Fatalf("delivery overtook the held subscriber: %+v", event)
 		case <-poll.C:
 		case <-ctx.Done():
-			t.Fatal("follow-up worker did not wait for the running delivery:", ctx.Err())
+			t.Fatal("second delivery did not wait for the first:", ctx.Err())
 		}
 	}
 	unblock()
