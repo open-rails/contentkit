@@ -607,6 +607,66 @@ it("adds a version from a sibling: creates it, then copies its files, audio and 
   expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja");
 });
 
+it("follows a copy after its dialog closes: the added version keeps uploads blocked and shows the copy until its receipt, then reads its files and chapters again", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one" }] });
+  let forked = false;
+  s.media.mockImplementation(async (ref) => (ref.version === "v2" ? { ...read(forked ? [page] : []), meta: forked ? { forked: { from: "v1" } } : {} } : read()));
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja"));
+  // No barrier yet: the workspace follows the copy itself.
+  expect(await screen.findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  expect(screen.getByLabelText("Gallery files")).toBeDisabled();
+  const reads = () => s.calls.filter((c) => c.method === "GET" && c.path === "/contents/c1").length;
+  const before = reads();
+  forked = true;
+  await waitFor(() => expect(screen.queryByText("Copying files from Edition one. This can take a moment.")).toBeNull(), { timeout: 5_000 });
+  await waitFor(() => expect(document.querySelector(`[data-ckui=page-tile][data-path="pages/001.png"]`)).not.toBeNull());
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+}, 15_000);
+
+it("ends a failed copy in the dialog with its reason, and Try again forks again past the failure it replaces", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one" }] });
+  let failure = { from: "v1", reason: "destination", at: "2026-10-22T10:00:00Z" };
+  s.media.mockImplementation(async (ref) => (ref.version === "v2" ? { ...read([]), meta: { fork_failed: failure } } : read()));
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("The copy from Edition one failed: this version already has other files. Remove them, then try again.")).toBeVisible();
+  expect(within(dialog).queryByRole("status")).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+  // The failure it retries is not this copy's end.
+  expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  expect(writes(s).filter((c) => c.path.endsWith("/fork"))).toHaveLength(2);
+  await act(() => new Promise((done) => setTimeout(done, 2_500)));
+  expect(within(dialog).getByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  failure = { from: "v1", reason: "source", at: "2026-10-22T10:05:00Z" };
+  expect(await within(dialog).findByText("The copy from Edition one failed: the original changed while it was copied. Remove the copied files, then try again.", {}, { timeout: 3_000 })).toBeVisible();
+}, 15_000);
+
+it("shows a version's failed copy with its reason, takes uploads, and Try again re-sends that fork", async () => {
+  const s = server({ versions: [edition, { ...edition, id: "v2", code: "VERSION2", position: 2, label: "Edition two", languages: ["ja"] }] });
+  let meta: Record<string, unknown> = { fork_failed: { from: "v2", playback: true, reason: "error", at: "2026-10-22T10:00:00Z" } };
+  s.media.mockImplementation(async (ref) => ({ ...read(), meta: ref.version === "v1" ? meta : {} }));
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  expect(await screen.findByText("The copy from Edition two failed: something went wrong while copying.")).toBeVisible();
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Copying files from Edition two. This can take a moment.")).toBeVisible();
+  expect(screen.queryByText("The copy from Edition two failed: something went wrong while copying.")).toBeNull();
+  expect(screen.getByLabelText("Gallery files")).toBeDisabled();
+  expect(writes(s).map((c) => [c.method, c.path, c.body])).toEqual([["POST", "/contents/c1/versions/v1/fork", { from: "v2", playback: true }]]);
+  meta = { forked: { from: "v2" } };
+  await waitFor(() => expect(screen.queryByText("Copying files from Edition two. This can take a moment.")).toBeNull(), { timeout: 5_000 });
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+}, 15_000);
+
 it("adds an empty version when no Start from is chosen, without a fork", async () => {
   const s = server({ versions: [{ ...edition, label: "Edition one", has_audio: true, segments: [segment] }] });
   const user = userEvent.setup();
