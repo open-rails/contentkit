@@ -6,7 +6,7 @@ import { stem } from "../../client/media/client.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor, uploadRules } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContent } from "../../react/contents.js";
 import { useErrorReporter, useGuarded } from "../../react/context.js";
 import { useMediaFolder } from "../../react/folder.js";
@@ -73,6 +73,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const { client, scope } = useContentScope(p.client);
   const m = useMessages();
   const { t } = m;
+  const languageName = useLanguageName();
   const ids = useId();
   const guarded = useGuarded();
   const report = useErrorReporter(p.onError);
@@ -740,7 +741,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 <div className="grid gap-1 text-sm">
                   <p className="font-medium">
                     {t("readerEditor.versionStatus", {
-                      language: version.languages.map((l) => languages.find((x) => x.value === l)?.label ?? l).join(", "),
+                      language: version.languages.map((l) => { const label = languages.find((x) => x.value === l)?.label; return label && label !== l ? label : languageName(l); }).join(", "),
                       status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : "contentManager.published"),
                     })}
                   </p>
