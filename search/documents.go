@@ -165,7 +165,9 @@ type DirtyMark struct {
 }
 
 // MarkDirty queues documents for the worker, in the transaction that changes
-// their records; the queue trigger assigns each row a new revision.
+// their records; the queue trigger assigns each row a new revision. Duplicate
+// keys are coalesced by value; the last mark supplies Deleted and Reason, as
+// with sequential calls. Every mark is validated before any write.
 func MarkDirty(ctx context.Context, db Executor, schema string, marks []DirtyMark) error {
 	if db == nil {
 		return fmt.Errorf("search: database is required")
@@ -183,6 +185,11 @@ func MarkDirty(ctx context.Context, db Executor, schema string, marks []DirtyMar
 		Reason  string `json:"reason"`
 	}
 	rows := make([]dirtyRow, 0, len(marks))
+	type dirtyKey struct {
+		contentref.ContentKey
+		language string
+	}
+	positions := make(map[dirtyKey]int, len(marks))
 	for _, m := range marks {
 		if err := m.validate(); err != nil {
 			return err
@@ -191,7 +198,14 @@ func MarkDirty(ctx context.Context, db Executor, schema string, marks []DirtyMar
 		if reason == "" {
 			reason = "host"
 		}
-		rows = append(rows, dirtyRow{keyRow(m.DocumentKey), m.Deleted, reason})
+		key := dirtyKey{m.ContentRef.Key(), m.Language}
+		row := dirtyRow{keyRow(m.DocumentKey), m.Deleted, reason}
+		if index, exists := positions[key]; exists {
+			rows[index] = row
+		} else {
+			positions[key] = len(rows)
+			rows = append(rows, row)
+		}
 	}
 	data, err := json.Marshal(rows)
 	if err != nil {
