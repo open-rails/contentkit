@@ -503,19 +503,74 @@ function LanguageFields({ languages, value, many, onChange }: { languages: reado
   );
 }
 
-export function AddVersion({ languages, many, pending, onAdd }: { languages: readonly string[]; many: boolean; pending: boolean; onAdd: (v: { languages: string[] }) => void }) {
+/** A sibling a new version may start from, and what it has to copy. */
+export interface VersionSource {
+  id: string;
+  label: string;
+  audio: boolean;
+  chapters: boolean;
+}
+
+export function AddVersion({ languages, many, pending, sources, onAdd }: {
+  languages: readonly string[];
+  many: boolean;
+  pending: boolean;
+  /** Offers "Start from" one of these: the new version copies its files, and its audio and chapters when ticked. */
+  sources?: readonly VersionSource[];
+  onAdd: (v: { languages: string[] }, from?: { from: string; playback: boolean; segments: boolean }) => void;
+}) {
   const { t } = useMessages();
+  const id = useId();
   const [langs, setLangs] = useState<string[]>([]);
+  const [from, setFrom] = useState(NONE);
+  const [audio, setAudio] = useState(true);
+  const [chapters, setChapters] = useState(false);
+  const source = sources?.find((s) => s.id === from);
   return (
     <div className="flex flex-wrap items-center gap-2" data-ckui="add-version">
       <LanguageFields languages={languages} value={langs} many={many} onChange={setLangs} />
+      {!!sources?.length && (
+        <div className="grid w-full gap-2" data-ckui="add-version-source">
+          <Label htmlFor={`${id}-from`}>{t("readerEditor.startFrom")}</Label>
+          <Select value={from} onValueChange={(v) => setFrom(String(v ?? NONE))}>
+            <SelectTrigger id={`${id}-from`} size="sm" className="w-fit">
+              <SelectValue>{(v: string) => sources.find((s) => s.id === v)?.label ?? t("readerEditor.startEmpty")}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>{t("readerEditor.startEmpty")}</SelectItem>
+              {sources.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-pretty text-muted-foreground">{t("readerEditor.startFromHelp")}</p>
+          {source && (source.audio || source.chapters) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+              {source.audio && (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="size-4 accent-primary" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
+                  {t("readerEditor.copyAudio")}
+                </label>
+              )}
+              {source.chapters && (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="size-4 accent-primary" checked={chapters} onChange={(e) => setChapters(e.target.checked)} />
+                  {t("readerEditor.copyChapters")}
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <Button
         type="button"
         size="sm"
         variant="outline"
         disabled={pending || !langs.length}
         onClick={() => {
-          onAdd({ languages: langs });
+          onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
           setLangs([]);
         }}
       >
