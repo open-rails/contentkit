@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
-import type { Content, ContentModel, Rule, Segment, SegmentInput, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Rule, Segment, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
 import { ruleFor } from "../../client/media/rules.js";
 import { pageRemoved } from "../../client/media/windows.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
@@ -570,7 +570,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   const remove = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
   const valid=langs.length>0&&(!(directAccess||own)||complete(rule));
-  const submit=async(state?: Version["state"])=>{
+  const submit=async(state?: VersionState)=>{
     if(!valid)return false;
     setSaved(false);
     const settle=fields.checkpoint();
