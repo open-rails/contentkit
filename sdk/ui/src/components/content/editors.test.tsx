@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
@@ -256,4 +256,48 @@ it.each([
     body: { state: nextState, languages: ["en"], publish_at: new Date("2027-01-01T12:00").toISOString() },
   });
   expect(screen.queryByRole("switch", { name: "Draft" })).toBeNull();
+});
+
+it("a deleted standalone edition exposes only Restore and never restores directly to published", async () => {
+  const s = server({ "GET /kinds": () => model, "PATCH /contents/p1/versions/v1": ({ body }) => ({ ...version, ...body as object }) });
+  const user = userEvent.setup(), restored = vi.fn();
+  render(<VersionEditor content={content()} version={{ ...version, state: "deleted" }} media={false} chapters={false} client={s.client} onRestored={restored} />);
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete version" })).toBeNull();
+  await user.click(await screen.findByRole("button", { name: "Restore version" }));
+  await waitFor(() => expect(restored).toHaveBeenCalledOnce());
+  expect(s.calls.filter((call) => call.key.startsWith("PATCH"))).toEqual([{ key: "PATCH /contents/p1/versions/v1", body: { state: "draft" } }]);
+});
+
+it("reorders only undeleted editions while retaining deleted-edition restoration", async () => {
+  const first = { ...version, label: "First", position: 1, state: "published" as const };
+  const deleted = { ...version, id: "deleted", code: "DELETED", label: "Deleted edition", position: 2, state: "deleted" as const };
+  const second = { ...version, id: "second", code: "SECOND", label: "Second", position: 3, state: "published" as const };
+  const parent = content({ kind: "comic", versions: [first, deleted, second] });
+  const s = server({ "GET /kinds": () => model, "PUT /contents/p1/versions/order": () => parent });
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    const row = this.closest("[data-overlay]") ? document.querySelector("li[data-dragging]") : this.closest("li");
+    const index = row?.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+    return { x: 0, y: index * 40, top: index * 40, left: 0, bottom: index * 40 + 36, right: 300, width: 300, height: 36, toJSON: () => ({}) } as DOMRect;
+  });
+  try {
+    const { container } = render(<VersionsEditor content={parent} client={s.client} media={false} />);
+    const handle = await screen.findByRole("button", { name: "Reorder First" });
+    const tombstone = container.querySelector<HTMLElement>('[data-ckui="deleted-version"]')!;
+    expect(tombstone).not.toBeNull();
+    expect(tombstone.querySelector('[data-ckui="sort-handle"]')).toBeNull();
+    handle.focus();
+    const tick = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    fireEvent.keyDown(handle, { key: " ", code: "Space" });
+    await tick();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown", code: "ArrowDown" });
+    await tick();
+    fireEvent.keyDown(document.activeElement!, { key: " ", code: "Space" });
+    await waitFor(() => expect(s.calls.find((call) => call.key === "PUT /contents/p1/versions/order")?.body).toEqual({ ids: ["second", "v1"] }));
+    await userEvent.click(within(tombstone).getByRole("button", { name: "Edit" }));
+    expect(within(tombstone).getByRole("button", { name: "Restore version" })).toBeVisible();
+  } finally {
+    rect.mockRestore();
+  }
 });

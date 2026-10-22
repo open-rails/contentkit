@@ -85,6 +85,7 @@ export const content: typeof en = {
     versionPublishAt: "공개 시점(선택)",
     versionDraft: "초안",
     ownAccess: "별도 이용 규칙",
+    restoreVersion: "버전 복원",
     deleteVersion: "버전 삭제",
     media: "미디어",
     segments: "챕터",

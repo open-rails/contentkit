@@ -124,6 +124,7 @@ export const admin: typeof en = {
     wentLive: "{date}부터 진행 중",
   },
   contentManager: {
+    manageVersions: "버전 관리",
     noAccess: "게시물을 관리할 권한이 없습니다.",
     back: "모든 게시물",
     title: "게시물",

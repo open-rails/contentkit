@@ -838,7 +838,10 @@ The host still owns navigation outside the flow, including browser Back handling
   The shared Save includes edition details; Unpublish and Delete affect the
   selected edition. Standalone `VersionEditor` exposes explicit Publish/Unpublish
   actions that save staged edition fields with the state change in one write;
-  the parent item's publication remains separate. Trait toggles are omitted in the reader workspace; version
+  the parent item's publication remains separate. Deleted editions are read-only
+  and restore to Draft through an explicit Restore version action. The Trash
+  links to edition management for visible-version kinds; parent deletion and
+  restoration remain for hidden-version kinds. Trait toggles are omitted in the reader workspace; version
   tags use the ordinary entity picker. Reading layout lives under Reader tools
   when the kind declares `manhwa_style`; Paged / Continuous vertical stages that
   existing reader behavior until the same Save. The display-title field follows

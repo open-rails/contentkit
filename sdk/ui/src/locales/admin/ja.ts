@@ -124,6 +124,7 @@ export const admin: typeof en = {
     wentLive: "{date} から公開中",
   },
   contentManager: {
+    manageVersions: "バージョンを管理",
     noAccess: "投稿を管理する権限がありません。",
     back: "すべての投稿",
     title: "投稿",

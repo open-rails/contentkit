@@ -85,6 +85,7 @@ export const content: typeof en = {
     versionPublishAt: "公開日時（任意）",
     versionDraft: "下書き",
     ownAccess: "個別のアクセスルール",
+    restoreVersion: "バージョンを復元",
     deleteVersion: "バージョンを削除",
     media: "メディア",
     segments: "章",

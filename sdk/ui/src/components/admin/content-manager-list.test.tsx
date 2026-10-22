@@ -6,7 +6,7 @@ import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
 import type { Content, ContentModel, ManageCount, Rule, Version } from "../../client/generated/wire.js";
-import { ContentManager } from "./content-manager.js";
+import { ContentEditor, ContentManager } from "./content-manager.js";
 
 const model: ContentModel = {
   languages: ["en"],
@@ -54,6 +54,7 @@ function server(items: Content[], o: { count?: ManageCount; fail?: string; model
     if (method === "GET" && path === "/manage/gallery") return Response.json(shown);
     if (method === "GET" && path === "/manage/gallery/count") return Response.json(o.count ?? { total: shown.length });
     const patch = /^\/contents\/(\w+)$/.exec(path);
+    if (method === "GET" && patch) return Response.json(items.find((c) => c.id === patch[1]));
     if (method === "PATCH" && patch) {
       if (patch[1] === o.fail) return Response.json({ code: "conflict", error: "Changed elsewhere" }, { status: 409 });
       const found = items.find((c) => c.id === patch[1])!;
@@ -161,4 +162,16 @@ it("directs version-scoped gallery changes to the edition editor instead of pare
   expect(container.querySelector('[data-ckui="access-badge"]')).toBeNull();
   await waitFor(() => expect(s.calls.filter((call) => call.path === "/manage/gallery").at(-1)?.query.get("access")).toBeNull());
   expect(s.calls.some((call) => call.method !== "GET")).toBe(false);
+});
+
+it("visible-version players hide parent Delete in both the list and generic editor", async () => {
+  const player: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, presentation: "player", access_scope: "version" } } };
+  const s = server([item("a", "Alpha", { level: "public" })], { model: player });
+  const list = render(<Route client={s.client} />);
+  await screen.findByText("Alpha");
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  list.unmount();
+  render(<ContentEditor id="a" kind="gallery" client={s.client} />);
+  await screen.findByRole("heading", { name: "Edit" });
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
 });

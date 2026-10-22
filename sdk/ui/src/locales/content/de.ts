@@ -85,6 +85,7 @@ export const content: typeof en = {
     versionPublishAt: "Geht live (optional)",
     versionDraft: "Entwurf",
     ownAccess: "Eigene Zugangsregel",
+    restoreVersion: "Version wiederherstellen",
     deleteVersion: "Version löschen",
     media: "Medien",
     segments: "Kapitel",

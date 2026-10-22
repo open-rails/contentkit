@@ -104,6 +104,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const [versionScheduleTarget, setVersionScheduleTarget] = useState<HTMLDivElement | null>(null);
   const [versionActionsTarget, setVersionActionsTarget] = useState<HTMLDivElement | null>(null);
   const [versionReaderTarget, setVersionReaderTarget] = useState<HTMLDivElement | null>(null);
+  const [versionRestoreTarget, setVersionRestoreTarget] = useState<HTMLDivElement | null>(null);
   const [versionSchedule, setVersionSchedule] = useState("");
   const [stagedLanguage, setStagedLanguage] = useState<{ version: string; language: string } | null>(null);
   const [coverChoices, setCoverChoices] = useState(false);
@@ -118,7 +119,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const [thumb, setThumb] = useState<{ path: string; aspect: string } | null>(null);
   const versions = useMemo(() => [...(item?.versions ?? [])].sort((a, b) => a.position - b.position), [item?.versions]);
   const selectedCode = p.versionCode ?? chosen;
-  const version = selectedCode ? versions.find((v) => v.code === selectedCode) : versions[0];
+  const version = selectedCode ? versions.find((v) => v.code === selectedCode) : versions.find((v) => v.state !== "deleted") ?? versions[0];
+  const editionDeleted = version?.state === "deleted";
   const { id: contentID, versionCode, onVersionChange, onLeaveGuard } = p;
   const canonical = useRef("");
   useEffect(() => {
@@ -248,7 +250,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const offer = useAction("offer.save", p.onError);
   const addVersion = useAction("content.save", p.onError);
   const actions = useAction("content.save", p.onError);
-  const sourceFolder = useMediaFolder(ref, { commit: version?.live ? "manual" : "auto", client, onError: p.onError });
+  const sourceFolder = useMediaFolder(ref, { commit: version?.live || editionDeleted ? "manual" : "auto", client, onError: p.onError });
   const sourceFolderRef = useRef(sourceFolder);
   sourceFolderRef.current = sourceFolder;
   const fileDraft = useReaderFileDraft(sourceFolder, client);
@@ -312,7 +314,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     return () => removeEventListener("beforeunload", ask);
   }, [unsaved, folder.busy]);
   const save = async (publish: boolean) => {
-    if (saving) return;
+    if (saving || editionDeleted) return;
     setError(undefined);
     setNotice("");
     const state = latest.current;
@@ -485,7 +487,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   if (p.id && !item) return ed.error ? <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={ed.reload} /> : <Rows />;
   const status = item ? contentStatus(item) : "draft";
   const changeDetails = (patch: Partial<typeof details.value>) => details.edit((d) => ({ ...d, ...patch }));
-  const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, (l) => languages.find((x) => x.value === l)?.label ?? l, p.labels) }));
+  const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, (l) => languages.find((x) => x.value === l)?.label ?? l, p.labels) + (v.state === "deleted" ? ` · ${t("contentManager.deleted")}` : "") }));
   const discardLocalEdits = () => {
     folder.discard();
     fileDraft.discard();
@@ -537,7 +539,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             type="button"
             className="h-20 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default"
             style={{ aspectRatio: 0.7071 }}
-            disabled={saving || cover.pending}
+            disabled={saving || cover.pending || editionDeleted}
             title={t("readerEditor.thumbnail")}
             aria-label={t("readerEditor.thumbnail")}
             onClick={() => setCoverChoices(true)}
@@ -559,16 +561,17 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 <SelectTrigger aria-label={t("contentEditor.versions")}><SelectValue>{versionChoices.find((v) => v.id === version.id)?.label}</SelectValue></SelectTrigger>
                 <SelectContent>{versions.map((v) => <SelectItem key={v.id} value={v.code}>{versionChoices.find((c) => c.id === v.id)?.label}</SelectItem>)}</SelectContent>
               </Select>}
-              <Button variant="outline" size="sm" disabled={saving || filesPending || unsaved} onClick={() => setAddingVersion(true)}>{t("contentEditor.addVersion")}</Button>
+              <Button variant="outline" size="sm" disabled={saving || filesPending || unsaved || editionDeleted} onClick={() => setAddingVersion(true)}>{t("contentEditor.addVersion")}</Button>
             </div>
           )}
-          {item && p.contentHref?.(item) && (
+          {item && !editionDeleted && p.contentHref?.(item) && (
             <a href={p.contentHref(item)} className="text-sm underline" {...(item.live ? {} : { target: "_blank", rel: "noopener" })}>
               {t(item.live ? "contentManager.view" : "readerEditor.preview")}
             </a>
           )}
           <div ref={setVersionScheduleTarget} className="min-w-48" data-ckui="version-schedule-header" />
-          {item && !unsaved && !saving ? (
+          <div ref={setVersionRestoreTarget} data-ckui="version-restore-header" />
+          {!editionDeleted && (item && !unsaved && !saving ? (
             <span role="status" className="text-sm text-muted-foreground" data-ckui="editor-saved">
               {t("readerEditor.allSaved")}
             </span>
@@ -576,10 +579,10 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             <Button disabled={saving || allocating || folder.updating || !unsaved} onClick={() => void save(false)}>
               {saving ? t("common.saving") : t(item?.live ? "readerEditor.saveChanges" : "readerEditor.saveDraft")}
             </Button>
-          )}
-          <Button variant="outline" size="sm" disabled={saving || !history.canUndo} onClick={history.undo}>{t("editor.undo")}</Button>
-          <Button variant="outline" size="sm" disabled={saving || !history.canRedo} onClick={history.redo}>{t("editor.redo")}</Button>
-          {(!item?.live || version?.state === "draft") && (
+          ))}
+          <Button variant="outline" size="sm" disabled={saving || editionDeleted || !history.canUndo} onClick={history.undo}>{t("editor.undo")}</Button>
+          <Button variant="outline" size="sm" disabled={saving || editionDeleted || !history.canRedo} onClick={history.redo}>{t("editor.redo")}</Button>
+          {!editionDeleted && (!item?.live || version?.state === "draft") && (
             <Button variant="outline" disabled={saving || publishingBlocked} onClick={() => void save(true)}>
               {versionSchedule || publishAt ? t("readerEditor.schedule") : t("contentManager.publish")}
             </Button>
@@ -591,7 +594,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             {notice}
           </p>
         )}
-        <fieldset disabled={saving || actions.pending} className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
+        <fieldset disabled={saving || actions.pending || editionDeleted} className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
           <div className="grid min-w-0 gap-5">
             <Panel title={t("readerEditor.details")}>
               <p className="text-sm text-muted-foreground">{t(originalAndVersion ? "readerEditor.titlesHint" : "readerEditor.sharedHint")}</p>
@@ -688,7 +691,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             </Panel>
             {item && version && (
               <Panel title={t("readerEditor.versionDetails")}>
-                <VersionEditor key={`${version.id}:${draftGeneration}`} content={item} version={version} client={client} labels={p.labels} onError={p.onError} media={false} chapters={false} showTraits={false} actionsTarget={versionActionsTarget} readerToolsTarget={versionReaderTarget}
+                <VersionEditor key={`${version.id}:${draftGeneration}`} content={item} version={version} client={client} labels={p.labels} onError={p.onError} media={false} chapters={false} showTraits={false} actionsTarget={versionActionsTarget} readerToolsTarget={versionReaderTarget} restoreTarget={versionRestoreTarget} onRestored={() => { history.clear(); ed.reload(); }}
                   scheduleTarget={versionScheduleTarget} onScheduleChange={setVersionSchedule} onLanguagesChange={onVersionLanguagesChange} scheduleDisabled={saving}
                   beforeDelete={async () => {
                     if (!current()) return false;
@@ -697,7 +700,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                   onDeleted={() => {
                     if (!current()) return;
                     discardLocalEdits();
-                    const next = versions.find((v) => v.id !== version.id);
+                    const next = versions.find((v) => v.id !== version.id && v.state !== "deleted");
                     if (p.onVersionChange) p.onVersionChange(next ?? null, { replace: true });
                     else setChosen(next?.code ?? "");
                     ed.reload();

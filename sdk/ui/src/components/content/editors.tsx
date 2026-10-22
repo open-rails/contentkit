@@ -424,36 +424,40 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
     );
   }
   const languages = model?.languages ?? [];
+  const activeVersions = versions.filter((version) => version.state !== "deleted");
+  const deletedVersions = versions.filter((version) => version.state === "deleted");
+  const versionRow = (v: Version, handle?: ReactNode) => (
+    <div className="grid gap-2 rounded-md border border-border p-2" data-ckui="version-row" data-version={v.id}>
+      <div className="flex flex-wrap items-center gap-2">
+        {activeVersions.length > 1 && handle}
+        <span className="min-w-0 flex-1 font-medium break-words">{versionLabel(v, languageName, p.labels)}</span>
+        <Badge variant={v.live ? "default" : "outline"}>{t(v.state === "deleted" ? "contentManager.deleted" : v.live ? "contentEditor.live" : v.state === "draft" ? "contentManager.draft" : "contentManager.scheduled")}</Badge>
+        {v.access && <Badge variant="secondary">{t(`contentEditor.level_${v.access.level}`)}</Badge>}
+        {v.pages ? <span className="text-xs text-muted-foreground">{t("contentEditor.pageCount", { count: v.pages })}</span> : null}
+        <Button type="button" size="xs" variant="ghost" aria-expanded={open === v.id} onClick={() => open === v.id ? setOpen(null) : reveal(v.id)}>
+          {t(open === v.id ? "contentEditor.close" : "contentEditor.edit")}
+        </Button>
+      </div>
+      {opened.includes(v.id) && <div hidden={open !== v.id}><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
+    </div>
+  );
   return (
     <Section title={t("contentEditor.versions")} ckui="versions-editor">
       <SortableList
-        items={versions}
+        items={activeVersions}
         id={(v) => v.id}
         name={(v) => versionLabel(v, languageName, p.labels)}
         label={t("contentEditor.versions")}
-        disabled={order.pending || versions.length < 2}
+        disabled={order.pending || activeVersions.length < 2}
+        trailing={deletedVersions.map((v) => <li key={v.id} data-ckui="deleted-version">{versionRow(v)}</li>)}
         onMove={(from, to) => {
-          const ids = versions.map((v) => v.id);
+          const ids = activeVersions.map((v) => v.id);
           const [moved] = ids.splice(from, 1);
           ids.splice(to, 0, moved!);
           void order.run(() => client.contents.orderVersions(content.id, ids));
         }}
       >
-        {(v, handle) => (
-          <div className="grid gap-2 rounded-md border border-border p-2" data-ckui="version-row" data-version={v.id}>
-            <div className="flex flex-wrap items-center gap-2">
-              {versions.length > 1 && handle}
-              <span className="min-w-0 flex-1 font-medium break-words">{versionLabel(v, languageName, p.labels)}</span>
-              <Badge variant={v.live ? "default" : "outline"}>{t(v.live ? "contentEditor.live" : v.state === "draft" ? "contentManager.draft" : "contentManager.scheduled")}</Badge>
-              {v.access && <Badge variant="secondary">{t(`contentEditor.level_${v.access.level}`)}</Badge>}
-              {v.pages ? <span className="text-xs text-muted-foreground">{t("contentEditor.pageCount", { count: v.pages })}</span> : null}
-              <Button type="button" size="xs" variant="ghost" aria-expanded={open === v.id} onClick={() => open === v.id ? setOpen(null) : reveal(v.id)}>
-                {t(open === v.id ? "contentEditor.close" : "contentEditor.edit")}
-              </Button>
-            </div>
-            {opened.includes(v.id) && <div hidden={open !== v.id}><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
-          </div>
-        )}
+        {versionRow}
       </SortableList>
       <ErrorLine error={order.error} />
       <AddVersion
@@ -531,6 +535,9 @@ export interface VersionEditorProps extends Common {
   /** Let the host confirm discarding other unsaved fields before deleting this edition. */
   beforeDelete?: () => boolean | Promise<boolean>;
   onDeleted?: (version: Version) => void;
+  onRestored?: (version: Version) => void;
+  /** Optional enabled slot outside a deleted edition's read-only fieldset. */
+  restoreTarget?: HTMLElement | null;
   /** Optional header slot for this edition's staged publication time. */
   scheduleTarget?: HTMLElement | null;
   onScheduleChange?: (at: string) => void;
@@ -552,7 +559,7 @@ export function VersionEditor({ content, version, media = true, chapters = true,
   return <VersionForm key={key} content={content} version={version} model={model} media={media} chapters={chapters} {...p} client={client} />;
 }
 
-function VersionForm({ content, version: v, model, media, chapters = true, beforeDelete, onDeleted, scheduleTarget, onScheduleChange, onLanguagesChange, scheduleDisabled, showTraits = true, actionsTarget, readerToolsTarget, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean; chapters?: boolean; beforeDelete?: () => boolean | Promise<boolean>; onDeleted?: (version: Version) => void; scheduleTarget?: HTMLElement | null; onScheduleChange?: (at: string) => void; onLanguagesChange?: (languages: readonly string[]) => void; scheduleDisabled?: boolean; showTraits?: boolean; actionsTarget?: HTMLElement | null; readerToolsTarget?: HTMLElement | null }) {
+function VersionForm({ content, version: v, model, media, chapters = true, beforeDelete, onDeleted, onRestored, restoreTarget, scheduleTarget, onScheduleChange, onLanguagesChange, scheduleDisabled, showTraits = true, actionsTarget, readerToolsTarget, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean; chapters?: boolean; beforeDelete?: () => boolean | Promise<boolean>; onDeleted?: (version: Version) => void; onRestored?: (version: Version) => void; restoreTarget?: HTMLElement | null; scheduleTarget?: HTMLElement | null; onScheduleChange?: (at: string) => void; onLanguagesChange?: (languages: readonly string[]) => void; scheduleDisabled?: boolean; showTraits?: boolean; actionsTarget?: HTMLElement | null; readerToolsTarget?: HTMLElement | null }) {
   const { t } = useMessages();
   const id = useId();
   const client = useContentKitClient(p.client);
@@ -579,7 +586,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
   };
-  useEditorSaveTask(`version:${v.id}`,{label:t("contentEditor.versions"),dirty:fields.dirty.length>0,pending:save.pending||remove.pending,valid,save:submit,order:10});
+  useEditorSaveTask(`version:${v.id}`,{label:t("contentEditor.versions"),dirty:v.state!=="deleted"&&fields.dirty.length>0,pending:save.pending||remove.pending,valid,save:submit,order:10});
   const schedule = <div className="grid gap-1.5">
     <Label htmlFor={`${id}-at`}>{t("contentEditor.versionPublishAt")}</Label>
     <Input id={`${id}-at`} className="h-8" type="datetime-local" value={at} onChange={(e)=>edit({at:e.target.value})} disabled={save.pending || scheduleDisabled} />
@@ -602,6 +609,15 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     }).then((removed) => { if (removed) onDeleted?.(v); })}>{t("contentEditor.deleteVersion")}</Button>
     <ErrorLine error={remove.error} />
   </>;
+  if (v.state === "deleted") {
+    const restore = <div className="grid gap-2">
+      <Button type="button" size="sm" disabled={save.pending} onClick={() => void save.run(() => client.contents.updateVersion(content.id, v.id, { state: "draft" })).then((restored) => { if (restored) onRestored?.(restored); })}>
+        {t("contentEditor.restoreVersion")}
+      </Button>
+      <ErrorLine error={save.error} />
+    </div>;
+    return restoreTarget === undefined ? restore : restoreTarget && createPortal(restore, restoreTarget);
+  }
   return (
     <div className="grid gap-4 pt-2">
       <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (!coordinated) void submit();}}>

@@ -124,6 +124,7 @@ export const admin: typeof en = {
     wentLive: "自 {date} 起进行中",
   },
   contentManager: {
+    manageVersions: "管理版本",
     noAccess: "你没有管理文章的权限。",
     back: "所有文章",
     title: "文章",

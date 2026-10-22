@@ -89,8 +89,10 @@ function server(options: { failText?: boolean; failPublish?: boolean; media?: Re
     if (method === "GET" && path === "/kinds") return Response.json(options.model ?? model);
     if (method === "GET" && (path === "/manage/gallery" || path === "/manage")) {
       const code = url.searchParams.get("code");
-      return Response.json(code && code !== item.code ? [] : [item]);
+      const deleted = url.searchParams.get("state") === "deleted";
+      return Response.json(code ? code === item.code ? [item] : [] : (item.state === "deleted") === deleted ? [item] : []);
     }
+    if (method === "GET" && path === "/manage/gallery/count") return Response.json({ total: (item.state === "deleted") === (url.searchParams.get("state") === "deleted") ? 1 : 0 });
     if (method === "GET" && path === "/contents/c1") return Response.json(item);
     if (method === "POST" && path === "/contents") {
       item = { ...item, ...body, text: body.text, title: Object.values(body.text as NonNullable<Content["text"]>)[0]!.title };
@@ -118,7 +120,13 @@ function server(options: { failText?: boolean; failPublish?: boolean; media?: Re
     const editedVersion = /^\/contents\/c1\/versions\/([^/]+)$/.exec(path)?.[1];
     if (method === "PATCH" && editedVersion) {
       item = { ...item, versions: item.versions.map((v) => v.id === editedVersion ? { ...v, ...body } : v) };
+      if (item.state === "deleted" && body.state === "draft") item = { ...item, state: "published", deleted_at: undefined };
       return Response.json(item.versions.find((v) => v.id === editedVersion));
+    }
+    if (method === "DELETE" && editedVersion) {
+      item = { ...item, versions: item.versions.map((v) => v.id === editedVersion ? { ...v, state: "deleted" } : v) };
+      if (item.versions.every((v) => v.state === "deleted")) item = { ...item, state: "deleted", live: false, deleted_at: at };
+      return new Response(null, { status: 204 });
     }
     if (method === "GET" && editedVersion) return Response.json(item.versions.find((v) => v.id === editedVersion));
     if (method === "GET" && path.endsWith("/page-notices")) return Response.json({ notices: [] });
@@ -830,4 +838,48 @@ it("stages continuous reading layout in Reader tools and preserves unrelated edi
   expect(s.item.versions[0]?.traits).toEqual(["preserve_trait", "manhwa_style"]);
   expect(s.item.versions[1]?.traits).toEqual([]);
   expect(s.item.versions[0]?.state).toBe("published");
+});
+
+it("deletes the last edition, opens it from Trash, and restores only that edition as a private draft", async () => {
+  const direct: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, access_scope: "version" } } };
+  const s = server({ model: direct }), user = userEvent.setup();
+  function Route() {
+    const [at, setAt] = useState({ pathname: "/galleries/GALLERY01/versions/VERSION1", search: "" });
+    return <ContentManager client={s.client} kind="gallery" basePath="/galleries" navigation={{ ...at, navigate: (to) => setAt({ pathname: to.split("?")[0]!, search: to.includes("?") ? `?${to.split("?")[1]}` : "" }) }} />;
+  }
+  render(<Route />);
+  await user.click(await screen.findByRole("button", { name: "Delete version" }));
+  const confirmation = await screen.findByRole("alertdialog", { name: "Delete version" });
+  await user.click(within(confirmation).getByRole("button", { name: "Delete version" }));
+  await screen.findByRole("button", { name: "Restore version" });
+  expect(s.item.state).toBe("deleted");
+  await user.click(screen.getByRole("button", { name: "All items" }));
+  await user.click(await screen.findByRole("button", { name: "Deleted" }));
+  const manage = await screen.findByRole("button", { name: "Manage versions" });
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select every item on this page" })).toBeNull();
+  await user.click(manage);
+  const restore = await screen.findByRole("button", { name: "Restore version" });
+  expect(restore).toBeEnabled();
+  expect(restore.closest("fieldset[disabled]")).toBeNull();
+  expect(screen.getByLabelText("Title")).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete version" })).toBeNull();
+  await user.click(restore);
+  await waitFor(() => expect(screen.getByLabelText("Title")).toBeEnabled());
+  expect(s.item.versions[0]?.state).toBe("draft");
+  expect(writes(s).map((call) => [call.method, call.path, call.body])).toEqual([
+    ["DELETE", "/contents/c1/versions/v1", undefined],
+    ["PATCH", "/contents/c1/versions/v1", { state: "draft" }],
+  ]);
+});
+
+it("defaults to an undeleted edition even if a deleted edition has the first position", async () => {
+  const s = server({ versions: [{ ...edition, state: "deleted" }, { ...otherEdition, position: 2 }] });
+  const changed = vi.fn();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" onVersionChange={changed} />);
+  await waitFor(() => expect(changed).toHaveBeenCalled());
+  expect(changed.mock.calls[0]?.[0]?.id).toBe("v2");
+  expect(screen.queryByRole("button", { name: "Restore version" })).toBeNull();
 });

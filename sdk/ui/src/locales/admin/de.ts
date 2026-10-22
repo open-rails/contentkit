@@ -124,6 +124,7 @@ export const admin: typeof en = {
     wentLive: "Live seit {date}",
   },
   contentManager: {
+    manageVersions: "Versionen verwalten",
     noAccess: "Du hast keine Berechtigung, Beiträge zu verwalten.",
     back: "Alle Beiträge",
     title: "Beiträge",

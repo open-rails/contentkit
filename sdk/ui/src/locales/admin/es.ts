@@ -124,6 +124,7 @@ export const admin: typeof en = {
     wentLive: "Activa desde el {date}",
   },
   contentManager: {
+    manageVersions: "Administrar versiones",
     noAccess: "No tienes permiso para gestionar publicaciones.",
     back: "Todas las publicaciones",
     title: "Publicaciones",

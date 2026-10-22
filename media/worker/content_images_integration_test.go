@@ -391,7 +391,10 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	eventually(t, "the forked pages", time.Minute, pages)
 	// A rule change republishes the versions that inherit it.
 	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+g.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.PPV}}, nil)
-	must(http.StatusNoContent, staff, "DELETE", "/v1/contents/"+g.ID, nil, nil)
+	must(http.StatusConflict, staff, "DELETE", "/v1/contents/"+g.ID, nil, nil)
+	for _, version := range []string{from, forked.ID} {
+		must(http.StatusNoContent, staff, "DELETE", "/v1/contents/"+g.ID+"/versions/"+version, nil, nil)
+	}
 	if n, err := cat.PurgeDeleted(ctx); err != nil || n != 1 {
 		t.Fatalf("PurgeDeleted %d %v", n, err)
 	}

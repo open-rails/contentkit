@@ -85,6 +85,7 @@ export const content: typeof en = {
     versionPublishAt: "上线时间（可选）",
     versionDraft: "草稿",
     ownAccess: "单独的访问规则",
+    restoreVersion: "恢复版本",
     deleteVersion: "删除版本",
     media: "媒体",
     segments: "章节",

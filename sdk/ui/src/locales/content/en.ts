@@ -84,6 +84,7 @@ export const content = {
     versionPublishAt: "Goes live",
     versionDraft: "Draft",
     ownAccess: "Its own access rule",
+    restoreVersion: "Restore version",
     deleteVersion: "Delete version",
     media: "Media",
     segments: "Chapters",

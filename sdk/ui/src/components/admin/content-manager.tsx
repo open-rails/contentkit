@@ -295,9 +295,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const tiers = model?.tiers ?? [];
   // Reader works take one ZIP per draft, players one video per draft.
   const presentation = spec?.presentation;
-  const canDeleteParent = !!spec && (presentation !== "reader" || spec.versions.hidden === true);
+  const canDeleteParent = !!spec?.versions.hidden;
   const canChangeParentAccess = !!spec && spec.access_scope !== "version";
-  const canSelect = selectable && (deleted || canDeleteParent || (canChangeParentAccess && tiers.length > 0));
+  const canSelect = selectable && (deleted ? canDeleteParent : canDeleteParent || (canChangeParentAccess && tiers.length > 0));
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
   const drafts = useRef(new Map<string, Content>()).current;
@@ -565,7 +565,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                 )}
                 <RowCover url={c.cover?.url} />
                 <div className="grid min-w-0 flex-1 gap-1">
-                  {deleted ? (
+                  {deleted && canDeleteParent ? (
                     <span className="font-medium break-words line-through">{c.title}</span>
                   ) : (
                     <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => open(c)}>
@@ -591,10 +591,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   <ErrorLine error={rowErrors[c.id] ?? null} />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {deleted ? (
+                  {deleted ? canDeleteParent ? (
                     <Button size="sm" variant="outline" disabled={del.pending} onClick={() => void del.run(() => client.contents.restore(c.id))}>
                       {t("moderation.restore")}
                     </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => open(c)}>{t("contentManager.manageVersions")}</Button>
                   ) : (
                     <>
                       {toggleable(c) && (
@@ -900,10 +902,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         </p>
       )}
       <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-        <Button type="submit" disabled={ed.saving}>
+        <Button type="submit" disabled={ed.saving || item?.state === "deleted"}>
           {ed.saving ? t("common.saving") : t(item ? "common.save" : "contentManager.createDraft")}
         </Button>
-        {item && !item.live && (
+        {item && item.state !== "deleted" && !item.live && (
           <Button type="button" variant="outline" disabled={ed.saving} onClick={() => void publish(true)}>
             {t("contentManager.publish")}
           </Button>
@@ -913,7 +915,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             {t("contentManager.unpublish")}
           </Button>
         )}
-        {item && (
+        {item && hidden && (
           <Button type="button" variant="destructive" className="ms-auto" disabled={ed.saving} onClick={() => void remove()}>
             {t("contentManager.delete")}
           </Button>

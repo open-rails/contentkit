@@ -123,6 +123,7 @@ export const admin = {
     wentLive: "Live since {date}",
   },
   contentManager: {
+    manageVersions: "Manage versions",
     noAccess: "You don't have permission to manage this content.",
     back: "All items",
     title: "Content",
