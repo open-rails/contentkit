@@ -5,6 +5,7 @@ name: media-video
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
     - 'media/**'
+    - 'migrations/**'
     - '!media/image/**'
     - '!**.md'
     - 'go.mod'
@@ -16,12 +17,14 @@ name: media-video
     branches: [master, 'next/**']
     paths:
     - 'media/**'
+    - 'migrations/**'
     - '!media/image/**'
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
     - '.github/workflows/media-video.yaml'
   workflow_call: {}
+  workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:

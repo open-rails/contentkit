@@ -5,6 +5,7 @@ name: media-image
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
     - 'media/**'
+    - 'migrations/**'
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
@@ -17,6 +18,7 @@ name: media-image
     branches: [master, 'next/**']
     paths:
     - 'media/**'
+    - 'migrations/**'
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
@@ -24,6 +26,7 @@ name: media-image
     - '!cmd/*/Dockerfile'
     - '.github/workflows/media-image.yaml'
   workflow_call: {}
+  workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
