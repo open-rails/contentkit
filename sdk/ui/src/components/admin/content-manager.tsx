@@ -6,7 +6,7 @@ import { toContentKitError, type ContentKitError } from "../../client/errors.js"
 import { imageRefs } from "../../client/contents.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { Content, GroupCard, GroupDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
@@ -82,7 +82,7 @@ export function contentStatus(c: Content): ContentStatus {
   return "published";
 }
 
-const choices = (list?: readonly Choice[]) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: c } : c));
+const choices = (list?: readonly Choice[], name: (code: string) => string = (c) => c) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: name(c) } : c));
 const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destructive"> = { published: "default", scheduled: "secondary", draft: "outline", held: "secondary", rejected: "destructive" };
 const states = ["draft", "scheduled", "published"] as const;
 
@@ -730,7 +730,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const m = useMessages();
   const { t } = m;
   const ids = useId();
-  const languages = choices(offered);
+  const languageName = useLanguageName();
+  const languages = choices(offered, languageName);
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
   const ed = useContent(id, kind, language, { client });
   // A hidden version's cover is edited here; a visible version's in its own form.

@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { PollState } from "../../client/content/polls.js";
 import type { Poll } from "../../client/generated/wire.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
 import { Badge } from "#ckui/ui/badge";
@@ -40,7 +40,7 @@ export function pollState(p: Poll, now = Date.now()): PollState {
 }
 
 const STATES: readonly PollState[] = ["live", "scheduled", "closed", "inactive"];
-const choices = (list?: readonly Choice[]) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: c } : c));
+const choices = (list?: readonly Choice[], name: (code: string) => string = (c) => c) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: name(c) } : c));
 
 /**
  * Staff: every poll, by language, month or day, state and question, to
@@ -62,6 +62,7 @@ function Polls({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
   const access = usePollManagerAccess({ client: p.client });
+  const languageName = useLanguageName();
   if (access.loading) return <Rows />;
   if (!access.allowed.polls) return <NoAccess>{t("pollManager.noAccess")}</NoAccess>;
   if (!loc.view) return <List {...p} loc={loc} />;
@@ -70,7 +71,7 @@ function Polls({ basePath, navigation, ...p }: Inner) {
       {t("pollManager.back")}
     </Button>
   );
-  const languages = choices(p.languages);
+  const languages = choices(p.languages, languageName);
   return (
     <>
       {back}
@@ -94,7 +95,8 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
   const m = useMessages();
   const { t } = m;
   const ids = useId();
-  const languages = choices(offered);
+  const languageName = useLanguageName();
+  const languages = choices(offered, languageName);
   const query = loc.query.get("q") ?? "";
   const language = loc.query.get("language") ?? "";
   const stateParam = loc.query.get("state") ?? "";
