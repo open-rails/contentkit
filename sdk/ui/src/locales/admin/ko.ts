@@ -204,6 +204,8 @@ export const admin: typeof en = {
     noMatches: "이 필터와 일치하는 항목이 없습니다.",
     clearFilters: "필터 지우기",
     emptyAll: "아직 항목이 없습니다.",
+    newNamed: "새 {one}",
+    emptyNamed: "아직 {other} 항목이 없습니다.",
   },
   mediaPanel: {
     noAccess: "이 항목의 미디어를 편집할 수 없습니다.",

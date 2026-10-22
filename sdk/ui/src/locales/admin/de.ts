@@ -204,6 +204,8 @@ export const admin: typeof en = {
     noMatches: "Keine Einträge passen zu diesen Filtern.",
     clearFilters: "Filter zurücksetzen",
     emptyAll: "Noch keine Einträge.",
+    newNamed: "{one} erstellen",
+    emptyNamed: "Noch keine {other}.",
   },
   mediaPanel: {
     noAccess: "Du kannst die Medien dieses Eintrags nicht bearbeiten.",

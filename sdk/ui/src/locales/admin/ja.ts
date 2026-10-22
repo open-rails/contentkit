@@ -204,6 +204,8 @@ export const admin: typeof en = {
     noMatches: "条件に一致する項目はありません。",
     clearFilters: "絞り込みを解除",
     emptyAll: "まだ項目はありません。",
+    newNamed: "新しい{one}",
+    emptyNamed: "まだ{other}はありません。",
   },
   mediaPanel: {
     noAccess: "このアイテムのメディアは編集できません。",

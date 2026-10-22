@@ -204,6 +204,8 @@ export const admin: typeof en = {
     noMatches: "Ningún elemento coincide con estos filtros.",
     clearFilters: "Quitar filtros",
     emptyAll: "Aún no hay elementos.",
+    newNamed: "Crear {one}",
+    emptyNamed: "Aún no hay {other}.",
   },
   mediaPanel: {
     noAccess: "No puedes editar los archivos de este elemento.",

@@ -204,6 +204,8 @@ export const admin: typeof en = {
     noMatches: "没有符合这些筛选条件的项目。",
     clearFilters: "清除筛选",
     emptyAll: "还没有项目。",
+    newNamed: "新建{one}",
+    emptyNamed: "还没有{other}。",
   },
   mediaPanel: {
     noAccess: "你无法编辑此项目的媒体。",

@@ -203,6 +203,8 @@ export const admin = {
     noMatches: "No items match these filters.",
     clearFilters: "Clear filters",
     emptyAll: "No items yet.",
+    newNamed: "New {one}",
+    emptyNamed: "No {other} yet.",
   },
   mediaPanel: {
     noAccess: "You can't edit this item's media.",
