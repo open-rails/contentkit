@@ -170,6 +170,25 @@ func TestImport(t *testing.T) {
 	})
 }
 
+// Chapter folders that each restart their numbering keep the archive's
+// order: ch2/01 follows ch1/02 rather than sorting in beside ch1/01.
+func TestImportKeepsFoldersThatRestartNumbering(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	archive := zipOf(t, map[string][]byte{"ch1/01.png": pngOf(t, 20, 30, 1), "ch1/02.png": pngOf(t, 20, 30, 2),
+		"ch2/01.png": pngOf(t, 20, 30, 3), "ch2/02.png": pngOf(t, 20, 30, 4)})
+	s.mustUpload(s.creator, ref, "import/book", "application/zip", archive)
+	p := s.plan(access.Actor{Anonymous: true, IP: "203.0.113.2"}, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
+	var names []string
+	for _, pg := range p.Segments[0].Pages {
+		names = append(names, pg.Name)
+	}
+	if strings.Join(names, ",") != "01,02,01 (2),02 (2)" {
+		t.Fatalf("imported order %v", names)
+	}
+}
+
 func TestImportReservesLegacyPhysicalFilenames(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	v := s.version(s.content("gallery", `{"level":"public"}`))
