@@ -334,11 +334,40 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var draftVersion string
+	if err := pool.QueryRow(ctx, `SELECT id FROM `+table("content_versions")+` WHERE tenant_id=$1 AND content_id=$2`, env.Tenant, ids[0]).Scan(&draftVersion); err != nil {
+		t.Fatal(err)
+	}
+	draftRef, err := e.media.reg.VersionRef("blog", ids[0], draftVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftItem, err := e.media.reg.Item(draftRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Give the version a manifest incarnation without starting image processing.
+	draftManifest, err := e.media.jobs.Manifests().Edit(ctx, draftRef, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "Abandoned"}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `UPDATE `+table("content_items")+` SET created_at = now() - interval '2 hours' WHERE id = $1`, ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", ids[0]) == 0 {
-		t.Fatalf("expired %d (%v), folder deletions queued %d", n, err, jobs("contentkit_media_delete_folder", ids[0]))
+	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 {
+		t.Fatalf("expired %d (%v)", n, err)
+	}
+	var deletions int
+	var incarnation string
+	if err := pool.QueryRow(ctx, `SELECT count(*),coalesce(min(args->>'incarnation'),'') FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+`
+WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.Prefix()).Scan(&deletions, &incarnation); err != nil {
+		t.Fatal(err)
+	}
+	if deletions != 1 || incarnation != draftManifest.Incarnation || !strings.HasSuffix(draftItem.Prefix(), "/blog/"+draftVersion+"/") {
+		t.Fatalf("draft version deletion: count=%d prefix=%q incarnation=%q want=%q", deletions, draftItem.Prefix(), incarnation, draftManifest.Incarnation)
 	}
 	// The daily orphan sweep lists the catalog kinds' folders; nothing is past its grace yet.
 	if n, err := e.sweepOrphans(ctx); err != nil || n != 0 {
