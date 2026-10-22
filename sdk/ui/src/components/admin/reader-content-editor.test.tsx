@@ -665,6 +665,12 @@ it("names the gallery's status and the version's own status, and says why a publ
   expect(await screen.findByText("Readers can't see this version while the gallery is held for review.")).toBeVisible();
   view.unmount();
 
+  // A live gallery with a held edit keeps showing its approved snapshot: readers still see the version.
+  view = open({ state: "published", moderation: "held", live: true, versions: [{ ...edition, live: true }] });
+  expect(await screen.findByText("Gallery · Held for review")).toBeVisible();
+  expect(screen.queryByText(/^Readers can't see this version/)).toBeNull();
+  view.unmount();
+
   open({ state: "published", live: true, versions: [{ ...edition, live: true }] });
   expect(await screen.findByText("Gallery · Published")).toBeVisible();
   expect(await screen.findByText("This version (English) · Published")).toBeVisible();

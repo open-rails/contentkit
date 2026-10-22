@@ -745,7 +745,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                       status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : "contentManager.published"),
                     })}
                   </p>
-                  {version.state === "published" && status !== "published" && (
+                  {version.state === "published" && !item?.live && status !== "published" && (
                     <p className="text-pretty text-muted-foreground">
                       {status === "scheduled"
                         ? item.publish_at && Date.parse(item.publish_at) > Date.now() ? t("readerEditor.hiddenUntilDate", { date: formatDate(m, item.publish_at) }) : t("readerEditor.hiddenUntilLive")
