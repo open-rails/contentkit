@@ -31,7 +31,7 @@ import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionEditor, SegmentsEditor, AddVersion, versionLabel, allowsIndividualSales, defaultAccessRule } from "../content/editors.js";
 import { OfferFields } from "../content/offer-fields.js";
-import { ErrorLine, contentError, useAction } from "../social/parts.js";
+import { ErrorLine, contentError, formatDate, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
 import { EditorSaveContext, readerMediaReady, useEditorSaveCoordinator } from "../content/editor-save.js";
 import { ReaderManifestEditor } from "./reader-manifest.js";
@@ -548,7 +548,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
           <div className="min-w-0 flex-1">
             <h1 className="sr-only">{text.title || t("readerEditor.new")}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Badge variant={item?.live ? "default" : "outline"}>{t(`contentManager.${status}`)}</Badge>
+              <Badge variant={item?.live ? "default" : "outline"}>{t("readerEditor.galleryStatus", { status: t(`contentManager.${status}`) })}</Badge>
               {version && <span>{t("contentEditor.pageCount", { count: folder.read.read ? selectedPages : version.pages ?? 0 })}</span>}
               {allocating && <span role="status">{t("common.saving")}</span>}
             </div>
@@ -736,6 +736,23 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
               <ErrorLine error={offer.error} />
             </Panel>}
             <Panel title={t("readerEditor.publication")}>
+              {item && version && (
+                <div className="grid gap-1 text-sm">
+                  <p className="font-medium">
+                    {t("readerEditor.versionStatus", {
+                      language: version.languages.map((l) => languages.find((x) => x.value === l)?.label ?? l).join(", "),
+                      status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : "contentManager.published"),
+                    })}
+                  </p>
+                  {version.state === "published" && status !== "published" && (
+                    <p className="text-pretty text-muted-foreground">
+                      {status === "scheduled"
+                        ? item.publish_at && Date.parse(item.publish_at) > Date.now() ? t("readerEditor.hiddenUntilDate", { date: formatDate(m, item.publish_at) }) : t("readerEditor.hiddenUntilLive")
+                        : t(`readerEditor.hidden_${status}`)}
+                    </p>
+                  )}
+                </div>
+              )}
               {spec.comment_modes?.length !== 1 && (
                 <>
                   <Label htmlFor={`${ids}-comments`}>{t("contentEditor.comments")}</Label>
