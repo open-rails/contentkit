@@ -38,15 +38,15 @@ func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []Target) err
 	// A publisher locks and retires publications while it holds their
 	// version: lock the versions before them, after their contents as
 	// catalog writes and media callbacks do.
-	contents, versions := make([]string, len(targets)), make([]string, len(targets))
+	contents, ids := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
-		contents[i], versions[i] = t.Content, t.Version
+		contents[i], ids[i] = t.Content, t.Version
 	}
 	if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, s.o.Tenant, contents); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.versions+` v JOIN unnest($2::text[], $3::text[]) AS t(content, version)
-ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 ORDER BY v.id FOR UPDATE OF v`, s.o.Tenant, contents, versions); err != nil {
+ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 ORDER BY v.id FOR UPDATE OF v`, s.o.Tenant, contents, ids); err != nil {
 		return err
 	}
 	refs, kinds, err := s.itemRefs(ctx, tx, targets)
