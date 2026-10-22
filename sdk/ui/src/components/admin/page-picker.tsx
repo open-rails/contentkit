@@ -150,7 +150,7 @@ export function PagePicker({ label, pages, value, extras = [], onChange, classNa
   return (
     <>
       <Button type="button" size="sm" variant="outline" aria-label={label} className={cn("h-auto gap-2 py-1 ps-1", className)} onClick={() => setOpen(true)} data-ckui="page-picker">
-        <span className="flex h-10 w-7 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-muted text-[10px] tabular-nums text-muted-foreground">
+        <span className="flex h-20 w-14 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-muted text-xs tabular-nums text-muted-foreground">
           {current?.url ? <img src={current.url} alt="" className="size-full object-cover" /> : current ? index + 1 : null}
         </span>
         <span className="tabular-nums">{extra ? extra.label : current ? t("pagePicker.page", { n: index + 1 }) : t("pagePicker.choose")}</span>
@@ -169,7 +169,7 @@ export function PagePicker({ label, pages, value, extras = [], onChange, classNa
               ))}
             </div>
           )}
-          <ul className="grid max-h-[60vh] grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-2 overflow-y-auto p-1">
+          <ul className="grid max-h-[60vh] grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2 overflow-y-auto p-1">
             {pages.map((p, i) => (
               <li key={`${p.id}:${i}`}>
                 <button

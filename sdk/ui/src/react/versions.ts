@@ -6,7 +6,7 @@ import { isPending } from "../client/versions.js";
 import { sleep } from "../client/media/client.js";
 import { useMessages } from "../i18n/context.js";
 import type { Translator } from "../i18n/messages.js";
-import { useMediaRead, type ReadWindow } from "./read.js";
+import { useMediaGrantExpired, useMediaRead, type ReadWindow } from "./read.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 export interface UseReaderPlan {
@@ -47,15 +47,25 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   const key = content && version ? keyOf("reader-plan", scope, content, version) : null;
   const r = useResource<ReaderPlan | Pending>(store, key, { type: "reader-plan", id: version ?? undefined }, (s) => client.versions.reader(content!, version!, s));
   const pending = isPending(r.data);
-  const plan = r.data && !pending ? (r.data as ReaderPlan) : null;
+  const terminal = !!r.error && ([401, 403, 404, 410].includes(r.error.status) || ["unauthorized", "forbidden", "not_found", "gone"].includes(r.error.code));
+  // A retry clears the resource's error before it has new data. Keep a denied
+  // plan hidden until a successful response, including across transient errors.
+  const [deniedKey, setDeniedKey] = useState<string | null>(null);
+  if (terminal && deniedKey !== key) setDeniedKey(key);
+  if (deniedKey === key && r.loaded && !r.loading && !r.error) setDeniedKey(null);
+  const denied = terminal || deniedKey === key && (r.loading || !!r.error);
+  const candidate = !denied && r.data && !pending ? (r.data as ReaderPlan) : null;
+  const expired = useMediaGrantExpired(candidate?.expires);
+  const plan = useMemo(() => expired && candidate ? { ...candidate, previews: [] } : candidate, [candidate, expired]);
   const { data, reload } = r;
   // Every answer schedules the next look: a pending one polls, a plan waits for its next release.
   useEffect(() => {
-    const at = isPending(data) ? Date.now() + (o.poll ?? 5000) : nextReaderRefresh(data ? (data as ReaderPlan) : null);
+    if (r.loading || terminal) return;
+    const at = r.error || isPending(data) ? Date.now() + (o.poll ?? 5000) : nextReaderRefresh(data ? (data as ReaderPlan) : null);
     if (at === null) return;
     const t = setTimeout(reload, Math.min(MAX_DELAY, Math.max(0, at - Date.now()) + 500));
     return () => clearTimeout(t);
-  }, [data, reload, o.poll]);
+  }, [data, reload, o.poll, r.loading, r.error, terminal]);
   return { plan, pending, loading: !!key && (r.loading || !r.loaded), error: r.error, reload };
 }
 

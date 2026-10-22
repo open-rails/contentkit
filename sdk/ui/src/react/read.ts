@@ -54,6 +54,24 @@ export interface UseMediaRead {
 
 const POLL = 2500;
 const NONE: readonly ReadEntry[] = [];
+const MAX_DELAY = 2 ** 31 - 1;
+
+/** Expiry still advances while a renewal is pending, disabled or unsuccessful. */
+export function useMediaGrantExpired(expires?: number): boolean {
+  const [expiredAt, setExpiredAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!expires) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expire = () => {
+      const remaining = expires * 1000 - Date.now();
+      if (remaining <= 0) setExpiredAt(expires);
+      else timer = setTimeout(expire, Math.min(MAX_DELAY, remaining));
+    };
+    expire();
+    return () => clearTimeout(timer);
+  }, [expires]);
+  return !!expires && (expiredAt === expires || expires * 1000 <= Date.now());
+}
 
 /**
  * A read of the item, shared with every hook reading the same item and
@@ -163,5 +181,10 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
     loading = entries.some((e) => e.loading || !e.loaded);
     error = entries.find((e) => e.error)?.error;
   }
-  return { read, loading, error, processing: isProcessing(read), reload, refresh, set };
+  const expired = useMediaGrantExpired(read?.expires);
+  const visible = useMemo(() => expired && read ? {
+    ...read,
+    files: read.files.map((file) => ({ ...file, url: undefined, editor_url: undefined })),
+  } : read, [read, expired]);
+  return { read: visible, loading, error, processing: isProcessing(visible), reload, refresh, set };
 }

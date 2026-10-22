@@ -62,9 +62,16 @@ func TestVersionLookupPreservesSelectionAndAccess(t *testing.T) {
 	if _, err := f.s.LookupVersion(f.ctx, f.viewer("member", "gay.test", ViewerOptions{}), premium); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("direct lookup bypassed the domain's required tag: %v", err)
 	}
-	foreign := *f.s
-	foreign.tenant = "another-tenant"
-	if _, err := foreign.LookupVersion(f.ctx, f.viewer("member", "main.test", ViewerOptions{}), premium); !errors.Is(err, ErrNotFound) {
+	foreign, err := New(f.ctx, Options{Pool: f.pool, Schema: f.schema, Tenant: "another-tenant", Kinds: config(), Auth: f.auth, Now: f.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(foreign.Close)
+	foreignViewer, err := foreign.Viewer(access.WithMemo(f.ctx), ViewerOptions{Actor: f.as("member"), Host: "main.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := foreign.LookupVersion(f.ctx, foreignViewer, premium); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("direct lookup crossed tenant ownership: %v", err)
 	}
 	var response Content

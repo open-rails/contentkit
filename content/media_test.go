@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -209,7 +210,7 @@ func TestMediaResolverShowsPollFolders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 1 || got[refs[0].Key()] != c.want {
+		if len(got) != 1 || !reflect.DeepEqual(got[refs[0].Key()], c.want) {
 			t.Errorf("%s: %v, want only the poll as %+v", c.actor.ID, got, c.want)
 		}
 	}
