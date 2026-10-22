@@ -38,6 +38,15 @@ func versionsScenario(t *testing.T, w *world, f *server, staff, ownerID, owner, 
 	if byCode.ID != v2 || byCode.Code != c2 {
 		t.Fatalf("version by code %+v", byCode)
 	}
+	// Direct version lookup returns the parent with only the requested edition;
+	// it does not inherit access from a different edition or expose a body.
+	var selected catalog.Content
+	f.want(http.StatusOK, anon, "GET", "/versions/"+v2, nil, &selected)
+	if selected.ID != book || selected.SelectedVersionID != v2 || len(selected.Versions) != 1 || selected.Versions[0].ID != v2 || selected.Decision.Allowed || selected.Body != "" {
+		t.Fatalf("direct version lookup changed selection or access: %+v", selected)
+	}
+	f.want(http.StatusNotFound, anon, "GET", "/versions/"+missing, nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/versions/"+book, nil, nil)
 	f.want(404, anon, "GET", "/contents/"+book+"/versions/0000", nil, nil)
 	var resolved contenturl.Resolved
 	f.want(200, anon, "GET", "/codes/"+made.Code+"?v="+strings.ToLower(c2), nil, &resolved)
