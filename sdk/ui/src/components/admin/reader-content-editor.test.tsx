@@ -906,3 +906,34 @@ it("keeps cover choices open during a pending copy and closes the actual crop di
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled();
 });
+
+it.each([
+  { editor_url: "https://test.invalid/private-edited-cover.webp", expected: "https://test.invalid/private-edited-cover.webp" },
+  { editor_url: undefined, expected: "https://test.invalid/private-original-cover.png" },
+])("shows the selected private draft header cover after its authorized media arrives ($expected)", async ({ editor_url, expected }) => {
+  const selected: Version = { ...edition, state: "draft", cover: { image: "i-selected", url: "" } };
+  const s = server({ versions: [selected] });
+  let finish!: (value: ReadResult) => void;
+  s.media.mockReturnValue(new Promise<ReadResult>((resolve) => { finish = resolve; }));
+  const view = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByLabelText("Title");
+  const header = view.container.querySelector('[data-ckui="editor-thumbnail"]')!;
+  expect(header.querySelector("img")).toBeNull();
+  await act(async () => finish(read([
+    page,
+    { path: "cover/i-other.png", type: "image/png", upload: true, url: "https://test.invalid/wrong-cover.png" },
+    { path: "cover/i-selected.png", type: "image/png", upload: true, url: "https://test.invalid/private-original-cover.png", editor_url },
+  ])));
+  await waitFor(() => expect(header.querySelector("img")).toHaveAttribute("src", expected));
+});
+
+it("prefers the published header cover URL over authorized editor previews", async () => {
+  const published: Version = { ...edition, cover: { image: "i-selected", url: "https://test.invalid/public-cover.webp" } };
+  const s = server({ versions: [published], media: read([
+    page,
+    { path: "cover/i-selected.png", type: "image/png", upload: true, url: "https://test.invalid/private-original-cover.png", editor_url: "https://test.invalid/private-edited-cover.webp" },
+  ]) });
+  const view = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByLabelText("Title");
+  await waitFor(() => expect(view.container.querySelector('[data-ckui="editor-thumbnail"] img')).toHaveAttribute("src", "https://test.invalid/public-cover.webp"));
+});

@@ -274,6 +274,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   }, [page, pages]);
   const rules = folder.groups.flatMap((g) => (g.rule ? [g.rule] : []));
   const coverFile = version?.cover?.image ? files.find((f) => f.upload && !ruleFor(rules, f.path)?.page && stem(f.path).split("/").at(-1) === version.cover?.image) : undefined;
+  const coverSrc = version?.cover?.url || coverFile?.editor_url || coverFile?.url;
   const coverCrop = useEditorCrop(ref ?? NO_REF, thumb?.path, { client, onError: p.onError, onSaved: () => setThumb(null) });
   const editThumbnail = (path: string) => setThumb({ path, aspect: ruleFor(rules, path)?.aspect ?? "" });
   const mediaFailed = !!folder.error || folder.queue.items.some((q) => q.status === "failed") || files.some((f) => f.failed);
@@ -545,7 +546,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             onClick={() => setCoverChoices(true)}
             data-ckui="editor-thumbnail"
           >
-            {version?.cover?.url && <img src={version.cover.url} alt="" className="size-full object-cover" />}
+            {coverSrc && <img src={coverSrc} alt="" className="size-full object-cover" />}
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="sr-only">{text.title || t("readerEditor.new")}</h1>
