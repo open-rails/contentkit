@@ -169,6 +169,20 @@ it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad 
   expect(screen.getByLabelText("Anchor 2 offset (%)")).toHaveValue(25);
 });
 
+it("ReaderManifestEditor: upgrades stored page names to page hashes and saves the hashes", async () => {
+  const stored: ReaderMeta = { schema_version: 1, anchors: [{ id: "a1", page: "002", offset_percent: 50 }], background: [{ file: "theme", from_page: "001", to_page: "003" }], foreground: [{ file: "001", page: "001" }] };
+  const s = server({ "PUT /contents/c1/versions/v1/reader": () => undefined });
+  vi.spyOn(s.client.media, "read").mockImplementation(async () => read(stored));
+  const user = userEvent.setup();
+  render(<ReaderManifestEditor kind="gallery" content="c1" version="v1" />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("combobox", { name: "Cue 1 audio" })).toHaveTextContent("001");
+  expect(screen.queryByText(/names a page this version doesn't have/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove cue 1" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Manifest saved.")).toBeInTheDocument();
+  expect(s.bodies["PUT /contents/c1/versions/v1/reader"]).toEqual([{ schema_version: 1, anchors: [{ id: "a1", page: hash("002"), offset_percent: 50 }], background: [{ file: "theme", from_page: hash("001"), to_page: hash("003") }], foreground: [] }]);
+});
+
 it("ReaderManifestEditor: seeds every stored cue and flags one naming audio the version no longer has", async () => {
   const stored: ReaderMeta = { schema_version: 1, anchors: [], background: [{ file: "gone" }], foreground: [{ file: "003", page: hash("003") }] };
   const s = server({ "PUT /contents/c1/versions/v1/reader": () => undefined });

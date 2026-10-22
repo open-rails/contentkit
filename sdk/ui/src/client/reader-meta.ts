@@ -11,6 +11,29 @@ export function readerNames(plan: ReaderPlan): ReaderNames {
   return { pages: plan.segments.flatMap((s) => (s.pages ?? []).map((p) => ({ id: p.id, label: p.name }))), files: (plan.playback?.tracks ?? []).map((t) => t.name) };
 }
 
+/**
+ * meta with old page-name references (a page's file name without extension)
+ * upgraded to that page's hash, as the server does for reader plans: a name
+ * only maps when one page has it and it isn't itself a page hash. The next
+ * save stores hashes alone.
+ */
+export function hashPageNames(meta: ReaderMeta, pages: ReaderNames["pages"]): ReaderMeta {
+  const hashes = new Set(pages.map((p) => p.id));
+  const aliases = new Map<string, string>();
+  for (const page of pages) {
+    const name = page.label.includes(".") ? page.label.slice(0, page.label.lastIndexOf(".")) : page.label;
+    if (!name || hashes.has(name)) continue;
+    aliases.set(name, aliases.has(name) && aliases.get(name) !== page.id ? "" : page.id);
+  }
+  const to = (value: string | undefined) => (value !== undefined && aliases.get(value) ? aliases.get(value) : value);
+  return {
+    ...meta,
+    anchors: (meta.anchors ?? []).map((a) => ({ ...a, page: to(a.page)! })),
+    foreground: (meta.foreground ?? []).map((c) => (c.page === undefined ? c : { ...c, page: to(c.page) })),
+    background: (meta.background ?? []).map((c) => ({ ...c, ...(c.from_page !== undefined && { from_page: to(c.from_page) }), ...(c.to_page !== undefined && { to_page: to(c.to_page) }) })),
+  };
+}
+
 /** An empty schema-1 reader metadata. */
 export const emptyReaderMeta = (): ReaderMeta => ({ schema_version: 1, anchors: [], background: [], foreground: [] });
 

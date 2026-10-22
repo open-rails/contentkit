@@ -3,7 +3,7 @@ import { useContext, useId, useMemo, useRef, useState, type ReactNode } from "re
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta } from "../../client/generated/wire.js";
-import { emptyReaderMeta, matchAudio, readerMetaProblems, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "../../client/reader-meta.js";
+import { emptyReaderMeta, hashPageNames, matchAudio, readerMetaProblems, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "../../client/reader-meta.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useMediaRead } from "../../react/read.js";
@@ -73,8 +73,8 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
   const seed = useMemo(() => {
     if (!read.read) return { meta: null };
     const stored = read.read.meta?.reader as ReaderMeta | undefined;
-    return { meta: stored?.schema_version === 1 ? structuredClone(stored) : emptyReaderMeta() };
-  }, [read.read]);
+    return { meta: stored?.schema_version === 1 ? hashPageNames(structuredClone(stored), media.pages) : emptyReaderMeta() };
+  }, [read.read, media.pages]);
   const draft = useDraft(seed);
   const meta = draft.value.meta;
   const dirty = draft.dirty.length > 0;
