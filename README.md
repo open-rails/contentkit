@@ -538,8 +538,8 @@ checks still apply to each transfer.
 Reader page identity is the SHA-256 digest of the original source image.
 `FileInfo.page_id` and reader-plan page `id` expose that digest; logical names
 are display/path metadata. The manifest's ordered source list determines page
-numbers and consecutive ZIP entry names, without renaming source blobs when
-pages move. Reader metadata and chapter starts refer to source hashes.
+positions and ZIP entry order. Retained filenames and source blobs do not change
+when pages move. Reader metadata and chapter starts refer to source hashes.
 Upload commits remain asynchronous: a staged file has no verified `page_id`
 until placement finishes. Wait for placement before saving reader metadata or
 chapter starts that reference that source; a filename is not a fallback ID.

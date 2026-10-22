@@ -61,17 +61,19 @@ var uploadRoutes = []httpapi.Route[uploadHandler]{
 		Serve: httpapi.H(uploadHandler.frame)},
 }
 
+var mediaReadQuery = []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
+	httpapi.Repeated("path", "at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed"),
+	httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
+	httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")}
+
 var readRoutes = []httpapi.Route[readHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Open,
 		Doc:       "Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.",
 		Responses: []httpapi.Reply{httpapi.OK([]PresetRule{})}},
 		Serve: httpapi.H(readHandler.presets)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}", Resource: "media", Auth: httpapi.Public,
-		Doc: "Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.",
-		Query: []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
-			httpapi.Repeated("path", "at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed"),
-			httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
-			httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")},
+		Doc:       "Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.",
+		Query:     mediaReadQuery,
 		Responses: []httpapi.Reply{httpapi.OK(ReadResult{})}},
 		Serve: httpapi.H(readHandler.read)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/hls/{path...}", Resource: "media", Auth: httpapi.Public,
@@ -81,10 +83,8 @@ var readRoutes = []httpapi.Route[readHandler]{
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: HLSContentType}), httpapi.OK(httpapi.Stream{ContentType: VTTContentType})}},
 		Serve: httpapi.H(readHandler.playlist)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/versions/{version}", Resource: "media", Auth: httpapi.Public,
-		Doc: "A content version's item, read as GET /{kind}/{id} reads any other kind's item.",
-		Query: []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
-			httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
-			httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")},
+		Doc:       "A content version's item, read as GET /{kind}/{id} reads any other kind's item.",
+		Query:     mediaReadQuery,
 		Responses: []httpapi.Reply{httpapi.OK(ReadResult{})}},
 		Serve: httpapi.H(readHandler.read)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/versions/{version}/hls/{path...}", Resource: "media", Auth: httpapi.Public,

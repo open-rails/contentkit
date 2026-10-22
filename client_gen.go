@@ -1452,6 +1452,8 @@ func (c *Client) GetMediaHls(ctx context.Context, kind string, id string, path s
 type GetMediaVersionQuery struct {
 	// only files under this path prefix, e.g. low-res/
 	Prefix string
+	// at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed
+	Path []string
 	// files to skip before the URLs start
 	Offset int
 	// files that get URLs
@@ -1466,6 +1468,9 @@ func (q GetMediaVersionQuery) values() url.Values {
 	v := url.Values{}
 	if q.Prefix != "" {
 		v.Set("prefix", q.Prefix)
+	}
+	for _, s := range q.Path {
+		v.Add("path", s)
 	}
 	if q.Offset != 0 {
 		v.Set("offset", fmt.Sprint(q.Offset))

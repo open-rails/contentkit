@@ -6425,6 +6425,19 @@
             }
           },
           {
+            "name": "path",
+            "in": "query",
+            "description": "at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
             "name": "offset",
             "in": "query",
             "description": "files to skip before the URLs start",
