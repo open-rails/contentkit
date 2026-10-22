@@ -4,7 +4,7 @@ import { toContentKitError } from "../../client/errors.js";
 import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Membership, NewEntity, RefBody, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
-import { ruleFor } from "../../client/media/rules.js";
+import { ruleFor, uploadRules } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContent } from "../../react/contents.js";
@@ -35,6 +35,7 @@ import { ErrorLine, contentError, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
 import { EditorSaveContext, readerMediaReady, useEditorSaveCoordinator } from "../content/editor-save.js";
 import { ReaderManifestEditor } from "./reader-manifest.js";
+import { isAudioRule } from "./page-picker.js";
 import { PageNotices } from "./page-notices.js";
 import { LoadFailed, NoAccess, Rows, useConfirm } from "./shell.js";
 import { contentStatus, type ContentEditorProps } from "./content-manager.js";
@@ -112,7 +113,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const publication = useDraft(useMemo(() => ({ at: item?.publish_at ? localInput(new Date(item.publish_at)) : "" }), [item?.publish_at]));
   const publishAt = publication.value.at;
   const [addingVersion, setAddingVersion] = useState(false);
-  const [toolsOpened, setToolsOpened] = useState<string[]>([]);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   // A page tile picked as the thumbnail's source, and the cover upload being cropped.
   const [page, setPage] = useState<FileInfo | null>(null);
@@ -130,9 +130,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     canonical.current = key;
     onVersionChange(version, { replace: true });
   }, [contentID, versionCode, onVersionChange, item, version]);
-  useEffect(() => {
-    if (toolsExpanded && version) setToolsOpened((ids) => (ids.includes(version.id) ? ids : [...ids, version.id]));
-  }, [toolsExpanded, version]);
   const languageVersion = useRef("");
   useEffect(() => {
     if (!version || languageVersion.current === version.id) return;
@@ -674,12 +671,16 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 <SegmentsEditor key={version.id} content={item} version={version} client={client} onError={p.onError} heading={false} />
               </Panel>
             )}
-            {item && version && (
+            {item && version && uploadRules(folder.read.read).some(isAudioRule) && (
+              <Panel title={t("readerManifest.title")}>
+                <ReaderManifestEditor key={`${version.id}:${draftGeneration}`} kind={item.kind} content={item.id} version={version.id} client={client} onError={p.onError} heading={false} />
+              </Panel>
+            )}
+            {item && version && spec.versions.traits?.includes("manhwa_style") && (
               <details className="rounded-xl border border-border bg-card p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
                 <summary className="cursor-pointer font-medium">{t("readerEditor.readerTools")}</summary>
                 <div hidden={!toolsExpanded} className="mt-4 grid gap-4">
                   <div ref={setVersionReaderTarget} data-ckui="version-reader-settings" />
-                  {toolsOpened.includes(version.id) && <ReaderManifestEditor key={`${version.id}:${draftGeneration}`} kind={item.kind} content={item.id} version={version.id} client={client} onError={p.onError} />}
                 </div>
               </details>
             )}

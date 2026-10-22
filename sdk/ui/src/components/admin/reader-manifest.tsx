@@ -28,6 +28,8 @@ export interface ReaderManifestEditorProps {
   onError?: ContentKitErrorHandler;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Show its title; off where the host's section already names it. Default true. */
+  heading?: boolean;
 }
 
 const NONE = "__none__";
@@ -61,7 +63,7 @@ const shown = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? "
  * from file names in one step), background tracks over a range, and the
  * auto-advance default. Page order is the version's media order.
  */
-export function ReaderManifestEditor({ kind, content, version, client: own, onError, className, appearance }: ReaderManifestEditorProps) {
+export function ReaderManifestEditor({ kind, content, version, client: own, onError, className, appearance, heading = true }: ReaderManifestEditorProps) {
   const { t } = useMessages();
   const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(own);
@@ -104,16 +106,18 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
     const anchorIds = anchors.map((a) => a.id).filter(Boolean);
     return (
       <form className="grid gap-4" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
-        <p className="text-muted-foreground">{t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })}</p>
+        <p className="text-muted-foreground">
+          {t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })} {!names.files.length && t("readerManifest.noAudio")}
+        </p>
         <Defaults meta={meta} edit={edit} />
-        <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
+        <Group title={t("readerManifest.anchors")} help={t("readerManifest.anchorsHelp")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
           onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!.id, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
             <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
         </Group>
-        <Group title={t("readerManifest.foreground")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
+        <Group title={t("readerManifest.foreground")} help={t("readerManifest.foregroundHelp")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
           onAdd={() => edit((m) => ({ ...m, foreground: [...(m.foreground ?? []), { file: names.files[0]!, page: names.pages[0]!.id }] }))}
           extra={
             <Button type="button" size="sm" variant="outline" disabled={!names.files.length} onClick={() => {
@@ -130,7 +134,7 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
               onRemove={() => edit((m) => ({ ...m, foreground: drop(m.foreground, i) }))} />
           ))}
         </Group>
-        <Group title={t("readerManifest.background")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
+        <Group title={t("readerManifest.background")} help={t("readerManifest.backgroundHelp")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
           onAdd={() => edit((m) => ({ ...m, background: [...(m.background ?? []), { file: names.files[0]! }] }))}>
           {(meta.background ?? []).map((c, i) => (
             <BackgroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
@@ -158,7 +162,8 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
   })();
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-3 text-sm", className)} data-ckui="reader-manifest">
-      <h4 className="font-medium">{t("readerManifest.title")}</h4>
+      {heading && <h4 className="font-medium">{t("readerManifest.title")}</h4>}
+      <p className="text-pretty text-muted-foreground">{t("readerManifest.help")}</p>
       {body}
     </ContentKitUiRoot>
   );
@@ -174,10 +179,11 @@ function nextId(anchors: readonly Anchor[]): string {
 const replace = <T,>(list: T[] | undefined, i: number, next: T): T[] => (list ?? []).map((x, j) => (j === i ? next : x));
 const drop = <T,>(list: T[] | undefined, i: number): T[] => (list ?? []).filter((_, j) => j !== i);
 
-function Group({ title, add, disabled, onAdd, extra, children }: { title: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
+function Group({ title, help, add, disabled, onAdd, extra, children }: { title: string; help: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
   return (
     <fieldset className="grid gap-2 rounded-md border border-border p-3">
       <legend className="px-1 font-medium">{title}</legend>
+      <p className="text-pretty text-xs text-muted-foreground">{help}</p>
       {children}
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onAdd}>
