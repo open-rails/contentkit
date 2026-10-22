@@ -236,3 +236,24 @@ it("can render chapter controls under a host-supplied heading", async () => {
   expect(screen.queryByRole("heading", { name: "Chapters" })).toBeNull();
   expect(await screen.findByRole("button", { name: "Add chapter" })).toBeVisible();
 });
+
+it.each([
+  ["draft", "Publish", "published"],
+  ["published", "Unpublish", "draft"],
+] as const)("standalone version %s saves staged fields and %s in one edition-only write", async (state, action, nextState) => {
+  const s = server({
+    "GET /kinds": () => model,
+    "PATCH /contents/p1/versions/v1": ({ body }) => ({ ...version, ...body as object }),
+  });
+  const user = userEvent.setup();
+  render(<VersionEditor content={content()} version={{ ...version, state }} media={false} chapters={false} client={s.client} />);
+  fireEvent.change(await screen.findByLabelText("Goes live"), { target: { value: "2027-01-01T12:00" } });
+  expect(s.calls.some((call) => call.key.startsWith("PATCH"))).toBe(false);
+  await user.click(screen.getByRole("button", { name: action }));
+  await waitFor(() => expect(s.calls.filter((call) => call.key.startsWith("PATCH"))).toHaveLength(1));
+  expect(s.calls.find((call) => call.key.startsWith("PATCH"))).toMatchObject({
+    key: "PATCH /contents/p1/versions/v1",
+    body: { state: nextState, languages: ["en"], publish_at: new Date("2027-01-01T12:00").toISOString() },
+  });
+  expect(screen.queryByRole("switch", { name: "Draft" })).toBeNull();
+});

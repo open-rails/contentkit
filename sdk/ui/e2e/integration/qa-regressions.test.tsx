@@ -23,7 +23,8 @@ it("the content manager creates video content and opens an added version as a dr
   const user = userEvent.setup();
   const { container } = render(<ContentManager client={c} kind="video" languages={["en"]} />);
   await user.click(await screen.findByRole("button", { name: "New item" }, wait));
-  await user.type(screen.getByRole("textbox", { name: "Title" }), "QA video");
+  const title = `QA video ${crypto.randomUUID()}`;
+  await user.type(screen.getByRole("textbox", { name: "Title" }), title);
   await user.click(screen.getByRole("button", { name: "Create draft" }));
   const versions = await waitFor(() => {
     const section = container.querySelector<HTMLElement>('[data-ckui="versions-editor"]');
@@ -37,7 +38,10 @@ it("the content manager creates video content and opens an added version as a dr
   await waitFor(() => expect(versions.querySelectorAll('[data-ckui="version-row"]')).toHaveLength(2), wait);
   const added = versions.querySelectorAll<HTMLElement>('[data-ckui="version-row"]')[1]!;
   expect(added.querySelector('[data-slot="badge"]')).toHaveTextContent("Draft");
-  expect(within(added).getByRole("switch", { name: "Draft" })).toBeChecked();
+  expect(within(added).queryByRole("switch", { name: "Draft" })).toBeNull();
+  const [created] = await c.contents.manage({ kind: "video", q: title });
+  expect(created).toBeDefined();
+  expect((await c.contents.version(created!.id, added.dataset.version!)).state).toBe("draft");
   expect(within(added).getByRole("button", { name: "Close" })).toHaveAttribute("aria-expanded", "true");
   const source = await within(added).findByLabelText("Video file", undefined, wait);
   expect(source).toHaveAttribute("accept", expect.stringContaining("video/mp4"));

@@ -44,7 +44,7 @@ func TestRecordFactsPreservesConcurrentAccessIntegration(t *testing.T) {
 	for _, sql := range []string{
 		`INSERT INTO ` + items + ` (tenant_id,id,kind) VALUES ('facts','content','gallery')`,
 		`INSERT INTO ` + versions + ` (tenant_id,id,content_id,languages) VALUES ('facts','version','content',ARRAY['en'])`,
-		`INSERT INTO ` + facets + ` (tenant_id,content_id,version_id,kind,listing,languages,access_level) VALUES ('facts','content','version','gallery','listed',ARRAY['en'],'public')`,
+		`INSERT INTO ` + facets + ` (tenant_id,content_id,version_id,kind,languages,access_level) VALUES ('facts','content','version','gallery',ARRAY['en'],'public')`,
 	} {
 		if _, err := pool.Exec(ctx, sql); err != nil {
 			t.Fatal(err)

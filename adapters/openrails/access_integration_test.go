@@ -254,9 +254,9 @@ func TestDecideStoredRules(t *testing.T) {
 // does, from its stored rule (Rule.Facet) and memberships.
 func (w *world) facet(it access.Item) {
 	f := it.Rule.Facet()
-	w.exec(`INSERT INTO `+w.table("content_facets")+` (tenant_id, content_id, version_id, kind, listing, languages,
+	w.exec(`INSERT INTO `+w.table("content_facets")+` (tenant_id, content_id, version_id, kind, languages,
 			access_level, access_tiers, access_group_id, access_free_after, group_ids, published_at)
-		VALUES ($1, $2, $3, 'post', 'listed', '{en}', $4, $5, $6, $7, $8, now())`,
+		VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7, $8, now())`,
 		tenant, it.Content, it.Version, f.Level, f.Tiers, f.GroupID, f.FreeAfter, it.Groups)
 }
 

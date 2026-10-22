@@ -48,7 +48,9 @@ func TestManagementOrderIndexUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
+		// This test isolates the index upgrade. Later migrations may change
+		// content fields; the baseline tests cover that complete lineage.
+		if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:boundary+1]); err != nil {
 			t.Fatal(err)
 		}
 	}

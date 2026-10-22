@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, expect, it } from "vitest";
 import type { Content } from "../../src/client/index.js";
@@ -37,8 +37,10 @@ it("uploads, associates, chooses a stored cover and publishes the current galler
   await user.click(await screen.findByRole("option", { name: new RegExp(artistName) }, { timeout: 90_000 }));
   await waitFor(() => expect(view.container.querySelectorAll('[data-ckui="page-tile"]')).toHaveLength(2), wait);
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled(), wait);
-  await user.click(screen.getByRole("button", { name: "Reorder 01.png" }));
-  await user.click(screen.getByRole("button", { name: "Set as thumbnail" }));
+  await user.click(screen.getByRole("button", { name: "Reorder 1.png" }));
+  await user.click(screen.getByRole("button", { name: "Thumbnail" }));
+  const choices = await screen.findByRole("dialog");
+  await user.click(within(choices).getByRole("button", { name: "Set as thumbnail" }));
   // Surface a failed copy or cover update instead of only a missing dialog.
   await waitFor(() => {
     const alert = screen.queryAllByRole("alert").map((a) => a.textContent).join("; ");

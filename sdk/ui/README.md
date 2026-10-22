@@ -836,7 +836,9 @@ The host still owns navigation outside the flow, including browser Back handling
   selected edition's staged release time. `access_scope: version` presents a
   direct edition access rule instead of a parent rule/inheritance toggle.
   The shared Save includes edition details; Unpublish and Delete affect the
-  selected edition. Trait toggles are omitted in the reader workspace; version
+  selected edition. Standalone `VersionEditor` exposes explicit Publish/Unpublish
+  actions that save staged edition fields with the state change in one write;
+  the parent item's publication remains separate. Trait toggles are omitted in the reader workspace; version
   tags use the ordinary entity picker. Reading layout lives under Reader tools
   when the kind declares `manhwa_style`; Paged / Continuous vertical stages that
   existing reader behavior until the same Save. The display-title field follows

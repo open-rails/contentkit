@@ -570,12 +570,12 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   const remove = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
   const valid=langs.length>0&&(!(directAccess||own)||complete(rule));
-  const submit=async()=>{
+  const submit=async(state?: Version["state"])=>{
     if(!valid)return false;
     setSaved(false);
     const settle=fields.checkpoint();
     const accessChanged = fields.dirty.includes("own") || fields.dirty.includes("rule");
-    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(accessChanged?(directAccess||own?{access:cleanRule(rule)}:{clear_access:true}):{})}));
+    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(state?{state}:{}),...(accessChanged?(directAccess||own?{access:cleanRule(rule)}:{clear_access:true}):{})}));
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
   };
@@ -628,6 +628,9 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
           {!coordinated && <>
             <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
               {save.pending ? t("common.saving") : t("common.save")}
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit(v.state === "draft" ? "published" : "draft")}>
+              {t(v.state === "draft" ? "contentManager.publish" : "contentManager.unpublish")}
             </Button>
             <Saved show={saved} />
           </>}

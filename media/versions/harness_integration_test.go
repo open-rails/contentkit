@@ -524,8 +524,8 @@ func (s *site) version(content string) versions.Target {
 	s.exec(`INSERT INTO `+s.table("content_versions")+` (tenant_id, id, content_id, position, languages, state, published_at)
 SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND content_id = $3), 0), '{en}', 'published', now()`,
 		s.tenant, id, content)
-	s.exec(`INSERT INTO `+s.table("content_facets")+` (tenant_id, content_id, version_id, kind, live_from, listing, languages, access_level, position)
-SELECT v.tenant_id, v.content_id, v.id, c.kind, now(), 'listed', v.languages, 'public', v.position FROM `+s.table("content_versions")+` v
+	s.exec(`INSERT INTO `+s.table("content_facets")+` (tenant_id, content_id, version_id, kind, live_from, languages, access_level, position)
+SELECT v.tenant_id, v.content_id, v.id, c.kind, now(), v.languages, 'public', v.position FROM `+s.table("content_versions")+` v
 JOIN `+s.table("content_items")+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id WHERE v.tenant_id = $1 AND v.id = $2`, s.tenant, id)
 	return versions.Target{Content: content, Version: id}
 }
