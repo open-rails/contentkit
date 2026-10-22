@@ -142,6 +142,8 @@ export const admin: typeof en = {
     wentLive: "自 {date} 起进行中",
   },
   contentManager: {
+    switchLanguage: "切换语言？",
+    discardLanguageEdits: "此语言中未保存的更改将被放弃。",
     manageVersions: "管理版本",
     noAccess: "你没有管理文章的权限。",
     back: "所有文章",

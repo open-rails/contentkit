@@ -775,6 +775,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     report(err, "content.save");
   };
   const text = () => ({ title: f.title.trim(), description: f.description.trim(), body: f.body });
+  const stored = item?.text?.[language];
+  const dirty = !!item && (f.title.trim() !== (stored?.title ?? "") || f.description.trim() !== (stored?.description ?? "") || f.body !== (stored?.body ?? ""));
   const save = async () => {
     setError(null);
     setNotice(null);
@@ -801,7 +803,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const publish = async (live: boolean) => {
     setError(null);
     setNotice(null);
+    if (live && dirty && !f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
+      // Publishing makes the stored text public, so unsaved edits are saved first.
+      if (live && dirty) await ed.putText(text());
       if (live) await ed.publish(f.publishAt ? new Date(f.publishAt).toISOString() : undefined);
       else await ed.unpublish();
       setNotice(t(live ? "contentManager.publishedNotice" : "contentManager.unpublishedNotice"));
@@ -870,7 +875,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             <Label htmlFor={`${ids}-lang`}>{t("contentManager.language")}</Label>
             <Select
               value={language}
-              onValueChange={(v) => {
+              onValueChange={async (v) => {
+                if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
                 setLanguage(String(v ?? ""));
                 setForm(item ? null : empty);
               }}

@@ -142,6 +142,8 @@ export const admin: typeof en = {
     wentLive: "{date} から公開中",
   },
   contentManager: {
+    switchLanguage: "言語を切り替えますか？",
+    discardLanguageEdits: "この言語の未保存の変更は破棄されます。",
     manageVersions: "バージョンを管理",
     noAccess: "投稿を管理する権限がありません。",
     back: "すべての投稿",

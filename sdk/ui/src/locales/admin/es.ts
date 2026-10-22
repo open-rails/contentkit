@@ -142,6 +142,8 @@ export const admin: typeof en = {
     wentLive: "Activa desde el {date}",
   },
   contentManager: {
+    switchLanguage: "¿Cambiar de idioma?",
+    discardLanguageEdits: "Se descartarán los cambios sin guardar en este idioma.",
     manageVersions: "Administrar versiones",
     noAccess: "No tienes permiso para gestionar publicaciones.",
     back: "Todas las publicaciones",
