@@ -710,7 +710,7 @@ function UploadRow({
   const playback = useMemo(() => (kind === "audio" ? folder.read.read?.files.find((x) => x.from === f.path && x.url && x.path.endsWith("/audio.m4a")) : undefined), [kind, folder.read.read, f.path]);
   const known = f.dur || playback?.dur;
   const [loaded, setLoaded] = useState<number>();
-  const length = known || loaded;
+  const length = kind === "audio" && (known || loaded);
   const locked = disabled || folder.updating;
   const failure = f.failed ? errorText(failureError(f.failed)) : undefined;
   return (

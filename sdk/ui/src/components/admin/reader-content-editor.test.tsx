@@ -3,7 +3,7 @@ import "../../test/dom.js";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
 import type { Content, ContentModel, ContentMemberships, FileInfo, GroupCard, ReadResult, Version } from "../../client/generated/wire.js";
 import { ContentEditor, ContentManager } from "./content-manager.js";
@@ -526,6 +526,9 @@ it("refreshes pages and notices after asynchronous ZIP extraction replaces the a
 
 it("plays each Files audio upload from its M4A rendition, one at a time, and shows its length", async () => {
   const playing = new Set<HTMLMediaElement>();
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
   vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(function (this: HTMLMediaElement) { return !playing.has(this); });
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async function (this: HTMLMediaElement) { playing.add(this); fireEvent.play(this); });
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) { if (playing.delete(this)) fireEvent.pause(this); });
@@ -534,8 +537,9 @@ it("plays each Files audio upload from its M4A rendition, one at a time, and sho
     { path: "audio/001.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/001.mp3", size: 10, dur: 83.4 },
     { path: "audio/001/audio.m4a", type: "audio/mp4", from: "audio/001.mp3", url: "https://test.invalid/001.m4a", size: 8, dur: 83.4 },
     { path: "audio/002.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/002.mp3", size: 10 },
+    { path: "video/clip.mp4", type: "video/mp4", upload: true, url: "https://test.invalid/clip.mp4", size: 10, dur: 30 },
   ]);
-  media.uploads!.push({ path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 10_000_000 });
+  media.uploads!.push({ path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 10_000_000 }, { path: "video/{name}", types: ["video/mp4"], max_bytes: 10_000_000 });
   const s = server({ media });
   const user = userEvent.setup();
   const { container } = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
@@ -549,6 +553,7 @@ it("plays each Files audio upload from its M4A rendition, one at a time, and sho
   const row = (path: string) => container.querySelector<HTMLElement>(`[data-ckui=upload-row][data-path="${path}"]`)!;
   expect(within(row("audio/001.mp3")).getByText("1:23")).toBeVisible();
   expect(row("audio/002.mp3").querySelector("[data-ckui=audio-length]")).toBeNull();
+  expect(row("video/clip.mp4").querySelector("[data-ckui=audio-length]")).toBeNull();
   Object.defineProperty(a2, "duration", { value: 65 });
   fireEvent.loadedMetadata(a2!);
   expect(await within(row("audio/002.mp3")).findByText("1:05")).toBeVisible();
@@ -561,7 +566,6 @@ it("plays each Files audio upload from its M4A rendition, one at a time, and sho
   await user.click(screen.getByRole("button", { name: "Pause 002" }));
   expect(screen.getByRole("button", { name: "Play 002" })).toHaveAttribute("aria-pressed", "false");
   expect(playing.size).toBe(0);
-  vi.restoreAllMocks();
 });
 
 const segment = { position: 0, title: "Chapter one", start: 0, end: 1, released: true };
