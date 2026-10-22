@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/media"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 )
 
 // Event types written to the outbox.
@@ -84,9 +82,10 @@ func (s *Store) emit(ctx context.Context, q Querier, events ...Event) error {
 	return s.enqueueEvents(ctx, q)
 }
 
-// Queue delivery with the outbox write. A running delivery may already have
-// read its last batch, so InsertOnce retains one follow-up instead of losing
-// the wake-up. An unbound/older producer is covered by the recovery sweep.
+// Queue delivery with the outbox write. Keep it nonunique: a conflict locks
+// the running job and can deadlock with River's batch completer when this
+// transaction already locked another job. The recovery sweep covers unbound
+// producers.
 func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
 	s.mu.Lock()
 	client := s.jobs
@@ -94,12 +93,14 @@ func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
 	if client == nil {
 		return nil
 	}
-	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-		if tx, ok := q.(pgx.Tx); ok {
-			return client.InsertTx(ctx, tx, args, opts)
-		}
-		return client.Insert(ctx, args, opts)
-	}, deliverEventsArgs{}, river.InsertOpts{Queue: Queue, MaxAttempts: 3})
+	opts := &river.InsertOpts{Queue: Queue, MaxAttempts: 3}
+	var err error
+	if tx, ok := q.(pgx.Tx); ok {
+		_, err = client.InsertTx(ctx, tx, deliverEventsArgs{}, opts)
+	} else {
+		_, err = client.Insert(ctx, deliverEventsArgs{}, opts)
+	}
+	return err
 }
 
 // eventBatch bounds one delivery.
@@ -108,20 +109,21 @@ const eventBatch = 200
 // deliveredRetention is how long delivered events stay in the outbox.
 const deliveredRetention = 7 * 24 * time.Hour
 
+// ErrEventDeliveryBusy means another delivery holds this tenant's delivery lock.
+var ErrEventDeliveryBusy = errors.New("catalog: event delivery already in progress")
+
 // DeliverEvents hands undelivered events to the subscribers in batches, in
 // order, and marks each batch delivered once every subscriber took it; it
 // stops at the first failure, which it returns. Delivered events older than a
-// week are pruned. It returns how many events were delivered.
+// week are pruned. It returns how many events were delivered and
+// ErrEventDeliveryBusy if another delivery holds the tenant's lock.
 func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	subs := append([]Subscriber(nil), s.subscribers...)
 	s.mu.Unlock()
-	if _, err := s.pool.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id = $1 AND delivered_at < $2`, s.tenant, s.now().Add(-deliveredRetention)); err != nil {
-		return 0, err
-	}
 	total := 0
 	for {
-		n, err := s.deliverBatch(ctx, subs)
+		n, err := s.deliverBatch(ctx, subs, total == 0)
 		total += n
 		if err != nil || n < eventBatch {
 			return total, err
@@ -129,12 +131,25 @@ func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
 	}
 }
 
-func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error) {
+func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber, prune bool) (int, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
+	// Nonunique wake-ups may run together; deliver their batches in order.
+	var locked bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:catalog:events:"+s.schema+":"+s.tenant).Scan(&locked); err != nil {
+		return 0, err
+	}
+	if !locked {
+		return 0, ErrEventDeliveryBusy
+	}
+	if prune {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id = $1 AND delivered_at < $2`, s.tenant, s.now().Add(-deliveredRetention)); err != nil {
+			return 0, err
+		}
+	}
 	rows, err := tx.Query(ctx, `SELECT id, type, payload, created_at FROM `+s.t.events+`
  WHERE tenant_id = $1 AND delivered_at IS NULL ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, s.tenant, eventBatch)
 	if err != nil {
@@ -158,8 +173,11 @@ func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error
 		batch, ids = append(batch, e), append(ids, e.ID)
 	}
 	rows.Close()
-	if err := rows.Err(); err != nil || len(batch) == 0 {
+	if err := rows.Err(); err != nil {
 		return 0, err
+	}
+	if len(batch) == 0 {
+		return 0, tx.Commit(ctx)
 	}
 	for _, sub := range subs {
 		if err := sub(ctx, batch); err != nil {

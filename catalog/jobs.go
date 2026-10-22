@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -501,12 +502,9 @@ type publishDueArgs struct{}
 
 func (publishDueArgs) Kind() string { return "contentkit_catalog_publish_due" }
 
-type deliverEventsArgs struct {
-	After int64 `json:"after,omitempty"`
-}
+type deliverEventsArgs struct{}
 
-func (deliverEventsArgs) Kind() string                      { return "contentkit_catalog_deliver_events" }
-func (a deliverEventsArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
+func (deliverEventsArgs) Kind() string { return "contentkit_catalog_deliver_events" }
 
 type deliverEventsWorker struct {
 	river.WorkerDefaults[deliverEventsArgs]
@@ -514,10 +512,10 @@ type deliverEventsWorker struct {
 }
 
 func (w *deliverEventsWorker) Work(ctx context.Context, job *river.Job[deliverEventsArgs]) error {
-	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
-		return err
-	}
 	_, err := w.s.DeliverEvents(ctx)
+	if errors.Is(err, ErrEventDeliveryBusy) {
+		return river.JobSnooze(time.Second)
+	}
 	return err
 }
 
