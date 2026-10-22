@@ -54,7 +54,8 @@ func TestFork(t *testing.T) {
 }
 
 // A fork that gives up leaves a failure receipt in place of its barrier, so
-// the destination takes uploads again; a later fork clears it.
+// the destination takes uploads again; the editor's own upload or a later
+// fork clears it, removing leftovers does not.
 func TestForkFailure(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c, from := gallery(t, s)
@@ -91,13 +92,17 @@ WHERE kind = 'contentkit_version_fork' AND finalized_at IS NULL`).Scan(&running)
 	// The source changed after this fork's barrier was written: the barrier
 	// goes with the metadata it copied, and uploads are taken again.
 	if _, err := s.ms.EditExisting(s.ctx, ref, func(m *media.Manifest) error {
-		m.Meta = map[string]any{"title": "copied", "fork": map[string]any{"from": from.Version, "snapshot": "stale", "playback": true}}
+		m.Meta["title"] = "copied"
+		m.Meta["fork"] = map[string]any{"from": from.Version, "snapshot": "stale", "playback": true}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.upload(s.creator, ref, "originals/blocked", "image/png", pngOf(t, 30, 40, 98)); err == nil {
 		t.Fatal("an upload during a fork")
+	}
+	if s.manifest(ref).Meta["fork_failed"] == nil {
+		t.Fatal("the fork's barrier lost the failure receipt")
 	}
 	if resp, b := s.call(s.creator, "POST", path, body); resp.StatusCode != 202 {
 		t.Fatalf("fork: %d %s", resp.StatusCode, b)
@@ -106,9 +111,22 @@ WHERE kind = 'contentkit_version_fork' AND finalized_at IS NULL`).Scan(&running)
 	if m := s.manifest(ref); m.Meta["title"] != nil {
 		t.Fatalf("the failed fork kept its copied metadata %v", m.Meta)
 	}
+	// Removing leftovers or an internal write keeps the receipt for Try
+	// again; the editor's own upload ends it.
+	s.commit(s.creator, ref, media.Op{Op: media.OpRemove, Path: "originals/own.png", Takedown: true})
+	if s.manifest(ref).Meta["fork_failed"] == nil {
+		t.Fatal("a removal cleared the failure receipt")
+	}
+	s.mustUpload(access.Actor{ID: "contentkit", Kind: "contentkit:system"}, ref, "originals/internal", "image/png", pngOf(t, 30, 40, 96))
+	if s.manifest(ref).Meta["fork_failed"] == nil {
+		t.Fatal("an internal write cleared the failure receipt")
+	}
 	s.mustUpload(s.creator, ref, "originals/after", "image/png", pngOf(t, 30, 40, 97))
+	if m := s.manifest(ref); m.Meta["fork_failed"] != nil {
+		t.Fatalf("an upload kept the failure receipt %v", m.Meta)
+	}
 	// Emptied, the destination forks again, and the receipt replaces the failure.
-	s.commit(s.creator, ref, media.Op{Op: media.OpRemove, Path: "originals/own.png", Takedown: true}, media.Op{Op: media.OpRemove, Path: "originals/after.png", Takedown: true})
+	s.commit(s.creator, ref, media.Op{Op: media.OpRemove, Path: "originals/internal.png", Takedown: true}, media.Op{Op: media.OpRemove, Path: "originals/after.png", Takedown: true})
 	// Its automatic cover goes with the pages.
 	eventually(t, "the emptied destination", time.Minute, func() bool { return len(s.manifest(ref).Files) == 0 })
 	if resp, b := s.call(s.creator, "POST", path, body); resp.StatusCode != 202 {
