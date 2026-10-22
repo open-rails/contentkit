@@ -61,6 +61,17 @@ func TestKnownCardsPreserveCallerOrderAndReaderPolicy(t *testing.T) {
 	if got, _ := f.list("clean.test", "", q("/contents", "ids", f.cid(1))); !reflect.DeepEqual(got, []string{f.cid(1)}) {
 		t.Fatalf("global ID listing changed: %v", got)
 	}
+	// The fixture does not run the search worker: index the current catalog
+	// documents before checking the public search policy.
+	var refs []contentref.ContentRef
+	for n := 1; n <= 7; n++ {
+		refs = append(refs, contentref.New(tenant, "gallery", f.cid(n)))
+	}
+	documents, err := f.cat.BuildDocuments(f.ctx, "gallery", "en", refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.docs(documents...)
 	if got, _ := f.list("clean.test", "", "/search?q=Known"); len(got) != 3 {
 		t.Fatalf("published search results: %v", got)
 	}

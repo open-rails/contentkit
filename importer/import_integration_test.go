@@ -768,7 +768,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Files) != 2 || out.Files[0].Path != "originals/001.png" || out.Files[1].Path != "originals/002.png" {
+	if len(out.Files) != 2 || out.Files[0].Path != "originals/0001.png" || out.Files[1].Path != "originals/0002.png" {
 		t.Fatalf("committed %+v", out.Files)
 	}
 	// Sending them again finds the folder's bytes and keeps two pages.
@@ -787,7 +787,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 	t.Cleanup(func() { _ = env.Store.Delete(context.Background(), src) })
 	copied, err := f.e.Client().IngestMedia(t.Context(), nil, ref, uuid.NewString(),
 		[]contentkit.MediaFile{{Path: "originals/0003.png", Type: "image/png", From: src, Size: int64(len(body))}})
-	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/003.png" {
+	if err != nil || len(copied.Files) != 3 || copied.Files[2].Path != "originals/0003.png" {
 		t.Fatalf("copied %+v %v", copied.Files, err)
 	}
 	if _, err := env.Store.Head(t.Context(), src); err != nil {
